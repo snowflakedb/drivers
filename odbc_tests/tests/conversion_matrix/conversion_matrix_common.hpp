@@ -20,7 +20,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 

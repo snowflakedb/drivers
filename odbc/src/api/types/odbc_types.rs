@@ -610,6 +610,8 @@ impl From<SqlType> for sql::SqlDataType {
 #[repr(C)]
 pub struct ArdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt: *const Statement,
     pub bindings: HashMap<u16, Binding>,
     /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
     pub array_size: usize,
@@ -629,6 +631,8 @@ impl ArdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ard,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt: std::ptr::null(),
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -663,6 +667,8 @@ impl ArdDescriptor {
 #[repr(C)]
 pub struct ApdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt: *const Statement,
     pub records: HashMap<u16, ApdRecord>,
     /// `SQL_DESC_ARRAY_SIZE` — number of parameter sets (default 1).
     pub array_size: usize,
@@ -682,6 +688,8 @@ impl ApdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Apd,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt: std::ptr::null(),
             records: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -706,6 +714,8 @@ impl ApdDescriptor {
 #[repr(C)]
 pub struct IrdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt: *const Statement,
     /// `SQL_DESC_COUNT` — number of columns in the result set.
     pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
@@ -724,6 +734,8 @@ impl IrdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ird,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt: std::ptr::null(),
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -740,6 +752,8 @@ impl IrdDescriptor {
 #[repr(C)]
 pub struct IpdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt: *const Statement,
     pub records: HashMap<u16, IpdRecord>,
     /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
     pub array_status_ptr: *mut u16,
@@ -757,6 +771,8 @@ impl IpdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ipd,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt: std::ptr::null(),
             records: HashMap::new(),
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -827,6 +843,7 @@ impl ToSqlReturn for OdbcResult<()> {
             }
             Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA,
             Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE,
+            Err(OdbcError::DaeRequired { .. }) => sql::SqlReturn::NEED_DATA,
             Err(_) => sql::SqlReturn::ERROR,
         }
     }
@@ -978,6 +995,47 @@ impl ParameterBinding {
     }
 }
 
+/// Tracks whether the current execution originated from `SQLPrepare`+`SQLExecute`
+/// or from `SQLExecDirect`. Maps to the ODBC spec's `[p]`/`[np]` transition
+/// annotations (e.g. `SQLFreeStmt(SQL_CLOSE)` in S5 → S1 [np] / S3 [p]).
+#[derive(Clone, Debug)]
+pub enum ExecutionOrigin {
+    Prepared { schema: SchemaRef },
+    Direct,
+}
+
+impl ExecutionOrigin {
+    pub fn restore_state(&self) -> StatementState {
+        match self {
+            ExecutionOrigin::Prepared { schema } => StatementState::Prepared {
+                schema: schema.clone(),
+            },
+            ExecutionOrigin::Direct => StatementState::Created,
+        }
+    }
+
+    pub fn is_prepared(&self) -> bool {
+        matches!(self, ExecutionOrigin::Prepared { .. })
+    }
+}
+
+/// State of an individual DAE parameter's data during the `SQLPutData` loop.
+#[allow(dead_code)]
+pub enum ParamValue {
+    Pending,
+    Null,
+    Data(Vec<Vec<u8>>),
+}
+
+/// Holds the context for a data-at-execution operation in progress.
+#[allow(dead_code)]
+pub struct DaeContext {
+    pub dae_params: Vec<u16>,
+    pub current_index: usize,
+    pub pushed_data: HashMap<u16, ParamValue>,
+    pub deferred_query: Option<String>,
+}
+
 pub enum StatementState {
     Created,
     Prepared {
@@ -987,33 +1045,49 @@ pub enum StatementState {
     QueryExecuted {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
-        /// `true` when reached via `SQLExecute` (prepared path). On
-        /// `SQLFreeStmt(SQL_CLOSE)` the state returns to `Prepared`;
-        /// when `false` (exec-direct path) it returns to `Created`.
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     /// ODBC state S4 for DDL. No cursor opened; SQLRowCount returns -1.
     DdlExecuted {
         schema: SchemaRef,
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     /// ODBC state S4 for DML (INSERT/UPDATE/DELETE/MERGE).
     /// No cursor opened; SQLRowCount returns rows_affected.
     DmlExecuted {
         rows_affected: i64,
         schema: SchemaRef,
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     Done {
+        #[allow(dead_code)]
         schema: SchemaRef,
-        prepared: bool,
+        origin: ExecutionOrigin,
+    },
+    /// ODBC state S8: Need data, waiting for `SQLParamData`.
+    AwaitingParamData {
+        #[allow(dead_code)]
+        dae_context: Box<DaeContext>,
+        origin: ExecutionOrigin,
+    },
+    /// ODBC state S9: Need data, waiting for `SQLPutData`.
+    #[allow(dead_code)]
+    AwaitingPutData {
+        dae_context: Box<DaeContext>,
+        origin: ExecutionOrigin,
+    },
+    /// ODBC state S10: Need data, `SQLPutData` called at least once.
+    #[allow(dead_code)]
+    PutDataCalled {
+        dae_context: Box<DaeContext>,
+        origin: ExecutionOrigin,
     },
     Error,
 }
@@ -1026,6 +1100,16 @@ impl StatementState {
             StatementState::QueryExecuted { .. }
                 | StatementState::Fetching { .. }
                 | StatementState::Done { .. }
+        )
+    }
+
+    /// Returns `true` when the statement is in any of the NeedData states (S8/S9/S10).
+    pub fn is_need_data(&self) -> bool {
+        matches!(
+            self,
+            StatementState::AwaitingParamData { .. }
+                | StatementState::AwaitingPutData { .. }
+                | StatementState::PutDataCalled { .. }
         )
     }
 }
@@ -1130,6 +1214,11 @@ pub struct Statement {
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
     pub used_extended_fetch: bool,
+    /// Number of `?` parameter markers reported by the server after
+    /// `SQLPrepare`. Used to ignore spurious APD bindings on non-existent
+    /// parameters (e.g. DAE detection for "SELECT 1" with a bound param).
+    /// `None` before the first prepare or after exec-direct.
+    pub prepared_param_count: Option<usize>,
     /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
     pub last_query_id: Option<String>,
     /// Cancelled by `SQLCancel` (possibly from another thread) and observed
@@ -1165,6 +1254,7 @@ impl Statement {
             cursor_type: CursorType::ForwardOnly,
             max_length: 0,
             used_extended_fetch: false,
+            prepared_param_count: None,
             last_query_id: None,
             cancel_token: CancellationToken::new(),
         }

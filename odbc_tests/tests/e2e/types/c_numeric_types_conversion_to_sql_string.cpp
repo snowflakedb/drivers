@@ -3,19 +3,18 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_numeric_types][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG to SQL_VARCHAR and read back",
+                 "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_vc_long (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t_vc_long (col VARCHAR(100))");
 
   SQLINTEGER val = 42;
   SQLLEN ind = 0;
@@ -38,12 +37,11 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_numeric_ty
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "42");
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE to SQL_VARCHAR",
+                 "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_vc_dbl (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t_vc_dbl (col VARCHAR(100))");
 
   SQLDOUBLE val = 3.14;
   SQLLEN ind = 0;
@@ -67,12 +65,11 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR", "[c_numeric_types][conversi
   CHECK(s.find("3.14") != std::string::npos);
 }
 
-TEST_CASE("should bind SQL_C_BIT to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT to SQL_VARCHAR",
+                 "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_vc_bit (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t_vc_bit (col VARCHAR(100))");
 
   SQLCHAR val = 1;
   SQLLEN ind = 0;
@@ -95,12 +92,11 @@ TEST_CASE("should bind SQL_C_BIT to SQL_VARCHAR", "[c_numeric_types][conversion]
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "1");
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC to SQL_VARCHAR",
+                 "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_vc_num (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t_vc_num (col VARCHAR(100))");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -129,12 +125,11 @@ TEST_CASE("should bind SQL_C_NUMERIC to SQL_VARCHAR", "[c_numeric_types][convers
   NEW_DRIVER_ONLY("BD#33") { CHECK(get_data<SQL_C_CHAR>(sel, 1) == "123.45"); }
 }
 
-TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SBIGINT to SQL_VARCHAR",
+                 "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_vc_sb (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t_vc_sb (col VARCHAR(100))");
 
   SQLBIGINT val = 9999999999LL;
   SQLLEN ind = 0;
@@ -157,12 +152,11 @@ TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR", "[c_numeric_types][convers
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "9999999999");
 }
 
-TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG with NULL indicator to SQL_VARCHAR",
+                 "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_vc_null (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t_vc_null (col VARCHAR(100))");
 
   SQLINTEGER val = 0;
   SQLLEN ind = SQL_NULL_DATA;

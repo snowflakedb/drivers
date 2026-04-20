@@ -37,6 +37,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid handle type for this operation: {handle_type}"))]
+    InvalidHandleType {
+        handle_type: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid descriptor kind: {kind}"))]
     InvalidDescriptorKind {
         kind: u16,
@@ -381,6 +388,27 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Invalid connection string: {reason}"))]
+    InvalidConnectionString {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Data-at-execution required"))]
+    DaeRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "Function sequence error: cannot call this function during data-at-execution"
+    ))]
+    InvalidDuringDae {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -473,6 +501,7 @@ impl OdbcError {
         match self {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidDescriptorKind { .. } => SqlState::GeneralError,
             OdbcError::InvalidBufferLength { .. } => SqlState::InvalidStringOrBufferLength,
@@ -541,7 +570,8 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::JsonBinding { source, .. } => match source {
-                JsonBindingError::NumericMagnitudeOverflow { .. } => {
+                JsonBindingError::NumericMagnitudeOverflow { .. }
+                | JsonBindingError::BindingNumericOutOfRange { .. } => {
                     SqlState::NumericValueOutOfRange
                 }
                 JsonBindingError::UnsupportedCDataType { .. } => {
@@ -620,6 +650,9 @@ impl OdbcError {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
             OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
+            OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::DaeRequired { .. } => SqlState::GeneralError,
+            OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
         }
     }
 
@@ -728,7 +761,8 @@ impl ErrorTrace for CoreProtobufError {
 mod tests {
     use super::*;
     use crate::conversion::error::{
-        InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu,
+        UnsupportedCDataTypeSnafu,
     };
 
     #[test]
@@ -815,6 +849,20 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataRightTruncation);
+    }
+
+    #[test]
+    fn binding_numeric_out_of_range_maps_to_22003() {
+        let json_err = BindingNumericOutOfRangeSnafu {
+            reason: "SQL_C_BINARY buffer length 12 does not match SQL_DATE_STRUCT size (6)"
+                .to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
     }
 
     #[test]

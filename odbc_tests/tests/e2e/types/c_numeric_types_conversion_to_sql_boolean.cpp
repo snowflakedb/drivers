@@ -3,19 +3,18 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_SLONG one to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG one to SQL_BIT",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_long1 (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_long1 (col BOOLEAN)");
 
   SQLINTEGER val = 1;
   SQLLEN ind = 0;
@@ -38,12 +37,11 @@ TEST_CASE("should bind SQL_C_SLONG one to SQL_BIT", "[c_numeric_types][conversio
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
 }
 
-TEST_CASE("should bind SQL_C_SLONG zero to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG zero to SQL_BIT",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_long0 (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_long0 (col BOOLEAN)");
 
   SQLINTEGER val = 0;
   SQLLEN ind = 0;
@@ -66,12 +64,11 @@ TEST_CASE("should bind SQL_C_SLONG zero to SQL_BIT", "[c_numeric_types][conversi
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 0);
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE one to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE one to SQL_BIT",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_dbl1 (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_dbl1 (col BOOLEAN)");
 
   SQLDOUBLE val = 1.0;
   SQLLEN ind = 0;
@@ -94,12 +91,11 @@ TEST_CASE("should bind SQL_C_DOUBLE one to SQL_BIT", "[c_numeric_types][conversi
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE zero to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE zero to SQL_BIT",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_dbl0 (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_dbl0 (col BOOLEAN)");
 
   SQLDOUBLE val = 0.0;
   SQLLEN ind = 0;
@@ -122,12 +118,10 @@ TEST_CASE("should bind SQL_C_DOUBLE zero to SQL_BIT", "[c_numeric_types][convers
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 0);
 }
 
-TEST_CASE("should bind SQL_C_BIT to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_bbit (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_bbit (col BOOLEAN)");
 
   SQLCHAR val = 1;
   SQLLEN ind = 0;
@@ -150,12 +144,11 @@ TEST_CASE("should bind SQL_C_BIT to SQL_BIT", "[c_numeric_types][conversion][sql
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
 }
 
-TEST_CASE("should bind SQL_C_SLONG negative to SQL_BIT as true", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG negative to SQL_BIT as true",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_long_neg (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_long_neg (col BOOLEAN)");
 
   SQLINTEGER val = -1;
   SQLLEN ind = 0;
@@ -184,12 +177,11 @@ TEST_CASE("should bind SQL_C_SLONG negative to SQL_BIT as true", "[c_numeric_typ
   }
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC nonzero to SQL_BIT as true", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC nonzero to SQL_BIT as true",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_bool (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_bool (col BOOLEAN)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -222,12 +214,11 @@ TEST_CASE("should bind SQL_C_NUMERIC nonzero to SQL_BIT as true", "[c_numeric_ty
   }
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC zero to SQL_BIT as false", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC zero to SQL_BIT as false",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_bool0 (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_bool0 (col BOOLEAN)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -254,12 +245,11 @@ TEST_CASE("should bind SQL_C_NUMERIC zero to SQL_BIT as false", "[c_numeric_type
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 0);
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC negative to SQL_BIT as true", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC negative to SQL_BIT as true",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_bool_neg (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_bool_neg (col BOOLEAN)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -291,12 +281,11 @@ TEST_CASE("should bind SQL_C_NUMERIC negative to SQL_BIT as true", "[c_numeric_t
   }
 }
 
-TEST_CASE("should bind SQL_C_DEFAULT to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DEFAULT to SQL_BIT",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_default (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_default (col BOOLEAN)");
 
   SQLCHAR val_true = 1;
   SQLCHAR val_false = 0;
@@ -329,12 +318,11 @@ TEST_CASE("should bind SQL_C_DEFAULT to SQL_BIT", "[c_numeric_types][conversion]
   CHECK(get_data<SQL_C_BIT>(sel, 1) == 0);
 }
 
-TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG with NULL indicator to SQL_BIT",
+                 "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_long_null (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE t_long_null (col BOOLEAN)");
 
   SQLINTEGER val = 0;
   SQLLEN ind = SQL_NULL_DATA;

@@ -510,9 +510,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after all rows fetche
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after DDL execution",
                  "[odbc-api][cancel][terminating_statement]") {
-  auto schema = Schema::use_random_schema(dbc_handle());
+  Schema::use_temp_session_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE OR REPLACE TABLE cancel_test_tmp (id INT)"), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE cancel_test_tmp (id INT)"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
@@ -535,7 +535,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after DDL execution",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on statement in Error state",
                  "[odbc-api][cancel][terminating_statement]") {
-  auto schema = Schema::use_random_schema(dbc_handle());
+  Schema::use_temp_session_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT * FROM nonexistent_table"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsError());

@@ -3,7 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -594,13 +594,11 @@ TEST_CASE("SQLPrepare with cursor already open returns 24000.", "[query][prepare
 // DDL / DML Edge Cases
 // =============================================================================
 
-TEST_CASE("DDL via SQLPrepare + SQLExecute.", "[query][prepare]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DDL via SQLPrepare + SQLExecute.", "[query][prepare]") {
   // Doc: "SQLPrepare prepares an SQL string for execution."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   auto stmt = conn.createStatement();
 
   // When a CREATE TABLE is prepared and executed
@@ -623,15 +621,13 @@ TEST_CASE("DDL via SQLPrepare + SQLExecute.", "[query][prepare]") {
   CHECK(count == 0);
 }
 
-TEST_CASE("DML returning SQL_NO_DATA via SQLPrepare + SQLExecute.", "[query][prepare]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DML returning SQL_NO_DATA via SQLPrepare + SQLExecute.", "[query][prepare]") {
   // Doc: "SQL_NO_DATA is returned if the SQL statement was an UPDATE, INSERT,
   //       or DELETE statement that did not affect any rows."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecute-function#returns
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE prep_dml_nodata (id INT)");
+  conn.execute("CREATE TEMPORARY TABLE prep_dml_nodata (id INT)");
   auto stmt = conn.createStatement();
 
   // When a DELETE that affects no rows is prepared and executed
@@ -644,14 +640,12 @@ TEST_CASE("DML returning SQL_NO_DATA via SQLPrepare + SQLExecute.", "[query][pre
   CHECK(ret == SQL_NO_DATA);
 }
 
-TEST_CASE("INSERT via SQLPrepare + SQLExecute with verify.", "[query][prepare]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "INSERT via SQLPrepare + SQLExecute with verify.", "[query][prepare]") {
   // Doc: "SQLPrepare prepares an SQL string for execution."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE prep_insert_test (id INT, name VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE prep_insert_test (id INT, name VARCHAR(100))");
 
   // When an INSERT is prepared with bound parameters and executed
   {

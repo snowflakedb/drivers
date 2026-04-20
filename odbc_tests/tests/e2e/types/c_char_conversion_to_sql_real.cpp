@@ -5,16 +5,15 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_CHAR float string to SQL_DOUBLE", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR float string to SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_CHAR "3.14" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -32,11 +31,10 @@ TEST_CASE("should bind SQL_C_CHAR float string to SQL_DOUBLE", "[c_char][convers
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(3.14, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR integer string to SQL_REAL", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR integer string to SQL_REAL",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_CHAR "100" is bound to SQL_REAL and inserted
   auto stmt = conn.createStatement();
@@ -54,11 +52,9 @@ TEST_CASE("should bind SQL_C_CHAR integer string to SQL_REAL", "[c_char][convers
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(100.0, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR to SQL_FLOAT synonym", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR to SQL_FLOAT synonym", "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_CHAR "1.23" is bound to SQL_FLOAT and inserted
   auto stmt = conn.createStatement();
@@ -76,11 +72,9 @@ TEST_CASE("should bind SQL_C_CHAR to SQL_FLOAT synonym", "[c_char][conversion][s
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(1.23, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR to FLOAT4 column", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR to FLOAT4 column", "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT4)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT4)");
 
   // When SQL_C_CHAR "5.5" is bound to SQL_DOUBLE and inserted into a FLOAT4 column
   auto stmt = conn.createStatement();
@@ -98,11 +92,9 @@ TEST_CASE("should bind SQL_C_CHAR to FLOAT4 column", "[c_char][conversion][sql_r
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(5.5, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR to FLOAT8 column", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR to FLOAT8 column", "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT8)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT8)");
 
   // When SQL_C_CHAR "9.81" is bound to SQL_DOUBLE and inserted into a FLOAT8 column
   auto stmt = conn.createStatement();
@@ -120,11 +112,10 @@ TEST_CASE("should bind SQL_C_CHAR to FLOAT8 column", "[c_char][conversion][sql_r
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(9.81, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR to DOUBLE PRECISION column", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR to DOUBLE PRECISION column",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col DOUBLE PRECISION)");
+  conn.execute("CREATE TEMPORARY TABLE t (col DOUBLE PRECISION)");
 
   // When SQL_C_CHAR "2.22" is bound to SQL_DOUBLE and inserted into a DOUBLE PRECISION column
   auto stmt = conn.createStatement();
@@ -142,11 +133,9 @@ TEST_CASE("should bind SQL_C_CHAR to DOUBLE PRECISION column", "[c_char][convers
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(2.22, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR to REAL column", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR to REAL column", "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col REAL)");
+  conn.execute("CREATE TEMPORARY TABLE t (col REAL)");
 
   // When SQL_C_CHAR "7.77" is bound to SQL_REAL and inserted into a REAL column
   auto stmt = conn.createStatement();
@@ -164,11 +153,10 @@ TEST_CASE("should bind SQL_C_CHAR to REAL column", "[c_char][conversion][sql_rea
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(7.77, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_WCHAR float string to SQL_DOUBLE", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR float string to SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_WCHAR "2.71" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -186,11 +174,10 @@ TEST_CASE("should bind SQL_C_WCHAR float string to SQL_DOUBLE", "[c_char][conver
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(2.71, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_WCHAR integer string to SQL_REAL", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR integer string to SQL_REAL",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_WCHAR "200" is bound to SQL_REAL and inserted
   auto stmt = conn.createStatement();
@@ -208,11 +195,10 @@ TEST_CASE("should bind SQL_C_WCHAR integer string to SQL_REAL", "[c_char][conver
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(200.0, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_DOUBLE", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR with NULL indicator to SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_CHAR is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();
@@ -229,11 +215,10 @@ TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_DOUBLE", "[c_char][
   CHECK(get_data_optional<SQL_C_DOUBLE>(fetch_stmt, 1) == std::nullopt);
 }
 
-TEST_CASE("should bind SQL_C_WCHAR with NULL indicator to SQL_DOUBLE", "[c_char][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR with NULL indicator to SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_WCHAR is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();

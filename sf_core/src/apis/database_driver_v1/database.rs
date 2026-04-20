@@ -20,25 +20,6 @@ impl DatabaseDriverV1 {
         self.databases.add_handle(Mutex::new(Database::new()))
     }
 
-    pub async fn database_set_option(
-        &self,
-        db_handle: Handle,
-        key: String,
-        value: Setting,
-    ) -> Result<(), ApiError> {
-        match self.databases.get_obj(db_handle) {
-            Some(db_ptr) => {
-                let mut db = db_ptr.lock().await;
-                db.settings.insert(key, value);
-                Ok(())
-            }
-            None => InvalidArgumentSnafu {
-                argument: "Database handle not found".to_string(),
-            }
-            .fail(),
-        }
-    }
-
     pub async fn database_set_options(
         &self,
         db_handle: Handle,

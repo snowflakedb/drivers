@@ -3,17 +3,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_SLONG to SQL_INTEGER and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG to SQL_INTEGER and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When An integer value is bound and inserted
   auto stmt = conn.createStatement();
@@ -31,11 +30,10 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_INTEGER and read back", "[c_integer][c
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 42);
 }
 
-TEST_CASE("should bind SQL_C_SBIGINT to SQL_BIGINT and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SBIGINT to SQL_BIGINT and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When A 64-bit integer is bound and inserted
   auto stmt = conn.createStatement();
@@ -53,11 +51,10 @@ TEST_CASE("should bind SQL_C_SBIGINT to SQL_BIGINT and read back", "[c_integer][
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 9999999999LL);
 }
 
-TEST_CASE("should bind SQL_C_SSHORT to SQL_INTEGER and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SSHORT to SQL_INTEGER and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When A 16-bit integer at minimum value is bound and inserted
   auto stmt = conn.createStatement();
@@ -75,11 +72,10 @@ TEST_CASE("should bind SQL_C_SSHORT to SQL_INTEGER and read back", "[c_integer][
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == -32768);
 }
 
-TEST_CASE("should bind SQL_C_UTINYINT to SQL_INTEGER and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UTINYINT to SQL_INTEGER and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When An unsigned 8-bit integer is bound and inserted
   auto stmt = conn.createStatement();
@@ -97,11 +93,10 @@ TEST_CASE("should bind SQL_C_UTINYINT to SQL_INTEGER and read back", "[c_integer
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 255);
 }
 
-TEST_CASE("should bind SQL_C_ULONG to SQL_BIGINT and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_ULONG to SQL_BIGINT and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When A 32-bit unsigned integer is bound and inserted
   auto stmt = conn.createStatement();
@@ -119,11 +114,10 @@ TEST_CASE("should bind SQL_C_ULONG to SQL_BIGINT and read back", "[c_integer][co
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 4000000000LL);
 }
 
-TEST_CASE("should bind SQL_C_UBIGINT to SQL_BIGINT and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UBIGINT to SQL_BIGINT and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When An unsigned 64-bit maximum value is bound and inserted
   auto stmt = conn.createStatement();
@@ -141,11 +135,10 @@ TEST_CASE("should bind SQL_C_UBIGINT to SQL_BIGINT and read back", "[c_integer][
   CHECK(get_data<SQL_C_UBIGINT>(fetch_stmt, 1) == std::numeric_limits<SQLUBIGINT>::max());
 }
 
-TEST_CASE("should bind negative integer to SQL_INTEGER", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative integer to SQL_INTEGER",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When INT_MIN is bound as SQL_C_SLONG and inserted
   auto stmt = conn.createStatement();
@@ -163,11 +156,10 @@ TEST_CASE("should bind negative integer to SQL_INTEGER", "[c_integer][conversion
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == std::numeric_limits<SQLINTEGER>::min());
 }
 
-TEST_CASE("should bind SQL_C_STINYINT to SQL_INTEGER and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_STINYINT to SQL_INTEGER and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When A signed 8-bit integer at minimum value is bound and inserted
   auto stmt = conn.createStatement();
@@ -185,11 +177,10 @@ TEST_CASE("should bind SQL_C_STINYINT to SQL_INTEGER and read back", "[c_integer
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == -128);
 }
 
-TEST_CASE("should bind SQL_C_USHORT to SQL_INTEGER and read back", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_USHORT to SQL_INTEGER and read back",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When An unsigned 16-bit integer at maximum value is bound and inserted
   auto stmt = conn.createStatement();
@@ -207,11 +198,10 @@ TEST_CASE("should bind SQL_C_USHORT to SQL_INTEGER and read back", "[c_integer][
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 65535);
 }
 
-TEST_CASE("should bind SQL_C_SLONG zero to SQL_INTEGER", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG zero to SQL_INTEGER",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When zero is bound as SQL_C_SLONG and inserted
   auto stmt = conn.createStatement();
@@ -229,11 +219,10 @@ TEST_CASE("should bind SQL_C_SLONG zero to SQL_INTEGER", "[c_integer][conversion
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 0);
 }
 
-TEST_CASE("should reject SQL_C_SLONG overflow into NUMBER(3,0)", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SLONG overflow into NUMBER(3,0)",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER(3,0))");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER(3,0))");
 
   // When An integer exceeding the column precision is bound and inserted
   auto stmt = conn.createStatement();
@@ -250,11 +239,10 @@ TEST_CASE("should reject SQL_C_SLONG overflow into NUMBER(3,0)", "[c_integer][co
   CHECK(get_sqlstate(stmt) == "22003");
 }
 
-TEST_CASE("should bind SQL_C_SLONG with NULL indicator", "[c_integer][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG with NULL indicator",
+                 "[c_integer][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER)");
 
   // When A NULL parameter is bound using SQL_NULL_DATA
   auto stmt = conn.createStatement();

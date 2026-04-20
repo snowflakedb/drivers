@@ -3,6 +3,31 @@ use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
 use odbc_sys as sql;
 use tracing;
 
+/// Check if the owning statement is in a NeedData state (S8/S9/S10).
+///
+/// Uses `desc_ref_from_handle` to validate the descriptor handle (null
+/// and kind checks) and obtain a typed reference, then reads the
+/// back-pointer to the owning `Statement` to check its state.
+///
+/// ODBC spec allows ARD/APD/IPD access during S8-S10 (only IRD is
+/// restricted), but we block all four descriptor kinds to match
+/// reference driver behavior.
+fn check_need_data(desc_handle: sql::Handle) -> OdbcResult<()> {
+    let stmt_ptr = match desc_ref_from_handle(desc_handle)? {
+        DescriptorRef::Ard(desc) => desc.stmt,
+        DescriptorRef::Ird(desc) => desc.stmt,
+        DescriptorRef::Apd(desc) => desc.stmt,
+        DescriptorRef::Ipd(desc) => desc.stmt,
+    };
+    if !stmt_ptr.is_null() {
+        let stmt = unsafe { &*stmt_ptr };
+        if stmt.state.as_ref().is_need_data() {
+            return crate::api::error::InvalidDuringDaeSnafu.fail();
+        }
+    }
+    Ok(())
+}
+
 /// Get a descriptor field value
 pub fn get_desc_field(
     desc_handle: sql::Handle,
@@ -18,6 +43,8 @@ pub fn get_desc_field(
         rec_number,
         field_identifier
     );
+
+    check_need_data(desc_handle)?;
 
     if value_ptr.is_null() {
         tracing::error!("get_desc_field: value_ptr is null");
@@ -227,6 +254,8 @@ pub fn set_desc_field(
         rec_number,
         field_identifier
     );
+
+    check_need_data(desc_handle)?;
 
     if rec_number < 0 {
         tracing::error!("set_desc_field: invalid negative rec_number {}", rec_number);

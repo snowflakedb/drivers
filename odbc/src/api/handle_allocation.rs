@@ -88,6 +88,12 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
             // Store the same pointer in child_statements so free_connection can call
             // Arc::from_raw with a pointer that satisfies its documented contract.
             let raw_ptr = Arc::into_raw(stmt);
+            // Set descriptor back-pointers now that the Statement has a stable heap address.
+            let stmt_mut = unsafe { &mut *(raw_ptr as *mut Statement) };
+            stmt_mut.ard.stmt = raw_ptr;
+            stmt_mut.ird.stmt = raw_ptr;
+            stmt_mut.apd.stmt = raw_ptr;
+            stmt_mut.ipd.stmt = raw_ptr;
             conn.child_statements.push((weak, raw_ptr));
             Ok(raw_ptr as *mut Statement)
         }
@@ -294,6 +300,10 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
         }
         sql::HandleType::Stmt => {
             tracing::info!("Freeing stmt: SQLFreeHandle: handle_type={:?}", handle_type);
+            let stmt = crate::api::stmt_from_handle(handle);
+            if stmt.state.as_ref().is_need_data() {
+                return crate::api::error::InvalidDuringDaeSnafu.fail();
+            }
             free_statement(handle)
         }
         sql::HandleType::Desc => InvalidHandleSnafu.fail(),

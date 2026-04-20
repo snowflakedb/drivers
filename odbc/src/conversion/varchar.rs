@@ -28,6 +28,7 @@ use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 pub(crate) struct SnowflakeVarchar {
     #[allow(dead_code)]
     pub len: u32,
+    pub is_semi_structured: bool,
 }
 
 impl SnowflakeType for SnowflakeVarchar {
@@ -208,6 +209,17 @@ impl WriteODBCType for SnowflakeVarchar {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
+        if self.is_semi_structured {
+            match binding.target_type {
+                CDataType::Default | CDataType::Char | CDataType::WChar | CDataType::Binary => {}
+                _ => {
+                    return UnsupportedOdbcTypeSnafu {
+                        target_type: binding.target_type,
+                    }
+                    .fail();
+                }
+            }
+        }
         let snowflake_value: &str = &snowflake_value;
         match binding.target_type {
             CDataType::Default | CDataType::Char => {

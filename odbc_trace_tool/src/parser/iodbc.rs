@@ -6,7 +6,7 @@ use snafu::Location;
 
 use crate::model::{
     Direction, HandleGraph, HandleType, OdbcCall, ParamValue, Parameter, ReturnCode, TraceEntry,
-    TraceFormat, TraceHeader, TraceLog,
+    TraceFormat, TraceHeader, TraceLog, TracedCall,
 };
 
 #[derive(Snafu, Debug)]
@@ -76,6 +76,7 @@ struct RawBlock {
     timestamp: String,
     header_line: String,
     param_lines: Vec<String>,
+    line_number: usize,
 }
 
 static TIMESTAMP_RE: LazyLock<Regex> =
@@ -84,30 +85,42 @@ static TIMESTAMP_RE: LazyLock<Regex> =
 fn split_into_blocks(content: &str) -> Vec<RawBlock> {
     let timestamp_re = &*TIMESTAMP_RE;
     let mut blocks = Vec::new();
-    let mut lines = content.lines().peekable();
+    let all_lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
 
-    while let Some(line) = lines.next() {
+    while i < all_lines.len() {
+        let line = all_lines[i];
         if let Some(caps) = timestamp_re.captures(line) {
+            let block_line = i + 1;
             let timestamp = caps[1].to_string();
+            i += 1;
 
-            let header_line = match lines.next() {
-                Some(h) => h.to_string(),
-                None => continue,
+            let header_line = if i < all_lines.len() {
+                let h = all_lines[i].to_string();
+                i += 1;
+                h
+            } else {
+                continue;
             };
 
             let mut param_lines = Vec::new();
-            while let Some(peeked) = lines.peek() {
+            while i < all_lines.len() {
+                let peeked = all_lines[i];
                 if peeked.is_empty() || timestamp_re.is_match(peeked) || peeked.starts_with("**") {
                     break;
                 }
-                param_lines.push(lines.next().unwrap().to_string());
+                param_lines.push(peeked.to_string());
+                i += 1;
             }
 
             blocks.push(RawBlock {
                 timestamp,
                 header_line,
                 param_lines,
+                line_number: block_line,
             });
+        } else {
+            i += 1;
         }
     }
 
@@ -244,7 +257,10 @@ fn parse_parameters(param_lines: &[String]) -> Vec<Parameter> {
                 let string_val = str_caps[1].trim().to_string();
                 params.push(Parameter {
                     type_name,
-                    value: ParamValue::StringValue(string_val),
+                    value: ParamValue::StringValue {
+                        truncated: string_val.ends_with("..."),
+                        value: string_val,
+                    },
                 });
                 i += 2;
                 continue;
@@ -280,18 +296,20 @@ fn parse_entries(content: &str) -> Vec<TraceEntry> {
 
         entries.push(TraceEntry {
             timestamp: block.timestamp,
+            thread_id: None,
             direction: header.direction,
             function_name: header.function_name,
             return_code,
             return_code_raw,
             parameters,
+            line_number: Some(block.line_number),
         });
     }
 
     entries
 }
 
-fn pair_entries(entries: Vec<TraceEntry>) -> (Vec<OdbcCall>, HandleGraph) {
+fn pair_entries(entries: Vec<TraceEntry>) -> (Vec<TracedCall>, HandleGraph) {
     let mut calls = Vec::new();
     let mut handle_graph = HandleGraph::new();
     let mut pending_enters: Vec<TraceEntry> = Vec::new();
@@ -306,24 +324,30 @@ fn pair_entries(entries: Vec<TraceEntry>) -> (Vec<OdbcCall>, HandleGraph) {
                     .iter()
                     .rposition(|e| e.function_name == entry.function_name);
 
-                let input_params = if let Some(idx) = enter_idx {
+                let (input_params, entry_line) = if let Some(idx) = enter_idx {
                     let enter = pending_enters.remove(idx);
-                    enter.parameters
+                    (enter.parameters, enter.line_number)
                 } else {
-                    Vec::new()
+                    (Vec::new(), None)
                 };
 
                 let return_code = entry.return_code.unwrap_or(ReturnCode::Success);
+                let exit_line = entry.line_number;
 
+                let output_params = entry.parameters;
                 if entry.function_name == "SQLAllocHandle" && return_code.is_success() {
-                    register_alloc_from_params(&entry.parameters, &mut handle_graph);
+                    register_alloc_from_params(&output_params, &mut handle_graph);
                 }
 
-                calls.push(OdbcCall {
-                    function_name: entry.function_name,
-                    input_params,
-                    output_params: entry.parameters,
-                    return_code,
+                calls.push(TracedCall {
+                    call: OdbcCall::from_raw(
+                        &entry.function_name,
+                        input_params,
+                        output_params,
+                        return_code,
+                    ),
+                    entry_line,
+                    exit_line,
                 });
             }
         }
@@ -363,6 +387,7 @@ fn register_alloc_from_params(params: &[Parameter], graph: &mut HandleGraph) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{AllocHandle, DescribeCol, GetData, NumResultCols, Prepare};
 
     const SAMPLE_TRACE: &str =
         include_str!("../../../odbc_tests/tests/replay/iodbctest/select_1.log");
@@ -477,11 +502,7 @@ mod tests {
     #[test]
     fn test_parse_full_trace_function_names() {
         let trace = parse_str(SAMPLE_TRACE).expect("Failed to parse sample trace");
-        let names: Vec<&str> = trace
-            .calls
-            .iter()
-            .map(|c| c.function_name.as_str())
-            .collect();
+        let names: Vec<&str> = trace.calls.iter().map(|c| c.call.function_name()).collect();
 
         assert_eq!(names[0], "SQLDriverConnect");
         assert!(names.contains(&"SQLGetDiagRec"));
@@ -503,30 +524,33 @@ mod tests {
     fn test_parse_full_trace_return_codes() {
         let trace = parse_str(SAMPLE_TRACE).expect("Failed to parse sample trace");
 
-        assert_eq!(trace.calls[0].return_code, ReturnCode::SuccessWithInfo);
+        assert_eq!(
+            trace.calls[0].call.return_code(),
+            ReturnCode::SuccessWithInfo
+        );
 
         let prepare = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLPrepare")
+            .find(|c| c.call.function_name() == "SQLPrepare")
             .unwrap();
-        assert_eq!(prepare.return_code, ReturnCode::Success);
+        assert_eq!(prepare.call.return_code(), ReturnCode::Success);
 
         let fetch_scrolls: Vec<_> = trace
             .calls
             .iter()
-            .filter(|c| c.function_name == "SQLFetchScroll")
+            .filter(|c| c.call.function_name() == "SQLFetchScroll")
             .collect();
         assert_eq!(fetch_scrolls.len(), 2);
-        assert_eq!(fetch_scrolls[0].return_code, ReturnCode::Success);
-        assert_eq!(fetch_scrolls[1].return_code, ReturnCode::NoData);
+        assert_eq!(fetch_scrolls[0].call.return_code(), ReturnCode::Success);
+        assert_eq!(fetch_scrolls[1].call.return_code(), ReturnCode::NoData);
 
         let close = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLCloseCursor")
+            .find(|c| c.call.function_name() == "SQLCloseCursor")
             .unwrap();
-        assert_eq!(close.return_code, ReturnCode::Error);
+        assert_eq!(close.call.return_code(), ReturnCode::Error);
     }
 
     #[test]
@@ -536,23 +560,23 @@ mod tests {
         let prepare = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLPrepare")
+            .find(|c| c.call.function_name() == "SQLPrepare")
             .unwrap();
-        let sql = prepare.input_params.iter().find_map(|p| match &p.value {
-            ParamValue::StringValue(s) => Some(s.as_str()),
+        let sql = match &prepare.call {
+            OdbcCall::Prepare(Prepare { sql, .. }) => sql.as_deref(),
             _ => None,
-        });
+        };
         assert_eq!(sql, Some("SELECT 1"));
 
         let get_data = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLGetData")
+            .find(|c| c.call.function_name() == "SQLGetData")
             .unwrap();
-        let data = get_data.output_params.iter().find_map(|p| match &p.value {
-            ParamValue::StringValue(s) => Some(s.as_str()),
+        let data = match &get_data.call {
+            OdbcCall::GetData(GetData { value, .. }) => value.as_deref(),
             _ => None,
-        });
+        };
         assert_eq!(data, Some("1"));
     }
 
@@ -579,25 +603,23 @@ mod tests {
         let num_cols = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLNumResultCols")
+            .find(|c| c.call.function_name() == "SQLNumResultCols")
             .unwrap();
-        let count = num_cols.output_params.iter().find_map(|p| match &p.value {
-            ParamValue::OutputInteger { value, .. } => Some(*value),
+        let count = match &num_cols.call {
+            OdbcCall::NumResultCols(NumResultCols { count, .. }) => *count,
             _ => None,
-        });
+        };
         assert_eq!(count, Some(1));
 
         let desc = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLDescribeCol")
+            .find(|c| c.call.function_name() == "SQLDescribeCol")
             .unwrap();
-        let data_type = desc.output_params.iter().find_map(|p| match &p.value {
-            ParamValue::OutputNamedConstant { name, .. } if name == "SQL_DECIMAL" => {
-                Some(name.as_str())
-            }
+        let data_type = match &desc.call {
+            OdbcCall::DescribeCol(DescribeCol { data_type, .. }) => data_type.as_deref(),
             _ => None,
-        });
+        };
         assert_eq!(data_type, Some("SQL_DECIMAL"));
     }
 
@@ -608,20 +630,17 @@ mod tests {
         let alloc = trace
             .calls
             .iter()
-            .find(|c| c.function_name == "SQLAllocHandle")
+            .find(|c| c.call.function_name() == "SQLAllocHandle")
             .unwrap();
 
-        let ht = &alloc.output_params[0].value;
-        assert!(
-            matches!(ht, ParamValue::NamedConstant { value: 3, name } if name == "SQL_HANDLE_STMT")
-        );
-
-        let out = &alloc.output_params[2].value;
-        assert!(matches!(
-            out,
-            ParamValue::OutputAddress {
-                output_address, ..
-            } if output_address == "0x104956bc0"
-        ));
+        let OdbcCall::AllocHandle(AllocHandle {
+            handle_type: Some(HandleType::Stmt),
+            child_handle,
+            ..
+        }) = &alloc.call
+        else {
+            panic!("expected SQLAllocHandle for STMT with child handle");
+        };
+        assert_eq!(child_handle.as_deref(), Some("0x104956bc0"));
     }
 }

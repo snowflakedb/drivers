@@ -2,19 +2,18 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_NUMERIC to SQL_DOUBLE and read back", "[c_numeric][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC to SQL_DOUBLE and read back",
+                 "[c_numeric][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_dbl (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_dbl (col FLOAT)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -41,12 +40,11 @@ TEST_CASE("should bind SQL_C_NUMERIC to SQL_DOUBLE and read back", "[c_numeric][
   CHECK(get_data<SQL_C_DOUBLE>(sel, 1) == Catch::Approx(42.0));
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC with scale to SQL_DOUBLE", "[c_numeric][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC with scale to SQL_DOUBLE",
+                 "[c_numeric][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_dbl_sc (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_dbl_sc (col FLOAT)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -74,12 +72,11 @@ TEST_CASE("should bind SQL_C_NUMERIC with scale to SQL_DOUBLE", "[c_numeric][con
   NEW_DRIVER_ONLY("BD#33") { CHECK(get_data<SQL_C_DOUBLE>(sel, 1) == Catch::Approx(3.14)); }
 }
 
-TEST_CASE("should bind large SQL_C_NUMERIC exceeding 64-bit to SQL_DOUBLE", "[c_numeric][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind large SQL_C_NUMERIC exceeding 64-bit to SQL_DOUBLE",
+                 "[c_numeric][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_dbl_big (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_dbl_big (col FLOAT)");
 
   // 10^20 = 100000000000000000000 which exceeds UINT64_MAX
   SQL_NUMERIC_STRUCT ns = {};
@@ -107,12 +104,11 @@ TEST_CASE("should bind large SQL_C_NUMERIC exceeding 64-bit to SQL_DOUBLE", "[c_
   CHECK(get_data<SQL_C_DOUBLE>(sel, 1) == Catch::Approx(1.0e20));
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC with NULL indicator to SQL_DOUBLE", "[c_numeric][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC with NULL indicator to SQL_DOUBLE",
+                 "[c_numeric][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_dbl_null (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_dbl_null (col FLOAT)");
 
   SQL_NUMERIC_STRUCT ns = {};
   SQLLEN ind = SQL_NULL_DATA;

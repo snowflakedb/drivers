@@ -71,3 +71,17 @@ behavior_differences:
     description: |
       NEW driver: The `create_temp_table` parameter is removed from `write_pandas`. Use `table_type='temp'` instead.
       OLD driver: `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
+
+  20:
+    name: "ResultBatch does not expose session_manager or http_config"
+    description: |
+      NEW driver: `ResultBatch` does not have `session_manager` or `http_config` properties.
+        Chunk fetching is handled internally by the Rust core, so there is no Python-level HTTP
+        session management to configure on individual batches. After deserializing a `ResultBatch`
+        (e.g. via pickle), a live `Connection` must be provided to any data-fetching method
+        (`create_iter`, `to_arrow`, `to_pandas`, `populate_data`) or set via the `connection`
+        property, because the connection is not serialized.
+      OLD driver: `ResultBatch` exposes `session_manager` (get/set) and `http_config` (get/set)
+        properties used to control HTTP behavior for chunk downloads when the connection is no
+        longer active. A cloned `SessionManager` is serialized with the batch, allowing chunk
+        downloads without an active connection.

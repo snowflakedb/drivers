@@ -10,16 +10,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should reject SQL_C_SLONG bound to SQL_TYPE_TIMESTAMP", "[c_numeric][incompatible][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SLONG bound to SQL_TYPE_TIMESTAMP",
+                 "[c_numeric][incompatible][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP)");
 
   SQLINTEGER val = 20250115;
   SQLLEN ind = 0;
@@ -33,11 +32,10 @@ TEST_CASE("should reject SQL_C_SLONG bound to SQL_TYPE_TIMESTAMP", "[c_numeric][
   check_incompatible_bindparam(stmt, SQL_C_SLONG, SQL_TYPE_TIMESTAMP, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_DOUBLE bound to SQL_TYPE_TIMESTAMP", "[c_numeric][incompatible][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_DOUBLE bound to SQL_TYPE_TIMESTAMP",
+                 "[c_numeric][incompatible][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP)");
 
   SQLDOUBLE val = 20250115.0;
   SQLLEN ind = 0;
@@ -51,11 +49,10 @@ TEST_CASE("should reject SQL_C_DOUBLE bound to SQL_TYPE_TIMESTAMP", "[c_numeric]
   check_incompatible_bindparam(stmt, SQL_C_DOUBLE, SQL_TYPE_TIMESTAMP, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_FLOAT bound to SQL_TYPE_TIMESTAMP", "[c_numeric][incompatible][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_FLOAT bound to SQL_TYPE_TIMESTAMP",
+                 "[c_numeric][incompatible][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP)");
 
   SQLREAL val = 20250115.0f;
   SQLLEN ind = 0;
@@ -69,11 +66,10 @@ TEST_CASE("should reject SQL_C_FLOAT bound to SQL_TYPE_TIMESTAMP", "[c_numeric][
   check_incompatible_bindparam(stmt, SQL_C_FLOAT, SQL_TYPE_TIMESTAMP, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_BIT bound to SQL_TYPE_TIMESTAMP", "[c_numeric][incompatible][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_BIT bound to SQL_TYPE_TIMESTAMP",
+                 "[c_numeric][incompatible][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP)");
 
   SQLCHAR val = 1;
   SQLLEN ind = 0;
@@ -87,11 +83,10 @@ TEST_CASE("should reject SQL_C_BIT bound to SQL_TYPE_TIMESTAMP", "[c_numeric][in
   check_incompatible_bindparam(stmt, SQL_C_BIT, SQL_TYPE_TIMESTAMP, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_NUMERIC bound to SQL_TYPE_TIMESTAMP", "[c_numeric][incompatible][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_NUMERIC bound to SQL_TYPE_TIMESTAMP",
+                 "[c_numeric][incompatible][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 8;
@@ -109,11 +104,10 @@ TEST_CASE("should reject SQL_C_NUMERIC bound to SQL_TYPE_TIMESTAMP", "[c_numeric
   check_incompatible_bindparam(stmt, SQL_C_NUMERIC, SQL_TYPE_TIMESTAMP, &ns, sizeof(ns), &ind);
 }
 
-TEST_CASE("should reject SQL_C_SBIGINT bound to SQL_TYPE_TIMESTAMP", "[c_numeric][incompatible][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SBIGINT bound to SQL_TYPE_TIMESTAMP",
+                 "[c_numeric][incompatible][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP)");
 
   SQLBIGINT val = 20250115;
   SQLLEN ind = 0;

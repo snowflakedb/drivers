@@ -13,7 +13,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "TestTable.hpp"
 #include "conversion_checks.hpp"
 
@@ -32,15 +32,12 @@ inline SQLDOUBLE get_data_default_as_double(const StatementHandleWrapper& stmt, 
 // SQL_C_DEFAULT for FLOAT/DOUBLE columns
 // ============================================================================
 
-TEST_CASE("REAL default conversion - basic values", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - basic values", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When FLOAT/DOUBLE values are inserted and fetched via SQL_C_DEFAULT
-  conn.execute("DROP TABLE IF EXISTS test_real_default");
   conn.execute(
-      "CREATE TABLE test_real_default ("
+      "CREATE TEMPORARY TABLE test_real_default ("
       "  f1 FLOAT, "
       "  f2 DOUBLE, "
       "  f3 FLOAT)");
@@ -54,10 +51,8 @@ TEST_CASE("REAL default conversion - basic values", "[e2e][types][real]") {
   CHECK(get_data_default_as_double(stmt, 3) == 0.0);
 }
 
-TEST_CASE("REAL default conversion - integer values stored as float", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - integer values stored as float", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Integer values stored as FLOAT are fetched via SQL_C_DEFAULT
   auto stmt = conn.execute_fetch("SELECT 42::FLOAT, -100::FLOAT, 0::FLOAT, 1::FLOAT");
@@ -69,14 +64,11 @@ TEST_CASE("REAL default conversion - integer values stored as float", "[e2e][typ
   CHECK(get_data_default_as_double(stmt, 4) == 1.0);
 }
 
-TEST_CASE("REAL default conversion - extreme values near DBL_MAX", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values near DBL_MAX", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Extreme values near DBL_MAX are inserted and fetched via SQL_C_DEFAULT
-  conn.execute("DROP TABLE IF EXISTS test_real_extreme");
-  conn.execute("CREATE TABLE test_real_extreme (val DOUBLE)");
+  conn.execute("CREATE TEMPORARY TABLE test_real_extreme (val DOUBLE)");
   conn.execute(
       "INSERT INTO test_real_extreme VALUES "
       "(1.7976931348623157e308), "
@@ -113,10 +105,8 @@ TEST_CASE("REAL default conversion - extreme values near DBL_MAX", "[e2e][types]
   CHECK(get_data_default_as_double(stmt, 1) == -1.7976931348623157e308);
 }
 
-TEST_CASE("REAL default conversion - very small values", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - very small values", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Very small DOUBLE values are fetched via SQL_C_DEFAULT
   auto stmt = conn.execute_fetch(
@@ -136,15 +126,13 @@ TEST_CASE("REAL default conversion - very small values", "[e2e][types][real]") {
   CHECK(v3 > -1e-300);
 }
 
-TEST_CASE("REAL default conversion - FLOAT, DOUBLE, REAL synonyms produce same result", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - FLOAT, DOUBLE, REAL synonyms produce same result",
+                 "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Same value is stored in FLOAT, DOUBLE, REAL columns and fetched via SQL_C_DEFAULT
-  conn.execute("DROP TABLE IF EXISTS test_real_synonyms");
   conn.execute(
-      "CREATE TABLE test_real_synonyms ("
+      "CREATE TEMPORARY TABLE test_real_synonyms ("
       "  f FLOAT, "
       "  d DOUBLE, "
       "  r REAL)");
@@ -161,14 +149,11 @@ TEST_CASE("REAL default conversion - FLOAT, DOUBLE, REAL synonyms produce same r
   CHECK(d == r);
 }
 
-TEST_CASE("REAL SQL_C_DEFAULT matches explicit SQL_C_DOUBLE", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_DEFAULT matches explicit SQL_C_DOUBLE", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Values are fetched with SQL_C_DOUBLE and SQL_C_DEFAULT
-  conn.execute("DROP TABLE IF EXISTS test_real_default_vs_explicit");
-  conn.execute("CREATE TABLE test_real_default_vs_explicit (val DOUBLE)");
+  conn.execute("CREATE TEMPORARY TABLE test_real_default_vs_explicit (val DOUBLE)");
   conn.execute(
       "INSERT INTO test_real_default_vs_explicit VALUES "
       "(1.5), (-2.75), (0.0), (999999.999), (1.7976931348623157e308)");
@@ -200,14 +185,11 @@ TEST_CASE("REAL SQL_C_DEFAULT matches explicit SQL_C_DOUBLE", "[e2e][types][real
   }
 }
 
-TEST_CASE("REAL default conversion - multiple rows", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - multiple rows", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Multiple DOUBLE rows are fetched via SQL_C_DEFAULT
-  conn.execute("DROP TABLE IF EXISTS test_real_multi");
-  conn.execute("CREATE TABLE test_real_multi (val DOUBLE)");
+  conn.execute("CREATE TEMPORARY TABLE test_real_multi (val DOUBLE)");
   conn.execute(
       "INSERT INTO test_real_multi VALUES "
       "(1.5), (-2.75), (0.0), (1e100), (-1e100)");
@@ -226,10 +208,8 @@ TEST_CASE("REAL default conversion - multiple rows", "[e2e][types][real]") {
   }
 }
 
-TEST_CASE("REAL default conversion - fractional values", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - fractional values", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Fractional FLOAT values are fetched via SQL_C_DEFAULT
   auto stmt = conn.execute_fetch("SELECT 0.1::FLOAT, 0.5::FLOAT, 0.333333333::FLOAT");
@@ -244,10 +224,8 @@ TEST_CASE("REAL default conversion - fractional values", "[e2e][types][real]") {
   CHECK_THAT(v3, Catch::Matchers::WithinRel(0.333333333));
 }
 
-TEST_CASE("REAL zero is exactly zero", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL zero is exactly zero", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Zero FLOAT value is fetched via SQL_C_DEFAULT
   auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT");
@@ -258,10 +236,8 @@ TEST_CASE("REAL zero is exactly zero", "[e2e][types][real]") {
   CHECK(val == 0.0);
 }
 
-TEST_CASE("REAL table column conversions", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL table column conversions", "[e2e][types][real]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with FLOAT, DOUBLE, REAL columns is queried
   TestTable table(conn, "test_real_conversions", "f FLOAT, d DOUBLE, r REAL", "(1.5, -2.75, 100.0)");
@@ -294,10 +270,8 @@ TEST_CASE("REAL table column conversions", "[e2e][types][real]") {
   }
 }
 
-TEST_CASE("REAL NULL to SQL_C_DEFAULT", "[real][conversion][c_default][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NULL to SQL_C_DEFAULT", "[real][conversion][c_default][null]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL FLOAT value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");

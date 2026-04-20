@@ -196,8 +196,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: 24000 - No cursor open"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][closecursor][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -212,6 +210,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: HY010 - Called during S
 
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  SQLCancel(stmt_handle());
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: 24000 - Double close",

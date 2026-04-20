@@ -42,9 +42,12 @@ message(STATUS "ODBC_INCLUDE_DIRS: ${ODBC_INCLUDE_DIRS}")
 message(STATUS "ODBC_LIBRARIES: ${ODBC_LIBRARIES}")
 
 add_subdirectory(common)
+add_subdirectory(tools)
 
 function(add_odbc_test name)
   add_executable(${name} ${ARGN})
+  target_sources(${name} PRIVATE
+      "${PROJECT_SOURCE_DIR}/common/src/schema_cleanup_listener.cpp")
   target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common Threads::Threads)
   if(NOT WIN32)
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})

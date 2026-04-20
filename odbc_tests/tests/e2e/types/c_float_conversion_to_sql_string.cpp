@@ -3,16 +3,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR and read back", "[c_float][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE to SQL_VARCHAR and read back",
+                 "[c_float][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_DOUBLE 3.14 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -31,11 +30,10 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR and read back", "[c_float][co
   CHECK(s.find("3.14") != std::string::npos);
 }
 
-TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR and read back", "[c_float][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_FLOAT to SQL_VARCHAR and read back",
+                 "[c_float][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_FLOAT 42.0 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -54,11 +52,10 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR and read back", "[c_float][con
   CHECK(s.find("42") != std::string::npos);
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator to SQL_VARCHAR", "[c_float][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE with NULL indicator to SQL_VARCHAR",
+                 "[c_float][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_DOUBLE is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();

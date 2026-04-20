@@ -4,18 +4,15 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC", "[fixed][conversion][c_numeric]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC", "[fixed][conversion][c_numeric]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NUMBER/DECIMAL values are fetched as SQL_C_NUMERIC
   (void)0;
@@ -50,12 +47,10 @@ TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC", "[fixed][conversion][c_numeric]") {
   }
 }
 
-TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_PRECISION and SQL_DESC_SCALE",
-          "[fixed][conversion][c_numeric][descriptor]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_PRECISION and SQL_DESC_SCALE",
+                 "[fixed][conversion][c_numeric][descriptor]") {
   SKIP_OLD_DRIVER("BD#13", "Old driver ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField");
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("target scale matches source scale - no truncation");
@@ -211,10 +206,8 @@ TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_PRECISION and SQL_DESC_SCA
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_NUMERIC", "[fixed][conversion][c_numeric][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_NUMERIC", "[fixed][conversion][c_numeric][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL NUMBER value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,2)");

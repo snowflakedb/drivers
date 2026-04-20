@@ -11,7 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "odbc_matchers.hpp"
 
@@ -21,10 +21,9 @@ static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(s
 // SUCCESSFUL CONVERSIONS - String to SQL_C_BINARY
 // ============================================================================
 
-TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][conversion][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to SQL_C_BINARY",
+                 "[datatype][string][conversion][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting various string literals is executed
   auto stmt = conn.execute_fetch("SELECT 'hello' AS c1, '' AS c2, 'ABC123!@#' AS c3, NULL::STRING AS c4");
@@ -84,10 +83,9 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
 // SUCCESSFUL CONVERSIONS - UTF-8 String to SQL_C_BINARY
 // ============================================================================
 
-TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][string][conversion][binary][utf8]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-8 string literals to SQL_C_BINARY",
+                 "[datatype][string][conversion][binary][utf8]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting UTF-8 string literals is executed
   auto stmt = conn.executew_fetch(
