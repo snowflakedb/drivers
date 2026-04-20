@@ -22,6 +22,10 @@ from unittest.mock import patch
 
 import pytest
 
+
+# Skip this module when running on the reference (old) connector
+pytest.importorskip("snowflake.connector._internal.logout_config_mapping")
+
 from snowflake.connector._internal.logout_config_mapping import (
     PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS,
     PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS,

@@ -19,6 +19,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+
+# Skip entire directory when running on the reference (old) connector —
+# these tests require Core-specific _internal modules that don't exist there.
+pytest.importorskip("snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2")
+
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     ConnectionIsClosedResponse,
