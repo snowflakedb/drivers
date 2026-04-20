@@ -23,6 +23,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 public class FloatTests extends SnowflakeIntegrationTestBase {
   private static final String FLOAT_TYPE = "FLOAT";
   private static final int LARGE_RESULT_SET_SIZE = 50_000;
+  // Realistic large maximum value (15 significant digits, works in both Arrow and JSON)
+  private static final double FLOAT_REALISTIC_MAX = 1.79769313486231e+308;
 
   @Test
   public void shouldCastFloatValuesToAppropriateTypeForFloatAndSynonyms() throws Exception {
@@ -154,6 +156,34 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
 
           // Then Result should verify precision around 15 decimal digits
           assertSingleRow(resultSet, Arrays.asList(123456789012345.0, 1234567890123456.0));
+        });
+  }
+
+  @Test
+  public void shouldHandleRealisticLargeFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms()
+      throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Query "SELECT <query_values>" is executed
+    String sql = String.format("SELECT %1$s::%2$s, -%1$s::%2$s", FLOAT_REALISTIC_MAX, FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain floats [<expected_values>]
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+          double val1 = resultSet.getDouble(1);
+          double val2 = resultSet.getDouble(2);
+
+          assertEquals(FLOAT_REALISTIC_MAX, val1, Math.abs(FLOAT_REALISTIC_MAX * 1e-15));
+          assertEquals(-FLOAT_REALISTIC_MAX, val2, Math.abs(FLOAT_REALISTIC_MAX * 1e-15));
+
+          // Verify values are finite (works in both Arrow and JSON)
+          assertFalse(Double.isInfinite(val1), "Column 1 should be finite");
+          assertFalse(Double.isInfinite(val2), "Column 2 should be finite");
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
   }
 
