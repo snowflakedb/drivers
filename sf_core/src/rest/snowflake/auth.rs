@@ -114,7 +114,7 @@ pub struct AuthResponseSessionInfo {
 #[derive(Debug, Default, Deserialize)]
 pub struct AuthResponseMain {
     /// Session token for authenticating requests
-    pub token: Option<String>,
+    pub token: Option<SensitiveString>,
     /// Session token validity
     #[serde(
         rename = "validityInSeconds",
@@ -124,7 +124,7 @@ pub struct AuthResponseMain {
     pub validity: Option<Duration>,
     /// Master token for refreshing expired session tokens
     #[serde(rename = "masterToken")]
-    pub master_token: Option<String>,
+    pub master_token: Option<SensitiveString>,
     /// Master token validity
     #[serde(
         rename = "masterValidityInSeconds",
@@ -133,9 +133,9 @@ pub struct AuthResponseMain {
     )]
     pub master_validity: Option<Duration>,
     #[serde(rename = "mfaToken")]
-    pub mfa_token: Option<String>,
+    pub mfa_token: Option<SensitiveString>,
     #[serde(rename = "idToken")]
-    pub _id_token: Option<String>,
+    pub _id_token: Option<SensitiveString>,
     #[serde(rename = "idTokenValidityInSeconds")]
     pub _id_token_validity: Option<u64>,
     #[serde(rename = "displayUserName")]

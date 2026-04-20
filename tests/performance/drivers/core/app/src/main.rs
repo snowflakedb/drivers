@@ -13,6 +13,7 @@ mod types;
 use test_types::TestType;
 
 type Result<T> = std::result::Result<T, String>;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClientBlockingExt;
 use sf_core::protobuf::generated::database_driver_v1::*;
 
 use config::TestConfig;
@@ -79,21 +80,17 @@ fn run() -> Result<()> {
     }
 
     // Cleanup
-    rt.block_on(async |c| {
-        c.statement_release(StatementReleaseRequest {
+    rt.client()
+        .statement_release_blocking(StatementReleaseRequest {
             stmt_handle: Some(stmt_handle),
         })
-        .await
-    })
-    .ok();
+        .ok();
 
-    rt.block_on(async |c| {
-        c.connection_release(ConnectionReleaseRequest {
+    rt.client()
+        .connection_release_blocking(ConnectionReleaseRequest {
             conn_handle: Some(conn_handle),
         })
-        .await
-    })
-    .ok();
+        .ok();
 
     Ok(())
 }

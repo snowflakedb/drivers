@@ -28,7 +28,7 @@ from .._internal.binding_converters import (
     ParamStyle,
 )
 from .._internal.decorators import pep249
-from .._internal.errorcode import ER_CURSOR_IS_CLOSED
+from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
@@ -38,6 +38,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     PrepareResult,
     QueryBindings,
     ResultChunk,
+    StatementExecuteAsyncRequest,
     StatementExecuteQueryRequest,
     StatementHandle,
     StatementPrepareRequest,
@@ -409,6 +410,9 @@ class SnowflakeCursorBase(abc.ABC):
         self.reset()
         return self._execute(operation, parameters, _is_put_get, **kwargs)
 
+    def _format_query_for_log(self, query: str) -> str:
+        return self._connection._format_query_for_log(query)
+
     def _execute(
         self,
         operation: str,
@@ -417,6 +421,9 @@ class SnowflakeCursorBase(abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("query: [%s]", self._format_query_for_log(operation))
+
         query, bindings = self._prepare_query(operation, parameters)
 
         result: ExecuteResult | None = None
@@ -472,7 +479,7 @@ class SnowflakeCursorBase(abc.ABC):
             seq_of_parameters (sequence): Sequence of parameter sequences or dicts
 
         Raises:
-            ProgrammingError: If parameter sequences have inconsistent lengths
+            InterfaceError: If parameter sequences have inconsistent lengths
         """
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
@@ -508,8 +515,8 @@ class SnowflakeCursorBase(abc.ABC):
         for params in rows:
             if len(params) != first_len:
                 raise InterfaceError(
-                    f"251007: Bulk data size don't match. expected: {first_len}, "
-                    f"got: {len(params)}, command: {operation}"
+                    f"Bulk data size don't match. expected: {first_len}, got: {len(params)}, command: {operation}",
+                    errno=ER_INVALID_VALUE,
                 )
 
         # Transpose from row-major to column-major format
@@ -982,15 +989,51 @@ class SnowflakeCursorBase(abc.ABC):
 
         self._prefetch_hook = prefetch_hook
 
+    @_requires_open
     def execute_async(
         self,
         command: str,
         params: Sequence[Any] | dict[str, Any] | None = None,
-        timeout: int | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Execute a query asynchronously without waiting for results."""
-        raise NotImplementedError("execute_async is not yet implemented")
+    ) -> dict[str, str | None]:
+        """Submit a query for async execution and return immediately with the query ID.
+
+        This is the first step in the async query lifecycle::
+
+            # 1. Submit the query
+            result = cursor.execute_async("SELECT ...")
+            query_id = result["queryId"]
+
+            # 2. Poll until complete
+            status = connection.get_query_status(query_id)
+
+            # 3. Retrieve results
+            cursor.get_results_from_sfqid(query_id)
+
+        Args:
+            command: SQL statement to execute.
+            params: Parameters for the operation (sequence or dict).
+            **kwargs: Unused, accepted for backward compatibility.
+
+        Returns:
+            dict with a ``queryId`` key containing the Snowflake Query ID.
+        """
+        # TODO: deprecate returning the dict, return just the sfqid itself
+        self.reset()
+        return self._execute_async(command, params)
+
+    def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
+        query, bindings = self._prepare_query(command, params)
+
+        response = None
+        with create_statement(self._connection, query) as stmt_handle:
+            request = StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
+            response = self._connection.db_api.statement_execute_async(request)
+
+        query_id = (response.query_id if response.query_id else None) if response else None
+        self._query_result = _QueryResult(sfqid=query_id)
+
+        return {"queryId": query_id}
 
     @_requires_open
     def abort_query(self, qid: str) -> bool:

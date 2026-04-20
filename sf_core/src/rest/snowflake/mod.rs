@@ -26,7 +26,7 @@ use reqwest::{self, Method, header};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
 
@@ -100,9 +100,9 @@ struct RefreshSessionResponse {
 #[derive(Debug, serde::Deserialize)]
 struct RefreshSessionData {
     #[serde(rename = "sessionToken")]
-    session_token: String,
+    session_token: SensitiveString,
     #[serde(rename = "masterToken")]
-    master_token: String,
+    master_token: SensitiveString,
     #[serde(rename = "sessionId")]
     session_id: i64,
     #[serde(
@@ -133,7 +133,7 @@ struct TokenRequestResponse {
 #[derive(Debug, serde::Deserialize)]
 struct TokenRequestData {
     #[serde(rename = "sessionToken")]
-    session_token: String,
+    session_token: SensitiveString,
     #[serde(
         rename = "validityInSecondsST",
         deserialize_with = "auth::deserialize_seconds_as_duration",
@@ -365,46 +365,49 @@ async fn send_login_request(
     login_parameters: &LoginParameters,
     login_request: &AuthRequest,
 ) -> Result<AuthResponse, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
-    let request = client
-        .post(&login_url)
-        .query(&[
-            (
-                "databaseName",
-                login_parameters.database.as_deref().unwrap_or_default(),
-            ),
-            (
-                "schemaName",
-                login_parameters.schema.as_deref().unwrap_or_default(),
-            ),
-            (
-                "warehouse",
-                login_parameters.warehouse.as_deref().unwrap_or_default(),
-            ),
-            (
-                "roleName",
-                login_parameters.role.as_deref().unwrap_or_default(),
-            ),
-        ])
-        .json(login_request)
-        .header("accept", "application/snowflake")
-        .header(
-            "User-Agent",
-            format!(
-                "{}/{} ({}) CPython/3.11.6",
-                login_parameters.client_info.application,
-                login_parameters.client_info.version.clone(),
-                login_parameters.client_info.os.clone()
-            ),
-        )
-        .header("Authorization", "Snowflake Token=\"None\"")
-        .build()
-        .context(RequestConstructionSnafu { request: "login" })?;
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute login request",
-    })?;
+    let user_agent = user_agent(&login_parameters.client_info);
+
+    let build_request = || {
+        client
+            .post(&login_url)
+            .query(&[
+                (
+                    "databaseName",
+                    login_parameters.database.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "schemaName",
+                    login_parameters.schema.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "warehouse",
+                    login_parameters.warehouse.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "roleName",
+                    login_parameters.role.as_deref().unwrap_or_default(),
+                ),
+            ])
+            .json(login_request)
+            .header("accept", "application/snowflake")
+            .header("User-Agent", &user_agent)
+            .header("Authorization", "Snowflake Token=\"None\"")
+            .timeout(Duration::from_secs(30))
+    };
+
+    let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
+    let policy = RetryPolicy::default();
+
+    let response = execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "login request",
+        })?;
 
     read_response_json::<AuthResponse>(response)
         .await
@@ -516,7 +519,7 @@ pub async fn snowflake_login_with_client(
         store_mfa_token_in_cache(
             &login_parameters.server_url,
             username,
-            mfa_token,
+            mfa_token.reveal(),
             token_cache,
         );
     }
@@ -595,8 +598,8 @@ pub async fn snowflake_login_with_client(
     );
     Ok(LoginResult {
         tokens: SessionTokens {
-            session_token: session_token.into(),
-            master_token: master_token.into(),
+            session_token,
+            master_token,
             session_id,
             session_expires_at,
             master_expires_at,
@@ -700,8 +703,8 @@ pub async fn refresh_session(
     );
 
     Ok(SessionTokens {
-        session_token: data.session_token.into(),
-        master_token: data.master_token.into(),
+        session_token: data.session_token,
+        master_token: data.master_token,
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
@@ -808,7 +811,7 @@ pub async fn token_request(
     })?;
 
     Ok(TokenRequestResult {
-        session_token: data.session_token.into(),
+        session_token: data.session_token,
         validity_in_seconds: data.validity.and_then(|d| i64::try_from(d.as_secs()).ok()),
     })
 }
@@ -909,7 +912,11 @@ async fn execute_async_with_fallback<'a>(
             },
         ) => {
             tracing::error!(
-                sql_prefix = query_input.sql.chars().take(50).collect::<String>(),
+                sql_prefix = query_input
+                    .sql
+                    .chars()
+                    .take(query_parameters.log_max_query_length)
+                    .collect::<String>(),
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -963,7 +970,11 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = query_input.sql.chars().take(50).collect::<String>();
+    let sql_prefix = query_input
+        .sql
+        .chars()
+        .take(query_parameters.log_max_query_length)
+        .collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
@@ -1418,16 +1429,26 @@ where
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
         }
+        let body = response_text.unwrap_or("Unknown error".to_string());
+        let truncated = if body.len() > 1024 {
+            let mut end = 1024;
+            while !body.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}… ({} bytes total)", &body[..end], body.len())
+        } else {
+            body
+        };
         return ResponseStatusSnafu {
             status: response_status,
-            message: response_text.unwrap_or("Unknown error".to_string()),
+            message: truncated,
         }
         .fail();
     }
 
     let response_text = response_text.context(ResponseTextSnafu)?;
 
-    tracing::debug!("Response text: {response_text}");
+    tracing::debug!(response_len = response_text.len(), "Received HTTP response");
     let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
     Ok(response_data)
@@ -2083,5 +2104,76 @@ mod tests {
             data.authenticator.as_deref(),
             Some("PROGRAMMATIC_ACCESS_TOKEN")
         );
+    }
+
+    mod send_login_request_retry_tests {
+        use super::*;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        #[tokio::test]
+        async fn retries_on_503_then_succeeds() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+
+            let attempt_clone = attempt.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(move |_: &Request| {
+                    let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    if n < 2 {
+                        ResponseTemplate::new(503).set_body_string("Service Unavailable")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "mock_token",
+                                "masterToken": "mock_master_token",
+                                "sessionId": 12345
+                            }
+                        }))
+                    }
+                })
+                .expect(3)
+                .mount(&server)
+                .await;
+
+            let client = reqwest::Client::new();
+            let params = LoginParameters {
+                account_name: "testaccount".to_string(),
+                login_method: LoginMethod::Password {
+                    username: "testuser".to_string(),
+                    password: "testpass".into(),
+                },
+                server_url: server.uri(),
+                database: None,
+                schema: None,
+                warehouse: None,
+                role: None,
+                client_info: test_client_info(),
+                session_parameters: None,
+                spcs_token: None,
+            };
+            let auth_req = AuthRequest {
+                data: AuthRequestData {
+                    account_name: "testaccount".to_string(),
+                    login_name: Some("testuser".to_string()),
+                    password: Some("testpass".into()),
+                    ..Default::default()
+                },
+            };
+
+            let result = send_login_request(&client, &params, &auth_req).await;
+
+            assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
+            assert_eq!(
+                attempt.load(Ordering::SeqCst),
+                3,
+                "Expected exactly 3 attempts (2 failures + 1 success), got {}",
+                attempt.load(Ordering::SeqCst)
+            );
+        }
     }
 }

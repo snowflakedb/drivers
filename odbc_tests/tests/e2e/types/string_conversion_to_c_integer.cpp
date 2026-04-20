@@ -17,7 +17,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
@@ -29,10 +29,9 @@
 // SUCCESSFUL CONVERSIONS - String to Signed Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to signed c_type", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to signed c_type",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing integers is executed
   auto stmt = conn.execute_fetch(
@@ -87,10 +86,9 @@ TEST_CASE("should convert string literals to signed c_type", "[datatype][string]
 // SUCCESSFUL CONVERSIONS - String to Unsigned Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to unsigned c_type", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to unsigned c_type",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing unsigned integers is executed
   auto stmt = conn.execute_fetch(
@@ -131,10 +129,9 @@ TEST_CASE("should convert string literals to unsigned c_type", "[datatype][strin
 // SUCCESSFUL CONVERSIONS - String to BIT Type
 // ============================================================================
 
-TEST_CASE("should convert string literals to SQL_C_BIT", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to SQL_C_BIT",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing boolean values is executed
   auto stmt = conn.execute_fetch("SELECT '1' AS true_val, '0' AS false_val, ' 1 ' AS c3, ' 0 ' AS c4");
@@ -150,10 +147,9 @@ TEST_CASE("should convert string literals to SQL_C_BIT", "[datatype][string][con
 // FAILING CONVERSIONS - String to BIT Type
 // ============================================================================
 
-TEST_CASE("should fail converting string literals with to SQL_C_BIT", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting string literals with to SQL_C_BIT",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals with leading/trailing whitespace is executed
   auto stmt = conn.execute_fetch("SELECT 'abc' AS invalid, '456' AS whole, '6' AS single_digit, '1.1' AS fractional");
@@ -169,11 +165,10 @@ TEST_CASE("should fail converting string literals with to SQL_C_BIT", "[datatype
 // TRUNCATION TESTS
 // ============================================================================
 
-TEST_CASE("should truncate decimal string literals with fractional part when converting to integer types",
-          "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should truncate decimal string literals with fractional part when converting to integer types",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals with decimal parts is executed
   const auto query =
@@ -254,11 +249,10 @@ TEST_CASE("should truncate decimal string literals with fractional part when con
   }
 }
 
-TEST_CASE("should truncate decimal string literals without fractional part when converting to integer types",
-          "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should truncate decimal string literals without fractional part when converting to integer types",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("SQL_C_BIGINT");
@@ -342,10 +336,9 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
 // CONVERSION WITH SQLBindCol - Integer types
 // ============================================================================
 
-TEST_CASE("should convert strings to integer types using SQLBindCol", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to integer types using SQLBindCol",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_LONG
   {

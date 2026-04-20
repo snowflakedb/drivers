@@ -2,15 +2,12 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <cstring>
-
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_descriptor.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -299,8 +296,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY092 - Set UNNAMED to
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][setdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);

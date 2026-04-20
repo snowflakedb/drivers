@@ -8,7 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "TestTable.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
@@ -16,10 +16,9 @@
 #include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Test decimal to SQL_C_CHAR and SQL_C_DEFAULT conversion", "[fixed][conversion][c_char]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test decimal to SQL_C_CHAR and SQL_C_DEFAULT conversion",
+                 "[fixed][conversion][c_char]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with various DECIMAL/NUMBER/INT columns is queried
   TestTable table(conn, "test_number",
@@ -43,10 +42,8 @@ TEST_CASE("Test decimal to SQL_C_CHAR and SQL_C_DEFAULT conversion", "[fixed][co
   }
 }
 
-TEST_CASE("SQL_DECIMAL default conversion", "[fixed][conversion][c_char][default]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL default conversion", "[fixed][conversion][c_char][default]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("basic values from table");
@@ -163,10 +160,9 @@ TEST_CASE("SQL_DECIMAL default conversion", "[fixed][conversion][c_char][default
   }
 }
 
-TEST_CASE("SQL_DECIMAL default conversion - large precision", "[fixed][conversion][c_char][default]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL default conversion - large precision",
+                 "[fixed][conversion][c_char][default]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("large values");
@@ -204,10 +200,8 @@ TEST_CASE("SQL_DECIMAL default conversion - large precision", "[fixed][conversio
   }
 }
 
-TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conversion][c_wchar]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conversion][c_wchar]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("basic values");
@@ -246,10 +240,8 @@ TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conversion][c_wchar]") {
   }
 }
 
-TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[fixed][conversion][c_char][buffer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQL_C_CHAR buffer handling", "[fixed][conversion][c_char][buffer]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NUMBER values are fetched into various buffer sizes
   (void)0;  // SECTIONs below perform the fetch
@@ -319,10 +311,9 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[fixed][conversion][c_char]
   }
 }
 
-TEST_CASE("Without TREAT_DECIMAL_AS_INT default is SQL_C_CHAR for scale=0", "[fixed][conversion][c_char][default]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Without TREAT_DECIMAL_AS_INT default is SQL_C_CHAR for scale=0",
+                 "[fixed][conversion][c_char][default]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When An integer DECIMAL value is queried with SQL_C_DEFAULT
   auto stmt = conn.execute_fetch("SELECT 42::DECIMAL(10,0)");
@@ -337,10 +328,8 @@ TEST_CASE("Without TREAT_DECIMAL_AS_INT default is SQL_C_CHAR for scale=0", "[fi
   CHECK(std::string(buffer, indicator) == "42");
 }
 
-TEST_CASE("Test string at limits", "[fixed][conversion][c_char][limits]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test string at limits", "[fixed][conversion][c_char][limits]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Max and min 37-digit NUMBER values are fetched as SQL_C_CHAR and SQL_C_DEFAULT
   std::string max_val = std::string(37, '9');
@@ -354,10 +343,8 @@ TEST_CASE("Test string at limits", "[fixed][conversion][c_char][limits]") {
   CHECK(get_data_default_as_string(stmt, 2) == min_val);
 }
 
-TEST_CASE("DECIMAL multiple rows as SQL_C_CHAR", "[fixed][conversion][c_char][multirow]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DECIMAL multiple rows as SQL_C_CHAR", "[fixed][conversion][c_char][multirow]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with various DECIMAL(10,2) values is queried
   TestTable table(conn, "test_number_multi", "val DECIMAL(10,2)",
@@ -377,10 +364,8 @@ TEST_CASE("DECIMAL multiple rows as SQL_C_CHAR", "[fixed][conversion][c_char][mu
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_CHAR types", "[fixed][conversion][c_char][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_CHAR types", "[fixed][conversion][c_char][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL NUMBER value is queried
   const auto query = "SELECT NULL::NUMBER(10,0)";

@@ -4,7 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
@@ -221,6 +221,36 @@ TEST_CASE("should fail with 07002 after SQL_RESET_PARAMS clears bindings.", "[qu
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
 }
 
+TEST_CASE("should succeed after SQL_RESET_PARAMS clears a spurious extra binding.", "[query][bind_parameter]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a 1-parameter query is prepared but params 1 AND 2 are bound
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER p1 = 10, p2 = 20;
+  SQLLEN ind1 = 0, ind2 = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p1, 0, &ind1);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p2, 0, &ind2);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // And all parameter bindings are reset
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // And only the real parameter (param 1) is re-bound
+  SQLINTEGER val = 99;
+  SQLLEN val_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &val, 0, &val_ind);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then executing should succeed (the spurious param 2 was trimmed by reset)
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+}
+
 TEST_CASE("should fail with 07002 when parameter bindings have a gap.", "[query][bind_parameter]") {
   // Given Snowflake client is logged in
   Connection conn;
@@ -363,10 +393,9 @@ TEST_CASE("should bind NULL via SQL_NULL_DATA indicator.", "[query][bind_paramet
   CHECK(!result.has_value());
 }
 
-TEST_CASE("should alternate NULL and non-NULL across sequential executions.", "[query][bind_parameter]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should alternate NULL and non-NULL across sequential executions.",
+                 "[query][bind_parameter]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE bind_null_seq (val INTEGER)");
   auto stmt = conn.createStatement();
 

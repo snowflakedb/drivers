@@ -1268,6 +1268,32 @@ class TestCursorExecutemany:
         assert rows == [(1, "alice"), (2, "bob"), (3, "charlie")]
 
 
+class TestCursorExecutemanyErrors:
+    """Integration tests for executemany validation errors."""
+
+    @with_paramstyle("qmark")
+    def test_bulk_row_length_mismatch(self, cursor):
+        """Test that executemany raises InterfaceError when rows have inconsistent lengths."""
+        with pytest.raises(InterfaceError) as excinfo:
+            cursor.executemany("INSERT INTO any_table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
+        error = excinfo.value
+        assert error.errno == 251007
+        assert "bulk data size don't match" in error.msg.lower()
+        assert "expected: 2" in error.msg.lower()
+        assert "got: 3" in error.msg.lower()
+
+    @with_paramstyle("numeric")
+    def test_bulk_row_length_mismatch_numeric(self, cursor):
+        """Test that executemany raises InterfaceError for inconsistent lengths with numeric paramstyle."""
+        with pytest.raises(InterfaceError) as excinfo:
+            cursor.executemany("INSERT INTO any_table VALUES (:1, :2)", [(1, "a"), (2,)])
+        error = excinfo.value
+        assert error.errno == 251007
+        assert "bulk data size don't match" in error.msg.lower()
+        assert "expected: 2" in error.msg.lower()
+        assert "got: 1" in error.msg.lower()
+
+
 class TestCursorReset:
     """Integration tests for Cursor.reset method."""
 
@@ -2145,7 +2171,6 @@ class TestGetResultsFromSfqid:
             assert cur2.description[0].name == "A"
             assert cur2.description[1].name == "B"
 
-    @pytest.mark.skip_universal(reason="execute_async not yet implemented")
     def test_get_results_from_sfqid_waits_for_async_query(self, connection):
         """get_results_from_sfqid polls until an async query completes."""
         with connection.cursor() as cur1:
@@ -2181,7 +2206,6 @@ class TestCursorAbortQuery:
         result = cursor.abort_query(qid)
         assert result is False
 
-    @pytest.mark.skip_universal(reason="[SNOW-2872511] execute_async not yet implemented")
     def test_abort_query_returns_true_for_running_query(self, connection):
         """abort_query returns True when aborting a currently running query."""
         long_running_query = "SELECT SYSTEM$WAIT(30, 'SECONDS')"

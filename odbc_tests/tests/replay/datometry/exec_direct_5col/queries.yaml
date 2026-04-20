@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 74d49a54-cbca-4b75-932f-bc87229c24c4
+    -- DTM_QRY:
+    show terse objects like 'dtm331\\_src' in "DTMREPLAYTESTDB"."PUBLIC"
+  mapped: show terse objects like 'dtm331\\_src' in "DTMREPLAYTESTDB"."PUBLIC"

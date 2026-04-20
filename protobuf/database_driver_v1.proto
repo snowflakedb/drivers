@@ -33,6 +33,9 @@ enum StatusCode {
   STATUS_CODE_MISSING_PARAMETER = 15;
   STATUS_CODE_INVALID_PARAMETER_VALUE = 16;
   STATUS_CODE_LOGIN_ERROR = 17;
+  STATUS_CODE_LOCAL_FILE_NOT_FOUND = 18;
+  STATUS_CODE_REMOTE_FILE_NOT_FOUND = 19;
+  STATUS_CODE_UNSUPPORTED_COMPRESSION = 20;
 }
 
 // Info codes corresponding to Thrift InfoCode enum
@@ -226,51 +229,6 @@ message DatabaseNewResponse {
   DatabaseHandle db_handle = 1;
 }
 
-message DatabaseSetOptionStringRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message DatabaseSetOptionStringResponse {
-}
-
-message DatabaseSetOptionBytesRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message DatabaseSetOptionBytesResponse {
-}
-
-message DatabaseSetOptionIntRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message DatabaseSetOptionIntResponse {
-}
-
-message DatabaseSetOptionDoubleRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message DatabaseSetOptionDoubleResponse {
-}
-
-message DatabaseSetOptionBoolRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message DatabaseSetOptionBoolResponse {
-}
-
 message DatabaseInitRequest {
   DatabaseHandle db_handle = 1;
 }
@@ -292,51 +250,6 @@ message ConnectionNewRequest {
 
 message ConnectionNewResponse {
   ConnectionHandle conn_handle = 1;
-}
-
-message ConnectionSetOptionStringRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message ConnectionSetOptionStringResponse {
-}
-
-message ConnectionSetOptionBytesRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message ConnectionSetOptionBytesResponse {
-}
-
-message ConnectionSetOptionIntRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message ConnectionSetOptionIntResponse {
-}
-
-message ConnectionSetOptionDoubleRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message ConnectionSetOptionDoubleResponse {
-}
-
-message ConnectionSetOptionBoolRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message ConnectionSetOptionBoolResponse {
 }
 
 message ConnectionInitRequest {
@@ -569,51 +482,6 @@ message StatementPrepareResponse {
   PrepareResult result = 1;
 }
 
-message StatementSetOptionStringRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message StatementSetOptionStringResponse {
-}
-
-message StatementSetOptionBytesRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message StatementSetOptionBytesResponse {
-}
-
-message StatementSetOptionIntRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message StatementSetOptionIntResponse {
-}
-
-message StatementSetOptionDoubleRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message StatementSetOptionDoubleResponse {
-}
-
-message StatementSetOptionBoolRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message StatementSetOptionBoolResponse {
-}
-
 message StatementGetParameterSchemaRequest {
   StatementHandle stmt_handle = 1;
 }
@@ -630,6 +498,16 @@ message StatementExecuteQueryRequest {
 
 message StatementExecuteQueryResponse {
   ExecuteResult result = 1;
+}
+
+// Async query execution: submit and return immediately with query_id
+message StatementExecuteAsyncRequest {
+  StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;
+}
+
+message StatementExecuteAsyncResponse {
+  string query_id = 1;
 }
 
 message StatementExecutePartitionsRequest {
@@ -672,6 +550,9 @@ message ResultChunk {
     string inline = 2;
     RemoteChunk remote = 3;
   }
+  int32 row_count = 4;
+  optional int64 compressed_size = 5;
+  optional int64 uncompressed_size = 6;
 }
 
 message ResultChunksResult {
@@ -798,11 +679,6 @@ service DatabaseDriver {
   option (service_error) = "DriverException";
   // Database operations
   rpc DatabaseNew(DatabaseNewRequest) returns (DatabaseNewResponse);
-  rpc DatabaseSetOptionString(DatabaseSetOptionStringRequest) returns (DatabaseSetOptionStringResponse);
-  rpc DatabaseSetOptionBytes(DatabaseSetOptionBytesRequest) returns (DatabaseSetOptionBytesResponse);
-  rpc DatabaseSetOptionInt(DatabaseSetOptionIntRequest) returns (DatabaseSetOptionIntResponse);
-  rpc DatabaseSetOptionDouble(DatabaseSetOptionDoubleRequest) returns (DatabaseSetOptionDoubleResponse);
-  rpc DatabaseSetOptionBool(DatabaseSetOptionBoolRequest) returns (DatabaseSetOptionBoolResponse);
   rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
@@ -810,11 +686,6 @@ service DatabaseDriver {
 
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
-  rpc ConnectionSetOptionString(ConnectionSetOptionStringRequest) returns (ConnectionSetOptionStringResponse);
-  rpc ConnectionSetOptionBytes(ConnectionSetOptionBytesRequest) returns (ConnectionSetOptionBytesResponse);
-  rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
-  rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
-  rpc ConnectionSetOptionBool(ConnectionSetOptionBoolRequest) returns (ConnectionSetOptionBoolResponse);
   rpc ConnectionSetOptions(ConnectionSetOptionsRequest) returns (ConnectionSetOptionsResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
@@ -849,17 +720,13 @@ service DatabaseDriver {
   rpc StatementSetSqlQuery(StatementSetSqlQueryRequest) returns (StatementSetSqlQueryResponse);
   rpc StatementSetSubstraitPlan(StatementSetSubstraitPlanRequest) returns (StatementSetSubstraitPlanResponse);
   rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
-  rpc StatementSetOptionString(StatementSetOptionStringRequest) returns (StatementSetOptionStringResponse);
-  rpc StatementSetOptionBytes(StatementSetOptionBytesRequest) returns (StatementSetOptionBytesResponse);
-  rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
-  rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
-  rpc StatementSetOptionBool(StatementSetOptionBoolRequest) returns (StatementSetOptionBoolResponse);
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
+  rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);

@@ -1,16 +1,16 @@
 use crate::api::CDataType;
-use crate::api::encoding::OdbcEncoding;
+use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
-    NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required,
-    StatementNotExecutedSnafu,
+    ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu,
+    DisconnectedSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu,
+    InvalidHandleSnafu, InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu,
+    Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, SqlType,
-    Statement, StatementState, stmt_from_handle,
+    ApdRecord, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord, OdbcResult,
+    ParamDirection, ParamValue, SqlType, Statement, StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
@@ -26,6 +26,28 @@ use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
 use tracing;
 
+/// Scan the APD for parameters marked as data-at-execution.
+fn find_dae_params(apd: &crate::api::ApdDescriptor, param_limit: Option<usize>) -> Vec<u16> {
+    let mut dae_params = Vec::new();
+    for (&param_num, record) in &apd.records {
+        if let Some(limit) = param_limit
+            && param_num as usize > limit
+        {
+            continue;
+        }
+        if !record.str_len_or_ind_ptr.is_null() {
+            let ind = unsafe { *record.str_len_or_ind_ptr };
+            // SQL_DATA_AT_EXEC (-2): simple DAE flag.
+            // SQL_LEN_DATA_AT_EXEC(len) = (-len - 100): DAE with size hint, always <= -100.
+            if ind == sql::DATA_AT_EXEC || ind <= -100 {
+                dae_params.push(param_num);
+            }
+        }
+    }
+    dae_params.sort();
+    dae_params
+}
+
 /// Execute a SQL statement directly (SQLExecDirect / SQLExecDirectW).
 pub fn exec_direct<E: OdbcEncoding>(
     statement_handle: sql::Handle,
@@ -40,13 +62,50 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("exec_direct: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    // Obtain an independent &mut Connection without tying up a borrow on stmt,
-    // so stmt.apd / stmt.ipd / stmt.stmt_handle remain accessible below.
+    // Validate connection before committing to NeedData state.
+    let conn = unsafe { &mut *stmt.conn_ptr() };
+    match &mut conn.state {
+        ConnectionState::Disconnected => {
+            tracing::error!("exec_direct: connection is disconnected");
+            return DisconnectedSnafu.fail();
+        }
+        ConnectionState::Connected { .. } => {}
+    }
+
+    // No param_limit for exec-direct: enter DAE if any APD record has a DAE
+    // indicator, regardless of the SQL text.  We deliberately avoid client-side
+    // `?` parsing because (a) it can disagree with the server's parser on edge
+    // cases (comments, dollar-quoted strings, etc.) and (b) the reference
+    // driver (Simba SDK) behaves the same way.
+    let dae_params = find_dae_params(&stmt.apd, None);
+    if !dae_params.is_empty() {
+        let pushed_data = dae_params
+            .iter()
+            .map(|&p| (p, ParamValue::Pending))
+            .collect();
+        let dae_context = DaeContext {
+            dae_params,
+            current_index: 0,
+            pushed_data,
+            deferred_query: Some(statement_text.to_string()),
+        };
+        stmt.state.set(StatementState::AwaitingParamData {
+            dae_context: Box::new(dae_context),
+            origin: ExecutionOrigin::Direct,
+        });
+        return DaeRequiredSnafu.fail();
+    }
+
+    // Re-borrow connection for execution.
     let conn = unsafe { &mut *stmt.conn_ptr() };
     match &mut conn.state {
         ConnectionState::Connected {
@@ -79,7 +138,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
-            let execute_state = create_execute_state(response, false)?;
+            let execute_state = create_execute_state(response, ExecutionOrigin::Direct)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -179,6 +238,10 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("prepare: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
@@ -217,6 +280,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
 
             let param_count = result.number_of_binds.max(0) as usize;
+            stmt.prepared_param_count = Some(param_count);
             let max_varchar = conn.numeric_settings.max_varchar_size;
             stmt.ipd.records.retain(|&k, _| (k as usize) <= param_count);
             for i in 1..=param_count {
@@ -245,25 +309,64 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("execute: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    let prepared = match stmt.state.as_ref() {
-        StatementState::Prepared { .. } => true,
-        StatementState::DdlExecuted { prepared, .. }
-        | StatementState::DmlExecuted { prepared, .. } => *prepared,
-        _ => false,
+    let origin = match stmt.state.as_ref() {
+        StatementState::Prepared { schema } => ExecutionOrigin::Prepared {
+            schema: schema.clone(),
+        },
+        StatementState::DdlExecuted { origin, .. } | StatementState::DmlExecuted { origin, .. } => {
+            origin.clone()
+        }
+        _ => ExecutionOrigin::Direct,
     };
+    let is_prepared = origin.is_prepared();
 
+    // Validate connection before committing to NeedData state.
+    let conn = unsafe { &mut *stmt.conn_ptr() };
+    match &mut conn.state {
+        ConnectionState::Disconnected => {
+            tracing::error!("execute: connection is disconnected");
+            return DisconnectedSnafu.fail();
+        }
+        ConnectionState::Connected { .. } => {}
+    }
+
+    let dae_params = find_dae_params(&stmt.apd, stmt.prepared_param_count);
+    if !dae_params.is_empty() {
+        let pushed_data = dae_params
+            .iter()
+            .map(|&p| (p, ParamValue::Pending))
+            .collect();
+        let dae_context = DaeContext {
+            dae_params,
+            current_index: 0,
+            pushed_data,
+            deferred_query: None,
+        };
+        stmt.state.set(StatementState::AwaitingParamData {
+            dae_context: Box::new(dae_context),
+            origin,
+        });
+        return DaeRequiredSnafu.fail();
+    }
+
+    // Re-borrow connection for execution.
     let conn = unsafe { &mut *stmt.conn_ptr() };
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, prepared)?;
+            let (bindings, _json_owner) =
+                apply_parameter_bindings(&stmt.apd, &stmt.ipd, is_prepared)?;
 
             stmt.cancel_token = CancellationToken::new();
             let _cancel_token = stmt.cancel_token.clone();
@@ -282,7 +385,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
 
-            let execute_state = create_execute_state(response, prepared)?;
+            let execute_state = create_execute_state(response, origin)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -333,7 +436,7 @@ fn set_state(stmt: &mut Statement, state: StatementState) {
 
 fn create_execute_state(
     response: StatementExecuteQueryResponse,
-    prepared: bool,
+    origin: ExecutionOrigin,
 ) -> OdbcResult<StatementState> {
     tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
@@ -344,7 +447,7 @@ fn create_execute_state(
         if is_ddl_statement(id) {
             return Ok(StatementState::DdlExecuted {
                 schema: reader.schema(),
-                prepared,
+                origin,
             });
         }
         if is_dml_statement_type(Some(id))
@@ -353,14 +456,14 @@ fn create_execute_state(
             return Ok(StatementState::DmlExecuted {
                 rows_affected: affected,
                 schema: reader.schema(),
-                prepared,
+                origin,
             });
         }
     }
     Ok(StatementState::QueryExecuted {
         reader,
         rows_affected,
-        prepared,
+        origin,
     })
 }
 
@@ -457,6 +560,11 @@ pub fn bind_parameter(
         return InvalidHandleSnafu.fail();
     }
 
+    let stmt_check = stmt_from_handle(statement_handle);
+    if stmt_check.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     if parameter_number == 0 {
         tracing::error!("bind_parameter: parameter_number cannot be 0");
         return InvalidParameterNumberSnafu.fail();
@@ -535,45 +643,28 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
     }
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     match option {
         FreeStmtOption::Close => {
             tracing::info!("free_stmt: Closing cursor");
             let transition = match stmt.state.as_ref() {
                 StatementState::Created | StatementState::Prepared { .. } => None,
-                StatementState::QueryExecuted {
-                    reader,
-                    prepared: true,
-                    ..
-                }
-                | StatementState::Fetching {
-                    reader,
-                    prepared: true,
-                    ..
-                } => {
-                    let schema = reader.schema();
-                    let desc_count = schema.fields().len() as sql::SmallInt;
-                    Some((StatementState::Prepared { schema }, desc_count))
-                }
-                StatementState::DdlExecuted {
-                    schema,
-                    prepared: true,
-                }
-                | StatementState::DmlExecuted {
-                    schema,
-                    prepared: true,
-                    ..
-                }
-                | StatementState::Done {
-                    schema,
-                    prepared: true,
-                } => {
-                    let desc_count = schema.fields().len() as sql::SmallInt;
-                    Some((
-                        StatementState::Prepared {
-                            schema: schema.clone(),
-                        },
-                        desc_count,
-                    ))
+                StatementState::QueryExecuted { origin, .. }
+                | StatementState::Fetching { origin, .. }
+                | StatementState::DdlExecuted { origin, .. }
+                | StatementState::DmlExecuted { origin, .. }
+                | StatementState::Done { origin, .. } => {
+                    let next = origin.restore_state();
+                    let desc_count = match &next {
+                        StatementState::Prepared { schema } => {
+                            schema.fields().len() as sql::SmallInt
+                        }
+                        _ => 0,
+                    };
+                    Some((next, desc_count))
                 }
                 _ => Some((StatementState::Created, 0)),
             };
@@ -589,8 +680,15 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
             stmt.ard.unbind_all();
         }
         FreeStmtOption::ResetParams => {
-            tracing::info!("free_stmt: Resetting all parameter bindings (APD)");
+            tracing::info!("free_stmt: Resetting all parameter bindings");
             stmt.apd.clear();
+            // Trim IPD back to the server's prepared parameter count so
+            // that records added by spurious SQLBindParameter calls beyond
+            // the actual marker count are removed, while server-populated
+            // records from SQLPrepare are preserved.
+            if let Some(count) = stmt.prepared_param_count {
+                stmt.ipd.records.retain(|&k, _| (k as usize) <= count);
+            }
         }
     }
 
@@ -604,6 +702,10 @@ pub fn close_cursor(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("close_cursor: statement_handle={statement_handle:?}");
 
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
 
     if !stmt.state.as_ref().has_open_cursor() {
         return InvalidCursorStateSnafu.fail();
@@ -623,6 +725,10 @@ pub fn num_params(
     tracing::debug!("num_params: statement_handle={:?}", statement_handle);
 
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
 
     if matches!(stmt.state.as_ref(), StatementState::Created) {
         return StatementNotExecutedSnafu.fail();
@@ -664,13 +770,17 @@ pub fn describe_param(
 
     let stmt = stmt_from_handle(statement_handle);
 
-    let allowed = matches!(
-        stmt.state.as_ref(),
-        StatementState::Prepared { .. }
-            | StatementState::DdlExecuted { prepared: true, .. }
-            | StatementState::DmlExecuted { prepared: true, .. }
-            | StatementState::Done { prepared: true, .. }
-    );
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
+    let allowed = match stmt.state.as_ref() {
+        StatementState::Prepared { .. } => true,
+        StatementState::DdlExecuted { origin, .. }
+        | StatementState::DmlExecuted { origin, .. }
+        | StatementState::Done { origin, .. } => origin.is_prepared(),
+        _ => false,
+    };
     if !allowed {
         return StatementNotExecutedSnafu.fail();
     }
@@ -732,6 +842,10 @@ pub fn bind_col(
 
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     // Per ODBC specification, if target_value_ptr is null, unbind the column
     if target_value_ptr.is_null() {
         tracing::debug!("bind_col: unbinding column {}", column_number);
@@ -774,6 +888,10 @@ pub fn set_stmt_attr(
 
     let attr = StmtAttr::try_from(attribute)?;
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
 
     match attr {
         StmtAttr::CursorType => {
@@ -834,13 +952,18 @@ pub fn set_stmt_attr(
             stmt.ard.bind_offset_ptr = ptr;
             Ok(())
         }
-        StmtAttr::SnowflakeLastQueryId => {
-            tracing::warn!("set_stmt_attr: SnowflakeLastQueryId is read-only");
+        StmtAttr::MetadataId => {
+            let val = value_ptr as sql::ULen;
+            stmt.metadata_id = val != 0;
+            Ok(())
+        }
+        StmtAttr::SnowflakeLastQueryId | StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
+            tracing::warn!("set_stmt_attr: {:?} is read-only", attr);
             ReadOnlyAttributeSnafu { attribute }.fail()
         }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
-            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
+            UnsupportedAttributeSnafu { attribute }.fail()
         }
     }
 }
@@ -860,6 +983,10 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
 
     let attr = StmtAttr::try_from(attribute)?;
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
 
     match attr {
         StmtAttr::CursorType => {
@@ -950,6 +1077,19 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             Ok(())
         }
+        StmtAttr::MetadataId => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = stmt.metadata_id as sql::ULen;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
         StmtAttr::SnowflakeLastQueryId => {
             if buffer_length < 0 {
                 return InvalidBufferLengthSnafu {
@@ -958,7 +1098,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
                 .fail();
             }
             let query_id = stmt.last_query_id.as_deref().unwrap_or("");
-            crate::api::encoding::write_string_bytes_i32::<E>(
+            write_string_bytes_i32::<E>(
                 query_id,
                 value_ptr as *mut E::Char,
                 buffer_length,
@@ -991,15 +1131,25 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     // TODO(SNOW-3258918): Cancel async execution.
     // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
 
-    // TODO(SNOW-3258919): Cancel data-at-execution (SQL_NEED_DATA).
-    // Blocked by: SQLParamData and SQLPutData are not implemented/exported.
-
     // TODO(SNOW-3258922): Cancel execution on another thread.
     // Blocked by: no server-side cancel RPC. When implemented,
     // cancelling the token resolves the cancelled() future observed
     // by the executing thread's tokio::select!, aborting the in-flight RPC.
 
     let stmt = stmt_from_handle(statement_handle);
+
+    match stmt.state.as_ref() {
+        StatementState::AwaitingParamData { origin, .. }
+        | StatementState::AwaitingPutData { origin, .. }
+        | StatementState::PutDataCalled { origin, .. } => {
+            // TODO(SNOW-3258919): Full cancel testing during NeedData.
+            let restored = origin.restore_state();
+            stmt.state.set(restored);
+            return Ok(());
+        }
+        _ => {}
+    }
+
     stmt.cancel_token.cancel();
     Ok(())
 }

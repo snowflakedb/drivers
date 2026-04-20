@@ -21,7 +21,7 @@ COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show
 
 # Install cargo-chef
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --version 0.1.77 --locked
 
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569

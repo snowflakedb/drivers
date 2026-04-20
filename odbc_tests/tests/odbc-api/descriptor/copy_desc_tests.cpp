@@ -341,12 +341,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY007 - IRD source from un
   SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA (explicit desc)",
                  "[odbc-api][copydesc][descriptor][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  // Get descriptors before entering NEED_DATA state
-  SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
@@ -368,4 +367,33 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_
 
   SQLCancel(stmt_handle());
   SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA",
+                 "[odbc-api][copydesc][descriptor][error]") {
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  // Use a second statement's implicit ARD as the copy target,
+  // avoiding SQLAllocHandle(SQL_HANDLE_DESC) which is not implemented.
+  SQLHSTMT stmt2 = SQL_NULL_HSTMT;
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt2);
+  REQUIRE(ret == SQL_SUCCESS);
+  const SQLHDESC target_ard = get_descriptor(stmt2, SQL_ATTR_APP_ROW_DESC);
+
+  ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLCopyDesc(ard, target_ard);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+
+  SQLCancel(stmt_handle());
+  SQLFreeHandle(SQL_HANDLE_STMT, stmt2);
 }

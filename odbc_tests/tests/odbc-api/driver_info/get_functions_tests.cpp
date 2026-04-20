@@ -98,6 +98,7 @@ static const FunctionTest ALL_ODBC_FUNCTIONS[] = {
 
     // Statement Termination Functions
     {SQL_API_SQLCANCEL, "SQLCancel", true},
+    {SQL_API_SQLCANCELHANDLE, "SQLCancelHandle", false},
     {SQL_API_SQLCLOSECURSOR, "SQLCloseCursor", false},
     {SQL_API_SQLENDTRAN, "SQLEndTran", false},
     {SQL_API_SQLFREESTMT, "SQLFreeStmt", true},
@@ -125,6 +126,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
     // Windows DM does not report deprecated SQLSetScrollOptions
     WINDOWS_ONLY {
       if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
+    }
+    // BD#45: Reference driver's SQLGetFunctions bitmap omits SQL_API_SQLCANCELHANDLE
+    // even though the reference driver exports and handles the function.
+    OLD_DRIVER_ONLY("BD#45") {
+      if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
     }
     INFO("Function: " << func.name << " (ID=" << func.functionId << ")");
     REQUIRE(SQL_FUNC_EXISTS(supported, func.functionId));
@@ -277,6 +283,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported fun
   for (const auto& func : ALL_ODBC_FUNCTIONS) {
     WINDOWS_ONLY {
       if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
+    }
+    // BD#45: Reference driver's SQLGetFunctions bitmap omits SQL_API_SQLCANCELHANDLE
+    OLD_DRIVER_ONLY("BD#45") {
+      if (func.functionId == SQL_API_SQLCANCELHANDLE) continue;
     }
     SQLUSMALLINT supported = SQL_FALSE;
     ret = SQLGetFunctions(dbc_handle(), func.functionId, &supported);

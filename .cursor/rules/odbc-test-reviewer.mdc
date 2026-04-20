@@ -12,8 +12,8 @@ When asked to review ODBC test code, systematically check each category below. R
 
 - All ODBC handles must use RAII wrappers (`Connection`, `Schema`, `TestTable`, `HandleWrapper` variants).
 - Flag manual `SQLAllocHandle` / `SQLDisconnect` / `SQLFreeHandle` — these leak on test failure.
-- `Schema::use_random_schema(conn)` is required when the test creates tables. Do NOT flag its absence for literal-only queries.
-- Flag `DROP TABLE IF EXISTS` inside a random schema — the schema destructor drops CASCADE, making it redundant. Suggest `CREATE OR REPLACE TABLE` or plain `CREATE TABLE`.
+- `Schema::use_temp_session_schema(conn)` is required when the test creates tables. Do NOT flag its absence for literal-only queries.
+- Prefer `CREATE OR REPLACE TABLE` over `DROP TABLE IF EXISTS` + `CREATE TABLE` — saves a server round-trip.
 
 ## 2. Test Structure
 
@@ -69,7 +69,7 @@ Available matchers: `Succeeded()`, `IsSuccess()`, `IsSuccessWithInfo()`, `IsErro
 
 ## 8. Abstraction Levels
 
-- **Given (setup)**: high-level abstractions — `Connection`, `Schema::use_random_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
+- **Given (setup)**: high-level abstractions — `Connection`, `Schema::use_temp_session_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
 - **When/Then (test)**: raw ODBC calls (`SQLExecDirect`, `SQLFetch`, `SQLGetData`) or purpose-built helpers to make the tested code path explicit and auditable.
 - Flag tests that use raw ODBC for setup or high-level wrappers for the behaviour under test.
 

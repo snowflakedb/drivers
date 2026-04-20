@@ -27,10 +27,21 @@ pub fn is_ascii_locale() -> bool {
     false
 }
 
-pub fn mask_non_ascii_characters(src: &str) -> String {
-    src.chars()
-        .map(|c| if !c.is_ascii() { '\x1a' } else { c })
-        .collect()
+/// Replace each non-ASCII character with `\x1a` (SUB control character).
+///
+/// Returns a borrow for pure-ASCII input to avoid a per-call heap allocation
+/// on the `write_char_string` hot path. ODBC ANSI output is ASCII-only in
+/// C/POSIX locales, and in practice the vast majority of values that flow
+/// through here (numbers, dates, times, English text) are already ASCII.
+pub fn mask_non_ascii_characters(src: &str) -> std::borrow::Cow<'_, str> {
+    if src.is_ascii() {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    std::borrow::Cow::Owned(
+        src.chars()
+            .map(|c| if !c.is_ascii() { '\x1a' } else { c })
+            .collect(),
+    )
 }
 
 /// Abstracts over ANSI (narrow) and Unicode (wide) ODBC string operations,

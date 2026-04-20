@@ -3,7 +3,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 

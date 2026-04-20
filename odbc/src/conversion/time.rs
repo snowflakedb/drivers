@@ -1,19 +1,54 @@
+use std::io::{Cursor, Write as _};
+
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Int64Type;
-use chrono::{NaiveTime, Timelike};
+use chrono::{Datelike, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError,
-    UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    BindingNumericOutOfRangeSnafu, InvalidArrowValueSnafu, JsonBindingError,
+    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedCDataTypeSnafu,
+    UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+
+/// Format a `NaiveTime` as `HH:MM:SS[.fffffffff]` into a stack buffer without
+/// heap allocation. 32 bytes is ample for the widest output (`HH:MM:SS.` + 9
+/// fractional digits = 18 bytes).
+fn format_time_ascii<'a>(time: &NaiveTime, buf: &'a mut [u8; 32]) -> &'a str {
+    let len = {
+        let mut cursor = Cursor::new(&mut buf[..]);
+        let _ = write!(
+            cursor,
+            "{:02}:{:02}:{:02}",
+            time.hour(),
+            time.minute(),
+            time.second()
+        );
+        let nanos = time.nanosecond();
+        if nanos != 0 {
+            let _ = write!(cursor, ".{nanos:09}");
+        }
+        cursor.position() as usize
+    };
+    // Trim trailing zeros from the optional fractional part.
+    let mut end = len;
+    if buf[..end].contains(&b'.') {
+        while end > 0 && buf[end - 1] == b'0' {
+            end -= 1;
+        }
+    }
+    // SAFETY: only ASCII digits, `:`, and `.` written above.
+    unsafe { std::str::from_utf8_unchecked(&buf[..end]) }
+}
 
 pub(crate) struct SnowflakeTime {
     pub(crate) scale: u32,
@@ -112,8 +147,9 @@ impl WriteODBCType for SnowflakeTime {
                     }
                     .fail();
                 }
-                let formatted = format_time_string(&snowflake_value);
-                Ok(binding.write_char_string(&formatted, get_data_offset))
+                let mut buf = [0u8; 32];
+                let s = format_time_ascii(&snowflake_value, &mut buf);
+                Ok(binding.write_char_string(s, get_data_offset))
             }
             CDataType::WChar => {
                 if binding.buffer_length > 0 && binding.buffer_length < 18 {
@@ -123,35 +159,58 @@ impl WriteODBCType for SnowflakeTime {
                     }
                     .fail();
                 }
-                let formatted = format_time_string(&snowflake_value);
-                Ok(binding.write_wchar_string(&formatted, get_data_offset))
+                let mut buf = [0u8; 32];
+                let s = format_time_ascii(&snowflake_value, &mut buf);
+                Ok(binding.write_wchar_string(s, get_data_offset))
+            }
+            CDataType::Binary => {
+                if binding.buffer_length > 0
+                    && (binding.buffer_length as usize) < std::mem::size_of::<sql::Time>()
+                {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_BINARY time".to_string(),
+                    }
+                    .fail();
+                }
+                let time = sql::Time {
+                    hour: snowflake_value.hour() as u16,
+                    minute: snowflake_value.minute() as u16,
+                    second: snowflake_value.second() as u16,
+                };
+                // SAFETY: `sql::Time` is a POD struct; borrowing its bytes
+                // for the duration of this call avoids an intermediate stack
+                // copy per row.
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        &time as *const sql::Time as *const u8,
+                        std::mem::size_of::<sql::Time>(),
+                    )
+                };
+                Ok(binding.write_binary(bytes, get_data_offset))
+            }
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let today = chrono::Local::now().date_naive();
+                let ts = sql::Timestamp {
+                    year: today.year() as i16,
+                    month: today.month() as u16,
+                    day: today.day() as u16,
+                    hour: snowflake_value.hour() as u16,
+                    minute: snowflake_value.minute() as u16,
+                    second: snowflake_value.second() as u16,
+                    fraction: 0,
+                };
+                binding.write_fixed(ts);
+                if snowflake_value.nanosecond() != 0 {
+                    Ok(vec![Warning::NumericValueTruncated])
+                } else {
+                    Ok(vec![])
+                }
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }
             .fail(),
         }
-    }
-}
-
-fn format_time_string(time: &NaiveTime) -> String {
-    let nanos = time.nanosecond();
-    if nanos == 0 {
-        format!(
-            "{:02}:{:02}:{:02}",
-            time.hour(),
-            time.minute(),
-            time.second()
-        )
-    } else {
-        let frac = format!("{nanos:09}");
-        let trimmed = frac.trim_end_matches('0');
-        format!(
-            "{:02}:{:02}:{:02}.{trimmed}",
-            time.hour(),
-            time.minute(),
-            time.second()
-        )
     }
 }
 
@@ -189,6 +248,19 @@ impl ReadODBC for SnowflakeTime {
                     .map_err(|_| {
                         UnsupportedCDataTypeSnafu {
                             c_type: binding.value_type,
+                        }
+                        .build()
+                    })
+            }
+            CDataType::Binary => {
+                let time = read_binary_struct::<sql::Time>(binding, "SQL_TIME_STRUCT")?;
+                NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
+                    .ok_or_else(|| {
+                        BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}",
+                                time.hour, time.minute, time.second
+                            ),
                         }
                         .build()
                     })

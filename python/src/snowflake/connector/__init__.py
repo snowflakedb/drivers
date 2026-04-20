@@ -44,7 +44,7 @@ from .version import __version__
 
 # PEP 249 Module Interface Constants
 apilevel = "2.0"
-threadsafety = 1  # Threads may share the module, but not connections
+threadsafety = 2  # Threads may share the module and connections, but not cursors
 paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
 register_default_logger_callback()

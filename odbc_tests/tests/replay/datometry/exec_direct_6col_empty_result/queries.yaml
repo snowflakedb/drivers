@@ -1,0 +1,4 @@
+queries:
+- index: 0
+  original: select * from "DTMREPLAYTESTDB"."__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where 1=0
+  mapped: select * from "DTMREPLAYTESTDB"."__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where 1=0

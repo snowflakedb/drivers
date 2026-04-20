@@ -120,6 +120,12 @@ class TestParamstyleSetter:
         connection.paramstyle = "  QMARK  "
         assert connection.paramstyle == ParamStyle.QMARK
 
+    def test_assign_via_private_paramstyle_normalizes(self, connection):
+        """Legacy / SnowPy code sets ``conn._paramstyle`` directly; must coerce like ``paramstyle``."""
+        connection._paramstyle = "numeric"
+        assert connection.paramstyle == ParamStyle.NUMERIC
+        assert connection._paramstyle == ParamStyle.NUMERIC
+
     def test_assign_enum_unchanged(self, connection):
         connection.paramstyle = ParamStyle.NUMERIC
         assert connection.paramstyle == ParamStyle.NUMERIC
@@ -344,6 +350,84 @@ class TestConnectionSetOptions:
         request = mock_db_api.connection_set_options.call_args[0][0]
         assert set(request.options.keys()) == {"client_app_id"}
         assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
+
+
+class TestClose:
+    """Unit tests for Connection.close() and handle release."""
+
+    def test_close_releases_handles(self, connection, mock_db_api):
+        """close() should release both connection and database handles on the Rust side."""
+        connection.close()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+
+    def test_close_nullifies_handles(self, connection, mock_db_api):
+        """close() should set conn_handle and db_handle to None to prevent use-after-release."""
+        assert connection.conn_handle is not None
+        assert connection.db_handle is not None
+
+        connection.close()
+
+        assert connection.conn_handle is None
+        assert connection.db_handle is None
+
+    def test_close_is_idempotent(self, connection, mock_db_api):
+        """Calling close() multiple times should only release handles once."""
+        connection.close()
+        connection.close()
+        connection.close()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+
+    def test_close_releases_database_even_if_connection_release_fails(self, connection, mock_db_api):
+        """database_release should still be called if connection_release raises."""
+        mock_db_api.connection_release.side_effect = RuntimeError("release failed")
+
+        connection.close()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+
+    def test_close_sets_closed_flag_even_if_release_fails(self, connection, mock_db_api):
+        """The connection should be marked closed even if handle release fails."""
+        mock_db_api.connection_release.side_effect = RuntimeError("boom")
+        mock_db_api.database_release.side_effect = RuntimeError("boom")
+
+        connection.close()
+
+        assert connection._closed is True
+
+    def test_del_releases_handles_if_not_closed(self, mock_db_api):
+        """__del__ should release handles when close() was never called."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="test_user", account="test_account")
+
+        conn.__del__()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+        assert conn._closed is True
+
+    def test_del_is_noop_if_already_closed(self, connection, mock_db_api):
+        """__del__ should not release handles if close() was already called."""
+        connection.close()
+        mock_db_api.reset_mock()
+
+        connection.__del__()
+
+        mock_db_api.connection_release.assert_not_called()
+        mock_db_api.database_release.assert_not_called()
+
+    def test_del_does_not_raise(self, connection, mock_db_api):
+        """__del__ must never propagate exceptions."""
+        mock_db_api.connection_release.side_effect = RuntimeError("boom")
+        mock_db_api.database_release.side_effect = RuntimeError("boom")
+
+        connection.__del__()
 
 
 class TestContextManagerUnit:
@@ -674,6 +758,80 @@ class TestApplicationProperty:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             conn = Connection(user="u", account="a", application="MyApp")
         assert "application" not in conn.kwargs
+
+
+class TestLogMaxQueryLength:
+    """Unit tests for Connection.log_max_query_length and _format_query_for_log."""
+
+    def test_default_value_is_80(self, connection):
+        assert connection.log_max_query_length == 80
+
+    def test_custom_value_at_connect_time(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=200)
+        assert conn.log_max_query_length == 200
+
+    def test_format_short_query_unchanged(self, connection):
+        query = "SELECT 1"
+        assert connection._format_query_for_log(query) == "SELECT 1"
+
+    def test_format_long_query_truncated(self, connection):
+        query = "x" * 100
+        result = connection._format_query_for_log(query)
+        assert result == "x" * 80 + "..."
+        assert len(result) == 83
+
+    def test_format_query_one_below_boundary(self, connection):
+        query = "x" * 79
+        assert connection._format_query_for_log(query) == "x" * 79
+
+    def test_format_collapses_newlines(self, connection):
+        query = "SELECT\n    col1,\n    col2\nFROM\n    my_table"
+        result = connection._format_query_for_log(query)
+        assert "\n" not in result
+        assert result == "SELECT col1, col2 FROM my_table"
+
+    def test_format_strips_leading_trailing_whitespace_per_line(self, connection):
+        query = "  SELECT 1  \n  FROM dual  "
+        result = connection._format_query_for_log(query)
+        assert result == "SELECT 1 FROM dual"
+
+    def test_format_collapses_then_truncates(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=20)
+
+        query = "SELECT\n    very_long_column_name\nFROM\n    my_table"
+        result = conn._format_query_for_log(query)
+        assert len(result) == 23  # 20 + "..."
+        assert result.endswith("...")
+
+    def test_custom_zero_truncates_everything(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=0)
+
+        assert conn._format_query_for_log("SELECT 1") == "..."
+
+    def test_sent_to_sf_core(self, mock_db_api):
+        """log_max_query_length should be forwarded to sf_core for Rust-side log truncation."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", log_max_query_length=200)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["log_max_query_length"] == ConfigSetting(int_value=200)
+
+    def test_format_query_at_exact_boundary(self, connection):
+        """Legacy uses strict less-than: a query of exactly log_max_query_length chars IS truncated."""
+        query = "x" * 80
+        result = connection._format_query_for_log(query)
+        assert result == "x" * 80 + "..."
 
 
 class TestConnectionArrowProperties:

@@ -5,7 +5,7 @@ use std::ptr;
 use snafu::prelude::*;
 use snafu::Location;
 
-use crate::model::{HandleType, OdbcCall, ParamValue, ReturnCode, TraceLog};
+use crate::model::{HandleType, OdbcCall, ReturnCode, TraceLog};
 
 #[derive(Snafu, Debug)]
 pub enum ReplayerError {
@@ -53,8 +53,6 @@ const SQL_C_CHAR: SqlSmallInt = 1;
 const SQL_SUCCESS: SqlReturn = 0;
 const SQL_SUCCESS_WITH_INFO: SqlReturn = 1;
 const SQL_NO_DATA: SqlReturn = 100;
-
-const SKIPPED_FUNCTIONS: &[&str] = &["SQLGetDiagRec", "SQLGetFunctions"];
 
 pub struct ReplayConfig {
     pub connection_string: String,
@@ -128,6 +126,8 @@ extern "C" {
     ) -> SqlReturn;
 
     fn SQLNumResultCols(stmt: SqlHandle, column_count: *mut SqlSmallInt) -> SqlReturn;
+
+    fn SQLRowCount(stmt: SqlHandle, row_count: *mut SqlLen) -> SqlReturn;
 
     fn SQLDescribeCol(
         stmt: SqlHandle,
@@ -231,23 +231,24 @@ impl<'a> ReplayContext<'a> {
             h
         };
 
-        for call in &trace.calls {
-            if call.function_name == "SQLDriverConnect" {
-                if let Some(param) = call.output_params.first() {
-                    if let ParamValue::Address(addr) = &param.value {
-                        self.handle_map.insert(addr.clone(), dbc);
-                    }
+        for tc in &trace.calls {
+            if let OdbcCall::DriverConnect(c) = &tc.call {
+                if let Some(addr) = &c.handle {
+                    self.handle_map.insert(addr.clone(), dbc);
                 }
                 break;
             }
         }
 
-        for call in &trace.calls {
-            if SKIPPED_FUNCTIONS.iter().any(|&f| f == call.function_name) {
+        for tc in &trace.calls {
+            if matches!(
+                &tc.call,
+                OdbcCall::GetDiagRec(_) | OdbcCall::GetFunctions(_)
+            ) {
                 self.skipped += 1;
                 continue;
             }
-            self.replay_call(call, env, dbc)?;
+            self.replay_call(&tc.call, env, dbc)?;
         }
 
         unsafe {
@@ -270,22 +271,23 @@ impl<'a> ReplayContext<'a> {
     }
 
     fn replay_call(&mut self, call: &OdbcCall, _env: SqlHandle, dbc: SqlHandle) -> Result<()> {
-        match call.function_name.as_str() {
-            "SQLDriverConnect" => self.replay_driver_connect(call, dbc)?,
-            "SQLAllocHandle" => self.replay_alloc_handle(call, dbc),
-            "SQLPrepare" => self.replay_prepare(call)?,
-            "SQLExecute" => self.replay_execute(call),
-            "SQLExecDirect" => self.replay_exec_direct(call)?,
-            "SQLNumResultCols" => self.replay_num_result_cols(call),
-            "SQLDescribeCol" => self.replay_describe_col(call),
-            "SQLFetchScroll" => self.replay_fetch_scroll(call),
-            "SQLFetch" => self.replay_fetch(call),
-            "SQLGetData" => self.replay_get_data(call),
-            "SQLMoreResults" => self.replay_more_results(call),
-            "SQLCloseCursor" => self.replay_close_cursor(call),
-            "SQLGetInfo" => self.replay_get_info(call, dbc),
-            "SQLFreeHandle" => self.replay_free_handle(call),
-            "SQLDisconnect" => {}
+        match call {
+            OdbcCall::DriverConnect(c) => self.replay_driver_connect(c, dbc)?,
+            OdbcCall::AllocHandle(c) => self.replay_alloc_handle(c, dbc),
+            OdbcCall::Prepare(c) => self.replay_prepare(c)?,
+            OdbcCall::Execute(c) => self.replay_execute(c),
+            OdbcCall::ExecDirect(c) => self.replay_exec_direct(c)?,
+            OdbcCall::NumResultCols(c) => self.replay_num_result_cols(c),
+            OdbcCall::DescribeCol(c) => self.replay_describe_col(c),
+            OdbcCall::FetchScroll(c) => self.replay_fetch_scroll(c),
+            OdbcCall::Fetch(c) => self.replay_fetch(c),
+            OdbcCall::GetData(c) => self.replay_get_data(c),
+            OdbcCall::RowCount(c) => self.replay_row_count(c),
+            OdbcCall::MoreResults(c) => self.replay_more_results(c),
+            OdbcCall::CloseCursor(c) => self.replay_close_cursor(c),
+            OdbcCall::GetInfo(c) => self.replay_get_info(c, dbc),
+            OdbcCall::FreeHandle(c) => self.replay_free_handle(c),
+            OdbcCall::Disconnect(_) => {}
             _ => {
                 self.skipped += 1;
             }
@@ -293,7 +295,11 @@ impl<'a> ReplayContext<'a> {
         Ok(())
     }
 
-    fn replay_driver_connect(&mut self, call: &OdbcCall, dbc: SqlHandle) -> Result<()> {
+    fn replay_driver_connect(
+        &mut self,
+        call: &crate::model::DriverConnect,
+        dbc: SqlHandle,
+    ) -> Result<()> {
         let conn_str = CString::new(self.config.connection_string.as_str()).map_err(|e| {
             ReplayerError::InvalidString {
                 detail: format!("connection string: {e}"),
@@ -312,13 +318,12 @@ impl<'a> ReplayContext<'a> {
                 SQL_DRIVER_NOPROMPT,
             )
         };
-        self.record_result(call, ret, true);
+        self.record(call.return_code, "SQLDriverConnect", ret, true);
         Ok(())
     }
 
-    fn replay_alloc_handle(&mut self, call: &OdbcCall, dbc: SqlHandle) {
-        let handle_type_value = extract_int(&call.output_params, 0);
-        let Some(ht) = handle_type_value.and_then(HandleType::from_value) else {
+    fn replay_alloc_handle(&mut self, call: &crate::model::AllocHandle, dbc: SqlHandle) {
+        let Some(ht) = call.handle_type else {
             self.skipped += 1;
             return;
         };
@@ -326,62 +331,75 @@ impl<'a> ReplayContext<'a> {
             self.skipped += 1;
             return;
         }
-        let child_addr = extract_output_addr(&call.output_params, 2);
         let mut new_handle: SqlHandle = ptr::null_mut();
         let ret = unsafe { SQLAllocHandle(SQL_HANDLE_STMT, dbc, &mut new_handle) };
-        if let Some(addr) = child_addr {
-            self.handle_map.insert(addr, new_handle);
+        if let Some(addr) = &call.child_handle {
+            self.handle_map.insert(addr.clone(), new_handle);
         }
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLAllocHandle", ret, false);
     }
 
-    fn replay_prepare(&mut self, call: &OdbcCall) -> Result<()> {
-        let stmt = self.resolve_stmt(&call.input_params);
-        let sql = extract_string(&call.input_params).unwrap_or_default();
+    fn replay_prepare(&mut self, call: &crate::model::Prepare) -> Result<()> {
+        let stmt = self.resolve_handle(&call.handle);
+        let sql = call.sql.as_deref().unwrap_or_default();
         let sql_c = CString::new(sql).map_err(|e| ReplayerError::InvalidString {
             detail: format!("SQL statement: {e}"),
             location: Location::default(),
         })?;
         let ret = unsafe { SQLPrepare(stmt, sql_c.as_ptr() as *const SqlChar, SQL_NTS) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLPrepare", ret, false);
         Ok(())
     }
 
-    fn replay_execute(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.input_params);
+    fn replay_execute(&mut self, call: &crate::model::Execute) {
+        let stmt = self.resolve_handle(&call.handle);
         let ret = unsafe { SQLExecute(stmt) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLExecute", ret, false);
     }
 
-    fn replay_exec_direct(&mut self, call: &OdbcCall) -> Result<()> {
-        let stmt = self.resolve_stmt(&call.input_params);
-        let sql = extract_string(&call.input_params).unwrap_or_default();
+    fn replay_exec_direct(&mut self, call: &crate::model::ExecDirect) -> Result<()> {
+        let stmt = self.resolve_handle(&call.handle);
+        let sql = call.sql.as_deref().unwrap_or_default();
         let sql_c = CString::new(sql).map_err(|e| ReplayerError::InvalidString {
             detail: format!("SQL statement: {e}"),
             location: Location::default(),
         })?;
         let ret = unsafe { SQLExecDirect(stmt, sql_c.as_ptr() as *const SqlChar, SQL_NTS) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLExecDirect", ret, false);
         Ok(())
     }
 
-    fn replay_num_result_cols(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
-        let expected_count = extract_output_int(&call.output_params, 1);
+    fn replay_num_result_cols(&mut self, call: &crate::model::NumResultCols) {
+        let stmt = self.resolve_handle(&call.handle);
         let mut count: SqlSmallInt = 0;
         let ret = unsafe { SQLNumResultCols(stmt, &mut count) };
-        let mut details = None;
-        if let Some(expected) = expected_count {
+        let details = call.count.and_then(|expected| {
             if i64::from(count) != expected {
-                details = Some(format!("Column count: expected {expected}, got {count}"));
+                Some(format!("Column count: expected {expected}, got {count}"))
+            } else {
+                None
             }
-        }
-        self.record_result_with_details(call, ret, false, details);
+        });
+        self.record_with_details(call.return_code, "SQLNumResultCols", ret, false, details);
     }
 
-    fn replay_describe_col(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
-        let col_num = extract_int(&call.output_params, 1).unwrap_or(1) as SqlUSmallInt;
+    fn replay_row_count(&mut self, call: &crate::model::RowCount) {
+        let stmt = self.resolve_handle(&call.handle);
+        let mut count: SqlLen = 0;
+        let ret = unsafe { SQLRowCount(stmt, &mut count) };
+        let details = call.count.and_then(|expected| {
+            if count as i64 != expected {
+                Some(format!("Row count: expected {expected}, got {count}"))
+            } else {
+                None
+            }
+        });
+        self.record_with_details(call.return_code, "SQLRowCount", ret, false, details);
+    }
+
+    fn replay_describe_col(&mut self, call: &crate::model::DescribeCol) {
+        let stmt = self.resolve_handle(&call.handle);
+        let col_num = call.column_number.unwrap_or(1) as SqlUSmallInt;
         let mut col_name = [0u8; 256];
         let mut name_len: SqlSmallInt = 0;
         let mut data_type: SqlSmallInt = 0;
@@ -402,11 +420,11 @@ impl<'a> ReplayContext<'a> {
             )
         };
         let mut mismatches = Vec::new();
-        if let Some(expected_name) = extract_string(&call.output_params) {
+        if let Some(expected_name) = &call.column_name {
             let actual = unsafe { CStr::from_ptr(col_name.as_ptr() as *const _) }
                 .to_string_lossy()
                 .to_string();
-            if actual != expected_name {
+            if actual != *expected_name {
                 mismatches.push(format!(
                     "Column name: expected '{expected_name}', got '{actual}'"
                 ));
@@ -417,29 +435,28 @@ impl<'a> ReplayContext<'a> {
         } else {
             Some(mismatches.join("; "))
         };
-        self.record_result_with_details(call, ret, false, details);
+        self.record_with_details(call.return_code, "SQLDescribeCol", ret, false, details);
     }
 
-    fn replay_fetch_scroll(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
-        let orientation = extract_int(&call.output_params, 1).unwrap_or(1) as SqlSmallInt;
-        let offset = extract_int(&call.output_params, 2).unwrap_or(1) as SqlLen;
+    fn replay_fetch_scroll(&mut self, call: &crate::model::FetchScroll) {
+        let stmt = self.resolve_handle(&call.handle);
+        let orientation = call.orientation.unwrap_or(1) as SqlSmallInt;
+        let offset = call.offset.unwrap_or(1) as SqlLen;
         let ret = unsafe { SQLFetchScroll(stmt, orientation, offset) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLFetchScroll", ret, false);
     }
 
-    fn replay_fetch(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
+    fn replay_fetch(&mut self, call: &crate::model::Fetch) {
+        let stmt = self.resolve_handle(&call.handle);
         let ret = unsafe { SQLFetch(stmt) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLFetch", ret, false);
     }
 
-    fn replay_get_data(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
-        let col_num = extract_int(&call.output_params, 1).unwrap_or(1) as SqlUSmallInt;
-        let target_type =
-            extract_int(&call.output_params, 2).unwrap_or(i64::from(SQL_C_CHAR)) as SqlSmallInt;
-        let buf_len = extract_int(&call.output_params, 4).unwrap_or(1024) as SqlLen;
+    fn replay_get_data(&mut self, call: &crate::model::GetData) {
+        let stmt = self.resolve_handle(&call.handle);
+        let col_num = call.column_number.unwrap_or(1) as SqlUSmallInt;
+        let target_type = call.target_type.unwrap_or(i64::from(SQL_C_CHAR)) as SqlSmallInt;
+        let buf_len = call.buffer_length.unwrap_or(1024) as SqlLen;
         let mut buffer = vec![0u8; buf_len as usize + 1];
         let mut indicator: SqlLen = 0;
         let ret = unsafe {
@@ -454,34 +471,34 @@ impl<'a> ReplayContext<'a> {
         };
         let mut details = None;
         if ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO {
-            if let Some(expected_str) = extract_string(&call.output_params) {
+            if let Some(expected_str) = &call.value {
                 let actual = unsafe { CStr::from_ptr(buffer.as_ptr() as *const _) }
                     .to_string_lossy()
                     .to_string();
-                if actual != expected_str {
+                if actual != *expected_str {
                     details = Some(format!(
                         "Data value: expected '{expected_str}', got '{actual}'"
                     ));
                 }
             }
         }
-        self.record_result_with_details(call, ret, false, details);
+        self.record_with_details(call.return_code, "SQLGetData", ret, false, details);
     }
 
-    fn replay_more_results(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
+    fn replay_more_results(&mut self, call: &crate::model::MoreResults) {
+        let stmt = self.resolve_handle(&call.handle);
         let ret = unsafe { SQLMoreResults(stmt) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLMoreResults", ret, false);
     }
 
-    fn replay_close_cursor(&mut self, call: &OdbcCall) {
-        let stmt = self.resolve_stmt(&call.output_params);
+    fn replay_close_cursor(&mut self, call: &crate::model::CloseCursor) {
+        let stmt = self.resolve_handle(&call.handle);
         let ret = unsafe { SQLCloseCursor(stmt) };
-        self.record_result(call, ret, false);
+        self.record(call.return_code, "SQLCloseCursor", ret, false);
     }
 
-    fn replay_get_info(&mut self, call: &OdbcCall, dbc: SqlHandle) {
-        let info_type = extract_int(&call.output_params, 1).unwrap_or(0) as SqlUSmallInt;
+    fn replay_get_info(&mut self, call: &crate::model::GetInfo, dbc: SqlHandle) {
+        let info_type = call.info_type_value.unwrap_or(0) as SqlUSmallInt;
         let mut buffer = [0u8; 256];
         let mut len: SqlSmallInt = 0;
         let ret = unsafe {
@@ -493,52 +510,52 @@ impl<'a> ReplayContext<'a> {
                 &mut len,
             )
         };
-        self.record_result(call, ret, true);
+        self.record(call.return_code, "SQLGetInfo", ret, true);
     }
 
-    fn replay_free_handle(&mut self, call: &OdbcCall) {
-        let handle_type_value = extract_int(&call.output_params, 0);
-        let Some(ht) = handle_type_value.and_then(HandleType::from_value) else {
+    fn replay_free_handle(&mut self, call: &crate::model::FreeHandle) {
+        let Some(ht) = call.handle_type else {
             return;
         };
         if matches!(ht, HandleType::Env | HandleType::Dbc) {
             return;
         }
-        let addr = extract_addr(&call.output_params, 1);
-        if let Some(handle) = addr.and_then(|a| self.handle_map.remove(&a)) {
+        if let Some(handle) = call.handle.as_ref().and_then(|a| self.handle_map.remove(a)) {
             unsafe {
                 SQLFreeHandle(SQL_HANDLE_STMT, handle);
             }
         }
     }
 
-    fn resolve_stmt(&self, params: &[crate::model::Parameter]) -> SqlHandle {
-        for param in params {
-            if let ParamValue::Address(addr) = &param.value {
-                if let Some(&handle) = self.handle_map.get(addr) {
-                    return handle;
-                }
-            }
-        }
-        ptr::null_mut()
+    fn resolve_handle(&self, addr: &Option<String>) -> SqlHandle {
+        addr.as_ref()
+            .and_then(|a| self.handle_map.get(a))
+            .copied()
+            .unwrap_or(ptr::null_mut())
     }
 
-    fn record_result(&mut self, call: &OdbcCall, actual: SqlReturn, relaxed_success: bool) {
-        self.record_result_with_details(call, actual, relaxed_success, None);
-    }
-
-    fn record_result_with_details(
+    fn record(
         &mut self,
-        call: &OdbcCall,
+        expected: ReturnCode,
+        function_name: &str,
+        actual: SqlReturn,
+        relaxed_success: bool,
+    ) {
+        self.record_with_details(expected, function_name, actual, relaxed_success, None);
+    }
+
+    fn record_with_details(
+        &mut self,
+        expected: ReturnCode,
+        function_name: &str,
         actual: SqlReturn,
         relaxed_success: bool,
         details: Option<String>,
     ) {
-        let expected = call.return_code;
         let passed =
             self.return_codes_match(expected, actual, relaxed_success) && details.is_none();
         self.results.push(CallResult {
-            function_name: call.function_name.clone(),
+            function_name: function_name.to_string(),
             expected_return_code: expected,
             actual_return_code: actual,
             passed,
@@ -574,42 +591,6 @@ fn expected_code(rc: ReturnCode) -> SqlReturn {
         ReturnCode::NeedData => 99,
         ReturnCode::StillExecuting => 2,
     }
-}
-
-fn extract_int(params: &[crate::model::Parameter], idx: usize) -> Option<i64> {
-    params.get(idx).and_then(|p| match &p.value {
-        ParamValue::Integer(v) => Some(*v),
-        ParamValue::NamedConstant { value, .. } => Some(*value),
-        _ => None,
-    })
-}
-
-fn extract_output_int(params: &[crate::model::Parameter], idx: usize) -> Option<i64> {
-    params.get(idx).and_then(|p| match &p.value {
-        ParamValue::OutputInteger { value, .. } => Some(*value),
-        _ => None,
-    })
-}
-
-fn extract_addr(params: &[crate::model::Parameter], idx: usize) -> Option<String> {
-    params.get(idx).and_then(|p| match &p.value {
-        ParamValue::Address(a) => Some(a.clone()),
-        _ => None,
-    })
-}
-
-fn extract_output_addr(params: &[crate::model::Parameter], idx: usize) -> Option<String> {
-    params.get(idx).and_then(|p| match &p.value {
-        ParamValue::OutputAddress { output_address, .. } => Some(output_address.clone()),
-        _ => None,
-    })
-}
-
-fn extract_string(params: &[crate::model::Parameter]) -> Option<String> {
-    params.iter().find_map(|p| match &p.value {
-        ParamValue::StringValue(s) => Some(s.clone()),
-        _ => None,
-    })
 }
 
 pub fn print_report(summary: &ReplaySummary) {

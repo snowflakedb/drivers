@@ -8,6 +8,7 @@ use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -16,12 +17,14 @@ use crate::apis::database_driver_v1::{
 };
 use crate::config::config_manager;
 use crate::config::path_resolver;
+use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::rest::snowflake::error::SfError;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
+use std::future::Future;
 use std::sync::LazyLock;
 use tracing::instrument;
 
@@ -512,6 +515,39 @@ fn extract_query_id(error: &ApiError) -> Option<String> {
     }
 }
 
+/// Map a `QueryResponseProcessingError` to a more specific `StatusCode` for
+/// file-transfer (PUT/GET) operations.  Falls back to `InternalError` for
+/// non-file-transfer query-processing failures.
+fn file_transfer_status_code(error: &QueryResponseProcessingError) -> StatusCode {
+    match error {
+        QueryResponseProcessingError::FileUpload {
+            source: FileManagerError::PathExpansion { .. } | FileManagerError::NoFilesMatched { .. },
+            ..
+        } => StatusCode::LocalFileNotFound,
+        QueryResponseProcessingError::FileUpload {
+            source: FileManagerError::Io { .. },
+            ..
+        } => StatusCode::LocalFileNotFound,
+        QueryResponseProcessingError::FileUpload {
+            source: FileManagerError::CompressionType { .. },
+            ..
+        } => StatusCode::UnsupportedCompression,
+        QueryResponseProcessingError::FileDownload {
+            source:
+                FileManagerError::S3Download { .. }
+                | FileManagerError::GcsDownload { .. }
+                | FileManagerError::AzureDownload { .. },
+            ..
+        } => StatusCode::RemoteFileNotFound,
+        QueryResponseProcessingError::FileDownload {
+            source: FileManagerError::Io { .. },
+            ..
+        } => StatusCode::RemoteFileNotFound,
+        QueryResponseProcessingError::RemoteFileNotFound { .. } => StatusCode::RemoteFileNotFound,
+        _ => StatusCode::InternalError,
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -570,7 +606,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
-        ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
+        ApiError::QueryResponseProcessing { source, .. } => {
+            file_transfer_status_code(source.as_ref())
+        }
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
@@ -734,90 +772,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(
-        name = "DatabaseDriverV1::database_set_option_string",
-        skip(self, input)
-    )]
-    async fn database_set_option_string(
-        &self,
-        input: DatabaseSetOptionStringRequest,
-    ) -> Result<DatabaseSetOptionStringResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
-
-        self.driver
-            .database_set_option(db_handle.into(), input.key, Setting::String(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(DatabaseSetOptionStringResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::database_set_option_bytes",
-        skip(self, input)
-    )]
-    async fn database_set_option_bytes(
-        &self,
-        input: DatabaseSetOptionBytesRequest,
-    ) -> Result<DatabaseSetOptionBytesResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
-
-        self.driver
-            .database_set_option(db_handle.into(), input.key, Setting::Bytes(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(DatabaseSetOptionBytesResponse {})
-    }
-
-    #[instrument(name = "DatabaseDriverV1::database_set_option_int", skip(self, input))]
-    async fn database_set_option_int(
-        &self,
-        input: DatabaseSetOptionIntRequest,
-    ) -> Result<DatabaseSetOptionIntResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
-
-        self.driver
-            .database_set_option(db_handle.into(), input.key, Setting::Int(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(DatabaseSetOptionIntResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::database_set_option_double",
-        skip(self, input)
-    )]
-    async fn database_set_option_double(
-        &self,
-        input: DatabaseSetOptionDoubleRequest,
-    ) -> Result<DatabaseSetOptionDoubleResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
-
-        self.driver
-            .database_set_option(db_handle.into(), input.key, Setting::Double(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(DatabaseSetOptionDoubleResponse {})
-    }
-
-    #[instrument(name = "DatabaseDriverV1::database_set_option_bool", skip(self, input))]
-    async fn database_set_option_bool(
-        &self,
-        input: DatabaseSetOptionBoolRequest,
-    ) -> Result<DatabaseSetOptionBoolResponse, DriverException> {
-        let db_handle = required(input.db_handle, "Database handle is required")?;
-
-        self.driver
-            .database_set_option(db_handle.into(), input.key, Setting::Bool(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(DatabaseSetOptionBoolResponse {})
-    }
-
     #[instrument(name = "DatabaseDriverV1::database_set_options", skip(self, input))]
     async fn database_set_options(
         &self,
@@ -895,96 +849,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionNewResponse {
             conn_handle: Some(ConnectionHandle::from(handle)),
         })
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::connection_set_option_string",
-        skip(self, input)
-    )]
-    async fn connection_set_option_string(
-        &self,
-        input: ConnectionSetOptionStringRequest,
-    ) -> Result<ConnectionSetOptionStringResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
-        self.driver
-            .connection_set_option(conn_handle.into(), input.key, Setting::String(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(ConnectionSetOptionStringResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::connection_set_option_bytes",
-        skip(self, input)
-    )]
-    async fn connection_set_option_bytes(
-        &self,
-        input: ConnectionSetOptionBytesRequest,
-    ) -> Result<ConnectionSetOptionBytesResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
-        self.driver
-            .connection_set_option(conn_handle.into(), input.key, Setting::Bytes(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(ConnectionSetOptionBytesResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::connection_set_option_int",
-        skip(self, input)
-    )]
-    async fn connection_set_option_int(
-        &self,
-        input: ConnectionSetOptionIntRequest,
-    ) -> Result<ConnectionSetOptionIntResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
-        self.driver
-            .connection_set_option(conn_handle.into(), input.key, Setting::Int(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(ConnectionSetOptionIntResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::connection_set_option_double",
-        skip(self, input)
-    )]
-    async fn connection_set_option_double(
-        &self,
-        input: ConnectionSetOptionDoubleRequest,
-    ) -> Result<ConnectionSetOptionDoubleResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
-        self.driver
-            .connection_set_option(conn_handle.into(), input.key, Setting::Double(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(ConnectionSetOptionDoubleResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::connection_set_option_bool",
-        skip(self, input)
-    )]
-    async fn connection_set_option_bool(
-        &self,
-        input: ConnectionSetOptionBoolRequest,
-    ) -> Result<ConnectionSetOptionBoolResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
-        self.driver
-            .connection_set_option(conn_handle.into(), input.key, Setting::Bool(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(ConnectionSetOptionBoolResponse {})
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_set_options", skip(self, input))]
@@ -1406,93 +1270,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(
-        name = "DatabaseDriverV1::statement_set_option_string",
-        skip(self, input)
-    )]
-    async fn statement_set_option_string(
-        &self,
-        input: StatementSetOptionStringRequest,
-    ) -> Result<StatementSetOptionStringResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        self.driver
-            .statement_set_option(stmt_handle.into(), input.key, Setting::String(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(StatementSetOptionStringResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::statement_set_option_bytes",
-        skip(self, input)
-    )]
-    async fn statement_set_option_bytes(
-        &self,
-        input: StatementSetOptionBytesRequest,
-    ) -> Result<StatementSetOptionBytesResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        self.driver
-            .statement_set_option(stmt_handle.into(), input.key, Setting::Bytes(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(StatementSetOptionBytesResponse {})
-    }
-
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_int", skip(self, input))]
-    async fn statement_set_option_int(
-        &self,
-        input: StatementSetOptionIntRequest,
-    ) -> Result<StatementSetOptionIntResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        self.driver
-            .statement_set_option(stmt_handle.into(), input.key, Setting::Int(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(StatementSetOptionIntResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::statement_set_option_double",
-        skip(self, input)
-    )]
-    async fn statement_set_option_double(
-        &self,
-        input: StatementSetOptionDoubleRequest,
-    ) -> Result<StatementSetOptionDoubleResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        self.driver
-            .statement_set_option(stmt_handle.into(), input.key, Setting::Double(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(StatementSetOptionDoubleResponse {})
-    }
-
-    #[instrument(
-        name = "DatabaseDriverV1::statement_set_option_bool",
-        skip(self, input)
-    )]
-    async fn statement_set_option_bool(
-        &self,
-        input: StatementSetOptionBoolRequest,
-    ) -> Result<StatementSetOptionBoolResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        self.driver
-            .statement_set_option(stmt_handle.into(), input.key, Setting::Bool(input.value))
-            .await
-            .to_protobuf()?;
-
-        Ok(StatementSetOptionBoolResponse {})
-    }
-
     #[instrument(name = "DatabaseDriverV1::statement_set_options", skip(self, input))]
     async fn statement_set_options(
         &self,
@@ -1551,6 +1328,29 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_execute_async", skip(self, input))]
+    async fn statement_execute_async(
+        &self,
+        input: StatementExecuteAsyncRequest,
+    ) -> Result<StatementExecuteAsyncResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+
+        let bindings_opt = input
+            .bindings
+            .and_then(|b| b.binding_type)
+            .map(BindingType::from);
+
+        let result = self
+            .driver
+            .statement_execute_async(stmt_handle.into(), bindings_opt)
+            .await
+            .to_protobuf()?;
+
+        Ok(StatementExecuteAsyncResponse {
+            query_id: result.query_id,
+        })
+    }
+
     #[instrument(
         name = "DatabaseDriverV1::statement_execute_partitions",
         skip(self, _input)
@@ -1596,6 +1396,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             chunks.push(ResultChunk {
                 format: ChunkFormat::ArrowIpc as i32,
                 data: Some(result_chunk::Data::Inline(base64_data)),
+                row_count: chunk_info.initial_chunk_row_count as i32,
+                compressed_size: None,
+                uncompressed_size: None,
             });
         }
 
@@ -1606,6 +1409,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
                     url: c.url.clone(),
                     headers: c.headers.clone(),
                 })),
+                row_count: c.row_count,
+                compressed_size: Some(c.compressed_size),
+                uncompressed_size: Some(c.uncompressed_size),
             });
         }
 
@@ -1711,6 +1517,16 @@ static BLOCKING_CLIENT_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::ne
         .expect("Failed to create blocking protobuf client runtime")
 });
 
+type BlockingProtoError = Box<proto_utils::ProtoError<DriverException>>;
+type BlockingProtoResult<T> = Result<T, BlockingProtoError>;
+
+fn block_on_client_call<F, T>(future: F) -> BlockingProtoResult<T>
+where
+    F: Future<Output = Result<T, proto_utils::ProtoError<DriverException>>>,
+{
+    BLOCKING_CLIENT_RUNTIME.block_on(future).map_err(Box::new)
+}
+
 /// Blocking adapters for synchronous Rust test/support code that drives
 /// the in-process protobuf client. Production async paths should call
 /// the generated async client methods directly.
@@ -1719,67 +1535,59 @@ pub trait DatabaseDriverClientBlockingExt {
     fn database_new_blocking(
         &self,
         input: DatabaseNewRequest,
-    ) -> Result<DatabaseNewResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<DatabaseNewResponse>;
     fn database_init_blocking(
         &self,
         input: DatabaseInitRequest,
-    ) -> Result<DatabaseInitResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<DatabaseInitResponse>;
     fn connection_new_blocking(
         &self,
         input: ConnectionNewRequest,
-    ) -> Result<ConnectionNewResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<ConnectionNewResponse>;
     fn connection_init_blocking(
         &self,
         input: ConnectionInitRequest,
-    ) -> Result<ConnectionInitResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<ConnectionInitResponse>;
+    fn connection_set_options_blocking(
+        &self,
+        input: ConnectionSetOptionsRequest,
+    ) -> BlockingProtoResult<ConnectionSetOptionsResponse>;
     fn statement_new_blocking(
         &self,
         input: StatementNewRequest,
-    ) -> Result<StatementNewResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<StatementNewResponse>;
     fn statement_execute_query_blocking(
         &self,
         input: StatementExecuteQueryRequest,
-    ) -> Result<StatementExecuteQueryResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<StatementExecuteQueryResponse>;
     fn statement_set_sql_query_blocking(
         &self,
         input: StatementSetSqlQueryRequest,
-    ) -> Result<StatementSetSqlQueryResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<StatementSetSqlQueryResponse>;
+    fn statement_set_options_blocking(
+        &self,
+        input: StatementSetOptionsRequest,
+    ) -> BlockingProtoResult<StatementSetOptionsResponse>;
     fn statement_release_blocking(
         &self,
         input: StatementReleaseRequest,
-    ) -> Result<StatementReleaseResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<StatementReleaseResponse>;
     fn statement_result_chunks_blocking(
         &self,
         input: StatementResultChunksRequest,
-    ) -> Result<StatementResultChunksResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<StatementResultChunksResponse>;
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
-    ) -> Result<DatabaseFetchChunkResponse, proto_utils::ProtoError<DriverException>>;
-    fn connection_set_option_string_blocking(
-        &self,
-        input: ConnectionSetOptionStringRequest,
-    ) -> Result<ConnectionSetOptionStringResponse, proto_utils::ProtoError<DriverException>>;
-    fn connection_set_option_int_blocking(
-        &self,
-        input: ConnectionSetOptionIntRequest,
-    ) -> Result<ConnectionSetOptionIntResponse, proto_utils::ProtoError<DriverException>>;
-    fn connection_set_option_bytes_blocking(
-        &self,
-        input: ConnectionSetOptionBytesRequest,
-    ) -> Result<ConnectionSetOptionBytesResponse, proto_utils::ProtoError<DriverException>>;
-    fn statement_set_option_bool_blocking(
-        &self,
-        input: StatementSetOptionBoolRequest,
-    ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<DatabaseFetchChunkResponse>;
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
-    ) -> Result<ConnectionReleaseResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<ConnectionReleaseResponse>;
     fn database_release_blocking(
         &self,
         input: DatabaseReleaseRequest,
-    ) -> Result<DatabaseReleaseResponse, proto_utils::ProtoError<DriverException>>;
+    ) -> BlockingProtoResult<DatabaseReleaseResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1787,112 +1595,98 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
     fn database_new_blocking(
         &self,
         input: DatabaseNewRequest,
-    ) -> Result<DatabaseNewResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.database_new(input))
+    ) -> BlockingProtoResult<DatabaseNewResponse> {
+        block_on_client_call(self.database_new(input))
     }
 
     fn database_init_blocking(
         &self,
         input: DatabaseInitRequest,
-    ) -> Result<DatabaseInitResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.database_init(input))
+    ) -> BlockingProtoResult<DatabaseInitResponse> {
+        block_on_client_call(self.database_init(input))
     }
 
     fn connection_new_blocking(
         &self,
         input: ConnectionNewRequest,
-    ) -> Result<ConnectionNewResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_new(input))
+    ) -> BlockingProtoResult<ConnectionNewResponse> {
+        block_on_client_call(self.connection_new(input))
     }
 
     fn connection_init_blocking(
         &self,
         input: ConnectionInitRequest,
-    ) -> Result<ConnectionInitResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_init(input))
+    ) -> BlockingProtoResult<ConnectionInitResponse> {
+        block_on_client_call(self.connection_init(input))
+    }
+
+    fn connection_set_options_blocking(
+        &self,
+        input: ConnectionSetOptionsRequest,
+    ) -> BlockingProtoResult<ConnectionSetOptionsResponse> {
+        block_on_client_call(self.connection_set_options(input))
     }
 
     fn statement_new_blocking(
         &self,
         input: StatementNewRequest,
-    ) -> Result<StatementNewResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_new(input))
+    ) -> BlockingProtoResult<StatementNewResponse> {
+        block_on_client_call(self.statement_new(input))
     }
 
     fn statement_execute_query_blocking(
         &self,
         input: StatementExecuteQueryRequest,
-    ) -> Result<StatementExecuteQueryResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_execute_query(input))
+    ) -> BlockingProtoResult<StatementExecuteQueryResponse> {
+        block_on_client_call(self.statement_execute_query(input))
     }
 
     fn statement_set_sql_query_blocking(
         &self,
         input: StatementSetSqlQueryRequest,
-    ) -> Result<StatementSetSqlQueryResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_set_sql_query(input))
+    ) -> BlockingProtoResult<StatementSetSqlQueryResponse> {
+        block_on_client_call(self.statement_set_sql_query(input))
+    }
+
+    fn statement_set_options_blocking(
+        &self,
+        input: StatementSetOptionsRequest,
+    ) -> BlockingProtoResult<StatementSetOptionsResponse> {
+        block_on_client_call(self.statement_set_options(input))
     }
 
     fn statement_release_blocking(
         &self,
         input: StatementReleaseRequest,
-    ) -> Result<StatementReleaseResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_release(input))
+    ) -> BlockingProtoResult<StatementReleaseResponse> {
+        block_on_client_call(self.statement_release(input))
     }
 
     fn statement_result_chunks_blocking(
         &self,
         input: StatementResultChunksRequest,
-    ) -> Result<StatementResultChunksResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_result_chunks(input))
+    ) -> BlockingProtoResult<StatementResultChunksResponse> {
+        block_on_client_call(self.statement_result_chunks(input))
     }
 
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
-    ) -> Result<DatabaseFetchChunkResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.database_fetch_chunk(input))
-    }
-
-    fn connection_set_option_string_blocking(
-        &self,
-        input: ConnectionSetOptionStringRequest,
-    ) -> Result<ConnectionSetOptionStringResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_set_option_string(input))
-    }
-
-    fn connection_set_option_int_blocking(
-        &self,
-        input: ConnectionSetOptionIntRequest,
-    ) -> Result<ConnectionSetOptionIntResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_set_option_int(input))
-    }
-
-    fn connection_set_option_bytes_blocking(
-        &self,
-        input: ConnectionSetOptionBytesRequest,
-    ) -> Result<ConnectionSetOptionBytesResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_set_option_bytes(input))
-    }
-
-    fn statement_set_option_bool_blocking(
-        &self,
-        input: StatementSetOptionBoolRequest,
-    ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_set_option_bool(input))
+    ) -> BlockingProtoResult<DatabaseFetchChunkResponse> {
+        block_on_client_call(self.database_fetch_chunk(input))
     }
 
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
-    ) -> Result<ConnectionReleaseResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_release(input))
+    ) -> BlockingProtoResult<ConnectionReleaseResponse> {
+        block_on_client_call(self.connection_release(input))
     }
 
     fn database_release_blocking(
         &self,
         input: DatabaseReleaseRequest,
-    ) -> Result<DatabaseReleaseResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.database_release(input))
+    ) -> BlockingProtoResult<DatabaseReleaseResponse> {
+        block_on_client_call(self.database_release(input))
     }
 }

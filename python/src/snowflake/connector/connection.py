@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 
 from collections.abc import Generator, Iterable
 from functools import cached_property
@@ -17,6 +18,8 @@ from typing import Any, Callable, Union
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
+    ConnectionHandle,
+    DatabaseHandle,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
@@ -26,10 +29,12 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetQueryStatusResponse,
     ConnectionInitRequest,
     ConnectionNewRequest,
+    ConnectionReleaseRequest,
     ConnectionSetOptionsRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
+    DatabaseReleaseRequest,
 )
 from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
@@ -48,12 +53,21 @@ from .telemetry import TelemetryClient
 
 logger = logging.getLogger(__name__)
 
+# backward compatibility constant
+# snowflake-sqlalchemy imports this symbol and calls .get(name) in
+# parse_query_param_type to cast URL query-string values to the types the
+# connector expects.  The universal driver validates parameters internally, so
+# an empty dict is correct: every .get() returns None and values pass through
+# uncast.
+DEFAULT_CONFIGURATION: dict[str, tuple[Any, tuple[type, ...]]] = {}
+
 CLIENT_NAME = "PythonConnector"
 # The old connector used re.match(r"[\w\d_]+") without anchors, so any string
 # starting with a word character was accepted (dots, hyphens, etc. in the tail
 # were silently ignored).  We keep a start-anchored pattern without $ so that
 # callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
 APPLICATION_RE = re.compile(r"^[\w\d_]+")
+LOG_MAX_QUERY_LENGTH = 80
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -114,6 +128,8 @@ class Connection:
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
 
+        self._log_max_query_length: int = kwargs.get("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
+
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):
             self._application = CLIENT_NAME
@@ -130,9 +146,10 @@ class Connection:
         self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
 
         self.db_api = database_driver_client()
-        self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
+        self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
-        self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+        self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
         if autocommit is not None:
@@ -183,13 +200,53 @@ class Connection:
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
+        self._close_lock = threading.Lock()
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
     @pep249
     def close(self) -> None:
-        """Close the connection now."""
-        self._closed = True
+        """Close the connection now.
+
+        Thread-safety: the lock is held only for the flag flip and handle swap
+        (no I/O, no risk of deadlock).  The actual Rust-side release happens
+        outside the lock so concurrent ``close()`` calls are idempotent and
+        in-flight operations see the connection as closed immediately.
+        """
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            conn_handle, self.conn_handle = self.conn_handle, None
+            db_handle, self.db_handle = self.db_handle, None
+
+        if conn_handle:
+            self._release_connection_handle(conn_handle)
+        if db_handle:
+            self._release_database_handle(db_handle)
+
+    def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
+        """Release the Rust-side connection handle."""
+        try:
+            connection_release_request = ConnectionReleaseRequest(conn_handle=conn_handle)
+            self.db_api.connection_release(connection_release_request)
+        except Exception:
+            logger.warning("Failed to release connection handle", exc_info=True)
+
+    def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
+        """Release the Rust-side database handle."""
+        try:
+            database_release_request = DatabaseReleaseRequest(db_handle=db_handle)
+            self.db_api.database_release(database_release_request)
+        except Exception:
+            logger.warning("Failed to release database handle", exc_info=True)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            logger.warning("Failed to close.", exc_info=True)
+            pass
 
     @property
     @pep249
@@ -235,7 +292,7 @@ class Connection:
         return cursor_class(self)
 
     def _check_not_closed(self) -> None:
-        if self._closed:
+        if self.is_closed():
             raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
 
     # Context manager support
@@ -251,7 +308,7 @@ class Connection:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context. Commit on success / rollback on exception if autocommit is OFF."""
         try:
-            if not self._autocommit and not self._closed:
+            if not self.is_closed() and not self._autocommit:
                 if exc_type is None:
                     self.commit()
                 else:
@@ -324,17 +381,29 @@ class Connection:
         Returns:
             ParamStyle: The paramstyle enum value
         """
-        return self._paramstyle
+        return self.__paramstyle
 
     @paramstyle.setter
     def paramstyle(self, value: str | ParamStyle) -> None:
         """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
         if isinstance(value, ParamStyle):
-            self._paramstyle = value
+            self.__paramstyle = value
         elif isinstance(value, str):
-            self._paramstyle = ParamStyle.from_string(value)
+            self.__paramstyle = ParamStyle.from_string(value)
         else:
             raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+
+    @property
+    @backward_compatibility
+    def _paramstyle(self) -> ParamStyle:
+        """Internal binding-style storage (legacy callers assign to ``_paramstyle``)."""
+        return self.__paramstyle
+
+    @_paramstyle.setter
+    @backward_compatibility
+    def _paramstyle(self, value: str | ParamStyle) -> None:
+        """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
+        self.paramstyle = value
 
     def execute_string(
         self,
@@ -568,7 +637,14 @@ class Connection:
     @property
     def log_max_query_length(self) -> int:
         """Maximum number of characters of a query string to log."""
-        raise NotImplementedError("log_max_query_length is not yet implemented")
+        return self._log_max_query_length
+
+    def _format_query_for_log(self, query: str) -> str:
+        """Collapse whitespace and truncate a query string for safe debug logging."""
+        ret = " ".join(line.strip() for line in query.split("\n"))
+        if len(ret) < self.log_max_query_length:
+            return ret
+        return ret[: self.log_max_query_length] + "..."
 
     @property
     def disable_request_pooling(self) -> bool:
