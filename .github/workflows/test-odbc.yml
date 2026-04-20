@@ -127,7 +127,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
+          Invoke-Checked "python -m pip install cmake" { python -m pip install cmake>=4.0.3 }
           cmake --version
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
@@ -172,7 +172,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev ccache
 
-          pip install cmake>=4.0.3
+          python3 -m pip install 'cmake>=4.0.3'
           cmake --version
 
           # Install reference ODBC driver (downloaded installer is cached across runs keyed on ci/reference-odbc-version)
@@ -451,8 +451,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache ninja-build
           # odbc_tests/CMakeLists.txt requires CMake >= 4.0; ubuntu-latest ships ~3.30.
-          # pip wheel is an official Kitware artifact and installs in ~15s (vs ~60s for the .sh installer).
-          pip install 'cmake>=4.0.3'
+          # Prefer `python3 -m pip` over bare `pip` so we don't depend on PATH resolution
+          # pointing at the expected Python. The pip wheel is an official Kitware artifact
+          # and installs in ~15s (vs ~60s for the .sh installer).
+          python3 -m pip install 'cmake>=4.0.3'
           cmake --version
 
       - name: Install dependencies (macOS)
@@ -465,7 +467,8 @@ jobs:
         run: |
           set -euxo pipefail
           # cmake via pip (official Kitware wheel) — faster than brew and keeps Linux/macOS install symmetric.
-          pip install 'cmake>=4.0.3'
+          # `python3 -m pip` avoids PATH-based pip resolution pitfalls.
+          python3 -m pip install 'cmake>=4.0.3'
           # Only packages without pip wheels stay on brew. `ninja` is pre-installed on macos-latest,
           # but listing it here is cheap (no-op if present) and self-documenting.
           brew install unixodbc ccache ninja
@@ -518,9 +521,18 @@ jobs:
             $vcvarsOutput | ForEach-Object { Write-Host $_ }
             throw "vcvarsall.bat amd64 failed with exit code $LASTEXITCODE"
           }
+          # Propagate env vars to BOTH:
+          #   - $env:GITHUB_ENV: visible to subsequent steps in the job (the point of this step)
+          #   - the current PowerShell process: so the post-condition check below actually sees
+          #     the updated PATH. Writes to GITHUB_ENV are buffered and only applied at step
+          #     boundary — without updating the current process env, `Get-Command cl.exe` would
+          #     always fail here even on a perfectly good vcvarsall.bat run.
           $vcvarsOutput | ForEach-Object {
             if ($_ -match '^([^=]+)=(.*)$') {
-              echo "$($Matches[1])=$($Matches[2])" >> $env:GITHUB_ENV
+              $name = $Matches[1]
+              $value = $Matches[2]
+              echo "$name=$value" >> $env:GITHUB_ENV
+              [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
             }
           }
 
