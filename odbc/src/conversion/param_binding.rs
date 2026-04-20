@@ -209,12 +209,11 @@ fn make_converter(
 pub fn odbc_bindings_to_json(
     apd: &ApdDescriptor,
     ipd: &IpdDescriptor,
+    max_params: u16,
 ) -> Result<String, JsonBindingError> {
     let mut json_bindings = Map::new();
 
-    let max_key = apd.desc_count().max(ipd.desc_count());
-
-    for param_num in 1..=max_key {
+    for param_num in 1..=max_params {
         let apd_rec = apd.records.get(&param_num).ok_or_else(|| {
             tracing::error!(
                 "odbc_bindings_to_json: APD record #{param_num} not found. \
@@ -1678,7 +1677,7 @@ mod tests {
             0,
             &mut ind,
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd)?;
+        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()))?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "ANY");
         assert!(parsed["1"]["value"].is_null());
@@ -1695,7 +1694,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         )]);
-        assert!(odbc_bindings_to_json(&apd, &ipd).is_err());
+        assert!(odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).is_err());
     }
 
     #[test]
@@ -1740,7 +1739,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd)?;
+        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()))?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "FIXED");
         assert_eq!(parsed["1"]["value"], "7");
@@ -1758,7 +1757,7 @@ mod tests {
             0,
             &mut ind,
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd)?;
+        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()))?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "ANY");
         assert!(parsed["1"]["value"].is_null());
@@ -1792,7 +1791,64 @@ mod tests {
                 ..IpdRecord::default()
             },
         );
-        assert!(odbc_bindings_to_json(&apd, &ipd).is_err());
+        assert!(odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).is_err());
+    }
+
+    #[test]
+    fn max_params_zero_skips_phantom_dae_binding() -> TestResult {
+        // Simulates: SQLPrepare("SELECT 1") → 0 markers, then
+        // SQLBindParameter(1, ..., (SQLPOINTER)1, ..., SQL_DATA_AT_EXEC).
+        // The DM may or may not strip phantom bindings, so we test the
+        // serializer directly. With max_params=0 the dummy pointer at
+        // address 0x1 must never be dereferenced.
+        let mut dae_ind: sql::Len = sql::DATA_AT_EXEC;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            1usize as sql::Pointer, // dummy DAE token, not a real address
+            0,
+            &mut dae_ind,
+        )]);
+        let json = odbc_bindings_to_json(&apd, &ipd, 0)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed, serde_json::json!({}));
+        Ok(())
+    }
+
+    #[test]
+    fn max_params_caps_serialization_to_valid_range() -> TestResult {
+        // Simulates: SQLPrepare("SELECT ?") → 1 marker, then two bindings:
+        //   param 1 = valid integer
+        //   param 2 = phantom DAE bind with dummy pointer
+        // With max_params=1, only param 1 is serialized; the dummy pointer
+        // for param 2 is never touched.
+        let val: i32 = 42;
+        let mut dae_ind: sql::Len = sql::DATA_AT_EXEC;
+        let (apd, ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::Long,
+                sql::SqlDataType::INTEGER,
+                &val as *const i32 as sql::Pointer,
+                0,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::Char,
+                sql::SqlDataType::VARCHAR,
+                1usize as sql::Pointer, // dummy DAE token
+                0,
+                &mut dae_ind,
+            ),
+        ]);
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "FIXED");
+        assert_eq!(parsed["1"]["value"], "42");
+        assert!(parsed.get("2").is_none());
+        Ok(())
     }
 
     #[test]

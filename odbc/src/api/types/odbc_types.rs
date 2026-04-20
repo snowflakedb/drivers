@@ -1229,7 +1229,7 @@ pub struct Statement {
     /// `SQLPrepare`. Used to ignore spurious APD bindings on non-existent
     /// parameters (e.g. DAE detection for "SELECT 1" with a bound param).
     /// `None` before the first prepare or after exec-direct.
-    pub prepared_param_count: Option<usize>,
+    pub prepared_param_count: Option<u16>,
     /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
     pub last_query_id: Option<String>,
     /// Cancelled by `SQLCancel` (possibly from another thread) and observed
