@@ -383,7 +383,7 @@ async fn send_login_request(
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
 
-    let user_agent = user_agent(&login_parameters.client_info);
+    let user_agent = build_user_agent(&login_parameters.client_info);
 
     let build_request = || {
         client

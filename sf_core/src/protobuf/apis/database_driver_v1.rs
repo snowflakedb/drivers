@@ -472,6 +472,12 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 },
             )),
         },
+        ApiError::ConnectionClosed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
+        ApiError::LogoutFailed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
     }
 }
 
@@ -585,6 +591,8 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Base64Decoding { .. } => StatusCode::InternalError,
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
+        ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
+        ApiError::LogoutFailed { .. } => StatusCode::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
@@ -857,6 +865,35 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .connection_release(conn_handle.into())
             .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_close", skip(self, input))]
+    async fn connection_close(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        self.driver
+            .connection_close(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionCloseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_is_closed", skip(self, input))]
+    async fn connection_is_closed(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let is_closed = self
+            .driver
+            .connection_is_closed(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionIsClosedResponse { is_closed })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(self, input))]
@@ -1513,6 +1550,18 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: DatabaseReleaseRequest,
     ) -> BlockingProtoResult<DatabaseReleaseResponse>;
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> BlockingProtoResult<ConnectionCloseResponse>;
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> BlockingProtoResult<ConnectionIsClosedResponse>;
+    fn connection_get_info_blocking(
+        &self,
+        input: ConnectionGetInfoRequest,
+    ) -> BlockingProtoResult<ConnectionGetInfoResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1613,5 +1662,26 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: DatabaseReleaseRequest,
     ) -> BlockingProtoResult<DatabaseReleaseResponse> {
         block_on_client_call(self.database_release(input))
+    }
+
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> BlockingProtoResult<ConnectionCloseResponse> {
+        block_on_client_call(self.connection_close(input))
+    }
+
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> BlockingProtoResult<ConnectionIsClosedResponse> {
+        block_on_client_call(self.connection_is_closed(input))
+    }
+
+    fn connection_get_info_blocking(
+        &self,
+        input: ConnectionGetInfoRequest,
+    ) -> BlockingProtoResult<ConnectionGetInfoResponse> {
+        block_on_client_call(self.connection_get_info(input))
     }
 }
