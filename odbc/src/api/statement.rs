@@ -2,12 +2,13 @@ use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu,
-    DisconnectedSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu,
+    ArrowArrayStreamReaderCreationSnafu, ConcatNullValueSnafu, CursorAlreadyOpenSnafu,
+    DaeRequiredSnafu, DisconnectedSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
     InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
-    NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required,
-    StatementNotExecutedSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
+    NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
+    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
+    UnsupportedFeatureSnafu,
 };
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
@@ -2142,12 +2143,12 @@ pub fn put_data(
     let mut inner = guard.inner.lock();
 
     match inner.state.take() {
+        // S9 → S10 on success, S9 → S9 on error
         StatementState::AwaitingPutData {
             mut dae_context,
             origin,
         } => {
-            let param_num = dae_context.dae_params[dae_context.current_index];
-            let result = accumulate_put_data(&mut dae_context, param_num, data_ptr, str_len_or_ind);
+            let result = put_data_inner(&inner.apd, &mut dae_context, data_ptr, str_len_or_ind);
             inner.state.set(if result.is_ok() {
                 StatementState::PutDataCalled {
                     dae_context,
@@ -2161,13 +2162,12 @@ pub fn put_data(
             });
             result
         }
-
+        // S10 → S10 regardless of success or error
         StatementState::PutDataCalled {
             mut dae_context,
             origin,
         } => {
-            let param_num = dae_context.dae_params[dae_context.current_index];
-            let result = accumulate_put_data(&mut dae_context, param_num, data_ptr, str_len_or_ind);
+            let result = put_data_inner(&inner.apd, &mut dae_context, data_ptr, str_len_or_ind);
             inner.state.set(StatementState::PutDataCalled {
                 dae_context,
                 origin,
@@ -2182,12 +2182,49 @@ pub fn put_data(
     }
 }
 
+/// Validate inputs and accumulate one `SQLPutData` chunk.
+///
+/// Separated from `put_data()` so that each match arm can restore its own
+/// state variant on error. This makes it structurally impossible to restore
+/// the wrong ODBC state (S9 vs S10) after a validation failure -- the
+/// compiler enforces correctness rather than relying on a manual boolean flag.
+fn put_data_inner(
+    apd: &crate::api::ApdDescriptor,
+    dae_context: &mut DaeContext,
+    data_ptr: sql::Pointer,
+    str_len_or_ind: sql::Len,
+) -> OdbcResult<()> {
+    let param_num = dae_context.dae_params[dae_context.current_index];
+
+    // HY009: null DataPtr with non-null-data, non-zero indicator.
+    // Per spec, (null, 0) and (null, SQL_NULL_DATA) are both valid.
+    if data_ptr.is_null() && str_len_or_ind != sql::NULL_DATA && str_len_or_ind != 0 {
+        return NullPointerSnafu.fail();
+    }
+
+    // HY090: negative StrLen_or_Ind that isn't SQL_NTS or SQL_NULL_DATA
+    if str_len_or_ind < 0 && str_len_or_ind != sql::NTS && str_len_or_ind != sql::NULL_DATA {
+        return InvalidBufferLengthSnafu {
+            length: str_len_or_ind as i64,
+        }
+        .fail();
+    }
+
+    let c_type = apd
+        .records
+        .get(&param_num)
+        .map(|r| r.value_type)
+        .unwrap_or(CDataType::Default);
+    accumulate_put_data(dae_context, param_num, data_ptr, str_len_or_ind, c_type)
+}
+
 /// Accumulate a single `SQLPutData` chunk into the DAE context.
 fn accumulate_put_data(
     ctx: &mut DaeContext,
     param_num: u16,
     data_ptr: sql::Pointer,
     str_len_or_ind: sql::Len,
+    c_type: CDataType,
 ) -> OdbcResult<()> {
     let entry = ctx.pushed_data.get_mut(&param_num).ok_or_else(|| {
         crate::api::error::CountFieldIncorrectSnafu {
@@ -2196,13 +2233,34 @@ fn accumulate_put_data(
         .build()
     })?;
 
+    // HY020: cannot mix SQL_NULL_DATA with previously sent data chunks
+    if matches!(entry, ParamValue::Data(chunks) if !chunks.is_empty())
+        && str_len_or_ind == sql::NULL_DATA
+    {
+        return ConcatNullValueSnafu.fail();
+    }
+
     if str_len_or_ind == sql::NULL_DATA {
         *entry = ParamValue::Null;
         return Ok(());
     }
 
-    if data_ptr.is_null() {
-        return NullPointerSnafu.fail();
+    // HY020: cannot send data after SQL_NULL_DATA was already set
+    if matches!(entry, ParamValue::Null) {
+        return ConcatNullValueSnafu.fail();
+    }
+
+    // HY019: only character (SQL_C_CHAR, SQL_C_WCHAR) and binary (SQL_C_BINARY)
+    // types may be sent in multiple pieces. A second chunk for any other type
+    // is a spec violation.
+    if matches!(entry, ParamValue::Data(chunks) if !chunks.is_empty()) {
+        let splittable = matches!(
+            c_type,
+            CDataType::Char | CDataType::WChar | CDataType::Binary
+        );
+        if !splittable {
+            return NonCharBinarySentInPiecesSnafu.fail();
+        }
     }
 
     let len = if str_len_or_ind == sql::NTS {
@@ -2219,12 +2277,16 @@ fn accumulate_put_data(
         str_len_or_ind as usize
     };
 
+    if len == 0 {
+        return Ok(());
+    }
+
     let chunk = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, len) }.to_vec();
 
     match entry {
         ParamValue::Pending => *entry = ParamValue::Data(vec![chunk]),
         ParamValue::Data(chunks) => chunks.push(chunk),
-        ParamValue::Null => *entry = ParamValue::Data(vec![chunk]),
+        ParamValue::Null => unreachable!("NULL case handled above"),
     }
     Ok(())
 }
