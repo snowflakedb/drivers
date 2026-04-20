@@ -405,7 +405,18 @@ impl WriteODBCType for SnowflakeNumber {
 
                 let scale_diff = target_scale as i32 - self.scale as i32;
                 let (unscaled, truncated): (u128, bool) = if scale_diff >= 0 {
-                    (abs_value * pow10_u128(scale_diff as u32)?, false)
+                    let multiplier = pow10_u128(scale_diff as u32)?;
+                    let unscaled = abs_value.checked_mul(multiplier).ok_or_else(|| {
+                        NumericValueOutOfRangeSnafu {
+                            reason: format!(
+                                "Re-scaling numeric from scale {} to {target_scale} overflows u128 \
+                                 (abs_value={abs_value}, multiplier=10^{scale_diff})",
+                                self.scale
+                            ),
+                        }
+                        .build()
+                    })?;
+                    (unscaled, false)
                 } else {
                     let divisor = pow10_u128((-scale_diff) as u32)?;
                     (abs_value / divisor, abs_value % divisor != 0)
