@@ -186,20 +186,31 @@ impl SnowflakeNumber {
     /// Format a scaled `i128` as a decimal string into `buf` without any heap
     /// allocation, returning the filled slice as `&str`.
     ///
-    /// `buf` must be large enough for the widest possible output: optional
-    /// `-`, up to 39 digits of whole part, a `.`, and up to `MAX_DECIMAL_SCALE`
-    /// fractional digits. 48 bytes is sufficient. `scale` is asserted to be in
-    /// `0..=MAX_DECIMAL_SCALE`.
+    /// Preconditions validated at runtime:
+    /// - `scale <= MAX_DECIMAL_SCALE` — otherwise returns
+    ///   `NumericValueOutOfRange` (a scale of 39+ would overflow the 48-byte
+    ///   output buffer).
+    /// - The scratch buffer for absolute-value digits is 40 bytes (fits the
+    ///   39-digit expansion of any `u128`); if that formatting ever fails
+    ///   (e.g. the type widens), the caller receives `NumericValueOutOfRange`.
     ///
     /// Output shape:
     /// - `scale == 0`              → `[-]<digits>`
     /// - `digits.len() > scale`    → `[-]<int>.<frac>`
     /// - `digits.len() <= scale`   → `[-]0.<zero-pad><digits>`
-    fn format_decimal_into(value: i128, scale: u32, buf: &mut [u8; 48]) -> &str {
-        assert!(
-            scale <= MAX_DECIMAL_SCALE,
-            "format_decimal_into: scale={scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}",
-        );
+    fn format_decimal_into(
+        value: i128,
+        scale: u32,
+        buf: &mut [u8; 48],
+    ) -> Result<&str, WriteOdbcError> {
+        if scale > MAX_DECIMAL_SCALE {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "format_decimal_into: scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}",
+                ),
+            }
+            .fail();
+        }
         // Stage the absolute-value digits through `itoa`-equivalent formatting
         // (via the std library's `Display` for unsigned integers, which writes
         // directly into the provided buffer without heap allocation).
@@ -207,11 +218,15 @@ impl SnowflakeNumber {
         let abs_len = {
             let mut cur = std::io::Cursor::new(&mut abs_tmp[..]);
             use std::io::Write as _;
-            // 40 bytes always fits the decimal expansion of any u128 (max 39
-            // digits); the .expect() guards against the buffer being shrunk
-            // or a wider type being formatted into it.
-            write!(cur, "{}", value.unsigned_abs())
-                .expect("abs_tmp[40] too small for u128 Display");
+            if write!(cur, "{}", value.unsigned_abs()).is_err() {
+                return NumericValueOutOfRangeSnafu {
+                    reason: format!(
+                        "unsigned abs of i128 {value} does not fit in the {}-byte digit buffer",
+                        abs_tmp.len()
+                    ),
+                }
+                .fail();
+            }
             cur.position() as usize
         };
         let digits = &abs_tmp[..abs_len];
@@ -249,7 +264,7 @@ impl SnowflakeNumber {
             len += digits.len();
         }
         // SAFETY: only ASCII digits, '-', and '.' were written above.
-        unsafe { std::str::from_utf8_unchecked(&buf[..len]) }
+        Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
     }
 }
 
@@ -358,7 +373,7 @@ impl WriteODBCType for SnowflakeNumber {
             }
             CDataType::Char => {
                 let mut num_buf = [0u8; 48];
-                let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf);
+                let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf)?;
                 let warnings = binding.write_char_string(num_str, get_data_offset);
                 if warnings
                     .iter()
@@ -378,7 +393,7 @@ impl WriteODBCType for SnowflakeNumber {
             }
             CDataType::WChar => {
                 let mut num_buf = [0u8; 48];
-                let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf);
+                let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf)?;
                 let warnings = binding.write_wchar_string(num_str, get_data_offset);
                 let wchar_capacity = (binding.buffer_length / 2) as usize;
                 if warnings
@@ -636,7 +651,9 @@ mod format_decimal_into_tests {
 
     fn fmt(value: i128, scale: u32) -> String {
         let mut buf = [0u8; 48];
-        SnowflakeNumber::format_decimal_into(value, scale, &mut buf).to_string()
+        SnowflakeNumber::format_decimal_into(value, scale, &mut buf)
+            .expect("unexpected format error for in-range scale")
+            .to_string()
     }
 
     #[test]
@@ -727,12 +744,18 @@ mod format_decimal_into_tests {
     }
 
     #[test]
-    #[should_panic(expected = "exceeds supported range 0..=38")]
-    fn scale_above_max_decimal_scale_panics() {
-        // Defense-in-depth: the function asserts the precondition rather
-        // than overflowing the 48-byte output buffer.
+    fn scale_above_max_decimal_scale_returns_numeric_value_out_of_range() {
+        // Defense-in-depth: the function rejects an out-of-range scale with
+        // a typed conversion error rather than overflowing the 48-byte output
+        // buffer.
+        use crate::conversion::error::WriteOdbcError;
         let mut buf = [0u8; 48];
-        SnowflakeNumber::format_decimal_into(1, MAX_DECIMAL_SCALE + 1, &mut buf);
+        let err = SnowflakeNumber::format_decimal_into(1, MAX_DECIMAL_SCALE + 1, &mut buf)
+            .expect_err("expected NumericValueOutOfRange for scale > MAX_DECIMAL_SCALE");
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
     }
 }
 

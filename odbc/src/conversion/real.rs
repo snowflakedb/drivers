@@ -58,21 +58,27 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
 /// roundtrippable" representation.
 ///
 /// The buffer must be at least ~330 bytes to hold the widest possible
-/// `Display` output (e.g. `1e308` prints as 309 digits). We size it at 384
-/// bytes for headroom.
-fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> &str {
+/// `Display` output (`1e308` prints as 309 digits; `1e-300` as ~325). 384
+/// bytes covers every current case with headroom. If `<f64 as Display>` ever
+/// widens enough to overflow the buffer, the caller receives a typed
+/// `NumericValueOutOfRange` error rather than a silent truncation through
+/// the unsafe `from_utf8_unchecked` below.
+fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> Result<&str, WriteOdbcError> {
     let len = {
         let mut cur = Cursor::new(&mut buf[..]);
-        // 384 bytes is comfortably larger than the widest output Rust's
-        // `<f64 as Display>::fmt` produces (~325 bytes for `1e-300`, `1e308`
-        // — Display uses non-scientific notation for all finite values).
-        // The .expect() guards against a future libcore change widening the
-        // format, which would otherwise be silently truncated.
-        write!(cur, "{value}").expect("f64 buf[384] too small for Display output");
+        if write!(cur, "{value}").is_err() {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "f64 value {value} does not fit in the {}-byte Display format buffer",
+                    buf.len()
+                ),
+            }
+            .fail();
+        }
         cur.position() as usize
     };
     // SAFETY: `<f64 as Display>::fmt` only emits ASCII characters.
-    unsafe { std::str::from_utf8_unchecked(&buf[..len]) }
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
 }
 
 fn check_float_range(value: f64, min: f64, max: f64) -> Result<(), WriteOdbcError> {
@@ -270,7 +276,7 @@ impl WriteODBCType for SnowflakeReal {
             }
             CDataType::Char => {
                 let mut num_buf = [0u8; 384];
-                let num_str = format_f64_display_into(snowflake_value, &mut num_buf);
+                let num_str = format_f64_display_into(snowflake_value, &mut num_buf)?;
                 let warnings = binding.write_char_string(num_str, get_data_offset);
                 if warnings
                     .iter()
@@ -292,7 +298,7 @@ impl WriteODBCType for SnowflakeReal {
             }
             CDataType::WChar => {
                 let mut num_buf = [0u8; 384];
-                let num_str = format_f64_display_into(snowflake_value, &mut num_buf);
+                let num_str = format_f64_display_into(snowflake_value, &mut num_buf)?;
                 let warnings = binding.write_wchar_string(num_str, get_data_offset);
                 if warnings
                     .iter()
@@ -510,7 +516,7 @@ mod format_f64_display_into_tests {
 
     fn assert_matches(value: f64) {
         let mut buf = [0u8; 384];
-        let actual = format_f64_display_into(value, &mut buf);
+        let actual = format_f64_display_into(value, &mut buf).unwrap();
         let expected = value.to_string();
         assert_eq!(actual, expected, "mismatch for {value}");
     }

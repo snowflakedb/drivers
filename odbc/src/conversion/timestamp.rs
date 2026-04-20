@@ -229,19 +229,18 @@ fn read_struct_timestamp_tz(
 /// buffer without any heap allocation, returning the filled slice as `&str`.
 ///
 /// 48 bytes is sufficient: `YYYY-MM-DD HH:MM:SS.` = 20 bytes + up to 9 fractional
-/// digits + signed/4-digit year headroom. The previous `format!`-based
-/// implementation allocated a fresh `String` (and a second one for the
-/// fractional part) on every call.
-fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -> &'a str {
+/// digits + signed/4-digit year headroom. If a future chrono release ever
+/// widens this beyond the buffer, the caller receives a typed
+/// `NumericValueOutOfRange` error instead of a silent truncation through
+/// the unsafe `from_utf8_unchecked` below.
+fn format_timestamp_string_into<'a>(
+    dt: &NaiveDateTime,
+    buf: &'a mut [u8; 48],
+) -> Result<&'a str, WriteOdbcError> {
     let nanos = dt.nanosecond();
     let len = {
         let mut cur = Cursor::new(&mut buf[..]);
-        // 48 bytes is comfortably larger than the widest output chrono
-        // produces (~32 bytes including a signed 6-digit year). The .expect()
-        // calls guard against a future chrono release widening the format,
-        // which would otherwise be silently truncated by `write!` returning
-        // `Err` and the unsafe `from_utf8_unchecked` below.
-        write!(
+        let write_result = write!(
             cur,
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             dt.year(),
@@ -251,9 +250,21 @@ fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -
             dt.minute(),
             dt.second()
         )
-        .expect("timestamp buf too small for date+time");
-        if nanos != 0 {
-            write!(cur, ".{nanos:09}").expect("timestamp buf too small for fraction");
+        .and_then(|()| {
+            if nanos != 0 {
+                write!(cur, ".{nanos:09}")
+            } else {
+                Ok(())
+            }
+        });
+        if write_result.is_err() {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "timestamp value does not fit in the {}-byte format buffer",
+                    buf.len()
+                ),
+            }
+            .fail();
         }
         cur.position() as usize
     };
@@ -267,7 +278,7 @@ fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -
         }
     }
     // SAFETY: only ASCII digits, '-', ':', ' ', and '.' were written above.
-    unsafe { std::str::from_utf8_unchecked(&buf[..end]) }
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..end]) })
 }
 
 fn to_sql_timestamp(dt: &NaiveDateTime) -> sql::Timestamp {
@@ -302,7 +313,7 @@ fn write_timestamp_to_odbc(
                 .fail();
             }
             let mut buf = [0u8; 48];
-            let s = format_timestamp_string_into(dt, &mut buf);
+            let s = format_timestamp_string_into(dt, &mut buf)?;
             Ok(binding.write_char_string(s, get_data_offset))
         }
         CDataType::WChar => {
@@ -314,7 +325,7 @@ fn write_timestamp_to_odbc(
                 .fail();
             }
             let mut buf = [0u8; 48];
-            let s = format_timestamp_string_into(dt, &mut buf);
+            let s = format_timestamp_string_into(dt, &mut buf)?;
             Ok(binding.write_wchar_string(s, get_data_offset))
         }
         CDataType::Date | CDataType::TypeDate => {
@@ -643,7 +654,7 @@ mod format_timestamp_string_into_tests {
     fn assert_matches(secs: i64, nanos: u32) {
         let dt = DateTime::from_timestamp(secs, nanos).unwrap().naive_utc();
         let mut buf = [0u8; 48];
-        let actual = format_timestamp_string_into(&dt, &mut buf);
+        let actual = format_timestamp_string_into(&dt, &mut buf).unwrap();
         let expected = format_timestamp_reference(&dt);
         assert_eq!(
             actual, expected,
@@ -681,7 +692,7 @@ mod format_timestamp_string_into_tests {
             .unwrap();
         let mut buf = [0u8; 48];
         assert_eq!(
-            format_timestamp_string_into(&dt, &mut buf),
+            format_timestamp_string_into(&dt, &mut buf).unwrap(),
             "0001-01-01 00:00:00"
         );
     }
