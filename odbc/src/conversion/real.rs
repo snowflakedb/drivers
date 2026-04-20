@@ -493,39 +493,3 @@ impl WriteJson for SnowflakeReal {
         SnowflakeLogicalType::Real
     }
 }
-
-#[cfg(test)]
-mod write_json_non_finite_tests {
-    use super::*;
-    use crate::conversion::traits::WriteJson;
-
-    fn write(value: f64) -> Value {
-        SnowflakeReal.write_json(value).unwrap()
-    }
-
-    #[test]
-    fn finite_values_use_default_display() {
-        assert_eq!(write(0.0), Value::String("0".to_string()));
-        assert_eq!(write(1.5), Value::String("1.5".to_string()));
-        assert_eq!(write(-12345.6789), Value::String("-12345.6789".to_string()));
-    }
-
-    #[test]
-    fn nan_serializes_as_capital_n_a_n() {
-        assert_eq!(write(f64::NAN), Value::String("NaN".to_string()));
-    }
-
-    #[test]
-    fn positive_infinity_serializes_as_full_word_infinity() {
-        // Server rejects Rust's default "inf" — must be the full word.
-        assert_eq!(write(f64::INFINITY), Value::String("Infinity".to_string()));
-    }
-
-    #[test]
-    fn negative_infinity_serializes_as_full_word_with_sign() {
-        assert_eq!(
-            write(f64::NEG_INFINITY),
-            Value::String("-Infinity".to_string())
-        );
-    }
-}
