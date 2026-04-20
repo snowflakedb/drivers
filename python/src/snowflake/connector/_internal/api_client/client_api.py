@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import threading
 
 from ctypes import c_char_p
 from typing import TYPE_CHECKING, Any
@@ -201,10 +202,13 @@ class ProtoTransport:
 
 
 _DATABASE_DRIVER_CLIENT: DatabaseDriverClient | None = None
+_DATABASE_DRIVER_CLIENT_LOCK = threading.Lock()
 
 
 def database_driver_client() -> DatabaseDriverClient:
     global _DATABASE_DRIVER_CLIENT
     if _DATABASE_DRIVER_CLIENT is None:
-        _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
+        with _DATABASE_DRIVER_CLIENT_LOCK:
+            if _DATABASE_DRIVER_CLIENT is None:
+                _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
     return _DATABASE_DRIVER_CLIENT
