@@ -513,54 +513,48 @@ impl WriteJson for SnowflakeReal {
 #[cfg(test)]
 mod format_f64_display_into_tests {
     use super::format_f64_display_into;
-    use crate::conversion::error::WriteOdbcError;
 
-    fn assert_matches(value: f64) -> Result<(), WriteOdbcError> {
+    fn assert_matches(value: f64) {
         let mut buf = [0u8; 384];
-        let actual = format_f64_display_into(value, &mut buf)?;
+        let actual = format_f64_display_into(value, &mut buf).expect("format_f64_display_into");
         let expected = value.to_string();
         assert_eq!(actual, expected, "mismatch for {value}");
-        Ok(())
     }
 
     #[test]
-    fn integer_valued_floats_keep_no_trailing_decimal() -> Result<(), WriteOdbcError> {
+    fn integer_valued_floats_keep_no_trailing_decimal() {
         // Rust's Display for f64 strips ".0"; the stack-buffer path preserves
         // this because it goes through the same Display impl.
-        assert_matches(0.0)?;
-        assert_matches(-0.0)?;
-        assert_matches(1.0)?;
-        assert_matches(-1.0)?;
-        assert_matches(42.0)?;
-        assert_matches(123_456_789.0)?;
-        Ok(())
+        assert_matches(0.0);
+        assert_matches(-0.0);
+        assert_matches(1.0);
+        assert_matches(-1.0);
+        assert_matches(42.0);
+        assert_matches(123_456_789.0);
     }
 
     #[test]
-    fn typical_fractional_values() -> Result<(), WriteOdbcError> {
-        assert_matches(0.1)?;
-        assert_matches(-0.1)?;
-        assert_matches(12345.6789)?;
-        assert_matches(-12345.6789)?;
-        Ok(())
+    fn typical_fractional_values() {
+        assert_matches(0.1);
+        assert_matches(-0.1);
+        assert_matches(12345.6789);
+        assert_matches(-12345.6789);
     }
 
     #[test]
-    fn very_large_and_very_small_magnitudes() -> Result<(), WriteOdbcError> {
-        assert_matches(1e20)?;
-        assert_matches(1e-10)?;
-        assert_matches(1e308)?;
-        assert_matches(-1e308)?;
-        assert_matches(1e-300)?;
-        assert_matches(f64::MIN_POSITIVE)?;
-        Ok(())
+    fn very_large_and_very_small_magnitudes() {
+        assert_matches(1e20);
+        assert_matches(1e-10);
+        assert_matches(1e308);
+        assert_matches(-1e308);
+        assert_matches(1e-300);
+        assert_matches(f64::MIN_POSITIVE);
     }
 
     #[test]
-    fn special_values() -> Result<(), WriteOdbcError> {
-        assert_matches(f64::INFINITY)?;
-        assert_matches(f64::NEG_INFINITY)?;
-        assert_matches(f64::NAN)?;
-        Ok(())
+    fn special_values() {
+        assert_matches(f64::INFINITY);
+        assert_matches(f64::NEG_INFINITY);
+        assert_matches(f64::NAN);
     }
 }

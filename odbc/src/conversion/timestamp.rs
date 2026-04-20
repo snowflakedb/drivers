@@ -618,15 +618,16 @@ impl_snowflake_timestamp!(SnowflakeTimestampTz, tz, SnowflakeLogicalType::Timest
 #[cfg(test)]
 mod format_timestamp_string_into_tests {
     use super::format_timestamp_string_into;
-    use crate::conversion::error::WriteOdbcError;
     use chrono::{DateTime, NaiveDate};
 
-    fn fmt(secs: i64, nanos: u32) -> Result<String, WriteOdbcError> {
+    fn fmt(secs: i64, nanos: u32) -> String {
         let dt = DateTime::from_timestamp(secs, nanos)
             .expect("DateTime::from_timestamp with in-range inputs")
             .naive_utc();
         let mut buf = [0u8; 48];
-        Ok(format_timestamp_string_into(&dt, &mut buf)?.to_string())
+        format_timestamp_string_into(&dt, &mut buf)
+            .expect("format_timestamp_string_into")
+            .to_string()
     }
 
     // 2023-11-14 22:13:20 UTC, an arbitrary mid-range instant used to exercise
@@ -634,47 +635,37 @@ mod format_timestamp_string_into_tests {
     const REF_EPOCH: i64 = 1_700_000_000;
 
     #[test]
-    fn no_fractional_seconds() -> Result<(), WriteOdbcError> {
-        assert_eq!(fmt(0, 0)?, "1970-01-01 00:00:00");
-        assert_eq!(fmt(REF_EPOCH, 0)?, "2023-11-14 22:13:20");
-        Ok(())
+    fn no_fractional_seconds() {
+        assert_eq!(fmt(0, 0), "1970-01-01 00:00:00");
+        assert_eq!(fmt(REF_EPOCH, 0), "2023-11-14 22:13:20");
     }
 
     #[test]
-    fn with_fractional_seconds_various_trailing_zero_counts() -> Result<(), WriteOdbcError> {
+    fn with_fractional_seconds_various_trailing_zero_counts() {
         // Trailing-zero trimming is the interesting behavior to preserve.
-        assert_eq!(fmt(REF_EPOCH, 1)?, "2023-11-14 22:13:20.000000001");
-        assert_eq!(fmt(REF_EPOCH, 10)?, "2023-11-14 22:13:20.00000001");
-        assert_eq!(fmt(REF_EPOCH, 123_000_000)?, "2023-11-14 22:13:20.123");
-        assert_eq!(
-            fmt(REF_EPOCH, 123_456_789)?,
-            "2023-11-14 22:13:20.123456789"
-        );
-        assert_eq!(
-            fmt(REF_EPOCH, 999_999_999)?,
-            "2023-11-14 22:13:20.999999999"
-        );
-        Ok(())
+        assert_eq!(fmt(REF_EPOCH, 1), "2023-11-14 22:13:20.000000001");
+        assert_eq!(fmt(REF_EPOCH, 10), "2023-11-14 22:13:20.00000001");
+        assert_eq!(fmt(REF_EPOCH, 123_000_000), "2023-11-14 22:13:20.123");
+        assert_eq!(fmt(REF_EPOCH, 123_456_789), "2023-11-14 22:13:20.123456789");
+        assert_eq!(fmt(REF_EPOCH, 999_999_999), "2023-11-14 22:13:20.999999999");
     }
 
     #[test]
-    fn pre_epoch_timestamp() -> Result<(), WriteOdbcError> {
-        assert_eq!(fmt(-1_000, 0)?, "1969-12-31 23:43:20");
-        assert_eq!(fmt(-1_000, 500_000)?, "1969-12-31 23:43:20.0005");
-        Ok(())
+    fn pre_epoch_timestamp() {
+        assert_eq!(fmt(-1_000, 0), "1969-12-31 23:43:20");
+        assert_eq!(fmt(-1_000, 500_000), "1969-12-31 23:43:20.0005");
     }
 
     #[test]
-    fn year_padding() -> Result<(), WriteOdbcError> {
+    fn year_padding() {
         let dt = NaiveDate::from_ymd_opt(1, 1, 1)
             .expect("NaiveDate::from_ymd_opt with in-range inputs")
             .and_hms_opt(0, 0, 0)
             .expect("NaiveDate::and_hms_opt with in-range inputs");
         let mut buf = [0u8; 48];
         assert_eq!(
-            format_timestamp_string_into(&dt, &mut buf)?,
+            format_timestamp_string_into(&dt, &mut buf).expect("format_timestamp_string_into"),
             "0001-01-01 00:00:00"
         );
-        Ok(())
     }
 }
