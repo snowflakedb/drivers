@@ -83,6 +83,7 @@ clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
 der = "0.7"
 num-traits = "0.2.19"
+os_info = "3"
 
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }

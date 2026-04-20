@@ -264,12 +264,14 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
-                // Check telemetry opt-out before dropping the lock.
+                // Snowflake server defaults CLIENT_TELEMETRY_ENABLED to true; it only
+                // sends "false" when the account or user has opted out. If the parameter
+                // is absent (e.g. older server), we default to enabled to match server behavior.
                 let telemetry_enabled = conn
                     .session_parameters
                     .read()
                     .await
-                    .get("CLIENT_TELEMETRY_ENABLED")
+                    .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
                     .map(|v| v.eq_ignore_ascii_case("true"))
                     .unwrap_or(true);
                 drop(conn);
@@ -321,6 +323,9 @@ impl DatabaseDriverV1 {
         // Mutex is now dropped.
 
         // Step 2: Read session_id from the tokens RwLock without holding the Mutex.
+        // After a successful login, tokens are always present. The unwrap_or(0)
+        // is a defensive fallback — session_id 0 acts as a "no session" sentinel
+        // in the telemetry payload and is harmless if it somehow occurs.
         let session_id = tokens_arc
             .read()
             .await

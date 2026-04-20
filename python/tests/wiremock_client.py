@@ -108,13 +108,13 @@ class WiremockClient:
         if "mappings" in mapping_json and isinstance(mapping_json["mappings"], list):
             # File contains an array of mappings - send each individually
             for mapping in mapping_json["mappings"]:
-                response = requests.post(admin_url, json=mapping)
+                response = requests.post(admin_url, json=mapping, timeout=5)
 
                 if response.status_code not in (200, 201):
                     raise RuntimeError(f"Failed to add mapping: {response.status_code} {response.text}")
         else:
             # Single mapping - send the entire content as-is
-            response = requests.post(admin_url, data=content, headers={"Content-Type": "application/json"})
+            response = requests.post(admin_url, data=content, headers={"Content-Type": "application/json"}, timeout=5)
 
             if response.status_code not in (200, 201):
                 raise RuntimeError(f"Failed to add mapping: {response.status_code} {response.text}")
@@ -132,6 +132,7 @@ class WiremockClient:
         response = requests.post(
             f"{self.http_url()}/__admin/requests/find",
             json={"urlPathPattern": url_path_pattern},
+            timeout=5,
         )
         if response.status_code != 200:
             raise RuntimeError(f"Failed to query requests: {response.status_code} {response.text}")

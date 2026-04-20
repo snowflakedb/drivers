@@ -11,10 +11,10 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     DatabaseHandle,
 )
 from snowflake.connector.version import __version__
-from tests.compatibility import IS_UNIVERSAL_DRIVER
+from tests.compatibility import is_new_driver
 
 
-pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires universal driver")
+pytestmark = pytest.mark.skipif(not is_new_driver(), reason="Requires universal driver")
 
 
 class TestConnectionInitIdentity:
@@ -36,8 +36,11 @@ class TestConnectionInitIdentity:
 
         full_mock_db_api.connection_init.assert_called_once()
         req = full_mock_db_api.connection_init.call_args[0][0]
-        assert req.driver_name == "snowflake-connector-python"
-        assert req.driver_version == __version__
-        assert req.language_runtime == platform.python_implementation()
-        assert req.language_version == platform.python_version()
-        assert req.language_compiler == platform.python_compiler()
+        identity = req.wrapper_identity
+        from snowflake.connector.connection import CLIENT_NAME
+
+        assert identity.driver_name == CLIENT_NAME
+        assert identity.driver_version == __version__
+        assert identity.language_runtime == platform.python_implementation()
+        assert identity.language_version == platform.python_version()
+        assert identity.language_compiler == platform.python_compiler()

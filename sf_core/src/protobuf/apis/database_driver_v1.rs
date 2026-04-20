@@ -875,17 +875,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        // If wrapper identity fields are provided, store them before connection_init
+        // If wrapper identity is provided, store it before connection_init
         // so the session_init telemetry event carries the identity.
-        if let Some(ref driver_name) = input.driver_name
+        if let Some(ref wrapper) = input.wrapper_identity
+            && let Some(ref driver_name) = wrapper.driver_name
             && !driver_name.is_empty()
         {
             let identity = crate::apis::database_driver_v1::connection::WrapperIdentity {
                 driver_name: driver_name.clone(),
-                driver_version: input.driver_version.clone().unwrap_or_default(),
-                language_runtime: input.language_runtime.clone().unwrap_or_default(),
-                language_version: input.language_version.clone().unwrap_or_default(),
-                language_compiler: input.language_compiler.clone(),
+                driver_version: wrapper.driver_version.clone().unwrap_or_default(),
+                language_runtime: wrapper.language_runtime.clone().unwrap_or_default(),
+                language_version: wrapper.language_version.clone().unwrap_or_default(),
+                language_compiler: wrapper.language_compiler.clone(),
             };
 
             tracing::debug!(

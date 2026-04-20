@@ -252,15 +252,20 @@ message ConnectionNewResponse {
   ConnectionHandle conn_handle = 1;
 }
 
+// Identity of the language-specific wrapper invoking core via protobuf.
+message WrapperIdentity {
+  optional string driver_name = 1;
+  optional string driver_version = 2;
+  optional string language_runtime = 3;
+  optional string language_version = 4;
+  optional string language_compiler = 5;
+}
+
 message ConnectionInitRequest {
   ConnectionHandle conn_handle = 1;
   DatabaseHandle db_handle = 2;
-  // Wrapper identity fields — used to emit session_init telemetry during connection init.
-  optional string driver_name = 3;
-  optional string driver_version = 4;
-  optional string language_runtime = 5;
-  optional string language_version = 6;
-  optional string language_compiler = 7;
+  // Wrapper identity — used to emit session_init telemetry during connection init.
+  optional WrapperIdentity wrapper_identity = 3;
 }
 
 message ConnectionInitResponse {

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, load_pem_private_key
 
-from tests.compatibility import IS_UNIVERSAL_DRIVER
+from tests.compatibility import is_new_driver
 from tests.private_key_helper import get_test_private_key_path
 from tests.wiremock_client import WiremockClient
 
@@ -23,7 +23,7 @@ def test_session_init_telemetry_sent_on_connection_open(int_test_connection_fact
 
         # The old driver needs private_key as DER bytes; the universal driver uses private_key_file
         extra_params = {}
-        if not IS_UNIVERSAL_DRIVER:
+        if not is_new_driver():
             pem_data = Path(get_test_private_key_path()).read_bytes()
             pk = load_pem_private_key(pem_data, password=None)
             extra_params["private_key"] = pk.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
@@ -42,27 +42,26 @@ def test_session_init_telemetry_sent_on_connection_open(int_test_connection_fact
         assert request["method"] == "POST"
         assert request["url"] == "/telemetry/send"
 
-        # Validate headers — only driver-set headers plus standard transport headers
+        # Validate required headers. HTTP header names are case-insensitive and
+        # clients/libraries may add transport headers, so normalize and check subset.
         headers = request["headers"]
-        expected_header_names = {
-            "Authorization",
-            "Accept",
-            "User-Agent",
-            "Content-Type",
-            "Host",
-            "Content-Length",
-            "Connection",
-            "Content-Encoding",
-            "Accept-Encoding",
+        normalized_headers = {name.lower(): value for name, value in headers.items()}
+        required_header_names = {
+            "authorization",
+            "accept",
+            "user-agent",
+            "content-type",
+            "host",
+            "content-length",
+            "content-encoding",
+            "accept-encoding",
         }
-        assert set(headers.keys()) == expected_header_names, (
-            f"Unexpected headers: {set(headers.keys()) - expected_header_names}, "
-            f"Missing headers: {expected_header_names - set(headers.keys())}"
-        )
-        assert headers["Authorization"].startswith("Snowflake Token=")
-        assert headers["Content-Type"] == "application/json"
-        assert headers["Accept"] == "application/json"
-        assert headers["User-Agent"] is not None
+        missing_headers = required_header_names - set(normalized_headers.keys())
+        assert not missing_headers, f"Missing required headers: {missing_headers}"
+        assert normalized_headers["authorization"].startswith("Snowflake Token=")
+        assert normalized_headers["content-type"] == "application/json"
+        assert normalized_headers["accept"] == "application/json"
+        assert normalized_headers["user-agent"] is not None
 
         # Validate top-level payload structure.
         # Wiremock may transparently decompress gzip, so try both.

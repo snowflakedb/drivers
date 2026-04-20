@@ -45,48 +45,13 @@ impl EnvironmentInfo {
 }
 
 fn detect_os_version() -> String {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
-            for line in content.lines() {
-                if let Some(version) = line.strip_prefix("VERSION_ID=") {
-                    return version.trim_matches('"').to_string();
-                }
-            }
-        }
+    let info = os_info::get();
+    let version = info.version().to_string();
+    if version.is_empty() || version == "Unknown" {
+        "unknown".to_string()
+    } else {
+        version
     }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = std::process::Command::new("sw_vers")
-            .arg("-productVersion")
-            .output()
-        {
-            if output.status.success() {
-                return String::from_utf8_lossy(&output.stdout).trim().to_string();
-            }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // `cmd /C ver` outputs e.g. "Microsoft Windows [Version 10.0.22631.5039]"
-        if let Ok(output) = std::process::Command::new("cmd")
-            .args(["/C", "ver"])
-            .output()
-        {
-            if output.status.success() {
-                let ver = String::from_utf8_lossy(&output.stdout);
-                if let Some(start) = ver.find('[') {
-                    if let Some(end) = ver.find(']') {
-                        return ver[start + 1..end]
-                            .strip_prefix("Version ")
-                            .unwrap_or(&ver[start + 1..end])
-                            .to_string();
-                    }
-                }
-            }
-        }
-    }
-    "unknown".to_string()
 }
 
 #[cfg(test)]

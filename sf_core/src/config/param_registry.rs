@@ -84,6 +84,7 @@ pub mod param_names {
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
+    pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
 }
 
 /// Which API layer owns writes for a parameter.
