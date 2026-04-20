@@ -1,4 +1,4 @@
-use crate::protobuf::apis::database_driver_v1::DatabaseDriverImpl;
+use crate::protobuf::apis::database_driver_v1::{DatabaseDriverImpl, DriverOverrides};
 use crate::protobuf::generated::database_driver_v1::DatabaseDriverServer;
 use proto_utils::*;
 
@@ -16,8 +16,12 @@ impl Default for RustTransport {
 
 impl RustTransport {
     pub fn new() -> Self {
+        Self::new_with(DriverOverrides::default())
+    }
+
+    pub fn new_with(overrides: DriverOverrides) -> Self {
         Self {
-            driver: DatabaseDriverImpl::new(),
+            driver: DatabaseDriverImpl::new_with(overrides),
         }
     }
 }

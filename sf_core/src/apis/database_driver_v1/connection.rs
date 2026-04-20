@@ -189,7 +189,7 @@ impl DatabaseDriverV1 {
                     &config,
                     client_info,
                     None,
-                    read_spcs_token(),
+                    read_spcs_token(self.fs_adapter().as_ref()),
                 );
 
                 let mfa_caching_requested = matches!(

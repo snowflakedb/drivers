@@ -1,6 +1,7 @@
 use proto_utils::ProtoError;
 use sf_core::protobuf::apis::database_driver_v1::{
-    DatabaseDriverClient, DatabaseDriverClientBlockingExt, database_driver_client,
+    DatabaseDriverClient, DatabaseDriverClientBlockingExt, DriverOverrides, database_driver_client,
+    database_driver_client_with,
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
 
@@ -77,6 +78,24 @@ impl SnowflakeTestClient {
     }
 
     pub fn with_int_tests_params(server_url: Option<&str>) -> Self {
+        Self::with_int_tests_params_and_client(server_url, database_driver_client())
+    }
+
+    /// Variant of [`Self::with_int_tests_params`] that installs test
+    /// overrides (e.g. a mocked filesystem) on the underlying driver
+    /// before the client starts issuing requests. Add new overrides by
+    /// extending [`DriverOverrides`]; no new constructor is required.
+    pub fn with_int_tests_params_using(
+        server_url: Option<&str>,
+        overrides: DriverOverrides,
+    ) -> Self {
+        Self::with_int_tests_params_and_client(server_url, database_driver_client_with(overrides))
+    }
+
+    fn with_int_tests_params_and_client(
+        server_url: Option<&str>,
+        client: DatabaseDriverClient,
+    ) -> Self {
         setup_logging();
 
         let server_url = server_url.unwrap_or("http://localhost:8090");
@@ -94,8 +113,6 @@ impl SnowflakeTestClient {
             protocol: Some("http".to_string()),
             ..Default::default()
         };
-
-        let client = database_driver_client();
 
         let db_response = client.database_new_blocking(DatabaseNewRequest {}).unwrap();
         let db_handle = db_response.db_handle.unwrap();

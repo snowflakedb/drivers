@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use tokio::sync::Mutex;
 
 use super::connection::Connection;
 use super::database::Database;
 use super::statement::Statement;
+use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
@@ -12,6 +15,7 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
+    fs: once_cell::sync::OnceCell<Arc<dyn FsAdapter>>,
 }
 
 impl DatabaseDriverV1 {
@@ -21,11 +25,20 @@ impl DatabaseDriverV1 {
             connections: HandleManager::new(),
             statements: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
+            fs: once_cell::sync::OnceCell::new(),
         }
     }
 
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {
         self.token_cache.get_or_try_init(KeyringTokenCache::new)
+    }
+
+    pub fn fs_adapter(&self) -> Arc<dyn FsAdapter> {
+        self.fs.get_or_init(|| Arc::new(RealFs)).clone()
+    }
+
+    pub fn set_fs_adapter(&self, fs: Arc<dyn FsAdapter>) -> Result<(), Arc<dyn FsAdapter>> {
+        self.fs.set(fs)
     }
 }
 
