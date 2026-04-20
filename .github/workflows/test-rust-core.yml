@@ -176,6 +176,14 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
 
+      - name: Cleanup test PATs
+        if: always()
+        continue-on-error: true
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_test_pats.py \
+            --parameter-path $(pwd)/parameters.json
+
       - name: Save Rust cache
         if: always()
         uses: ./.github/actions/cargo-cache
@@ -333,6 +341,14 @@ jobs:
           name: windows-arm64-diagnostics
           path: windows-arm64-diagnostics/
           if-no-files-found: warn
+      - name: Cleanup test PATs
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_test_pats.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
 
       - name: Save Rust cache
         if: always()

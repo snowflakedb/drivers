@@ -178,6 +178,15 @@ pipeline {
                                         export PARAMETER_PATH=$(pwd)/parameters.json
                                         cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
                                     ''')
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_test_pats.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+
                                     if (testExitCode != 0) {
                                         echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
                                         unstable(message: "Rust Core tests failed")
@@ -236,6 +245,14 @@ pipeline {
                                             unstable(message: "Python tests failed")
                                         }
                                     }
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_test_pats.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
                                     
                                     def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
                                     uploadToCodecov('python', 'python/reports/coverage-python.xml')
@@ -285,6 +302,15 @@ pipeline {
                                         # Exclude CRL tests - they require Wiremock server which is not started in coverage job
                                         ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
                                     ''')
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_test_pats.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+
                                     if (testExitCode != 0) {
                                         echo "ODBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
                                         unstable(message: "ODBC tests failed")
