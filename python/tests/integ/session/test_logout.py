@@ -137,3 +137,39 @@ class TestLogoutIdempotency:
             logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) == 1, f"Should send exactly 1 logout, got {len(logout_requests)}"
+
+
+class TestLogoutConfigPassing:
+    """Tests that verify Python wrapper correctly passes config to Core (pure mock)."""
+
+    def test_should_have_enable_server_session_keep_alive_auto_detection_default_to_true(self, core_mock):
+        """Verify enable_server_session_keep_alive_auto_detection defaults to True."""
+        import warnings as w_mod
+
+        from snowflake.connector.connection import Connection
+
+        with w_mod.catch_warnings(record=True):
+            w_mod.simplefilter("always")
+            Connection(user="test", account="test")
+
+        options = core_mock.get_options_sent()
+        assert options.get("enable_server_session_keep_alive_auto_detection") is True
+        assert "server_session_keep_alive" not in options
+
+    def test_should_not_emit_auto_detection_deprecation_warning_when_explicitly_set_to_true(self, core_mock):
+        """Verify no FutureWarning when user explicitly passes auto_detection=True."""
+        import warnings as w_mod
+
+        from snowflake.connector.connection import Connection
+
+        with w_mod.catch_warnings(record=True) as captured:
+            w_mod.simplefilter("always")
+            Connection(user="test", account="test", enable_server_session_keep_alive_auto_detection=True)
+
+        options = core_mock.get_options_sent()
+        assert options.get("enable_server_session_keep_alive_auto_detection") is True
+
+        auto_detection_warnings = [
+            w for w in captured if issubclass(w.category, FutureWarning) and "auto_detection" in str(w.message)
+        ]
+        assert len(auto_detection_warnings) == 0

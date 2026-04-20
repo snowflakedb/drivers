@@ -22,15 +22,6 @@ from unittest.mock import patch
 
 import pytest
 
-
-# Skip this module when running on the reference (old) connector
-pytest.importorskip("snowflake.connector._internal.logout_config_mapping")
-
-from snowflake.connector._internal.logout_config_mapping import (
-    PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS,
-    PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS,
-    ErrorStrategy,
-)
 from tests.private_key_helper import get_test_private_key_path
 from tests.wiremock_client import WiremockClient
 
@@ -531,14 +522,13 @@ class TestLogoutPythonWrapper:
 
             # Then Logout timeout of 15 seconds is passed to Core
             options = core_proxy.get_options_sent()
-            assert options.get("logout_total_timeout_seconds") == PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS, (
-                f"Expected {PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS}s total timeout, "
-                f"got {options.get('logout_total_timeout_seconds')}"
+            assert options.get("logout_total_timeout_seconds") == 15, (
+                f"Expected {15}s total timeout, got {options.get('logout_total_timeout_seconds')}"
             )
 
             # And Logout max retries of 3 is passed to Core
-            assert options.get("logout_max_attempts") == PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS, (
-                f"Expected {PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS} max attempts, got {options.get('logout_max_attempts')}"
+            assert options.get("logout_max_attempts") == 3, (
+                f"Expected {3} max attempts, got {options.get('logout_max_attempts')}"
             )
 
             # And Logout request completes within 15 seconds
@@ -591,9 +581,8 @@ class TestLogoutPythonWrapper:
             )
 
             # And No further requests are sent after retry limit is reached
-            assert len(logout_requests) == PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS, (
-                f"Expected exactly {PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS} attempts (limit hit, no more sent). "
-                f"Got {len(logout_requests)}"
+            assert len(logout_requests) == 3, (
+                f"Expected exactly {3} attempts (limit hit, no more sent). Got {len(logout_requests)}"
             )
 
             # And Error is logged as WARN
@@ -610,9 +599,7 @@ class TestLogoutPythonWrapper:
 
             # And Error handling strategy is best-effort by default
             options = core_proxy.get_options_sent()
-            assert options.get("logout_error_strategy") == ErrorStrategy.BEST_EFFORT.value, (
-                "Default error strategy should be BEST_EFFORT"
-            )
+            assert options.get("logout_error_strategy") == "best_effort", "Default error strategy should be BEST_EFFORT"
 
 
 class TestLogoutRetryBehavior:
