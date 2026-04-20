@@ -23,8 +23,18 @@ if command -v ccache &>/dev/null; then
     CCACHE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
 fi
 
+# Prefer Ninja over the default Unix Makefiles generator: file-level parallelism and
+# faster dependency scanning typically save 20-40s on the C++ test-harness build.
+# Ninja is pre-installed on both ubuntu-latest and macos-latest GHA runners; local devs
+# may not have it, so gracefully fall back to the default generator if unavailable.
+GENERATOR_ARGS=()
+if command -v ninja &>/dev/null; then
+    GENERATOR_ARGS=(-G Ninja -DCMAKE_BUILD_TYPE=Debug)
+fi
+
 mkdir -p cmake-build
 cmake -B cmake-build \
+    "${GENERATOR_ARGS[@]}" \
     -D ODBC_LIBRARY="${ODBC_LIBRARY}" \
     -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE_DIR}" \
     -D DRIVER_TYPE="${DRIVER_TYPE}" \

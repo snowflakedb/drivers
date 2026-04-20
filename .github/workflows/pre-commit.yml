@@ -80,3 +80,5 @@ jobs:
         with:
           mode: save
           shared-key: "precommit"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
