@@ -346,10 +346,13 @@ class Connection:
             return
 
         if not retry:
+            single_attempt_no_retry = 1  # 1 total attempt = no retries
             self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
-                    options=_build_config_settings({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
+                    options=_build_config_settings(
+                        {LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: single_attempt_no_retry}
+                    ),
                 )
             )
 
