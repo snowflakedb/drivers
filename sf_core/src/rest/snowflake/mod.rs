@@ -1106,6 +1106,8 @@ async fn execute_sync_query<'a>(
     is_retry: bool,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
         async_exec: false,
@@ -1128,7 +1130,9 @@ async fn execute_sync_query<'a>(
             path: QUERY_REQUEST_PATH,
         })?;
 
-    // Build query parameters - include retry=true if this is a retry
+    // Build query parameters - include retry=true if this is a retry.
+    // The `requestId` is stable across HTTP-level retries so the server can
+    // dedupe replays via its normal request-id machinery.
     let mut query_params = vec![
         ("requestId", request_id.to_string()),
         ("request_guid", uuid::Uuid::new_v4().to_string()),
@@ -1137,20 +1141,25 @@ async fn execute_sync_query<'a>(
         query_params.push(("retry", "true".to_string()));
     }
 
-    let request = apply_json_content_type(apply_query_headers(
-        client.post(query_url),
-        &query_parameters.client_info,
-        session_token,
-    ))
-    .query(&query_params)
-    .json(&query_request)
-    .build()
-    .context(RequestConstructionSnafu { request: "query" })?;
-
     let send_start = Instant::now();
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute query request",
-    })?;
+    let build_request = || {
+        apply_json_content_type(apply_query_headers(
+            client.post(query_url.clone()),
+            &query_parameters.client_info,
+            session_token,
+        ))
+        .query(&query_params)
+        .json(&query_request)
+    };
+
+    let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+    let policy = RetryPolicy::default();
+
+    let response = execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "query request",
+        })?;
 
     let query_response = read_response_json::<query_response::Response>(response)
         .await
@@ -2163,6 +2172,72 @@ mod tests {
             let result = send_login_request(&client, &params, &auth_req).await;
 
             assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
+            assert_eq!(
+                attempt.load(Ordering::SeqCst),
+                3,
+                "Expected exactly 3 attempts (2 failures + 1 success), got {}",
+                attempt.load(Ordering::SeqCst)
+            );
+        }
+    }
+
+    mod execute_sync_query_retry_tests {
+        use super::*;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        #[tokio::test]
+        async fn retries_on_503_then_succeeds() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+
+            let attempt_clone = attempt.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/v1/query-request"))
+                .respond_with(move |_: &Request| {
+                    let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    if n < 2 {
+                        ResponseTemplate::new(503).set_body_string("Service Unavailable")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "queryId": "01abcdef-0000-0000-0000-000000000000",
+                            }
+                        }))
+                    }
+                })
+                .expect(3)
+                .mount(&server)
+                .await;
+
+            let client = reqwest::Client::new();
+            let query_parameters = QueryParameters {
+                server_url: server.uri(),
+                client_info: test_client_info(),
+                log_max_query_length: 1024,
+            };
+            let query_input = QueryInput {
+                sql: "SELECT 1".to_string(),
+                bindings: None,
+                describe_only: None,
+            };
+
+            let result = execute_sync_query(
+                &client,
+                &query_parameters,
+                "mock_session_token",
+                &query_input,
+                uuid::Uuid::new_v4(),
+                false,
+            )
+            .await;
+
+            if let Err(e) = &result {
+                panic!("Expected retry to succeed, got error: {e:?}");
+            }
             assert_eq!(
                 attempt.load(Ordering::SeqCst),
                 3,
