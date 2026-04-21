@@ -657,6 +657,35 @@ mod tests {
             => sign=1, val=0, out_precision=10, out_scale=0, truncated=false;
     }
 
+    // SQL_C_NUMERIC upscale where `abs_value * 10^scale_diff` overflows u128.
+    // Must return SQLSTATE 22003 (NumericValueOutOfRange) rather than silently
+    // wrapping and writing a corrupted SQL_NUMERIC_STRUCT.
+    #[test]
+    fn numeric_upscale_overflow_returns_22003() {
+        use crate::conversion::error::WriteOdbcError;
+        // source: scale=0, precision=38; value = 10^21 (fits in i128 ~1.7e38).
+        // target_scale = 20 -> scale_diff = 20 -> multiplier = 10^20.
+        // 10^21 * 10^20 = 10^41, which overflows u128 (max ~3.4e38).
+        let sn = make_decimal(0, 38);
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0u8; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_value(CDataType::Numeric, &mut value, &mut str_len);
+        binding.precision = Some(38);
+        binding.scale = Some(20);
+
+        let input: i128 = 1_000_000_000_000_000_000_000_i128; // 10^21
+        let err = sn.write_odbc_type(input, &binding, &mut None).unwrap_err();
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
+    }
+
     // ========================================================================
     // SQL_C_BINARY conversions (raw SQL_NUMERIC_STRUCT bytes)
     // ========================================================================

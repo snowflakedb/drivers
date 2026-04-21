@@ -123,26 +123,148 @@ where
     }
 }
 
-impl SnowflakeNumber {
-    fn format_decimal(value: i128, scale: u32) -> String {
-        if scale > 0 {
-            let mut s = value.to_string();
-            let is_negative = s.starts_with('-');
-            if is_negative {
-                s.remove(0);
-            }
-            while s.len() <= scale as usize {
-                s.insert(0, '0');
-            }
-            let decimal_pos = s.len() - scale as usize;
-            s.insert(decimal_pos, '.');
-            if is_negative {
-                s.insert(0, '-');
-            }
-            s
-        } else {
-            value.to_string()
+/// Maximum DECIMAL scale supported by Snowflake (and addressable by `i128`).
+/// `10i128.pow(38)` is the largest power of ten that fits in `i128`.
+const MAX_DECIMAL_SCALE: u32 = 38;
+
+/// Precomputed `10^n` for `0 ≤ n ≤ 38`, as `i128`. Used to avoid invoking
+/// `i128::pow` (which is not a const lookup) on every row in hot conversion
+/// paths.
+const POW10_I128: [i128; (MAX_DECIMAL_SCALE + 1) as usize] = {
+    let mut a = [1i128; (MAX_DECIMAL_SCALE + 1) as usize];
+    let mut i = 1;
+    while i < a.len() {
+        a[i] = a[i - 1] * 10;
+        i += 1;
+    }
+    a
+};
+
+/// Same table for `u128`. Needed for re-scaling in the SQL_C_NUMERIC arm.
+const POW10_U128: [u128; (MAX_DECIMAL_SCALE + 1) as usize] = {
+    let mut a = [1u128; (MAX_DECIMAL_SCALE + 1) as usize];
+    let mut i = 1;
+    while i < a.len() {
+        a[i] = a[i - 1] * 10;
+        i += 1;
+    }
+    a
+};
+
+/// Fetch `10^scale` as `i128` from the precomputed table, returning an
+/// `SQLSTATE 22003` error for `scale > MAX_DECIMAL_SCALE`.
+///
+/// In practice Snowflake DECIMAL scale is always in `0..=38` (max precision
+/// is 38 and `0 ≤ scale ≤ precision`), so the error branch is not expected
+/// on well-formed server output.
+fn pow10_i128(scale: u32) -> Result<i128, WriteOdbcError> {
+    POW10_I128.get(scale as usize).copied().ok_or_else(|| {
+        NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "DECIMAL scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}"
+            ),
         }
+        .build()
+    })
+}
+
+/// `u128` counterpart to [`pow10_i128`], used for re-scaling in the
+/// `SQL_C_NUMERIC` arm where the scale difference comes from the
+/// application-supplied ARD and is not otherwise validated.
+fn pow10_u128(scale: u32) -> Result<u128, WriteOdbcError> {
+    POW10_U128.get(scale as usize).copied().ok_or_else(|| {
+        NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE} for SQL_C_NUMERIC"
+            ),
+        }
+        .build()
+    })
+}
+
+impl SnowflakeNumber {
+    /// Format a scaled `i128` as a decimal string into `buf` without any heap
+    /// allocation, returning the filled slice as `&str`.
+    ///
+    /// Preconditions validated at runtime:
+    /// - `scale <= MAX_DECIMAL_SCALE` — otherwise returns
+    ///   `NumericValueOutOfRange` (a scale of 39+ would overflow the 48-byte
+    ///   output buffer).
+    /// - The scratch buffer for absolute-value digits is 40 bytes (fits the
+    ///   39-digit expansion of any `u128`); if that formatting ever fails
+    ///   (e.g. the type widens), the caller receives `NumericValueOutOfRange`.
+    ///
+    /// Output shape:
+    /// - `scale == 0`              → `[-]<digits>`
+    /// - `digits.len() > scale`    → `[-]<int>.<frac>`
+    /// - `digits.len() <= scale`   → `[-]0.<zero-pad><digits>`
+    fn format_decimal_into(
+        value: i128,
+        scale: u32,
+        buf: &mut [u8; 48],
+    ) -> Result<&str, WriteOdbcError> {
+        if scale > MAX_DECIMAL_SCALE {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "format_decimal_into: scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}",
+                ),
+            }
+            .fail();
+        }
+        // Stage the absolute-value digits through `itoa`-equivalent formatting
+        // (via the std library's `Display` for unsigned integers, which writes
+        // directly into the provided buffer without heap allocation).
+        let mut abs_tmp = [0u8; 40]; // 39 digits for u128::MAX + headroom
+        let abs_len = {
+            let mut cur = std::io::Cursor::new(&mut abs_tmp[..]);
+            use std::io::Write as _;
+            if write!(cur, "{}", value.unsigned_abs()).is_err() {
+                return NumericValueOutOfRangeSnafu {
+                    reason: format!(
+                        "unsigned abs of i128 {value} does not fit in the {}-byte digit buffer",
+                        abs_tmp.len()
+                    ),
+                }
+                .fail();
+            }
+            cur.position() as usize
+        };
+        let digits = &abs_tmp[..abs_len];
+        let is_negative = value < 0;
+        let scale = scale as usize;
+
+        let mut len = 0;
+        if is_negative {
+            buf[len] = b'-';
+            len += 1;
+        }
+        if scale == 0 {
+            buf[len..len + digits.len()].copy_from_slice(digits);
+            len += digits.len();
+        } else if digits.len() > scale {
+            let int_part = digits.len() - scale;
+            buf[len..len + int_part].copy_from_slice(&digits[..int_part]);
+            len += int_part;
+            buf[len] = b'.';
+            len += 1;
+            buf[len..len + scale].copy_from_slice(&digits[int_part..]);
+            len += scale;
+        } else {
+            // "0." + (scale - digits.len()) zero-pad + digits
+            buf[len] = b'0';
+            len += 1;
+            buf[len] = b'.';
+            len += 1;
+            let pad = scale - digits.len();
+            for b in &mut buf[len..len + pad] {
+                *b = b'0';
+            }
+            len += pad;
+            buf[len..len + digits.len()].copy_from_slice(digits);
+            len += digits.len();
+        }
+        // SAFETY: only ASCII digits, '-', and '.' were written above.
+        Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
     }
 }
 
@@ -170,7 +292,7 @@ impl WriteODBCType for SnowflakeNumber {
             other => other,
         };
 
-        let scale_factor = 10i128.pow(self.scale);
+        let scale_factor = pow10_i128(self.scale)?;
         let int_value = snowflake_value / scale_factor;
         let has_fractional = self.scale > 0 && snowflake_value % scale_factor != 0;
 
@@ -250,12 +372,13 @@ impl WriteODBCType for SnowflakeNumber {
                 Ok(fractional_warning(has_fractional))
             }
             CDataType::Char => {
-                let num_str = Self::format_decimal(snowflake_value, self.scale);
-                let warnings = binding.write_char_string(&num_str, get_data_offset);
+                let mut num_buf = [0u8; 48];
+                let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf)?;
+                let warnings = binding.write_char_string(num_str, get_data_offset);
                 if warnings
                     .iter()
                     .any(|w| matches!(w, Warning::StringDataTruncated))
-                    && whole_digits_len(&num_str) >= binding.buffer_length as usize
+                    && whole_digits_len(num_str) >= binding.buffer_length as usize
                 {
                     *get_data_offset = None;
                     return NumericValueOutOfRangeSnafu {
@@ -269,13 +392,14 @@ impl WriteODBCType for SnowflakeNumber {
                 Ok(warnings)
             }
             CDataType::WChar => {
-                let num_str = Self::format_decimal(snowflake_value, self.scale);
-                let warnings = binding.write_wchar_string(&num_str, get_data_offset);
+                let mut num_buf = [0u8; 48];
+                let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf)?;
+                let warnings = binding.write_wchar_string(num_str, get_data_offset);
                 let wchar_capacity = (binding.buffer_length / 2) as usize;
                 if warnings
                     .iter()
                     .any(|w| matches!(w, Warning::StringDataTruncated))
-                    && whole_digits_len(&num_str) >= wchar_capacity
+                    && whole_digits_len(num_str) >= wchar_capacity
                 {
                     *get_data_offset = None;
                     return NumericValueOutOfRangeSnafu {
@@ -295,16 +419,22 @@ impl WriteODBCType for SnowflakeNumber {
                 let abs_value = snowflake_value.unsigned_abs();
 
                 let scale_diff = target_scale as i32 - self.scale as i32;
-                let truncated = if scale_diff < 0 {
-                    let divisor = 10u128.pow((-scale_diff) as u32);
-                    abs_value % divisor != 0
+                let (unscaled, truncated): (u128, bool) = if scale_diff >= 0 {
+                    let multiplier = pow10_u128(scale_diff as u32)?;
+                    let unscaled = abs_value.checked_mul(multiplier).ok_or_else(|| {
+                        NumericValueOutOfRangeSnafu {
+                            reason: format!(
+                                "Re-scaling numeric from scale {} to {target_scale} overflows u128 \
+                                 (abs_value={abs_value}, multiplier=10^{scale_diff})",
+                                self.scale
+                            ),
+                        }
+                        .build()
+                    })?;
+                    (unscaled, false)
                 } else {
-                    false
-                };
-                let unscaled: u128 = if scale_diff >= 0 {
-                    abs_value * 10u128.pow(scale_diff as u32)
-                } else {
-                    abs_value / 10u128.pow((-scale_diff) as u32)
+                    let divisor = pow10_u128((-scale_diff) as u32)?;
+                    (abs_value / divisor, abs_value % divisor != 0)
                 };
 
                 let numeric = sql::Numeric {
@@ -512,5 +642,174 @@ impl WriteJson for SnowflakeNumber {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Fixed
+    }
+}
+
+#[cfg(test)]
+mod format_decimal_into_tests {
+    use super::{MAX_DECIMAL_SCALE, SnowflakeNumber};
+    use crate::conversion::error::WriteOdbcError;
+
+    fn fmt(value: i128, scale: u32) -> String {
+        let mut buf = [0u8; 48];
+        SnowflakeNumber::format_decimal_into(value, scale, &mut buf)
+            .expect("format_decimal_into")
+            .to_string()
+    }
+
+    #[test]
+    fn scale_zero_integer() {
+        assert_eq!(fmt(0, 0), "0");
+        assert_eq!(fmt(1, 0), "1");
+        assert_eq!(fmt(-1, 0), "-1");
+        assert_eq!(fmt(123_456_789, 0), "123456789");
+        assert_eq!(fmt(-123_456_789, 0), "-123456789");
+    }
+
+    #[test]
+    fn scale_greater_than_digit_count_pads_with_zeros() {
+        // The interesting shape is "0." + (scale - digits) zeros + digits.
+        assert_eq!(fmt(1, 30), "0.000000000000000000000000000001");
+        assert_eq!(fmt(-1, 30), "-0.000000000000000000000000000001");
+        assert_eq!(fmt(9, 10), "0.0000000009");
+        assert_eq!(fmt(-9, 10), "-0.0000000009");
+    }
+
+    #[test]
+    fn scale_equal_to_digit_count_uses_leading_zero() {
+        // boundary between the two branches: digits.len() == scale
+        assert_eq!(fmt(5, 1), "0.5");
+        assert_eq!(fmt(-5, 1), "-0.5");
+        assert_eq!(fmt(123, 3), "0.123");
+        assert_eq!(fmt(-123, 3), "-0.123");
+    }
+
+    #[test]
+    fn scale_within_digit_count() {
+        assert_eq!(fmt(12345, 2), "123.45");
+        assert_eq!(fmt(-12345, 2), "-123.45");
+        assert_eq!(fmt(100, 3), "0.100");
+        assert_eq!(fmt(-100, 3), "-0.100");
+    }
+
+    #[test]
+    fn value_zero_at_various_scales() {
+        assert_eq!(fmt(0, 0), "0");
+        assert_eq!(fmt(0, 1), "0.0");
+        assert_eq!(fmt(0, 6), "0.000000");
+        assert_eq!(fmt(0, MAX_DECIMAL_SCALE), format!("0.{}", "0".repeat(38)));
+    }
+
+    #[test]
+    fn i128_extremes_at_scale_zero() {
+        assert_eq!(fmt(i128::MAX, 0), "170141183460469231731687303715884105727");
+        assert_eq!(
+            fmt(i128::MIN, 0),
+            "-170141183460469231731687303715884105728"
+        );
+    }
+
+    #[test]
+    fn i128_extremes_with_fractional_scale() {
+        // 39-digit i128::MAX with scale=10 -> 29-digit int + 10-digit frac
+        assert_eq!(
+            fmt(i128::MAX, 10),
+            "17014118346046923173168730371.5884105727"
+        );
+        assert_eq!(
+            fmt(i128::MIN, 10),
+            "-17014118346046923173168730371.5884105728"
+        );
+    }
+
+    #[test]
+    fn large_values_with_fractional_scale() {
+        assert_eq!(
+            fmt(123_456_789_012_345_678_901_234_567_890_i128, 12),
+            "123456789012345678.901234567890"
+        );
+        assert_eq!(
+            fmt(-123_456_789_012_345_678_901_234_567_890_i128, 12),
+            "-123456789012345678.901234567890"
+        );
+    }
+
+    #[test]
+    fn max_scale_with_unit_value() {
+        // pathological "0.<37 zeros>1" — exercises the outer edge of the
+        // padding loop without overflowing the 48-byte output buffer.
+        let mut expected = String::from("0.");
+        expected.push_str(&"0".repeat((MAX_DECIMAL_SCALE - 1) as usize));
+        expected.push('1');
+        assert_eq!(fmt(1, MAX_DECIMAL_SCALE), expected);
+    }
+
+    #[test]
+    fn scale_above_max_decimal_scale_returns_numeric_value_out_of_range() {
+        // Defense-in-depth: the function rejects an out-of-range scale with
+        // a typed conversion error rather than overflowing the 48-byte output
+        // buffer. `expect_err` is the inverse of `expect` — it asserts that
+        // the Result is Err and extracts the inner error for further checks.
+        let mut buf = [0u8; 48];
+        let err = SnowflakeNumber::format_decimal_into(1, MAX_DECIMAL_SCALE + 1, &mut buf)
+            .expect_err("expected NumericValueOutOfRange for scale > MAX_DECIMAL_SCALE");
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod pow10_tests {
+    use super::{MAX_DECIMAL_SCALE, POW10_I128, POW10_U128, pow10_i128, pow10_u128};
+    use crate::conversion::error::WriteOdbcError;
+
+    #[test]
+    fn pow10_i128_matches_table_in_range() {
+        for scale in 0..=MAX_DECIMAL_SCALE {
+            assert_eq!(
+                pow10_i128(scale).expect("pow10_i128"),
+                POW10_I128[scale as usize],
+                "pow10_i128({scale}) disagrees with table"
+            );
+        }
+    }
+
+    #[test]
+    fn pow10_u128_matches_table_in_range() {
+        for scale in 0..=MAX_DECIMAL_SCALE {
+            assert_eq!(
+                pow10_u128(scale).expect("pow10_u128"),
+                POW10_U128[scale as usize],
+                "pow10_u128({scale}) disagrees with table"
+            );
+        }
+    }
+
+    #[test]
+    fn pow10_i128_out_of_range_returns_22003() {
+        let err = pow10_i128(MAX_DECIMAL_SCALE + 1).unwrap_err();
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pow10_u128_out_of_range_returns_22003() {
+        let err = pow10_u128(MAX_DECIMAL_SCALE + 1).unwrap_err();
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pow10_far_out_of_range_does_not_panic() {
+        // The previous `10i128.pow(n)` would panic in debug for n > 38.
+        // The new helpers return a typed error instead.
+        assert!(pow10_i128(100).is_err());
+        assert!(pow10_u128(u32::MAX).is_err());
     }
 }
