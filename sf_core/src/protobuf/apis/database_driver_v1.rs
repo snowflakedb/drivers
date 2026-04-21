@@ -752,11 +752,9 @@ impl DatabaseDriverImpl {
     }
 
     pub fn new_with(providers: DriverProviders) -> Self {
-        let driver = DatabaseDriverV1::new();
-        if let Some(fs) = providers.fs {
-            let _ = driver.set_fs_adapter(fs);
+        Self {
+            driver: DatabaseDriverV1::with_providers(providers),
         }
-        Self { driver }
     }
 }
 
@@ -1494,13 +1492,10 @@ pub type DatabaseDriverClient =
         crate::protobuf::apis::RustTransport,
     >;
 
+pub use crate::apis::database_driver_v1::DriverProviders;
+
 pub fn database_driver_client() -> DatabaseDriverClient {
     database_driver_client_with(DriverProviders::default())
-}
-
-#[derive(Default)]
-pub struct DriverProviders {
-    pub fs: Option<std::sync::Arc<dyn crate::fs_adapter::FsAdapter>>,
 }
 
 pub fn database_driver_client_with(providers: DriverProviders) -> DatabaseDriverClient {

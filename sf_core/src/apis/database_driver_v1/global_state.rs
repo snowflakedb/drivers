@@ -9,23 +9,43 @@ use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
+/// Injection points for `DatabaseDriverV1`.
+///
+/// Each field is optional; `None` means "use the production default".
+/// Add a new field (plus a default in `DatabaseDriverV1::new`) whenever
+/// a new provider becomes injectable — call sites that use
+/// `..Default::default()` won't need to change.
 #[derive(Default)]
+pub struct DriverProviders {
+    pub fs: Option<Arc<dyn FsAdapter>>,
+}
+
 pub struct DatabaseDriverV1 {
     pub(super) databases: HandleManager<Mutex<Database>>,
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
-    fs: once_cell::sync::OnceCell<Arc<dyn FsAdapter>>,
+    fs: Arc<dyn FsAdapter>,
+}
+
+impl Default for DatabaseDriverV1 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DatabaseDriverV1 {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        Self::with_providers(DriverProviders::default())
+    }
+
+    pub fn with_providers(providers: DriverProviders) -> Self {
         Self {
             databases: HandleManager::new(),
             connections: HandleManager::new(),
             statements: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
-            fs: once_cell::sync::OnceCell::new(),
+            fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
         }
     }
 
@@ -34,11 +54,7 @@ impl DatabaseDriverV1 {
     }
 
     pub fn fs_adapter(&self) -> Arc<dyn FsAdapter> {
-        self.fs.get_or_init(|| Arc::new(RealFs)).clone()
-    }
-
-    pub fn set_fs_adapter(&self, fs: Arc<dyn FsAdapter>) -> Result<(), Arc<dyn FsAdapter>> {
-        self.fs.set(fs)
+        self.fs.clone()
     }
 }
 
@@ -46,11 +62,10 @@ impl DatabaseDriverV1 {
 mod tests {
     use super::*;
 
-    static DRIVER_STATE: DatabaseDriverV1 = DatabaseDriverV1::new();
-
     #[test]
     fn token_cache_lazy_init_succeeds() {
-        let result = DRIVER_STATE.token_cache();
+        let driver = DatabaseDriverV1::new();
+        let result = driver.token_cache();
         assert!(
             result.is_ok(),
             "token_cache() should succeed: {:?}",
@@ -60,8 +75,9 @@ mod tests {
 
     #[test]
     fn token_cache_returns_same_instance() {
-        let first = DRIVER_STATE.token_cache().expect("first call failed");
-        let second = DRIVER_STATE.token_cache().expect("second call failed");
+        let driver = DatabaseDriverV1::new();
+        let first = driver.token_cache().expect("first call failed");
+        let second = driver.token_cache().expect("second call failed");
         assert!(
             std::ptr::eq(first, second),
             "token_cache() should return the same instance on repeated calls"
