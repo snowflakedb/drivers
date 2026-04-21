@@ -7,6 +7,7 @@ pub mod serialization;
 #[doc(hidden)]
 pub mod snowflake_exporter;
 
+pub mod os_details;
 pub mod platform_detection;
 
 use environment::EnvironmentInfo;

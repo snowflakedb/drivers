@@ -35,6 +35,8 @@ pub struct AuthRequestClientEnvironment {
     pub python_runtime: Option<String>,
     #[serde(rename = "PYTHON_COMPILER", skip_serializing_if = "Option::is_none")]
     pub python_compiler: Option<String>,
+    #[serde(rename = "OS_DETAILS", skip_serializing_if = "Option::is_none")]
+    pub os_details: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Default)]

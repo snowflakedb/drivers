@@ -125,6 +125,7 @@ fn default_client_info() -> ClientInfo {
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
         platforms: Vec::new(),
+        os_details: None,
     }
 }
 

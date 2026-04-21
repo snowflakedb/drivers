@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -7,6 +8,7 @@ use super::database::Database;
 use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
+use crate::telemetry::os_details::detect_os_details;
 use crate::telemetry::platform_detection::detect_platforms;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
@@ -28,6 +30,7 @@ pub struct DatabaseDriverV1 {
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
+    os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -49,6 +52,7 @@ impl DatabaseDriverV1 {
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
+            os_details: once_cell::sync::OnceCell::new(),
         }
     }
 
@@ -62,6 +66,11 @@ impl DatabaseDriverV1 {
 
     pub async fn platforms(&self) -> &Vec<String> {
         self.platforms.get_or_init(detect_platforms).await
+    }
+
+    pub fn os_details(&self) -> &Option<HashMap<String, String>> {
+        self.os_details
+            .get_or_init(|| detect_os_details(self.fs.as_ref()))
     }
 }
 
