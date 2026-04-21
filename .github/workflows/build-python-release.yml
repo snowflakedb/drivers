@@ -1,0 +1,251 @@
+name: Python Release Build
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
+  SDIST_PYTHON_VERSION: "3.13"
+
+jobs:
+  # ── Build wheels (shared reusable workflow) ────────────────────────
+  build_wheels:
+    uses: ./.github/workflows/_build-python-wheels.yml
+    with:
+      sf-core-matrix: >-
+        [{"target":"linux-x86_64","os":"ubuntu-latest",
+          "container":"quay.io/pypa/manylinux_2_28_x86_64",
+          "lib_name":"libsf_core.so",
+          "cargo_extra_args":"--features vendored-openssl"}]
+      cibw-matrix: >-
+        [{"target":"linux-x86_64","os":"ubuntu-latest",
+          "cibw_build":"cp3{10,11,12,13,14}-manylinux_x86_64",
+          "sf_core_artifact":"sf-core-linux-x86_64"}]
+
+  # ── Test wheels against cloud providers ────────────────────────────
+  test_wheels:
+    needs: build_wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        py: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        hatch_env: ["test", "test-pandas"]
+        cloud_provider: ["aws", "gcp", "azure"]
+        exclude:
+          - hatch_env: "test-pandas"
+            cloud_provider: "gcp"
+          - hatch_env: "test-pandas"
+            cloud_provider: "azure"
+    runs-on: ubuntu-latest
+    name: test (${{ matrix.hatch_env }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
+    env:
+      MATRIX_KEY: ${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}
+      UV_CACHE_DIR: /tmp/.uv-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Restore uv cache
+        uses: actions/cache@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ env.MATRIX_KEY }}-
+            uv-${{ matrix.py }}-
+
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install ${{ matrix.py }}
+
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheels-linux-x86_64
+          path: python/dist
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Install snowflake ud driver from wheel
+        working-directory: python
+        run: |
+          PY_TAG="cp$(echo '${{ matrix.py }}' | tr -d '.')"
+          export WHEEL_PATH="$(ls dist/*-${PY_TAG}-*.whl | head -1)"
+          echo "Installing wheel: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Run tests
+        working-directory: python
+        run: |
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
+            --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
+  # ── Build sdist ────────────────────────────────────────────────────
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache proto generator target
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-proto-target-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python
+        run: uv python install ${{ env.SDIST_PYTHON_VERSION }}
+
+      - name: Build sdist
+        working-directory: ./python
+        run: >
+          uv run --python ${{ env.SDIST_PYTHON_VERSION }}
+          --with hatch --with cython --with setuptools --with "virtualenv<21.0.0"
+          hatch build --target sdist
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Inspect sdist
+        working-directory: ./python
+        run: tar tzf dist/*.tar.gz | head -40
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist/*.tar.gz
+
+  # ── Test sdist (aws, with and without pandas) ──────────────────────
+  test_sdist:
+    needs: build_sdist
+    strategy:
+      fail-fast: false
+      matrix:
+        hatch_env: ["test", "test-pandas"]
+    runs-on: ubuntu-latest
+    name: test_sdist (${{ matrix.hatch_env }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python ${{ env.SDIST_PYTHON_VERSION }}
+        run: uv python install ${{ env.SDIST_PYTHON_VERSION }}
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Install snowflake ud driver from sdist
+        working-directory: python
+        run: hatch run ${{ matrix.hatch_env }}.py${{ env.SDIST_PYTHON_VERSION }}:install-wheel
+        env:
+          WHEEL_PATH: dist/*.tar.gz
+          SKIP_CORE_BUILD: "false"
+
+      - name: Run tests
+        working-directory: python
+        run: |
+          hatch run ${{ matrix.hatch_env }}.py${{ env.SDIST_PYTHON_VERSION }}:cov \
+            --junitxml=reports/sdist-${{ matrix.hatch_env }}.xml
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
+  # ── Clean up intermediate artifacts ────────────────────────────────
+  cleanup:
+    needs: [build_wheels, test_wheels]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete sf-core artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
+          | while read id; do
+              echo "Deleting artifact $id"
+              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+            done
+
+  # ── Status gate ────────────────────────────────────────────────────
+  release_status:
+    needs: [build_wheels, test_wheels, build_sdist, test_sdist]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          echo "=== Python Release Build Status ==="
+
+          if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build_sdist.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test_sdist.result }}" =~ ^(failure|cancelled)$ ]]; then
+            echo "FAILED"
+            echo "  build_wheels: ${{ needs.build_wheels.result }}"
+            echo "  test_wheels:  ${{ needs.test_wheels.result }}"
+            echo "  build_sdist:  ${{ needs.build_sdist.result }}"
+            echo "  test_sdist:   ${{ needs.test_sdist.result }}"
+            exit 1
+          fi
+
+          echo "PASSED"
+          echo "  build_wheels: ${{ needs.build_wheels.result }}"
+          echo "  test_wheels:  ${{ needs.test_wheels.result }}"
+          echo "  build_sdist:  ${{ needs.build_sdist.result }}"
+          echo "  test_sdist:   ${{ needs.test_sdist.result }}"
