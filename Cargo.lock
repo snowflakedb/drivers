@@ -4583,7 +4583,6 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
  "os_info",
- "pkcs1",
  "pprof",
  "prost 0.14.1",
  "proto_generator",
