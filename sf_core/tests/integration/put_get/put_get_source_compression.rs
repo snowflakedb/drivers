@@ -45,10 +45,17 @@ fn should_return_error_for_unsupported_compression_type() {
         .expect_err("Expected unsupported compression error")
     {
         proto_utils::ProtoError::Application(exc) => {
-            assert!(
-                exc.message.contains("Unsupported compression type"),
-                "Expected unsupported compression error, got: {}",
+            // Error may be wrapped: check both message and root_cause
+            let full_error = format!(
+                "{} {}",
                 exc.message,
+                exc.root_cause.as_deref().unwrap_or("")
+            );
+            assert!(
+                full_error.contains("Unsupported compression type"),
+                "Expected 'Unsupported compression type' in error chain, got: message={}, root_cause={:?}",
+                exc.message,
+                exc.root_cause,
             );
         }
         other => panic!("Expected application error, got: {other:?}"),

@@ -25,6 +25,31 @@ use tokio::time::sleep;
 use wiremock::matchers::{body_partial_json, header, method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// Create a thread-local capturing subscriber for log assertions.
+///
+/// Returns a (guard, buffer) pair. The guard must be held alive for the duration
+/// of the test. Logs are captured into the buffer. Use `get_captured_logs(&buf)`
+/// to read them.
+///
+/// This avoids the global subscriber conflict that #[traced_test] causes when
+/// other tests in the same binary call setup_logging() (which uses try_init).
+fn capturing_subscriber() -> (
+    tracing::subscriber::DefaultGuard,
+    &'static std::sync::Mutex<Vec<u8>>,
+) {
+    let buf: &'static std::sync::Mutex<Vec<u8>> =
+        Box::leak(Box::new(std::sync::Mutex::new(Vec::new())));
+    let mock_writer = tracing_test::internal::MockWriter::new(buf);
+    let dispatch = tracing_test::internal::get_subscriber(mock_writer, "trace");
+    let guard = tracing::dispatcher::set_default(&dispatch);
+    (guard, buf)
+}
+
+/// Read captured logs as a string.
+fn get_captured_logs(buf: &std::sync::Mutex<Vec<u8>>) -> String {
+    String::from_utf8(buf.lock().unwrap().clone()).unwrap_or_default()
+}
+
 // ===========================================================================
 //                      HTTP Request Construction
 // ===========================================================================
@@ -1175,11 +1200,14 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 // testing connection_close() with different ErrorStrategy configurations.
 
 #[tokio::test]
-#[tracing_test::traced_test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
-    // Scenario Outline with Examples: max_attempts = 2, 3
+    // Thread-local capturing subscriber — no global conflict with setup_logging()
+    let (_guard, log_buf) = capturing_subscriber();
 
+    // Scenario Outline with Examples: max_attempts = 2, 3
     for max_attempts in [2u64, 3] {
+        log_buf.lock().unwrap().clear();
+
         //Given Core logout function called with strict strategy
         let error_strategy = ErrorStrategy::Strict;
 
@@ -1220,13 +1248,12 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         .await
         .unwrap();
 
-        // Enter the test's tracing span on the blocking thread so that logs_contain()
-        // (which filters by span scope) captures logs from connection_close_blocking().
-        let span = tracing::Span::current();
+        // Propagate capturing subscriber to spawn_blocking thread
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
 
         //When Logout is executed
         let result = tokio::task::spawn_blocking(move || {
-            let _enter = span.enter();
+            let _guard = tracing::dispatcher::set_default(&dispatch);
             client.connection_close_blocking()
         })
         .await
@@ -1254,20 +1281,13 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         );
 
         //And Error log is emitted
-        logs_assert(|lines: &[&str]| {
-            if lines
-                .iter()
-                .any(|line| line.contains("ERROR") && line.contains("Logout failed"))
-            {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Expected ERROR log with 'Logout failed' (max_attempts={}).\nCaptured:\n{}",
-                    max_attempts,
-                    lines.join("\n")
-                ))
-            }
-        });
+        let logs = get_captured_logs(log_buf);
+        assert!(
+            logs.contains("ERROR") && logs.contains("Logout failed"),
+            "Expected ERROR log with 'Logout failed' (max_attempts={}).\nCaptured:\n{}",
+            max_attempts,
+            logs,
+        );
 
         //And Close throws error
         assert!(
@@ -1279,11 +1299,13 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
 async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy() {
-    // Scenario Outline with Examples: max_attempts = 2, 3
+    let (_guard, log_buf) = capturing_subscriber();
 
+    // Scenario Outline with Examples: max_attempts = 2, 3
     for max_attempts in [2u64, 3] {
+        log_buf.lock().unwrap().clear();
+
         //Given Core logout function called with best-effort strategy
         let error_strategy = ErrorStrategy::BestEffort;
 
@@ -1324,13 +1346,12 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         .await
         .unwrap();
 
-        // Enter the test's tracing span on the blocking thread so that logs_contain()
-        // (which filters by span scope) captures logs from connection_close_blocking().
-        let span = tracing::Span::current();
+        // Propagate capturing subscriber to spawn_blocking thread
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
 
         //When Logout is executed
         let result = tokio::task::spawn_blocking(move || {
-            let _enter = span.enter();
+            let _guard = tracing::dispatcher::set_default(&dispatch);
             client.connection_close_blocking()
         })
         .await
@@ -1358,20 +1379,13 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         );
 
         //And WARN log is emitted
-        logs_assert(|lines: &[&str]| {
-            if lines
-                .iter()
-                .any(|line| line.contains("WARN") && line.contains("Logout failed"))
-            {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Expected WARN log with 'Logout failed' (max_attempts={}).\nCaptured:\n{}",
-                    max_attempts,
-                    lines.join("\n")
-                ))
-            }
-        });
+        let logs = get_captured_logs(log_buf);
+        assert!(
+            logs.contains("WARN") && logs.contains("Logout failed"),
+            "Expected WARN log with 'Logout failed' (max_attempts={}).\nCaptured:\n{}",
+            max_attempts,
+            logs,
+        );
 
         //And Close succeeds
         assert!(
@@ -1486,8 +1500,9 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
 }
 
 #[tokio::test]
-#[tracing_test::traced_test]
 async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strategy() {
+    let (_guard, log_buf) = capturing_subscriber();
+
     // Scenario Outline with Examples: error_code = 400, 403, 404, 390114
 
     let error_cases: Vec<(&str, ResponseTemplate)> = vec![
@@ -1517,6 +1532,8 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
     ];
 
     for (error_code, response_template) in error_cases {
+        log_buf.lock().unwrap().clear();
+
         //Given Core logout function called with best-effort strategy
         let server = MockServer::start().await;
         mount_jwt_login_success(&server).await;
@@ -1552,13 +1569,12 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         .await
         .unwrap();
 
-        // Enter the test's tracing span on the blocking thread so that logs_contain()
-        // (which filters by span scope) captures logs from connection_close_blocking().
-        let span = tracing::Span::current();
+        // Propagate capturing subscriber to spawn_blocking thread
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
 
         //When Logout is executed
         let result = tokio::task::spawn_blocking(move || {
-            let _enter = span.enter();
+            let _guard = tracing::dispatcher::set_default(&dispatch);
             client.connection_close_blocking()
         })
         .await
@@ -1571,20 +1587,13 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             .count();
 
         //Then Error is logged as WARN
-        logs_assert(|lines: &[&str]| {
-            if lines
-                .iter()
-                .any(|line| line.contains("WARN") && line.contains("Logout failed"))
-            {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Expected WARN log with 'Logout failed' for non-retryable error {}.\nCaptured:\n{}",
-                    error_code,
-                    lines.join("\n")
-                ))
-            }
-        });
+        let logs = get_captured_logs(log_buf);
+        assert!(
+            logs.contains("WARN") && logs.contains("Logout failed"),
+            "Expected WARN log with 'Logout failed' for non-retryable error {}.\nCaptured:\n{}",
+            error_code,
+            logs,
+        );
 
         //And Close succeeds without throwing
         assert!(
