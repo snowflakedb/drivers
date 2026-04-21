@@ -1411,15 +1411,7 @@ mod tests {
     async fn query_context_returns_transport_fields() {
         let mut conn = Connection::new();
         conn.server_url = Some("https://account.snowflakecomputing.com".to_string());
-        conn.client_info = Some(crate::config::rest_parameters::ClientInfo {
-            application: "test".to_string(),
-            version: "1.0".to_string(),
-            os: "TestOS".to_string(),
-            os_version: "1.0".to_string(),
-            ocsp_mode: None,
-            crl_config: crate::crl::config::CrlConfig::default(),
-            tls_config: crate::tls::config::TlsConfig::default(),
-        });
+        conn.client_info = Some(crate::config::rest_parameters::test_fixtures::test_client_info());
         conn.http_client = Some(reqwest::Client::new());
         conn.retry_policy = RetryPolicy::default();
         let conn = Arc::new(Mutex::new(conn));

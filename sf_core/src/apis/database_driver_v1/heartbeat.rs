@@ -170,21 +170,8 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use crate::crl::config::CrlConfig;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
     use crate::sensitive::SensitiveString;
-    use crate::tls::config::TlsConfig;
-
-    fn test_client_info() -> ClientInfo {
-        ClientInfo {
-            application: "TestApp".to_string(),
-            version: "1.0.0".to_string(),
-            os: "Linux".to_string(),
-            os_version: "5.15".to_string(),
-            ocsp_mode: None,
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::default(),
-        }
-    }
 
     fn test_tokens(session_token: &str) -> SessionTokens {
         SessionTokens {

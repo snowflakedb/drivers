@@ -7,6 +7,8 @@ pub mod serialization;
 #[doc(hidden)]
 pub mod snowflake_exporter;
 
+pub mod platform_detection;
+
 use environment::EnvironmentInfo;
 use opentelemetry::InstrumentationScope;
 use opentelemetry::KeyValue;

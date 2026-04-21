@@ -27,6 +27,8 @@ pub struct AuthRequestClientEnvironment {
     pub os_version: String,
     #[serde(rename = "OCSP_MODE", skip_serializing_if = "Option::is_none")]
     pub ocsp_mode: Option<String>,
+    #[serde(rename = "PLATFORM")]
+    pub platforms: Vec<String>,
     #[serde(rename = "PYTHON_VERSION", skip_serializing_if = "Option::is_none")]
     pub python_version: Option<String>,
     #[serde(rename = "PYTHON_RUNTIME", skip_serializing_if = "Option::is_none")]

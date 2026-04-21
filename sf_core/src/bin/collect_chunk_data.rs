@@ -124,6 +124,7 @@ fn default_client_info() -> ClientInfo {
         ocsp_mode: Some("FAIL_OPEN".to_string()),
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
+        platforms: Vec::new(),
     }
 }
 
