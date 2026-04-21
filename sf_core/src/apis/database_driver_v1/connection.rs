@@ -318,9 +318,15 @@ impl DatabaseDriverV1 {
                         .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
                     let compiler = env_info.language_compiler.clone().unwrap_or_default();
 
-                    // Emit a short-lived session_init span so the exporter
-                    // sends telemetry immediately (not deferred until close).
+                    // Long-lived connection span parents all telemetry events
+                    // (session_init, api_usage, wrapper_error) for this session.
+                    let conn_span =
+                        tracing::info_span!("connection", "snowflake.session.id" = session_id,);
+
+                    // Emit a short-lived session_init child span so the exporter
+                    // sends environment telemetry immediately (not deferred until close).
                     {
+                        let _guard = conn_span.enter();
                         let _init_span = tracing::info_span!(
                             "session_init",
                             "snowflake.session.id" = session_id,
@@ -333,15 +339,9 @@ impl DatabaseDriverV1 {
                             "host.arch" = %env_info.os_architecture,
                             "process.runtime.compiler" = %compiler,
                         );
-                        // Span ends here when _init_span is dropped.
                     }
 
-                    // Long-lived connection span parents runtime events
-                    // (api_usage, wrapper_error) until the connection is released.
-                    let span =
-                        tracing::info_span!("connection", "snowflake.session.id" = session_id,);
-
-                    conn.telemetry_span = Some(span);
+                    conn.telemetry_span = Some(conn_span);
                 }
 
                 drop(conn);
