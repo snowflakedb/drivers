@@ -292,26 +292,37 @@ pipeline {
                           setupRust(PLATFORM)
                         }
                       }
+                      // catchError below demotes build/test/upload failures to UNSTABLE
+                      // instead of FAILURE. A FAILED stage would halt the pipeline and
+                      // skip downstream Tests; UNSTABLE marks the build yellow but lets
+                      // VPN E2E Tests and Revocation Validation continue to run.
+                      // Each platform still reports individual pass/fail on the UI.
                       stage('build (docker)') {
                         steps {
-                          run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                          }
                         }
                       }
                       stage('test (docker)') {
                         steps {
-                          run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                          }
                         }
                       }
                       stage('upload minicore package (docker)') {
                         steps {
-                          withCredentials([
-                            usernamePassword(
-                              usernameVariable: 'AWS_ACCESS_KEY_ID',
-                              passwordVariable: 'AWS_SECRET_ACCESS_KEY',
-                              credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
-                            )
-                          ]) {
-                            uploadMinicorePackage(PLATFORM)
+                          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            withCredentials([
+                              usernamePassword(
+                                usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                                credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                              )
+                            ]) {
+                              uploadMinicorePackage(PLATFORM)
+                            }
                           }
                         }
                       }
@@ -337,26 +348,34 @@ pipeline {
                       setupRust(PLATFORM)
                     }
                   }
+                  // See comment above on Docker Build: catchError demotes failures to
+                  // UNSTABLE so a broken platform build here doesn't block Tests.
                   stage('build (node)') {
                     steps {
-                      run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                      catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                      }
                     }
                   }
                   stage('test (node)') {
                     steps {
-                      run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                      catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                      }
                     }
                   }
                   stage('upload minicore package (node)') {
                     steps {
-                      withCredentials([
-                        usernamePassword(
-                          usernameVariable: 'AWS_ACCESS_KEY_ID',
-                          passwordVariable: 'AWS_SECRET_ACCESS_KEY',
-                          credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
-                        )
-                      ]) {
-                        uploadMinicorePackage(PLATFORM)
+                      catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        withCredentials([
+                          usernamePassword(
+                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                            passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                            credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                          )
+                        ]) {
+                          uploadMinicorePackage(PLATFORM)
+                        }
                       }
                     }
                   }
