@@ -119,7 +119,7 @@ pub enum CrlError {
     },
     /// Wrapper that adds CRL distribution-point URL context to any other CrlError
     /// raised while verifying a specific CRL. Propagated from the multi-DP loop in
-    /// CrlCache::check_certificate so callers can identify which URL failed without
+    /// CrlCache::check_revocation so callers can identify which URL failed without
     /// parsing log output. The inner error is boxed to keep the enum size small.
     #[snafu(display("CRL verification failed for distribution point {url}: {source}"))]
     CrlDistributionPointFailed {

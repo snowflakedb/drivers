@@ -18,10 +18,20 @@ if ! command -v unzip >/dev/null 2>&1; then
     yum install -y unzip || apt-get install -y unzip || true
 fi
 
-# Clone revocation-validation framework
-REVOCATION_BRANCH="${REVOCATION_BRANCH:-main}"
+# Clone revocation-validation framework.
+# REVOCATION_REF accepts a branch, tag, or commit SHA (git --branch supports all three).
+# Legacy env var `REVOCATION_BRANCH` is still honoured for backward compatibility.
+# Production CI should pass a pinned tag or commit SHA (e.g. REVOCATION_REF=v1.2.3) so
+# test results are reproducible over time. Falling back to `main` is convenient for
+# local runs but makes runs non-deterministic if the upstream repo changes.
+REVOCATION_REF="${REVOCATION_REF:-${REVOCATION_BRANCH:-main}}"
 REVOCATION_REPO="https://github.com/snowflake-eng/revocation-validation.git"
 REVOCATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/revocation-validation.XXXXXX")"
+
+if [ "$REVOCATION_REF" = "main" ]; then
+    echo "[Warn] REVOCATION_REF defaulted to 'main' — results are non-reproducible." >&2
+    echo "[Warn] Production CI should set REVOCATION_REF to a pinned tag or commit SHA." >&2
+fi
 
 # Clean up workspace AND any ASKPASS helper on exit. The askpass script is chmod 700
 # and deleted here to minimize the window in which the helper file exists on disk.
@@ -52,10 +62,22 @@ esac
 EOF
     chmod 700 "$ASKPASS_SCRIPT"
     GIT_ASKPASS="$ASKPASS_SCRIPT" GIT_TERMINAL_PROMPT=0 \
-        git clone -q --depth 1 --branch "$REVOCATION_BRANCH" \
+        git clone -q --depth 1 --branch "$REVOCATION_REF" \
         "$REVOCATION_REPO" "$REVOCATION_DIR"
 else
-    git clone -q --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
+    git clone -q --depth 1 --branch "$REVOCATION_REF" "$REVOCATION_REPO" "$REVOCATION_DIR"
+fi
+
+# Scrub GitHub credentials from the environment BEFORE executing any code from the
+# cloned external repo. `go run .` below compiles and runs third-party Go code that
+# could read os.Getenv or spawn subprocesses which inherit our env. Keeping the token
+# alive past the git clone gives unnecessary exposure. Also blank the ASKPASS script
+# now (it's already chmod 700 and will be removed in the EXIT trap, but a pre-run
+# `: > ...` truncates the contents immediately, eliminating the window in which the
+# file contains credentials on disk).
+unset GITHUB_USER GITHUB_TOKEN
+if [ -n "$ASKPASS_SCRIPT" ]; then
+    : > "$ASKPASS_SCRIPT"
 fi
 
 cd "$REVOCATION_DIR"

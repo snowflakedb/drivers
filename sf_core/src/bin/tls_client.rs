@@ -251,11 +251,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Size: {} bytes", body.len());
             println!("  Time: {elapsed:?}");
 
+            // Distinguish "request completed" from "HTTP success": automation parsing the
+            // result JSON would otherwise treat 404/500 etc. as successes because we got a
+            // response at all. Reserve `success=true` for 2xx statuses; expose the non-2xx
+            // case via error/error_type so consumers can act on it. The process exit code
+            // (in main()) then mirrors this — non-success returns Err, which is observable
+            // by shell/CI callers.
+            let success = status.is_success();
+            let (error, error_type) = if success {
+                (None, None)
+            } else {
+                (
+                    Some(format!("HTTP request returned status {status}")),
+                    Some("http".to_string()),
+                )
+            };
+
             TestResult {
-                success: true,
+                success,
                 status_code: Some(status.as_u16()),
-                error: None,
-                error_type: None,
+                error,
+                error_type,
             }
         }
         Err(e) => {
