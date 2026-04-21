@@ -1130,25 +1130,34 @@ async fn execute_sync_query<'a>(
             path: QUERY_REQUEST_PATH,
         })?;
 
-    // Build query parameters - include retry=true if this is a retry.
-    // The `requestId` is stable across HTTP-level retries so the server can
-    // dedupe replays via its normal request-id machinery.
-    let mut query_params = vec![
+    // Base query parameters - the `requestId` is stable across HTTP-level
+    // retries so the server can dedupe replays via its normal request-id
+    // machinery. The `retry=true` flag is the documented Snowflake hint that
+    // signals "look up requestId in the dedup table"; for unknown requestIds
+    // the server simply executes the query as a fresh request.
+    let base_query_params = vec![
         ("requestId", request_id.to_string()),
         ("request_guid", uuid::Uuid::new_v4().to_string()),
     ];
-    if is_retry {
-        query_params.push(("retry", "true".to_string()));
-    }
 
     let send_start = Instant::now();
+    let attempt_counter = std::sync::atomic::AtomicU32::new(0);
     let build_request = || {
+        let n = attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Set retry=true if either the outer caller already considers this a
+        // retry, or this is a second-or-later HTTP-level attempt within
+        // execute_with_retry. Always safe per Snowflake docs; only increases
+        // dedupe accuracy when the server has already seen this requestId.
+        let mut params = base_query_params.clone();
+        if is_retry || n >= 1 {
+            params.push(("retry", "true".to_string()));
+        }
         apply_json_content_type(apply_query_headers(
             client.post(query_url.clone()),
             &query_parameters.client_info,
             session_token,
         ))
-        .query(&query_params)
+        .query(&params)
         .json(&query_request)
     };
 
@@ -2188,14 +2197,18 @@ mod tests {
         use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
         #[tokio::test]
-        async fn retries_on_503_then_succeeds() {
+        async fn retries_on_503_then_succeeds_and_sets_retry_flag_on_replays() {
             let server = MockServer::start().await;
             let attempt = Arc::new(AtomicU32::new(0));
+            let captured_urls: Arc<std::sync::Mutex<Vec<String>>> =
+                Arc::new(std::sync::Mutex::new(Vec::new()));
 
             let attempt_clone = attempt.clone();
+            let captured_clone = captured_urls.clone();
             Mock::given(method("POST"))
                 .and(path_regex(r"/queries/v1/query-request"))
-                .respond_with(move |_: &Request| {
+                .respond_with(move |req: &Request| {
+                    captured_clone.lock().unwrap().push(req.url.to_string());
                     let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
                     if n < 2 {
                         ResponseTemplate::new(503).set_body_string("Service Unavailable")
@@ -2242,8 +2255,39 @@ mod tests {
             assert_eq!(
                 attempt.load(Ordering::SeqCst),
                 3,
-                "Expected exactly 3 attempts (2 failures + 1 success), got {}",
-                attempt.load(Ordering::SeqCst)
+                "Expected exactly 3 attempts (2 failures + 1 success)",
+            );
+
+            let urls = captured_urls.lock().unwrap();
+            assert_eq!(urls.len(), 3, "Should have captured 3 request URLs");
+            assert!(
+                !urls[0].contains("retry=true"),
+                "First attempt must not include retry=true (fresh request): {}",
+                urls[0]
+            );
+            assert!(
+                urls[1].contains("retry=true"),
+                "Second attempt must include retry=true so the server dedupes: {}",
+                urls[1]
+            );
+            assert!(
+                urls[2].contains("retry=true"),
+                "Third attempt must include retry=true so the server dedupes: {}",
+                urls[2]
+            );
+
+            let request_ids: Vec<&str> = urls
+                .iter()
+                .filter_map(|u| {
+                    u.split_once("requestId=")
+                        .map(|(_, rest)| rest.split('&').next().unwrap_or(rest))
+                })
+                .collect();
+            assert_eq!(request_ids.len(), 3);
+            assert!(
+                request_ids[0] == request_ids[1] && request_ids[1] == request_ids[2],
+                "requestId must be stable across HTTP-level retries: {:?}",
+                request_ids
             );
         }
     }
