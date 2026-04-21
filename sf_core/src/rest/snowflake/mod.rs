@@ -971,15 +971,10 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = query_input
-        .sql
-        .chars()
-        .take(query_parameters.log_max_query_length)
-        .collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
-        sql_prefix,
+        sql_prefix = query_input.sql.chars().take(query_parameters.log_max_query_length).collect::<String>(),
         "Executing sync query"
     );
 
@@ -991,6 +986,7 @@ async fn execute_sync_with_retry<'a>(
         query_input,
         request_id,
         false, // not a retry
+        retry_policy,
     )
     .await
     {
@@ -1037,6 +1033,7 @@ async fn execute_sync_with_retry<'a>(
             query_input,
             request_id,
             true, // is retry
+            retry_policy,
         )
         .await
         {
@@ -1106,6 +1103,7 @@ async fn execute_sync_query<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     is_retry: bool,
+    retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
@@ -1163,8 +1161,23 @@ async fn execute_sync_query<'a>(
         request_id = %request_id,
         is_retry,
         query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
-        "Sync query completed"
+        "Sync query response received"
     );
+
+    let query_response = if async_exec::should_poll_for_completion(&query_response) {
+        tracing::debug!(request_id = %request_id, "detached query - polling for completion");
+        async_exec::poll_detached_query(
+            client,
+            query_parameters,
+            session_token,
+            &query_response,
+            retry_policy,
+        )
+        .await
+        .context(AsyncQuerySnafu)?
+    } else {
+        query_response
+    };
 
     into_query_result(query_response)
 }
