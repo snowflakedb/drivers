@@ -6,6 +6,7 @@ pub(crate) mod error;
 mod global_state;
 pub(crate) mod heartbeat;
 mod query;
+pub mod spcs_token;
 pub(crate) mod statement;
 pub(crate) mod validation;
 
@@ -14,6 +15,6 @@ pub use crate::handle_manager::Handle;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
 pub use error::ApiError;
-pub use global_state::DatabaseDriverV1;
+pub use global_state::{DatabaseDriverV1, DriverProviders};
 pub use statement::{BindingType, ColumnMetadata, DataPtr, ExecuteResult, StoredChunkInfo};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

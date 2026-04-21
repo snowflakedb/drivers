@@ -82,6 +82,8 @@ pub struct AuthRequestData {
     pub oauth_type: Option<String>,
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    #[serde(rename = "SPCS_TOKEN", skip_serializing_if = "Option::is_none")]
+    pub spcs_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

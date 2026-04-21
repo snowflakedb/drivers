@@ -8,6 +8,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use super::Setting;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
+use super::spcs_token::read_spcs_token;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
     normalize_host_underscores, resolve_options, validate_connection_seed_write,
@@ -210,8 +211,12 @@ impl DatabaseDriverV1 {
 
                 let http_client = create_tls_client_with_config(config.tls.clone())
                     .context(TlsClientCreationSnafu)?;
-                let login_parameters =
-                    LoginParameters::from_connection_config(&config, client_info, None);
+                let login_parameters = LoginParameters::from_connection_config(
+                    &config,
+                    client_info,
+                    None,
+                    read_spcs_token(self.fs_adapter().as_ref()),
+                );
 
                 let mfa_caching_requested = matches!(
                     &login_parameters.login_method,

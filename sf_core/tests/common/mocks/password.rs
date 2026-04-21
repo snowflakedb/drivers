@@ -22,6 +22,26 @@ impl Match for AuthenticatorFieldAbsent {
     }
 }
 
+pub fn success_login_response() -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "success": true,
+        "data": {
+            "token": "mock_session_token",
+            "masterToken": "mock_master_token",
+            "sessionId": 12345,
+            "validityInSeconds": 3600,
+            "masterValidityInSeconds": 14400,
+            "parameters": [],
+            "sessionInfo": {
+                "databaseName": "test_database",
+                "schemaName": "test_schema",
+                "warehouseName": "test_warehouse",
+                "roleName": "test_role"
+            }
+        }
+    }))
+}
+
 /// Successful password login — matches a POST to login-request with LOGIN_NAME and PASSWORD
 /// and verifies the AUTHENTICATOR field is absent (matching old driver behavior).
 pub fn login_success() -> Mock {
@@ -34,23 +54,7 @@ pub fn login_success() -> Mock {
             }
         })))
         .and(AuthenticatorFieldAbsent)
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "success": true,
-            "data": {
-                "token": "mock_session_token",
-                "masterToken": "mock_master_token",
-                "sessionId": 12345,
-                "validityInSeconds": 3600,
-                "masterValidityInSeconds": 14400,
-                "parameters": [],
-                "sessionInfo": {
-                    "databaseName": "test_database",
-                    "schemaName": "test_schema",
-                    "warehouseName": "test_warehouse",
-                    "roleName": "test_role"
-                }
-            }
-        })))
+        .respond_with(success_login_response())
 }
 
 /// Failed password login — wrong credentials.

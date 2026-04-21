@@ -112,6 +112,7 @@ pub struct LoginParameters {
     pub role: Option<String>,
     pub client_info: ClientInfo,
     pub session_parameters: Option<HashMap<String, String>>,
+    pub spcs_token: Option<String>,
 }
 
 impl LoginParameters {
@@ -139,6 +140,7 @@ impl LoginParameters {
             role: settings.get_string("role"),
             client_info: ClientInfo::from_settings(settings)?,
             session_parameters: None,
+            spcs_token: None,
         })
     }
 }

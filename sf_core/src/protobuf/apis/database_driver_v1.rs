@@ -748,8 +748,12 @@ impl Default for DatabaseDriverImpl {
 
 impl DatabaseDriverImpl {
     pub fn new() -> Self {
+        Self::new_with(DriverProviders::default())
+    }
+
+    pub fn new_with(providers: DriverProviders) -> Self {
         Self {
-            driver: DatabaseDriverV1::new(),
+            driver: DatabaseDriverV1::with_providers(providers),
         }
     }
 }
@@ -1515,8 +1519,14 @@ pub type DatabaseDriverClient =
         crate::protobuf::apis::RustTransport,
     >;
 
+pub use crate::apis::database_driver_v1::DriverProviders;
+
 pub fn database_driver_client() -> DatabaseDriverClient {
-    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new())
+    database_driver_client_with(DriverProviders::default())
+}
+
+pub fn database_driver_client_with(providers: DriverProviders) -> DatabaseDriverClient {
+    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new_with(providers))
 }
 
 // Synchronous convenience wrappers used by Rust test helpers and small
