@@ -271,8 +271,10 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
-                // Register the session in the shared telemetry registry
-                // so the global OpenTelemetryLayer can route exported spans.
+                // Telemetry setup: check if the server has opted this session
+                // into in-band telemetry, then register the session with the
+                // global exporter so spans tagged with this session_id are
+                // routed to /telemetry/send.
                 let telemetry_enabled = conn
                     .session_parameters
                     .read()
@@ -285,11 +287,16 @@ impl DatabaseDriverV1 {
                     use crate::config::rest_parameters::QueryParameters;
                     use crate::telemetry::snowflake_exporter::ExporterSession;
 
+                    let Some(http_client) = conn.http_client.clone() else {
+                        tracing::warn!(
+                            "Skipping telemetry: http_client not set after connection init"
+                        );
+                        drop(conn);
+                        return Ok(());
+                    };
+
                     let exporter_session = Arc::new(ExporterSession {
-                        client: conn
-                            .http_client
-                            .clone()
-                            .expect("http_client set after init"),
+                        client: http_client,
                         query_parameters: QueryParameters {
                             server_url: login_parameters.server_url.clone(),
                             client_info: login_parameters.client_info.clone(),
@@ -310,18 +317,29 @@ impl DatabaseDriverV1 {
                         .map(crate::telemetry::environment::EnvironmentInfo::with_wrapper)
                         .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
                     let compiler = env_info.language_compiler.clone().unwrap_or_default();
-                    let span = tracing::info_span!(
-                        "connection",
-                        "snowflake.session.id" = session_id,
-                        "service.name" = %env_info.driver_name,
-                        "service.version" = %env_info.driver_version,
-                        "process.runtime.name" = %env_info.language_runtime,
-                        "process.runtime.version" = %env_info.language_version,
-                        "os.type" = %env_info.os_name,
-                        "os.version" = %env_info.os_version,
-                        "host.arch" = %env_info.os_architecture,
-                        "process.runtime.compiler" = %compiler,
-                    );
+
+                    // Emit a short-lived session_init span so the exporter
+                    // sends telemetry immediately (not deferred until close).
+                    {
+                        let _init_span = tracing::info_span!(
+                            "session_init",
+                            "snowflake.session.id" = session_id,
+                            "service.name" = %env_info.driver_name,
+                            "service.version" = %env_info.driver_version,
+                            "process.runtime.name" = %env_info.language_runtime,
+                            "process.runtime.version" = %env_info.language_version,
+                            "os.type" = %env_info.os_name,
+                            "os.version" = %env_info.os_version,
+                            "host.arch" = %env_info.os_architecture,
+                            "process.runtime.compiler" = %compiler,
+                        );
+                        // Span ends here when _init_span is dropped.
+                    }
+
+                    // Long-lived connection span parents runtime events
+                    // (api_usage, wrapper_error) until the connection is released.
+                    let span =
+                        tracing::info_span!("connection", "snowflake.session.id" = session_id,);
 
                     conn.telemetry_span = Some(span);
                 }
@@ -369,8 +387,10 @@ impl DatabaseDriverV1 {
             // Drop the tracing span — this ends the underlying OTel span
             // so the BatchSpanProcessor can export it.
             drop(span);
-            // Remove the session from the shared registry so the exporter
-            // stops routing spans for this connection.
+            // Force-flush the batch processor so all queued spans (including
+            // the just-ended connection span) are exported before we remove
+            // the session from the registry.
+            crate::logging::flush_telemetry();
             if let Some(id) = session_id {
                 self.telemetry_sessions()
                     .write()

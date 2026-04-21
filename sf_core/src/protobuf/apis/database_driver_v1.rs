@@ -1568,8 +1568,8 @@ impl DatabaseDriverImpl {
         fields(
             snowflake.session.id = session_id,
             otel.status_code = "ERROR",
-            exception_type = %exception_type,
-            exception_source = %error_source,
+            exception.type = %exception_type,
+            exception.source = %error_source,
         )
     )]
     async fn record_wrapper_error(session_id: i64, exception_type: &str, error_source: &str) {

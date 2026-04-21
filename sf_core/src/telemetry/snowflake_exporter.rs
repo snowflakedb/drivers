@@ -350,6 +350,24 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn extract_session_id_handles_i64_value() {
+        let attrs = vec![KeyValue::new(SESSION_ID_ATTR, 42i64)];
+        assert_eq!(extract_session_id(&attrs), Some(42));
+    }
+
+    #[test]
+    fn extract_session_id_handles_string_value() {
+        let attrs = vec![KeyValue::new(SESSION_ID_ATTR, "99")];
+        assert_eq!(extract_session_id(&attrs), Some(99));
+    }
+
+    #[test]
+    fn extract_session_id_returns_none_when_missing() {
+        let attrs = vec![KeyValue::new("other.attr", "value")];
+        assert_eq!(extract_session_id(&attrs), None);
+    }
+
     #[tokio::test]
     async fn span_exporter_routes_to_multiple_sessions() {
         let server1 = MockServer::start().await;

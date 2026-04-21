@@ -17,6 +17,14 @@ use tracing_subscriber::layer::SubscriberExt;
 /// exporter worker is not shut down when the local variable goes out of scope.
 static TELEMETRY_PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLock::new();
 
+/// Force-flush all pending telemetry spans so they are exported before
+/// a session is deregistered. No-op if the provider has not been initialized.
+pub fn flush_telemetry() {
+    if let Some(provider) = TELEMETRY_PROVIDER.get() {
+        let _ = provider.force_flush();
+    }
+}
+
 pub mod c_api;
 mod callback_layer;
 mod error;
@@ -76,15 +84,18 @@ where
     let subscriber = subscriber.with(opentelemetry_layer);
 
     let snowflake_layer = {
-        let sessions = crate::telemetry::snowflake_exporter::global_session_registry();
-        let exporter = crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
-        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-            .with_batch_exporter(exporter)
-            .build();
+        // Build the provider once and keep it alive for the process lifetime.
+        // get_or_init ensures the tracer always references the long-lived
+        // instance, even if init_logging is called more than once.
+        let provider = TELEMETRY_PROVIDER.get_or_init(|| {
+            let sessions = crate::telemetry::snowflake_exporter::global_session_registry();
+            let exporter =
+                crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
+            opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .build()
+        });
         let tracer = provider.tracer("snowflake.telemetry");
-        // Keep the provider alive for the process lifetime so the batch
-        // exporter worker thread is not shut down.
-        TELEMETRY_PROVIDER.get_or_init(|| provider);
         OpenTelemetryLayer::new(tracer)
     };
     let subscriber = subscriber.with(Some(snowflake_layer));
