@@ -4,7 +4,7 @@ use crate::common::mocks::password;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
 use sf_core::fs_adapter::mock::MockFs;
-use sf_core::protobuf::apis::database_driver_v1::DriverOverrides;
+use sf_core::protobuf::apis::database_driver_v1::DriverProviders;
 use wiremock::matchers::{body_partial_json, method, path_regex};
 use wiremock::{Match, Mock, Request};
 
@@ -15,13 +15,13 @@ struct SpcsTokenTestContext {
 
 impl SpcsTokenTestContext {
     fn new() -> Self {
-        Self::with_overrides(DriverOverrides::default())
+        Self::with_providers(DriverProviders::default())
     }
 
-    fn with_overrides(overrides: DriverOverrides) -> Self {
+    fn with_providers(providers: DriverProviders) -> Self {
         let mock = MockServerWithTls::start();
         let client =
-            SnowflakeTestClient::with_int_tests_params_using(Some(&mock.http_url()), overrides);
+            SnowflakeTestClient::with_int_tests_params_using(Some(&mock.http_url()), providers);
         client.set_connection_option("password", "test_password"); // pragma: allowlist secret
         Self { mock, client }
     }
@@ -60,7 +60,7 @@ fn should_not_include_spcs_token_when_env_var_is_not_set() {
 #[test]
 fn should_include_spcs_token_when_env_var_is_set_and_file_exists() {
     let fs = Arc::new(MockFs::new().with_file("/snowflake/session/spcs_token", "my-spcs-token"));
-    let context = SpcsTokenTestContext::with_overrides(DriverOverrides { fs: Some(fs) });
+    let context = SpcsTokenTestContext::with_providers(DriverProviders { fs: Some(fs) });
     context.mock.mount(
         Mock::given(method("POST"))
             .and(path_regex(r"/session/v1/login-request"))

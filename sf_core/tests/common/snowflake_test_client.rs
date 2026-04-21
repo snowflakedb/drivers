@@ -1,7 +1,7 @@
 use proto_utils::ProtoError;
 use sf_core::config::param_names;
 use sf_core::protobuf::apis::database_driver_v1::{
-    DatabaseDriverClient, DatabaseDriverClientBlockingExt, DriverOverrides, database_driver_client,
+    DatabaseDriverClient, DatabaseDriverClientBlockingExt, DriverProviders, database_driver_client,
     database_driver_client_with,
 };
 use sf_core::protobuf::generated::database_driver_v1::*;
@@ -83,14 +83,14 @@ impl SnowflakeTestClient {
     }
 
     /// Variant of [`Self::with_int_tests_params`] that installs test
-    /// overrides (e.g. a mocked filesystem) on the underlying driver
-    /// before the client starts issuing requests. Add new overrides by
-    /// extending [`DriverOverrides`]; no new constructor is required.
+    /// providers (e.g. a mocked filesystem) on the underlying driver
+    /// before the client starts issuing requests. Add new providers by
+    /// extending [`DriverProviders`]; no new constructor is required.
     pub fn with_int_tests_params_using(
         server_url: Option<&str>,
-        overrides: DriverOverrides,
+        providers: DriverProviders,
     ) -> Self {
-        Self::with_int_tests_params_and_client(server_url, database_driver_client_with(overrides))
+        Self::with_int_tests_params_and_client(server_url, database_driver_client_with(providers))
     }
 
     fn with_int_tests_params_and_client(

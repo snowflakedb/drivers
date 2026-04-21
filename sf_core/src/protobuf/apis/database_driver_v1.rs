@@ -748,12 +748,12 @@ impl Default for DatabaseDriverImpl {
 
 impl DatabaseDriverImpl {
     pub fn new() -> Self {
-        Self::new_with(DriverOverrides::default())
+        Self::new_with(DriverProviders::default())
     }
 
-    pub fn new_with(overrides: DriverOverrides) -> Self {
+    pub fn new_with(providers: DriverProviders) -> Self {
         let driver = DatabaseDriverV1::new();
-        if let Some(fs) = overrides.fs {
+        if let Some(fs) = providers.fs {
             let _ = driver.set_fs_adapter(fs);
         }
         Self { driver }
@@ -1495,16 +1495,16 @@ pub type DatabaseDriverClient =
     >;
 
 pub fn database_driver_client() -> DatabaseDriverClient {
-    database_driver_client_with(DriverOverrides::default())
+    database_driver_client_with(DriverProviders::default())
 }
 
 #[derive(Default)]
-pub struct DriverOverrides {
+pub struct DriverProviders {
     pub fs: Option<std::sync::Arc<dyn crate::fs_adapter::FsAdapter>>,
 }
 
-pub fn database_driver_client_with(overrides: DriverOverrides) -> DatabaseDriverClient {
-    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new_with(overrides))
+pub fn database_driver_client_with(providers: DriverProviders) -> DatabaseDriverClient {
+    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new_with(providers))
 }
 
 // Synchronous convenience wrappers used by Rust test helpers and small
