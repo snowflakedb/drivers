@@ -132,13 +132,13 @@ pub struct QueryContext {
 pub struct QueryContextEntry {
     //unused fields
     #[serde(rename = "id")]
-    _id: i32,
+    _id: i64,
     #[serde(rename = "timestamp")]
     _timestamp: i64,
     #[serde(rename = "priority")]
-    _priority: i32,
+    _priority: i64,
     #[serde(rename = "context")]
-    _context: String,
+    _context: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1155,5 +1155,57 @@ mod tests {
             ),
             Ok(_) => panic!("Expected error for unsupported column type GEOGRAPHY"),
         }
+    }
+
+    #[test]
+    fn test_query_context_entry_id_exceeding_i32_max() {
+        let json = r#"{
+            "data": {
+                "queryContext": {
+                    "entries": [
+                        {"id": 3575747553, "timestamp": 1681400000, "priority": 0, "context": "some_ctx"}
+                    ]
+                }
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+    }
+
+    #[test]
+    fn test_query_context_entry_missing_context_field() {
+        let json = r#"{
+            "data": {
+                "queryContext": {
+                    "entries": [
+                        {"id": 42, "timestamp": 1681400000, "priority": 1}
+                    ]
+                }
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+    }
+
+    #[test]
+    fn test_query_context_entry_with_all_large_values() {
+        let json = r#"{
+            "data": {
+                "queryContext": {
+                    "entries": [
+                        {"id": 3575748941, "timestamp": 9999999999999, "priority": 3000000000, "context": "ctx"},
+                        {"id": 3575748745, "timestamp": 1681400000, "priority": 0}
+                    ]
+                }
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
     }
 }
