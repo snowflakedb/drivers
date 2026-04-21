@@ -234,7 +234,8 @@ fn connect_with_params(
         options.insert("port".to_owned(), port_int.into());
     }
 
-    let connection = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle);
+    let connection = &mut dbc.connection;
     apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
 
     // Check before moving `options` into the RPC call below.
@@ -561,7 +562,8 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
-    let connection = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle);
+    let connection = &mut dbc.connection;
     if let ConnectionState::Connected {
         db_handle,
         conn_handle,
@@ -621,7 +623,8 @@ pub fn native_sql<E: OdbcEncoding>(
         .fail();
     }
 
-    let conn = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle);
+    let conn = &mut dbc.connection;
     if matches!(conn.state, ConnectionState::Disconnected) {
         return crate::api::error::DisconnectedSnafu.fail();
     }
@@ -665,7 +668,8 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     string_length: sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let connection = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle);
+    let connection = &mut dbc.connection;
     tracing::debug!("set_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
@@ -872,7 +876,8 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     string_length_ptr: *mut sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let connection = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle);
+    let connection = &mut dbc.connection;
     tracing::debug!("get_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {

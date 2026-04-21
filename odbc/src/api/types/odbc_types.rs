@@ -1,5 +1,9 @@
 use crate::api::bitmask::Bitmask;
-use crate::api::error::InvalidDescriptorKindSnafu;
+use crate::api::error::{
+    ConnectionHasNoEnvironmentSnafu, InvalidDescriptorKindSnafu, OdbcRuntimeSnafu,
+};
+use crate::api::handle_registry::HandleId;
+use crate::api::runtime::global;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
 use crate::conversion::warning::Warnings;
@@ -9,8 +13,11 @@ use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
+use snafu::ResultExt;
 use std::collections::HashMap;
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
+
+use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::CDataType;
@@ -862,12 +869,21 @@ impl ToSqlReturn for OdbcResult<()> {
         self.to_sql_return(warnings).0
     }
 }
+pub struct Env {
+    pub environment: Mutex<Environment>,
+}
+
+// TODO: this is a hack to allow the Env to be used in a multi-threaded environment
+// Will be removed after this PR stack is completed
+unsafe impl Send for Env {}
+unsafe impl Sync for Env {}
 
 pub struct Environment {
     pub odbc_version: sql::Integer,
     pub connection_pooling: sql::AttrConnectionPooling,
     pub connection_pool_match: sql::AttrCpMatch,
     pub diagnostic_info: DiagnosticInfo,
+    pub connections: Vec<*mut Dbc>,
 }
 
 pub enum ConnectionState {
@@ -882,6 +898,19 @@ pub enum ConnectionState {
 /// Pre-connection attributes set via SQLSetConnectAttr before connecting.
 /// These are applied to the sf_core connection during driver_connect/connect.
 pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
+
+pub struct Dbc {
+    pub connection: Connection,
+    pub env: Weak<Env>,
+}
+
+impl Dbc {
+    pub fn env(&self) -> Result<Arc<Env>, OdbcError> {
+        self.env
+            .upgrade()
+            .ok_or(ConnectionHasNoEnvironmentSnafu.build())
+    }
+}
 
 pub struct Connection {
     pub state: ConnectionState,
@@ -1206,7 +1235,7 @@ impl GetDataState {
 pub struct Statement {
     /// Raw pointer to the owning connection. Valid for the entire lifetime of this Statement
     /// (the connection always outlives its statements). Access via `conn()` / `conn_ptr()`.
-    conn: *mut Connection,
+    conn: *mut Dbc,
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1251,7 +1280,7 @@ unsafe impl Send for Statement {}
 
 impl Statement {
     /// Construct a new Statement for the given connection.
-    pub fn new(conn: *mut Connection, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
+    pub fn new(conn: *mut Dbc, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
         Self {
             conn,
             stmt_handle,
@@ -1277,7 +1306,7 @@ impl Statement {
     /// # Safety
     /// The caller must ensure the Connection outlives this borrow and no other
     /// mutable reference to the Connection exists simultaneously.
-    pub unsafe fn conn(&self) -> &Connection {
+    pub unsafe fn conn(&self) -> &Dbc {
         debug_assert!(
             !self.conn.is_null(),
             "Statement::conn: connection pointer is null"
@@ -1297,19 +1326,23 @@ impl Statement {
     /// derived from this statement) exists while the returned pointer is dereferenced
     /// mutably. Having both an active `&Connection` and a `&mut Connection` pointing
     /// to the same allocation is undefined behaviour.
-    pub(crate) unsafe fn conn_ptr(&self) -> *mut Connection {
+    pub(crate) unsafe fn conn_ptr(&self) -> *mut Dbc {
         self.conn
     }
 }
 
 // Helper functions for handle conversion
-pub fn env_from_handle<'a>(handle: sql::Handle) -> &'a mut Environment {
-    let env_ptr = handle as *mut Environment;
-    unsafe { env_ptr.as_mut().unwrap() }
+pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<Arc<Env>> {
+    let handle_id = HandleId::from(handle);
+    let env = global()
+        .context(OdbcRuntimeSnafu)?
+        .env_registry
+        .get(handle_id)?;
+    Ok(env)
 }
 
-pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Connection {
-    let conn_ptr = handle as *mut Connection;
+pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Dbc {
+    let conn_ptr = handle as *mut Dbc;
     unsafe { conn_ptr.as_mut().unwrap() }
 }
 
