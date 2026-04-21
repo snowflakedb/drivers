@@ -18,10 +18,12 @@ import yaml
 
 ALLOWED_STATUSES = {"unknown", "todo", "fixed", "allowed"}
 ALLOWED_TYPES = {"api_incompatibility", "bug", "enhancement", "unknown"}
+ALLOWED_REVIEWED = {True, False}
 KNOWN_FIELDS = {
     "name",
     "status",
     "type",
+    "reviewed",
     "description",
     "old_driver_behavior",
     "new_driver_behavior",
@@ -104,6 +106,10 @@ def validate() -> list[str]:
             errors.append(f"BD-{bd_id}: 'type' is required (allowed: {', '.join(sorted(ALLOWED_TYPES))})")
         elif bd_type not in ALLOWED_TYPES:
             errors.append(f"BD-{bd_id}: invalid type '{bd_type}' (allowed: {', '.join(sorted(ALLOWED_TYPES))})")
+
+        reviewed = entry.get("reviewed")
+        if reviewed is not None and not isinstance(reviewed, bool):
+            errors.append(f"BD-{bd_id}: 'reviewed' must be a boolean (true/false)")
 
     old_ids = _committed_ids()
     removed = old_ids - seen_ids
