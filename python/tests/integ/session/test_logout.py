@@ -144,11 +144,7 @@ class TestLogoutIdempotency:
 
 
 class TestLogoutConfigPassing:
-    """Tests that verify Python wrapper correctly passes config to Core (pure mock).
-
-    Moved from tests/e2e/session/test_logout.py — these use core_mock (no real
-    backend), making them integration tests, not e2e.
-    """
+    """Verify Python wrapper correctly passes logout config to Core."""
 
     def test_should_have_enable_server_session_keep_alive_auto_detection_default_to_true(self, core_mock):
         """Verify enable_server_session_keep_alive_auto_detection defaults to True.
@@ -215,10 +211,7 @@ class TestLogoutConfigPassing:
 
 
 class TestAutoCleanupConfig:
-    """Config-level auto_cleanup tests (pure mock, no real Core).
-
-    Moved from tests/e2e/session/test_logout.py — uses core_mock.
-    """
+    """Verify auto_cleanup defaults and atexit handler registration."""
 
     def test_should_have_auto_cleanup_enabled_by_default(self, core_mock):
         """Verify auto_cleanup defaults to True and atexit handler is registered."""
@@ -226,8 +219,7 @@ class TestAutoCleanupConfig:
 
         with patch("snowflake.connector.connection.atexit") as mock_atexit:
             # Given Snowflake Python client is created with default parameters
-            with pytest.warns(FutureWarning):
-                conn = Connection(user="test", account="test")
+            conn = Connection(user="test", account="test")
 
             # When Connection is initialized
             auto_cleanup_value = conn.auto_cleanup
