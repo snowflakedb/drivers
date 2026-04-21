@@ -3,6 +3,10 @@
 These tests use Wiremock to verify that logout HTTP requests are sent correctly.
 """
 
+import warnings
+
+from unittest.mock import patch
+
 import pytest
 
 from tests.wiremock_client import WiremockClient
@@ -140,36 +144,98 @@ class TestLogoutIdempotency:
 
 
 class TestLogoutConfigPassing:
-    """Tests that verify Python wrapper correctly passes config to Core (pure mock)."""
+    """Tests that verify Python wrapper correctly passes config to Core (pure mock).
+
+    Moved from tests/e2e/session/test_logout.py — these use core_mock (no real
+    backend), making them integration tests, not e2e.
+    """
 
     def test_should_have_enable_server_session_keep_alive_auto_detection_default_to_true(self, core_mock):
-        """Verify enable_server_session_keep_alive_auto_detection defaults to True."""
-        import warnings as w_mod
+        """Verify enable_server_session_keep_alive_auto_detection defaults to True.
 
+        Default True is required for backward compat (SNOW-2314152): the old Python
+        driver always checked _async_sfqids before logout. Without this default,
+        Core receives enable_server_session_keep_alive_auto_detection=None → always logout → kills async queries.
+        A FutureWarning is emitted because this default will change in a future version.
+        """
+        # Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
         from snowflake.connector.connection import Connection
 
-        with w_mod.catch_warnings(record=True):
-            w_mod.simplefilter("always")
+        with pytest.warns(FutureWarning) as warning_list:
             Connection(user="test", account="test")
 
+        # When Connection configuration is checked
         options = core_mock.get_options_sent()
-        assert options.get("enable_server_session_keep_alive_auto_detection") is True
-        assert "server_session_keep_alive" not in options
+
+        # Then enable_server_session_keep_alive_auto_detection defaults to true
+        assert options.get("enable_server_session_keep_alive_auto_detection") is True, (
+            "Default True must flow through to Core so registry check is performed"
+        )
+
+        # And Auto-detection is enabled by default
+        assert "server_session_keep_alive" not in options, (
+            "Default server_session_keep_alive=None should not be sent to Core"
+        )
+
+        # And Deprecation warning is emitted about auto_detection default changing
+        assert any(
+            "enable_server_session_keep_alive_auto_detection was not set" in str(w.message) for w in warning_list
+        ), f"Expected FutureWarning about auto_detection default, got: {[str(w.message) for w in warning_list]}"
 
     def test_should_not_emit_auto_detection_deprecation_warning_when_explicitly_set_to_true(self, core_mock):
-        """Verify no FutureWarning when user explicitly passes auto_detection=True."""
-        import warnings as w_mod
+        """Verify no FutureWarning when user explicitly passes auto_detection=True.
 
+        Explicit True means the user has made a conscious choice — no warning needed.
+        """
         from snowflake.connector.connection import Connection
 
-        with w_mod.catch_warnings(record=True) as captured:
-            w_mod.simplefilter("always")
-            Connection(user="test", account="test", enable_server_session_keep_alive_auto_detection=True)
+        # Given Snowflake Python client is created with enable_server_session_keep_alive_auto_detection set to true
+        with warnings.catch_warnings(record=True) as captured_warnings:
+            warnings.simplefilter("always")
+            Connection(
+                user="test",
+                account="test",
+                enable_server_session_keep_alive_auto_detection=True,
+            )
 
+        # When Connection configuration is checked
         options = core_mock.get_options_sent()
+
+        # Then enable_server_session_keep_alive_auto_detection is true
         assert options.get("enable_server_session_keep_alive_auto_detection") is True
 
+        # And No deprecation warning is emitted about auto_detection default
         auto_detection_warnings = [
-            w for w in captured if issubclass(w.category, FutureWarning) and "auto_detection" in str(w.message)
+            w for w in captured_warnings if issubclass(w.category, FutureWarning) and "auto_detection" in str(w.message)
         ]
-        assert len(auto_detection_warnings) == 0
+        assert len(auto_detection_warnings) == 0, (
+            f"No FutureWarning expected when auto_detection is explicitly True, "
+            f"got: {[str(w.message) for w in auto_detection_warnings]}"
+        )
+
+
+class TestAutoCleanupConfig:
+    """Config-level auto_cleanup tests (pure mock, no real Core).
+
+    Moved from tests/e2e/session/test_logout.py — uses core_mock.
+    """
+
+    def test_should_have_auto_cleanup_enabled_by_default(self, core_mock):
+        """Verify auto_cleanup defaults to True and atexit handler is registered."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.atexit") as mock_atexit:
+            # Given Snowflake Python client is created with default parameters
+            with pytest.warns(FutureWarning):
+                conn = Connection(user="test", account="test")
+
+            # When Connection is initialized
+            auto_cleanup_value = conn.auto_cleanup
+
+            # Then auto_cleanup defaults to true
+            assert auto_cleanup_value is True, (
+                f"auto_cleanup should default to True for backward compat, got {auto_cleanup_value}"
+            )
+
+            # And atexit handler is registered at connection init
+            mock_atexit.register.assert_called_once_with(conn._close_at_process_exit)

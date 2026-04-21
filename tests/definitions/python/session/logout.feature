@@ -101,7 +101,7 @@ Feature: Session Logout - Python-specific behavior
       | true           |
       | false          |
 
-  @python_e2e
+  @python_int
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
     # Backward-compat default (SNOW-2314152). Will change to None in a future version.
     Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
@@ -110,7 +110,7 @@ Feature: Session Logout - Python-specific behavior
     And Auto-detection is enabled by default
     And Deprecation warning is emitted about auto_detection default changing
 
-  @python_e2e
+  @python_int
   Scenario: should not emit auto_detection deprecation warning when explicitly set to true
     # Explicit True means user has made a conscious choice — no warning needed.
     Given Snowflake Python client is created with enable_server_session_keep_alive_auto_detection set to true
@@ -167,7 +167,7 @@ Feature: Session Logout - Python-specific behavior
   # Phase 3: flip default so auto_cleanup is off unless explicitly enabled.
   # Phase 4: remove auto_cleanup and its config entirely.
 
-  @python_e2e
+  @python_int
   Scenario: should have auto_cleanup enabled by default
     # Phase 2 (doc for: SNOW-2314152): preserve backward compatibility.
     # Python has legacy atexit auto-cleanup, so it defaults to on.
