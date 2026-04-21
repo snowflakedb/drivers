@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::config::rest_parameters::ClientInfo;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
     use crate::rest::snowflake;
     use crate::tls::config::TlsConfig;
@@ -37,15 +38,12 @@ mod integration_tests {
         };
         let client_info = ClientInfo {
             application: "PythonConnector".to_string(),
-            version: "3.15.0".to_string(),
-            os: "Darwin".to_string(),
-            os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
-            ocsp_mode: Some("FAIL_OPEN".to_string()),
             crl_config: crl_config.clone(),
             tls_config: TlsConfig {
                 crl_config,
                 ..Default::default()
             },
+            ..test_client_info()
         };
 
         assert_eq!(
@@ -136,10 +134,7 @@ mod integration_tests {
             application: "PythonConnector".to_string(),
             version: "3.15.0".to_string(),
             os: "Darwin".to_string(),
-            os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
-            ocsp_mode: Some("FAIL_OPEN".to_string()),
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::default(),
+            ..test_client_info()
         };
         let user_agent = snowflake::user_agent(&client_info);
 

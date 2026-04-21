@@ -73,23 +73,10 @@ pub async fn send_heartbeat(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
     use serde_json::json;
     use wiremock::matchers::{header, header_regex, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    fn test_client_info() -> ClientInfo {
-        use crate::crl::config::CrlConfig;
-        use crate::tls::config::TlsConfig;
-        ClientInfo {
-            application: "TestApp".to_string(),
-            version: "1.0.0".to_string(),
-            os: "Linux".to_string(),
-            os_version: "5.15".to_string(),
-            ocsp_mode: None,
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::default(),
-        }
-    }
 
     #[tokio::test]
     async fn heartbeat_request_url_and_headers() {
