@@ -11,6 +11,7 @@ These deferred tests will be added as the underlying features are implemented.
 """
 
 import logging
+import os
 import subprocess
 import sys
 import textwrap
@@ -31,6 +32,9 @@ import sys, os, traceback
 print(f"DIAG:PID={os.getpid()},PYTHON={sys.version_info[:2]}", flush=True)
 """
 
+# TODO(FFI-shutdown): remove once sf_core_shutdown() is implemented
+_SUBPROCESS_ENV = {**os.environ, "RUST_BACKTRACE": "1"}
+
 
 def assert_logout_request_format(logout_request: dict) -> None:
     """Verify logout request has correct format."""
@@ -42,6 +46,7 @@ def assert_logout_request_format(logout_request: dict) -> None:
     assert auth_header[:16] == "Snowflake Token=", "Authorization header should start with 'Snowflake Token='"
 
 
+@pytest.mark.skip_reference(reason="conn.rest is None on reference connector (different token access pattern)")
 class TestLogoutTokenCleanup:
     """Token cleanup tests from shared/session/logout.feature.
 
@@ -150,6 +155,7 @@ class TestLogoutEdgeCases:
             # And No errors are thrown
             assert conn.is_closed()
 
+    @pytest.mark.skip_reference(reason="Old connector has no close idempotency — 5 threads send 5 logouts")
     def test_should_handle_concurrent_close_calls_safely(self, int_test_connection_factory):
         """Verify that concurrent close() calls are thread-safe and send only one logout request."""
         with WiremockClient().start() as wiremock:
@@ -560,6 +566,7 @@ class TestLogoutRetryBehavior:
     retries a failed logout request.
     """
 
+    @pytest.mark.skip_reference(reason="Old connector (v4.3.0) does not retry logout on 503")
     def test_should_retry_logout_on_transient_failure_when_close_called_with_default_retry(
         self, int_test_connection_factory
     ):
@@ -616,6 +623,9 @@ class TestLogoutRetryBehavior:
             )
 
 
+@pytest.mark.skip_reference(
+    reason="subprocess imports Connection (not SnowflakeConnection), _close_at_process_exit missing"
+)
 class TestAutoCleanup:
     """Auto-cleanup deprecation tests from python/session/logout.feature.
 
@@ -688,6 +698,7 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=_SUBPROCESS_ENV,
             )
             self._assert_subprocess_ok(result, "atexit registration")
             assert "ATEXIT_REGISTERED" in result.stdout, "Subprocess must confirm atexit registration"
@@ -748,6 +759,7 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=_SUBPROCESS_ENV,
             )
             self._assert_subprocess_ok(result, "atexit retry=False phase A")
 
@@ -776,6 +788,7 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=_SUBPROCESS_ENV,
             )
             self._assert_subprocess_ok(result_b, "phase B: must exit cleanly despite 500")
             assert len(wiremock2.get_logout_requests()) >= 1, (
@@ -829,6 +842,7 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=_SUBPROCESS_ENV,
             )
             self._assert_subprocess_ok(result, "10 leaked connections")
 
@@ -896,6 +910,7 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=_SUBPROCESS_ENV,
             )
             self._assert_subprocess_ok(result, "auto_cleanup=False")
 
