@@ -6,6 +6,7 @@ pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
+pub mod telemetry;
 
 use std::collections::HashMap;
 
@@ -1605,6 +1606,12 @@ pub enum RestError {
     #[snafu(display("Invalid URL: {url}"))]
     InvalidUrl {
         url: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to encode telemetry payload: {reason}"))]
+    PayloadEncoding {
+        reason: String,
         #[snafu(implicit)]
         location: Location,
     },

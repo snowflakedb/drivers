@@ -16,7 +16,7 @@ cli = ["clap"]
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
-opentelemetry = { version = "0.30.0", default-features = false, features = ["trace"] }
+opentelemetry = { version = "0.30.0", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.30.0" }
 opentelemetry-semantic-conventions = { version = "0.30.0" }
@@ -83,6 +83,7 @@ clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
 der = "0.7"
 num-traits = "0.2.19"
+os_info = "3"
 
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }
@@ -92,6 +93,7 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1.47.1", features = ["fs"] }
+opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"

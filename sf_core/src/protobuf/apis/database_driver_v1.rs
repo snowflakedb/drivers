@@ -873,8 +873,35 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: ConnectionInitRequest,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
         let db_handle = required(input.db_handle, "Database handle is required")?;
+
+        // If wrapper identity is provided, store it before connection_init
+        // so the session_init telemetry event carries the identity.
+        if let Some(ref wrapper) = input.wrapper_identity
+            && let Some(ref driver_name) = wrapper.driver_name
+            && !driver_name.is_empty()
+        {
+            let identity = crate::apis::database_driver_v1::connection::WrapperIdentity {
+                driver_name: driver_name.clone(),
+                driver_version: wrapper.driver_version.clone().unwrap_or_default(),
+                language_runtime: wrapper.language_runtime.clone().unwrap_or_default(),
+                language_version: wrapper.language_version.clone().unwrap_or_default(),
+                language_compiler: wrapper.language_compiler.clone(),
+            };
+
+            tracing::debug!(
+                driver_name = %identity.driver_name,
+                driver_version = %identity.driver_version,
+                language_runtime = %identity.language_runtime,
+                language_version = %identity.language_version,
+                "Wrapper identity stored via connection_init"
+            );
+
+            self.driver
+                .set_wrapper_identity(Handle::from(conn_handle), identity)
+                .await
+                .to_protobuf()?;
+        }
 
         self.driver
             .connection_init(conn_handle.into(), db_handle.into())

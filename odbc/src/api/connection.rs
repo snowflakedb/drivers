@@ -291,6 +291,7 @@ fn connect_with_params(
         c.connection_init(ConnectionInitRequest {
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
+            ..Default::default()
         })
         .await?;
 

@@ -67,6 +67,7 @@ test = [
 dev = [
     "ruff",
     "mypy",
+    "mypy-protobuf",
     "hatchling",
     "types-pytz",
     "types-protobuf",

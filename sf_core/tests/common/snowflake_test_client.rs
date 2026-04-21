@@ -70,6 +70,7 @@ impl SnowflakeTestClient {
             .connection_init_blocking(ConnectionInitRequest {
                 conn_handle: Some(test_client.conn_handle),
                 db_handle: Some(test_client.db_handle),
+                ..Default::default()
             })
             .unwrap();
 
@@ -138,6 +139,7 @@ impl SnowflakeTestClient {
             .connection_init_blocking(ConnectionInitRequest {
                 conn_handle: Some(test_client.conn_handle),
                 db_handle: Some(test_client.db_handle),
+                ..Default::default()
             })
             .unwrap();
 
@@ -300,6 +302,7 @@ impl SnowflakeTestClient {
         match self.client.connection_init_blocking(ConnectionInitRequest {
             conn_handle: Some(self.conn_handle),
             db_handle: Some(self.db_handle),
+            ..Default::default()
         }) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Connection failed: {e:?}")),

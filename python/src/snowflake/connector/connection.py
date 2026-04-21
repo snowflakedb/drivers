@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import logging
+import platform
 import re
 import threading
 
@@ -20,6 +21,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionHandle,
     DatabaseHandle,
+    WrapperIdentity,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
@@ -49,6 +51,7 @@ from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
+from .version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +64,8 @@ logger = logging.getLogger(__name__)
 # uncast.
 DEFAULT_CONFIGURATION: dict[str, tuple[Any, tuple[type, ...]]] = {}
 
-CLIENT_NAME = "PythonConnector"
+CLIENT_NAME = "snowflake-connector-python"
+_APPLICATION_NAME = "PythonConnector"
 # The old connector used re.match(r"[\w\d_]+") without anchors, so any string
 # starting with a word character was accepted (dots, hyphens, etc. in the tail
 # were silently ignored).  We keep a start-anchored pattern without $ so that
@@ -132,7 +136,7 @@ class Connection:
 
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):
-            self._application = CLIENT_NAME
+            self._application = _APPLICATION_NAME
         elif isinstance(application, str):
             if not APPLICATION_RE.match(application):
                 raise ProgrammingError(f"Invalid application name: {application!r}")
@@ -196,7 +200,19 @@ class Connection:
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
-        self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self.db_api.connection_init(
+            ConnectionInitRequest(
+                conn_handle=self.conn_handle,
+                db_handle=self.db_handle,
+                wrapper_identity=WrapperIdentity(
+                    driver_name=CLIENT_NAME,
+                    driver_version=__version__,
+                    language_runtime=platform.python_implementation(),
+                    language_version=platform.python_version(),
+                    language_compiler=platform.python_compiler(),
+                ),
+            )
+        )
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
