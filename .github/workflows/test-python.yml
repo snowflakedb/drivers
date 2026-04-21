@@ -32,24 +32,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      sf-core-matrix: >-
-        [{"target":"linux-x86_64","os":"ubuntu-latest",
-          "container":"quay.io/pypa/manylinux_2_28_x86_64",
-          "lib_name":"libsf_core.so",
-          "cargo_extra_args":"--features vendored-openssl"},
-         {"target":"windows-arm64","os":"windows-11-arm",
-          "container":"",
-          "lib_name":"sf_core.dll",
-          "cargo_extra_args":"--config profile.release.strip=false --config profile.release.opt-level=2"}]
-      cibw-matrix: >-
-        [{"target":"linux-x86_64","os":"ubuntu-latest",
-          "cibw_build":"cp3{10,11,12,13,14}-manylinux_x86_64",
-          "sf_core_artifact":"sf-core-linux-x86_64"}]
-      wheel-matrix: >-
-        [{"os":"windows-11-arm","py":"3.11",
-          "sf_core_artifact":"sf-core-windows-arm64"},
-         {"os":"windows-11-arm","py":"3.12",
-          "sf_core_artifact":"sf-core-windows-arm64"}]
+      targets: '{"linux_x86": ["3.10","3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:

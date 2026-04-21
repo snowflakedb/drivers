@@ -3,39 +3,121 @@ name: Build Python Wheels
 on:
   workflow_call:
     inputs:
-      sf-core-matrix:
+      targets:
         type: string
         required: true
         description: >
-          JSON array of objects: [{target, os, container, lib_name, cargo_extra_args}].
-          container: manylinux image for Linux, empty string for bare runners.
-          cargo_extra_args: extra flags for cargo build (e.g. --features vendored-openssl).
-      cibw-matrix:
-        type: string
-        required: false
-        default: '[]'
-        description: >
-          JSON array of objects: [{target, os, cibw_build, sf_core_artifact}].
-          When non-empty, builds wheels via cibuildwheel (Linux/macOS).
-      wheel-matrix:
-        type: string
-        required: false
-        default: '[]'
-        description: >
-          JSON array of objects: [{os, py, sf_core_artifact}].
-          When non-empty, builds wheels manually per (os, py) pair (Windows ARM64).
+          JSON object mapping platform keys to Python version arrays.
+          Example: {"linux_x86": ["3.10","3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}
+          Supported platforms: linux_x86, linux_arm, windows_arm.
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ── Expand targets into detailed build matrices ────────────────────
+  configure:
+    runs-on: ubuntu-latest
+    outputs:
+      sf-core-matrix: ${{ steps.expand.outputs.sf-core-matrix }}
+      cibw-matrix: ${{ steps.expand.outputs.cibw-matrix }}
+      wheel-matrix: ${{ steps.expand.outputs.wheel-matrix }}
+    steps:
+      - name: Expand targets into build matrices
+        id: expand
+        shell: python3 {0}
+        run: |
+          import json, os
+
+          PLATFORMS = {
+              "linux_x86": {
+                  "target": "linux-x86_64",
+                  "os": "ubuntu-latest",
+                  "container": "quay.io/pypa/manylinux_2_28_x86_64",
+                  "lib_name": "libsf_core.so",
+                  "cargo_extra_args": "--features vendored-openssl",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "manylinux_x86_64",
+              },
+              "linux_arm": {
+                  "target": "linux-aarch64",
+                  "os": "ubuntu-latest",
+                  "container": "quay.io/pypa/manylinux_2_28_aarch64",
+                  "lib_name": "libsf_core.so",
+                  "cargo_extra_args": "--features vendored-openssl",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "manylinux_aarch64",
+              },
+              "windows_arm": {
+                  "target": "windows-arm64",
+                  "os": "windows-11-arm",
+                  "container": "",
+                  "lib_name": "sf_core.dll",
+                  "cargo_extra_args": "",
+                  "wheel_method": "manual",
+              },
+          }
+
+          targets = json.loads("""${{ inputs.targets }}""")
+
+          sf_core = []
+          cibw = []
+          wheel = []
+          seen_targets = set()
+
+          for key, versions in targets.items():
+              if key not in PLATFORMS:
+                  raise ValueError(f"Unknown platform: {key}. Supported: {list(PLATFORMS)}")
+              p = PLATFORMS[key]
+
+              if p["target"] not in seen_targets:
+                  seen_targets.add(p["target"])
+                  sf_core.append({
+                      "target": p["target"],
+                      "os": p["os"],
+                      "container": p["container"],
+                      "lib_name": p["lib_name"],
+                      "cargo_extra_args": p["cargo_extra_args"],
+                  })
+
+              if p["wheel_method"] == "cibuildwheel":
+                  minor = [v.replace(".", "") for v in versions]
+                  if len(minor) == 1:
+                      selector = f"cp{minor[0]}-{p['cibw_arch']}"
+                  else:
+                      selector = "cp3{" + ",".join(v[1:] for v in minor) + "}-" + p["cibw_arch"]
+                  cibw.append({
+                      "target": p["target"],
+                      "os": p["os"],
+                      "cibw_build": selector,
+                      "sf_core_artifact": f"sf-core-{p['target']}",
+                  })
+              else:
+                  for v in versions:
+                      wheel.append({
+                          "os": p["os"],
+                          "py": v,
+                          "sf_core_artifact": f"sf-core-{p['target']}",
+                      })
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"sf-core-matrix={json.dumps(sf_core)}\n")
+              f.write(f"cibw-matrix={json.dumps(cibw)}\n")
+              f.write(f"wheel-matrix={json.dumps(wheel)}\n")
+
+          # Log for debugging
+          print("sf-core-matrix:", json.dumps(sf_core, indent=2))
+          print("cibw-matrix:", json.dumps(cibw, indent=2))
+          print("wheel-matrix:", json.dumps(wheel, indent=2))
+
   # ── Build sf_core (Rust shared library) ────────────────────────────
   # One build per target platform. Python-version-independent.
   build_sf_core:
+    needs: configure
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.sf-core-matrix) }}
+        include: ${{ fromJSON(needs.configure.outputs.sf-core-matrix) }}
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     name: build_sf_core (${{ matrix.target }})
@@ -120,12 +202,12 @@ jobs:
 
   # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
   build_wheels:
-    needs: build_sf_core
-    if: fromJSON(inputs.cibw-matrix)[0] != null
+    needs: [configure, build_sf_core]
+    if: fromJSON(needs.configure.outputs.cibw-matrix)[0] != null
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.cibw-matrix) }}
+        include: ${{ fromJSON(needs.configure.outputs.cibw-matrix) }}
     runs-on: ${{ matrix.os }}
     name: build_wheels (${{ matrix.target }})
     steps:
@@ -175,12 +257,12 @@ jobs:
 
   # ── Build wheels manually per (os, py) pair (Windows ARM64) ────────
   build_wheel:
-    needs: build_sf_core
-    if: fromJSON(inputs.wheel-matrix)[0] != null
+    needs: [configure, build_sf_core]
+    if: fromJSON(needs.configure.outputs.wheel-matrix)[0] != null
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.wheel-matrix) }}
+        include: ${{ fromJSON(needs.configure.outputs.wheel-matrix) }}
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
