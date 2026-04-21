@@ -1,0 +1,276 @@
+name: Build Python Wheels
+
+on:
+  workflow_call:
+    inputs:
+      sf-core-matrix:
+        type: string
+        required: true
+        description: >
+          JSON array of objects: [{target, os, container, lib_name, cargo_extra_args}].
+          container: manylinux image for Linux, empty string for bare runners.
+          cargo_extra_args: extra flags for cargo build (e.g. --features vendored-openssl).
+      cibw-matrix:
+        type: string
+        required: false
+        default: '[]'
+        description: >
+          JSON array of objects: [{target, os, cibw_build, sf_core_artifact}].
+          When non-empty, builds wheels via cibuildwheel (Linux/macOS).
+      wheel-matrix:
+        type: string
+        required: false
+        default: '[]'
+        description: >
+          JSON array of objects: [{os, py, sf_core_artifact}].
+          When non-empty, builds wheels manually per (os, py) pair (Windows ARM64).
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Build sf_core (Rust shared library) ────────────────────────────
+  # One build per target platform. Python-version-independent.
+  build_sf_core:
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.sf-core-matrix) }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    name: build_sf_core (${{ matrix.target }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Linux container setup ──
+      - name: Install Rust toolchain (container)
+        if: matrix.container != ''
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install vendored OpenSSL build deps (container)
+        if: matrix.container != ''
+        run: yum install -y perl-IPC-Cmd perl-Time-Piece
+
+      # ── Windows ARM64 OpenSSL setup ──
+      - name: Capture vcpkg version for cache key
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Cache vcpkg packages
+        if: runner.os == 'Windows'
+        id: vcpkg-cache
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
+      - name: Install ARM64 OpenSSL (static) via vcpkg
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Configure ARM64 OpenSSL (static)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      # ── Cargo cache & build ──
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ matrix.target }}-rust-sf-core-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-rust-sf-core-release-
+
+      - name: Build sf_core (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Build sf_core (Windows ARM64)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Upload sf_core library
+        uses: actions/upload-artifact@v4
+        with:
+          name: sf-core-${{ matrix.target }}
+          path: target/release/${{ matrix.lib_name }}
+
+  # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
+  build_wheels:
+    needs: build_sf_core
+    if: fromJSON(inputs.cibw-matrix)[0] != null
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.cibw-matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: build_wheels (${{ matrix.target }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download pre-built sf_core
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.sf_core_artifact }}
+          path: python/src/snowflake/connector/_core
+
+      - name: Ensure sf_core is executable
+        run: chmod +x python/src/snowflake/connector/_core/*
+
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v2.23
+        with:
+          package-dir: python
+          output-dir: python/dist
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build }}
+          CIBW_PRERELEASE_PYTHONS: "1"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_ALL_LINUX: >-
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+            && yum install -y perl-IPC-Cmd perl-Time-Piece
+          CIBW_ENVIRONMENT_LINUX: >-
+            PATH="$HOME/.cargo/bin:$PATH"
+            SKIP_CORE_BUILD=true
+            PROTO_CARGO_TARGET_DIR=/tmp/proto-target
+
+      - name: Check wheels with auditwheel
+        run: |
+          pip install auditwheel
+          for whl in python/dist/*.whl; do
+            echo "=== $(basename $whl) ==="
+            auditwheel show "$whl"
+          done
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.target }}
+          path: python/dist/*.whl
+
+  # ── Build wheels manually per (os, py) pair (Windows ARM64) ────────
+  build_wheel:
+    needs: build_sf_core
+    if: fromJSON(inputs.wheel-matrix)[0] != null
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.wheel-matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
+    env:
+      CMAKE_GENERATOR_PLATFORM: ${{ contains(matrix.os, 'arm') && 'ARM64' || '' }}
+      SKIP_CORE_BUILD: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download pre-built sf_core
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.sf_core_artifact }}
+          path: python/src/snowflake/connector/_core
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install ${{ contains(matrix.os, 'arm') && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
+
+      - name: Cache proto generator target
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-proto-target-
+
+      # ── Windows ARM64 OpenSSL (needed by cryptography dependency) ──
+      - name: Capture vcpkg version for cache key
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Cache vcpkg ARM64 static OpenSSL
+        if: runner.os == 'Windows'
+        id: vcpkg-cache
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
+      - name: Install ARM64 OpenSSL (static) via vcpkg
+        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Configure ARM64 OpenSSL (static)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      # ── Build ──
+      - name: Build python wheel (Linux/macOS)
+        if: runner.os != 'Windows'
+        working-directory: ./python
+        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Build python wheel (Windows ARM64)
+        if: runner.os == 'Windows'
+        working-directory: ./python
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}\proto-target
+
+      - name: Inspect wheel (Linux/macOS)
+        if: runner.os != 'Windows'
+        working-directory: ./python
+        run: uv run --python ${{ matrix.py }} python -m zipfile -l dist/*.whl
+
+      - name: Inspect wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ./python
+        shell: pwsh
+        run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
+
+      - name: Upload Python wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
+          path: python/dist/*.whl
