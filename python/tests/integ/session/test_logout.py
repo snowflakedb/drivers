@@ -143,6 +143,7 @@ class TestLogoutIdempotency:
             assert len(logout_requests) == 1, f"Should send exactly 1 logout, got {len(logout_requests)}"
 
 
+@pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
 class TestLogoutConfigPassing:
     """Verify Python wrapper correctly passes logout config to Core."""
 
@@ -210,6 +211,7 @@ class TestLogoutConfigPassing:
         )
 
 
+@pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
 class TestAutoCleanupConfig:
     """Verify auto_cleanup defaults and atexit handler registration."""
 
