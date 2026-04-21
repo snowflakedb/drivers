@@ -25,16 +25,16 @@ on:
         required: false
         default: false
         description: 'Statically link OpenSSL into sf_core (Linux). Eliminates libssl/libcrypto runtime deps.'
-      auditwheel:
-        type: boolean
-        required: false
-        default: false
-        description: 'Run auditwheel repair on Linux wheels to retag as manylinux and validate shared-lib deps.'
       linux-container:
         type: string
         required: false
         default: ''
         description: 'Container image for Linux builds (e.g. quay.io/pypa/manylinux_2_28_x86_64). Empty = bare runner.'
+      cibw-build:
+        type: string
+        required: false
+        default: ''
+        description: 'cibuildwheel CIBW_BUILD selector (e.g. "cp3{9,10,11,12,13}-manylinux_x86_64"). When set, uses cibuildwheel for Linux wheels instead of manual build.'
 
 env:
   CARGO_TERM_COLOR: always
@@ -139,8 +139,56 @@ jobs:
           name: sf-core-${{ matrix.os }}
           path: target/release/${{ matrix.lib_name }}
 
+  # ── Linux wheels via cibuildwheel (when cibw-build is set) ──────────
+  build_wheel_cibw:
+    needs: build_sf_core
+    if: inputs.cibw-build != ''
+    runs-on: ubuntu-latest
+    name: build_wheels (cibuildwheel)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download pre-built sf_core
+        uses: actions/download-artifact@v4
+        with:
+          name: sf-core-ubuntu-latest
+          path: python/src/snowflake/connector/_core
+
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v2.23
+        with:
+          package-dir: python
+          output-dir: python/dist
+        env:
+          CIBW_BUILD: ${{ inputs.cibw-build }}
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ inputs.linux-container || 'manylinux_2_28' }}
+          CIBW_BEFORE_ALL_LINUX: >-
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          CIBW_ENVIRONMENT_LINUX: >-
+            PATH="$HOME/.cargo/bin:$PATH"
+            SKIP_CORE_BUILD=true
+            PROTO_CARGO_TARGET_DIR=/tmp/proto-target
+
+      - name: Check wheels with auditwheel
+        working-directory: ./python
+        run: |
+          pip install auditwheel
+          for whl in dist/*.whl; do
+            echo "=== auditwheel show $(basename $whl) ==="
+            auditwheel show "$whl"
+          done
+
+      - name: Upload all Linux wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-linux
+          path: python/dist/*.whl
+
+  # ── Manual wheel build (when cibw-build is NOT set) ─────────────────
   build_wheel:
     needs: build_sf_core
+    if: inputs.cibw-build == ''
     strategy:
       fail-fast: false
       matrix:
@@ -148,7 +196,6 @@ jobs:
         py: ${{ fromJSON(inputs.wheel-matrix-py) }}
         exclude: ${{ fromJSON(inputs.wheel-matrix-exclude) }}
     runs-on: ${{ matrix.os }}
-    container: ${{ contains(matrix.os, 'ubuntu') && inputs.linux-container || '' }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
       CMAKE_GENERATOR_PLATFORM: ${{ matrix.os == 'windows-11-arm' && 'ARM64' || '' }}
@@ -157,32 +204,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain (container)
-        if: inputs.linux-container != ''
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
       - name: Download pre-built sf_core
         uses: actions/download-artifact@v4
         with:
           name: sf-core-${{ matrix.os }}
           path: python/src/snowflake/connector/_core
 
-      - name: Install system dependencies (Linux, bare runner)
-        if: runner.os == 'Linux' && inputs.linux-container == ''
-        run: |
-          sudo apt-get update
-          if [ "${{ inputs.auditwheel }}" = "true" ]; then
-            sudo apt-get install -y patchelf
-          fi
-
-      - name: Install system dependencies (Linux, container)
-        if: runner.os == 'Linux' && inputs.linux-container != ''
-        run: |
-          if [ "${{ inputs.auditwheel }}" = "true" ] && ! command -v patchelf &>/dev/null; then
-            yum install -y patchelf
-          fi
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
@@ -260,19 +290,6 @@ jobs:
           uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
         env:
           PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}\proto-target
-
-      - name: Make wheel manylinux-compliant (auditwheel)
-        if: runner.os == 'Linux' && inputs.auditwheel
-        working-directory: ./python
-        run: |
-          uv tool install auditwheel
-          echo "=== auditwheel show (before repair) ==="
-          auditwheel show dist/*.whl
-          auditwheel repair dist/*.whl --wheel-dir dist-repaired/
-          rm dist/*.whl
-          mv dist-repaired/*.whl dist/
-          echo "=== auditwheel show (after repair) ==="
-          auditwheel show dist/*.whl
 
       - name: Inspect wheel (Linux)
         if: runner.os == 'Linux'

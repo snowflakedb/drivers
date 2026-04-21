@@ -17,9 +17,9 @@ jobs:
     with:
       sf-core-matrix: '[{"os": "ubuntu-latest", "lib_name": "libsf_core.so"}]'
       wheel-matrix-os: '["ubuntu-latest"]'
-      wheel-matrix-py: '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]'
-      auditwheel: true
+      wheel-matrix-py: '["3.10", "3.11", "3.12", "3.13", "3.14"]'
       linux-container: 'quay.io/pypa/manylinux_2_28_x86_64'
+      cibw-build: 'cp3{10,11,12,13,14}-manylinux_x86_64'
 
   # ── Test each wheel against cloud providers ────────────────────────
   # 4 suites per wheel: aws, gcp, azure (without pandas) + aws (with pandas)
@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        py: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         hatch_env: ["test", "test-pandas"]
         cloud_provider: ["aws", "gcp", "azure"]
         exclude:
@@ -63,10 +63,10 @@ jobs:
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
 
-      - name: Download Python wheel
+      - name: Download Python wheels
         uses: actions/download-artifact@v4
         with:
-          name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
+          name: python-wheels-linux
           path: python/dist
 
       - name: Decode secrets
@@ -79,7 +79,11 @@ jobs:
 
       - name: Install snowflake ud driver from wheel
         working-directory: python
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        run: |
+          PY_TAG="cp$(echo '${{ matrix.py }}' | tr -d '.')"
+          export WHEEL_PATH="$(ls dist/*-${PY_TAG}-*.whl | head -1)"
+          echo "Installing wheel: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Run tests
         working-directory: python
