@@ -647,7 +647,7 @@ impl WriteJson for SnowflakeNumber {
 
 #[cfg(test)]
 mod format_decimal_into_tests {
-    use super::{SnowflakeNumber, MAX_DECIMAL_SCALE};
+    use super::{MAX_DECIMAL_SCALE, SnowflakeNumber};
     use crate::conversion::error::WriteOdbcError;
 
     fn fmt(value: i128, scale: u32) -> String {
@@ -762,7 +762,7 @@ mod format_decimal_into_tests {
 
 #[cfg(test)]
 mod pow10_tests {
-    use super::{pow10_i128, pow10_u128, MAX_DECIMAL_SCALE, POW10_I128, POW10_U128};
+    use super::{MAX_DECIMAL_SCALE, POW10_I128, POW10_U128, pow10_i128, pow10_u128};
     use crate::conversion::error::WriteOdbcError;
 
     #[test]
