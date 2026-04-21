@@ -252,28 +252,22 @@ pipeline {
     cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
   }
   stages {
-        // Top-level parallel: Build Matrix, VPN E2E Tests, and Revocation Validation all
-        // start simultaneously. The test stages don't consume artifacts from Build Matrix
-        // (Build Matrix uploads sf_mini_core packages to an artifact store; the test stages
-        // build their own sf_core / odbc / revocation harness from source), so there's no
-        // ordering constraint — running them in parallel shortens total wall time.
-        stage('CI') {
-          parallel {
-            stage('Build Matrix') {
-              matrix {
-                axes {
-                  axis {
-                    name 'PLATFORM'
-                    values 'linux-x86_64-musl', 'linux-aarch64-musl', 'linux-x86_64-glibc', 'linux-aarch64-glibc', 'windows-x86_64', 'windows-i686', 'windows-aarch64', 'macos-x86_64', 'macos-aarch64', 'aix-ppc64'
-                  }
-                }
-                environment {
-                  AIX_REPO_PATH = '/home/jenkins/universal-driver/${BRANCH_NAME}-${BUILD_NUMBER}'
-                  AIX_HOST = '40.143.95.16'
-                  AIX_USER = 'jenkins'
-                }
-                stages {
-                  stage('Docker Build') {
+
+        stage('Build Matrix') {
+          matrix {
+            axes {
+              axis {
+                name 'PLATFORM'
+                values 'linux-x86_64-musl', 'linux-aarch64-musl', 'linux-x86_64-glibc', 'linux-aarch64-glibc', 'windows-x86_64', 'windows-i686', 'windows-aarch64', 'macos-x86_64', 'macos-aarch64', 'aix-ppc64'
+              }
+            }
+            environment {
+              AIX_REPO_PATH = '/home/jenkins/universal-driver/${BRANCH_NAME}-${BUILD_NUMBER}'
+              AIX_HOST = '40.143.95.16'
+              AIX_USER = 'jenkins'
+            }
+            stages {
+              stage('Docker Build') {
                     when {
                       beforeAgent true
                       expression { needsDocker(PLATFORM) }
@@ -324,59 +318,60 @@ pipeline {
                     }
                   }
 
-                  stage('Node Build') {
-                    when {
-                      beforeAgent true
-                      expression { !needsDocker(PLATFORM) }
+              stage('Node Build') {
+                when {
+                  beforeAgent true
+                  expression { !needsDocker(PLATFORM) }
+                }
+                agent {
+                  label getAgentLabel(PLATFORM)
+                }
+                stages {
+                  stage('checkout (node)') {
+                    steps {
+                      checkout_repo()
                     }
-                    agent {
-                      label getAgentLabel(PLATFORM)
+                  }
+                  stage('setup rust (node)') {
+                    steps {
+                      setupRust(PLATFORM)
                     }
-                    stages {
-                      stage('checkout (node)') {
-                        steps {
-                          checkout_repo()
-                        }
-                      }
-                      stage('setup rust (node)') {
-                        steps {
-                          setupRust(PLATFORM)
-                        }
-                      }
-                      stage('build (node)') {
-                        steps {
-                          run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
-                        }
-                      }
-                      stage('test (node)') {
-                        steps {
-                          run_cargo_command(PLATFORM, 'test --package sf_mini_core')
-                        }
-                      }
-                      stage('upload minicore package (node)') {
-                        steps {
-                          withCredentials([
-                            usernamePassword(
-                              usernameVariable: 'AWS_ACCESS_KEY_ID',
-                              passwordVariable: 'AWS_SECRET_ACCESS_KEY',
-                              credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
-                            )
-                          ]) {
-                            uploadMinicorePackage(PLATFORM)
-                          }
-                        }
-                      }
+                  }
+                  stage('build (node)') {
+                    steps {
+                      run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
                     }
-                    post {
-                      always {
-                        cleanup()
+                  }
+                  stage('test (node)') {
+                    steps {
+                      run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                    }
+                  }
+                  stage('upload minicore package (node)') {
+                    steps {
+                      withCredentials([
+                        usernamePassword(
+                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                          passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                          credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                        )
+                      ]) {
+                        uploadMinicorePackage(PLATFORM)
                       }
                     }
                   }
                 }
+                post {
+                  always {
+                    cleanup()
+                  }
+                }
               }
             }
-
+          }
+        }
+        stage('Tests') {
+          parallel {
             stage('VPN E2E Tests') {
               agent { label 'build-node-extra-large' }
               environment {
