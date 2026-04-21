@@ -497,3 +497,15 @@ behavior_differences:
       Per the MS ODBC specification ("C to SQL: Binary" appendix) the driver checks that BufferLength equals the SQL data length (sizeof(SQL_NUMERIC_STRUCT) = 19 for DECIMAL/NUMERIC, sizeof(SQL_TIME_STRUCT) = 6 for TIME, sizeof(SQL_TIMESTAMP_STRUCT) = 16 for TIMESTAMP) and forwards the raw bytes to the server. Buffers of any other length are rejected with SQLSTATE 22003, matching the spec's "Byte length of data <> SQL data length -> 22003" rule.
     impact: |
       Applications that bind a typed C struct as SQL_C_BINARY now have a portable way to insert these SQL types without separate SQL_C_NUMERIC / SQL_C_TYPE_TIMESTAMP / etc. bindings. See SNOW-3031774 (PR #833 for the Rust implementation, PR #834 for E2E coverage).
+
+  47:
+    name: "SQL_C_CHAR/WCHAR non-finite string literals rejected client-side with 22018"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and the string value is "Infinity", "-Infinity", or "NaN" bound against a SQL_REAL / SQL_DOUBLE / SQL_FLOAT parameter, the driver forwards the string to the server and stores a non-finite FLOAT value.
+    new_driver_behavior: |
+      Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification). The MS ODBC specification (Appendix C, "numeric-literal" grammar) restricts character inputs bound to numeric SQL types to the ANSI SQL numeric literal syntax, which does not include the tokens "Infinity", "-Infinity", or "NaN".
+    impact: |
+      Applications that need to insert non-finite IEEE-754 values should bind SQL_C_FLOAT or SQL_C_DOUBLE (both spec-permitted and supported) rather than passing a string representation.

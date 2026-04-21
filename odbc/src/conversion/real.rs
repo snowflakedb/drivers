@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
-    UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidNumericLiteralSnafu, JsonBindingError,
+    NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -416,16 +416,22 @@ impl ReadODBC for SnowflakeReal {
             }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
-                let v = s.trim().parse::<f64>().map_err(|_| {
+                let trimmed = s.trim();
+                let v = trimmed.parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
                         c_type: binding.value_type,
                     }
                     .build()
                 })?;
+                // The ODBC "numeric-literal" grammar (MS ODBC spec, Appendix C)
+                // does not permit "Infinity" / "-Infinity" / "NaN" tokens, even
+                // though Rust's f64::from_str accepts them. Reject them with
+                // SQLSTATE 22018 so clients get a spec-aligned error instead of
+                // a value that would only work for SQL_REAL/SQL_DOUBLE targets.
                 if !v.is_finite() {
-                    return NumericMagnitudeOverflowSnafu {
+                    return InvalidNumericLiteralSnafu {
                         reason: format!(
-                            "non-finite f64 value {v} cannot be bound to real SQL type"
+                            "non-finite literal {trimmed:?} is not a valid ODBC numeric literal"
                         ),
                     }
                     .fail();
@@ -434,16 +440,17 @@ impl ReadODBC for SnowflakeReal {
             }
             CDataType::WChar => {
                 let s = read_wchar_str(binding)?;
-                let v = s.trim().parse::<f64>().map_err(|_| {
+                let trimmed = s.trim();
+                let v = trimmed.parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
                         c_type: binding.value_type,
                     }
                     .build()
                 })?;
                 if !v.is_finite() {
-                    return NumericMagnitudeOverflowSnafu {
+                    return InvalidNumericLiteralSnafu {
                         reason: format!(
-                            "non-finite f64 value {v} cannot be bound to real SQL type"
+                            "non-finite literal {trimmed:?} is not a valid ODBC numeric literal"
                         ),
                     }
                     .fail();

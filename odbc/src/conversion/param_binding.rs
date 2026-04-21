@@ -1883,6 +1883,131 @@ mod tests {
         Ok(())
     }
 
+    // Non-finite numeric-literal rejection (SQLSTATE 22018)
+    //
+    // Rust's f64::from_str accepts "Infinity", "-Infinity" and "NaN", but the
+    // ODBC "numeric-literal" grammar (MS ODBC spec, Appendix C) does not
+    // permit these tokens. The driver rejects them client-side so the caller
+    // sees InvalidCharacterValueForCast instead of a value that only works
+    // for SQL_REAL/SQL_DOUBLE targets.
+
+    #[test]
+    fn convert_char_infinity_as_real_rejected() {
+        let val = b"Infinity\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_char_neg_infinity_as_real_rejected() {
+        let val = b"-Infinity\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_char_nan_as_real_rejected() {
+        let val = b"NaN\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_wchar_infinity_as_real_rejected() {
+        let val: [u16; 9] = [
+            b'I' as u16,
+            b'n' as u16,
+            b'f' as u16,
+            b'i' as u16,
+            b'n' as u16,
+            b'i' as u16,
+            b't' as u16,
+            b'y' as u16,
+            0,
+        ];
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_wchar_neg_infinity_as_real_rejected() {
+        let val: [u16; 10] = [
+            b'-' as u16,
+            b'I' as u16,
+            b'n' as u16,
+            b'f' as u16,
+            b'i' as u16,
+            b'n' as u16,
+            b'i' as u16,
+            b't' as u16,
+            b'y' as u16,
+            0,
+        ];
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_wchar_nan_as_real_rejected() {
+        let val: [u16; 4] = [b'N' as u16, b'a' as u16, b'N' as u16, 0];
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
     // -- Structured C types → VARCHAR -----------------------------------------
     //
     // These tests live here (not in varchar.rs) because they validate the full

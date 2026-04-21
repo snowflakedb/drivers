@@ -213,6 +213,19 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    /// The character input parsed to a value that is not a valid numeric
+    /// literal for the SQL target type (e.g. "Infinity", "-Infinity", "NaN"
+    /// bound as SQL_C_CHAR/SQL_C_WCHAR to SQL_REAL/SQL_DOUBLE). The ODBC
+    /// spec's "numeric-literal" grammar (Appendix C) does not permit these
+    /// tokens, so the driver returns SQLSTATE 22018 (Invalid character
+    /// value for cast specification).
+    #[snafu(display("Invalid numeric literal: {reason}"))]
+    InvalidNumericLiteral {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Binding value out of range: {reason}"))]
     BindingNumericOutOfRange {
         reason: String,

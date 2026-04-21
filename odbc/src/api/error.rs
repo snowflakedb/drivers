@@ -605,7 +605,8 @@ impl OdbcError {
                 JsonBindingError::UnsupportedCDataType { .. } => {
                     SqlState::RestrictedDataTypeAttributeViolation
                 }
-                JsonBindingError::InvalidBooleanValue { .. } => {
+                JsonBindingError::InvalidBooleanValue { .. }
+                | JsonBindingError::InvalidNumericLiteral { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
                 _ => SqlState::GeneralError,
@@ -789,8 +790,8 @@ impl ErrorTrace for CoreProtobufError {
 mod tests {
     use super::*;
     use crate::conversion::error::{
-        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu,
-        UnsupportedCDataTypeSnafu,
+        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, InvalidNumericLiteralSnafu,
+        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
     };
 
     #[test]
@@ -849,6 +850,22 @@ mod tests {
     fn invalid_boolean_value_maps_to_22018() {
         let json_err = InvalidBooleanValueSnafu {
             value: "hello".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidCharacterValueForCast
+        );
+    }
+
+    #[test]
+    fn invalid_numeric_literal_maps_to_22018() {
+        let json_err = InvalidNumericLiteralSnafu {
+            reason: "non-finite literal \"Infinity\"".to_string(),
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
