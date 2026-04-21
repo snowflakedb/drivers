@@ -138,6 +138,31 @@ class WiremockClient:
             raise RuntimeError(f"Failed to query requests: {response.status_code} {response.text}")
         return response.json().get("requests", [])
 
+    def wait_for_requests(
+        self, url_path_pattern: str, min_count: int = 1, timeout: float = 2.0, poll_interval: float = 0.1
+    ) -> list[dict]:
+        """Poll Wiremock until at least `min_count` requests matching the pattern arrive.
+
+        Useful for asserting on requests that are sent asynchronously (e.g. telemetry).
+
+        Args:
+            url_path_pattern: Regex pattern to match against request URL paths.
+            min_count: Minimum number of matching requests to wait for.
+            timeout: Maximum time in seconds to wait before returning.
+            poll_interval: Time in seconds between polls.
+
+        Returns:
+            List of matching request objects (may be fewer than min_count on timeout).
+        """
+        deadline = time.time() + timeout
+        result: list[dict] = []
+        while time.time() < deadline:
+            result = self.get_requests(url_path_pattern)
+            if len(result) >= min_count:
+                return result
+            time.sleep(poll_interval)
+        return result
+
     def stop(self) -> None:
         """Stop the Wiremock process.
 
