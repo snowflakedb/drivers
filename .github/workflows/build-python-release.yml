@@ -1,8 +1,6 @@
 name: Python Release Build
 
 on:
-  # temporarily for testing
-  pull_request:
   workflow_dispatch:
 
 env:
@@ -11,24 +9,26 @@ env:
   SDIST_PYTHON_VERSION: "3.13"
 
 jobs:
-  # ── Build wheels (ubuntu-latest, all Python versions) ──────────────
+  # ── Build wheels (shared reusable workflow) ────────────────────────
   build_wheels:
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      sf-core-matrix: '[{"os": "ubuntu-latest", "lib_name": "libsf_core.so"}]'
-      wheel-matrix-os: '["ubuntu-latest"]'
-      wheel-matrix-py: '["3.10", "3.11", "3.12", "3.13", "3.14"]'
-      linux-container: 'quay.io/pypa/manylinux_2_28_x86_64'
-      cibw-build: 'cp3{10,11,12,13,14}-manylinux_x86_64'
+      sf-core-matrix: >-
+        [{"target":"linux-x86_64","os":"ubuntu-latest",
+          "container":"quay.io/pypa/manylinux_2_28_x86_64",
+          "lib_name":"libsf_core.so",
+          "cargo_extra_args":"--features vendored-openssl"}]
+      cibw-matrix: >-
+        [{"target":"linux-x86_64","os":"ubuntu-latest",
+          "cibw_build":"cp3{10,11,12,13,14}-manylinux_x86_64",
+          "sf_core_artifact":"sf-core-linux-x86_64"}]
 
-  # ── Test each wheel against cloud providers ────────────────────────
-  # 4 suites per wheel: aws, gcp, azure (without pandas) + aws (with pandas)
+  # ── Test wheels against cloud providers ────────────────────────────
   test_wheels:
     needs: build_wheels
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
         py: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         hatch_env: ["test", "test-pandas"]
         cloud_provider: ["aws", "gcp", "azure"]
@@ -37,10 +37,10 @@ jobs:
             cloud_provider: "gcp"
           - hatch_env: "test-pandas"
             cloud_provider: "azure"
-    runs-on: ${{ matrix.os }}
-    name: test_wheels (${{ matrix.hatch_env }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
+    runs-on: ubuntu-latest
+    name: test (${{ matrix.hatch_env }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
-      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}
+      MATRIX_KEY: ${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}
       UV_CACHE_DIR: /tmp/.uv-cache
     steps:
       - uses: actions/checkout@v4
@@ -57,16 +57,15 @@ jobs:
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
             uv-${{ env.MATRIX_KEY }}-
-            uv-${{ matrix.os }}-${{ matrix.py }}-
-            uv-${{ matrix.os }}-
+            uv-${{ matrix.py }}-
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
 
-      - name: Download Python wheels
+      - name: Download wheels
         uses: actions/download-artifact@v4
         with:
-          name: python-wheels-linux
+          name: python-wheels-linux-x86_64
           path: python/dist
 
       - name: Decode secrets
@@ -206,7 +205,7 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
-  # ── Clean up intermediate artifacts ─────────────────────────────────
+  # ── Clean up intermediate artifacts ────────────────────────────────
   cleanup:
     needs: [build_wheels, test_wheels]
     if: always()
@@ -224,7 +223,7 @@ jobs:
             done
 
   # ── Status gate ────────────────────────────────────────────────────
-  release-status:
+  release_status:
     needs: [build_wheels, test_wheels, build_sdist, test_sdist]
     if: always()
     runs-on: ubuntu-latest
@@ -237,17 +236,16 @@ jobs:
              [[ "${{ needs.test_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.build_sdist.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_sdist.result }}" =~ ^(failure|cancelled)$ ]]; then
-            echo "✗ Release build FAILED or CANCELLED"
-            echo "  - build_wheels: ${{ needs.build_wheels.result }}"
-            echo "  - test_wheels: ${{ needs.test_wheels.result }}"
-            echo "  - build_sdist: ${{ needs.build_sdist.result }}"
-            echo "  - test_sdist: ${{ needs.test_sdist.result }}"
+            echo "FAILED"
+            echo "  build_wheels: ${{ needs.build_wheels.result }}"
+            echo "  test_wheels:  ${{ needs.test_wheels.result }}"
+            echo "  build_sdist:  ${{ needs.build_sdist.result }}"
+            echo "  test_sdist:   ${{ needs.test_sdist.result }}"
             exit 1
           fi
 
-          echo "✓ Release build PASSED"
-          echo "  - build_wheels: ${{ needs.build_wheels.result }}"
-          echo "  - test_wheels: ${{ needs.test_wheels.result }}"
-          echo "  - build_sdist: ${{ needs.build_sdist.result }}"
-          echo "  - test_sdist: ${{ needs.test_sdist.result }}"
-          exit 0
+          echo "PASSED"
+          echo "  build_wheels: ${{ needs.build_wheels.result }}"
+          echo "  test_wheels:  ${{ needs.test_wheels.result }}"
+          echo "  build_sdist:  ${{ needs.build_sdist.result }}"
+          echo "  test_sdist:   ${{ needs.test_sdist.result }}"
