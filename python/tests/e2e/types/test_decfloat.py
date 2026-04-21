@@ -185,9 +185,11 @@ class TestDecfloatJsonResultFormat:
             cursor.execute("SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value")
             row = cursor.fetchone()
 
-            # Then Result should not be empty
+            # Then Result should be returned as appropriate type with value 1234.56789012345678901234567890
             assert row is not None
-            assert row[0] is not None
+            value = row[0]
+            assert isinstance(value, (Decimal, str)), f"Expected Decimal or str, got {type(value)}"
+            assert Decimal(str(value)) == Decimal("1234.56789012345678901234567890")
 
 
 class TestDecfloatTable:

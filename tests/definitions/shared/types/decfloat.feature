@@ -61,7 +61,7 @@ Feature: DECFLOAT type support
     Given Snowflake client is logged in
     And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
     When Query "SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value" is executed
-    Then Result should not be empty
+    Then Result should be returned as appropriate type with value 1234.56789012345678901234567890
 
   # =========================================================================== #
   #                             Table operations                                #
