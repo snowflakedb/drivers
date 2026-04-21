@@ -52,7 +52,7 @@ jobs:
 
       - name: Install vendored OpenSSL build deps (container)
         if: matrix.container != ''
-        run: yum install -y perl-IPC-Cmd
+        run: yum install -y perl-IPC-Cmd perl-Time-Piece
 
       # ── Windows ARM64 OpenSSL setup ──
       - name: Capture vcpkg version for cache key
@@ -152,7 +152,7 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >-
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-            && yum install -y perl-IPC-Cmd
+            && yum install -y perl-IPC-Cmd perl-Time-Piece
           CIBW_ENVIRONMENT_LINUX: >-
             PATH="$HOME/.cargo/bin:$PATH"
             SKIP_CORE_BUILD=true
