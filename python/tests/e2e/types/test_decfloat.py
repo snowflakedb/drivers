@@ -165,6 +165,31 @@ class TestDecfloatLiteral:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
 
+class TestDecfloatJsonResultFormat:
+    """Tests for DECFLOAT with JSON query result format.
+
+    Regression: when the server uses JSON format and doesn't recognize the client
+    as DECFLOAT-capable, it returns DECFLOAT columns as TEXT type without
+    length/byteLength metadata. The driver must handle this gracefully.
+    """
+
+    def test_should_select_decfloat_literal_with_json_result_format(self, connection_factory):
+        # Given Snowflake client is logged in
+        pass
+
+        # And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
+        with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
+            cursor = conn.cursor()
+
+            # When Query "SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value" is executed
+            cursor.execute("SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value")
+            row = cursor.fetchone()
+
+            # Then Result should not be empty
+            assert row is not None
+            assert row[0] is not None
+
+
 class TestDecfloatTable:
     """Tests for DECFLOAT type using table operations."""
 

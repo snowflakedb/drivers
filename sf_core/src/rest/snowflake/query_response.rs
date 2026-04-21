@@ -6,6 +6,13 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
+/// Snowflake's default maximum VARCHAR length (16 MB in characters).
+/// Used as fallback when the server omits length metadata for TEXT columns.
+const DEFAULT_TEXT_LENGTH: u64 = 16_777_216;
+
+/// Multiplier to derive byte_length from character length (UTF-8 max 4 bytes/char).
+const DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER: u64 = 4;
+
 /// Response from the `POST /queries/{qid}/abort-request` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct AbortQueryResponse {
@@ -558,17 +565,14 @@ impl TryFrom<&RowType> for query_types::RowType {
 
         match value.type_.to_uppercase().as_str() {
             "TEXT" => {
-                let length = value.length.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> length for TEXT/STRING/VARCHAR/CHAR column '{name}'"
-                    ),
-                })?;
-
-                let byte_length = value.byte_length.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> byte length for TEXT/STRING/VARCHAR/CHAR column '{name}'"
-                    ),
-                })?;
+                // Use Snowflake's default VARCHAR max length when the server omits
+                // length metadata. This happens when the server returns DECFLOAT
+                // columns as TEXT type for clients it doesn't recognize as
+                // DECFLOAT-capable (e.g. JSON format fallback).
+                let length = value.length.unwrap_or(DEFAULT_TEXT_LENGTH);
+                let byte_length = value
+                    .byte_length
+                    .unwrap_or(length * DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER);
 
                 Ok(query_types::RowType::text(
                     &name,
@@ -1207,5 +1211,28 @@ mod tests {
 
         let response: Response = serde_json::from_str(json).unwrap();
         assert!(response.success);
+    }
+
+    #[test]
+    fn test_text_type_without_length_uses_default() {
+        // Regression: the server may return DECFLOAT columns as TEXT without
+        // length/byteLength metadata when it doesn't recognize the client as
+        // DECFLOAT-capable. The driver must use defaults instead of failing.
+        let row_type = RowType {
+            name: "TEST_VALUE".to_string(),
+            type_: "TEXT".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        assert!(
+            result.is_ok(),
+            "TEXT column without length should use defaults, not fail"
+        );
     }
 }

@@ -53,6 +53,17 @@ Feature: DECFLOAT type support
     Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
 
   # =========================================================================== #
+  #                         JSON result format                                 #
+  # =========================================================================== #
+
+  @python_e2e
+  Scenario: should select decfloat literal with JSON result format
+    Given Snowflake client is logged in
+    And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
+    When Query "SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value" is executed
+    Then Result should not be empty
+
+  # =========================================================================== #
   #                             Table operations                                #
   # =========================================================================== #
 
