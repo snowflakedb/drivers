@@ -9,12 +9,11 @@ use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use serde_json::json;
-use sf_core::config::rest_parameters::{ClientInfo, QueryParameters};
-use sf_core::crl::config::CrlConfig;
+use sf_core::config::rest_parameters::QueryParameters;
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
 use sf_core::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
-use sf_core::tls::config::TlsConfig;
 use tokio::sync::RwLock as AsyncRwLock;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -22,15 +21,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn test_query_parameters(server_url: &str) -> QueryParameters {
     QueryParameters {
         server_url: server_url.to_string(),
-        client_info: ClientInfo {
-            application: "TestApp".to_string(),
-            version: "1.0.0".to_string(),
-            os: "Linux".to_string(),
-            os_version: "5.15".to_string(),
-            ocsp_mode: None,
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::default(),
-        },
+        client_info: test_client_info(),
         log_max_query_length: 80,
     }
 }

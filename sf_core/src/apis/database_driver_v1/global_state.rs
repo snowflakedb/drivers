@@ -30,6 +30,12 @@ pub struct DatabaseDriverV1 {
     platforms: tokio::sync::OnceCell<Vec<String>>,
 }
 
+impl Default for DatabaseDriverV1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DatabaseDriverV1 {
     pub fn new() -> Self {
         Self::with_providers(DriverProviders::default())

@@ -106,20 +106,10 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn test_query_parameters(server_url: &str) -> QueryParameters {
-        use crate::config::rest_parameters::ClientInfo;
-        use crate::crl::config::CrlConfig;
-        use crate::tls::config::TlsConfig;
+        use crate::config::rest_parameters::test_fixtures::test_client_info;
         QueryParameters {
             server_url: server_url.to_string(),
-            client_info: ClientInfo {
-                application: "TestApp".to_string(),
-                version: "1.0.0".to_string(),
-                os: "Linux".to_string(),
-                os_version: "5.15".to_string(),
-                ocsp_mode: None,
-                crl_config: CrlConfig::default(),
-                tls_config: TlsConfig::default(),
-            },
+            client_info: test_client_info(),
             log_max_query_length: 80,
         }
     }
