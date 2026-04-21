@@ -27,11 +27,11 @@ use tokio_util::sync::CancellationToken;
 use tracing;
 
 /// Scan the APD for parameters marked as data-at-execution.
-fn find_dae_params(apd: &crate::api::ApdDescriptor, param_limit: Option<usize>) -> Vec<u16> {
+fn find_dae_params(apd: &crate::api::ApdDescriptor, param_limit: Option<u16>) -> Vec<u16> {
     let mut dae_params = Vec::new();
     for (&param_num, record) in &apd.records {
         if let Some(limit) = param_limit
-            && param_num as usize > limit
+            && param_num > limit
         {
             continue;
         }
@@ -81,6 +81,11 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         ConnectionState::Connected { .. } => {}
     }
 
+    // exec-direct supersedes any prior SQLPrepare on this handle; clear the
+    // stale marker count before the DAE scan so it cannot leak into a later
+    // free_stmt(ResetParams) or SQLCancel → SQLExecute flow.
+    stmt.prepared_param_count = None;
+
     // No param_limit for exec-direct: enter DAE if any APD record has a DAE
     // indicator, regardless of the SQL text.  We deliberately avoid client-side
     // `?` parsing because (a) it can disagree with the server's parser on edge
@@ -112,7 +117,8 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false)?;
+            let (bindings, _json_owner) =
+                apply_parameter_bindings(&stmt.apd, &stmt.ipd, false, None)?;
             let stmt_handle = stmt.stmt_handle;
 
             stmt.cancel_token = CancellationToken::new();
@@ -279,14 +285,29 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             let schema = reader.schema();
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
 
-            let param_count = result.number_of_binds.max(0) as usize;
+            if result.number_of_binds < 0 {
+                tracing::warn!(
+                    "prepare: server reported negative bind count ({}), treating as 0",
+                    result.number_of_binds
+                );
+            }
+            let raw_bind_count = result.number_of_binds.max(0);
+            let param_count = u16::try_from(raw_bind_count).map_err(|_| {
+                crate::api::error::CountFieldIncorrectSnafu {
+                    reason: format!(
+                        "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
+                        u16::MAX
+                    ),
+                }
+                .build()
+            })?;
             stmt.prepared_param_count = Some(param_count);
             let max_varchar = conn.numeric_settings.max_varchar_size;
-            stmt.ipd.records.retain(|&k, _| (k as usize) <= param_count);
+            stmt.ipd.records.retain(|&k, _| k <= param_count);
             for i in 1..=param_count {
                 stmt.ipd
                     .records
-                    .entry(i as u16)
+                    .entry(i)
                     .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
             }
             tracing::info!(
@@ -365,8 +386,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) =
-                apply_parameter_bindings(&stmt.apd, &stmt.ipd, is_prepared)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(
+                &stmt.apd,
+                &stmt.ipd,
+                is_prepared,
+                stmt.prepared_param_count,
+            )?;
 
             stmt.cancel_token = CancellationToken::new();
             let _cancel_token = stmt.cancel_token.clone();
@@ -473,37 +498,49 @@ fn create_execute_state(
 /// provided parameter count and we validate that the APD covers every marker.
 /// When `prepared` is false (SQLExecDirect), the IPD only has records from
 /// SQLBindParameter — we send whatever the APD has and let the server validate.
+///
+/// `prepared_param_count` caps how many parameters are serialized for prepared
+/// statements, preventing phantom bindings beyond the server-reported marker
+/// count from being dereferenced.
 fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
     prepared: bool,
+    prepared_param_count: Option<u16>,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
+    let effective_count: u16 = if prepared {
+        prepared_param_count.ok_or_else(|| {
+            crate::api::error::CountFieldIncorrectSnafu {
+                reason: "prepared statement is missing prepared_param_count".to_string(),
+            }
+            .build()
+        })?
+    } else {
+        apd.desc_count().max(ipd.desc_count())
+    };
+
+    if effective_count == 0 {
+        return Ok((None, None));
+    }
+
     if apd.records.is_empty() {
         if prepared {
-            let ipd_count = ipd.desc_count() as usize;
-            if ipd_count > 0 {
-                return crate::api::error::CountFieldIncorrectSnafu {
-                    reason: format!(
-                        "parameter 1 is not bound (statement has {ipd_count} parameter markers)"
-                    ),
-                }
-                .fail();
+            return crate::api::error::CountFieldIncorrectSnafu {
+                reason: format!(
+                    "parameter 1 is not bound (statement has {effective_count} parameter markers)"
+                ),
             }
+            .fail();
         }
         return Ok((None, None));
     }
 
-    let ipd_count = ipd.desc_count() as usize;
-    if ipd_count == 0 && !prepared {
-        return Ok((None, None));
-    }
-
     if prepared {
-        for i in 1..=ipd_count {
-            if !apd.records.contains_key(&(i as u16)) {
+        for i in 1..=effective_count {
+            if !apd.records.contains_key(&i) {
                 return crate::api::error::CountFieldIncorrectSnafu {
                     reason: format!(
-                        "parameter {i} is not bound (statement has {ipd_count} parameter markers)"
+                        "parameter {i} is not bound (statement has {effective_count} parameter markers)"
                     ),
                 }
                 .fail();
@@ -511,11 +548,13 @@ fn apply_parameter_bindings(
         }
     }
     tracing::info!(
-        "apply_parameter_bindings: Found {} bound parameters",
-        apd.records.len()
+        "apply_parameter_bindings: Found {} bound parameters (effective_count={})",
+        apd.records.len(),
+        effective_count,
     );
 
-    let json_string = odbc_bindings_to_json(apd, ipd).context(JsonBindingSnafu {})?;
+    let json_string =
+        odbc_bindings_to_json(apd, ipd, effective_count).context(JsonBindingSnafu {})?;
 
     let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
     let json_data_len = json_string.len();
@@ -687,7 +726,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
             // the actual marker count are removed, while server-populated
             // records from SQLPrepare are preserved.
             if let Some(count) = stmt.prepared_param_count {
-                stmt.ipd.records.retain(|&k, _| (k as usize) <= count);
+                stmt.ipd.records.retain(|&k, _| k <= count);
             }
         }
     }
@@ -1152,4 +1191,20 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
 
     stmt.cancel_token.cancel();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{ApdDescriptor, IpdDescriptor, SqlState};
+
+    #[test]
+    fn apply_bindings_prepared_without_param_count_errors() {
+        let apd = ApdDescriptor::new();
+        let ipd = IpdDescriptor::new();
+        let result = apply_parameter_bindings(&apd, &ipd, true, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.to_sql_state(), SqlState::CountFieldIncorrect);
+    }
 }
