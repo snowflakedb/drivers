@@ -49,7 +49,7 @@ mod sflogger_layer;
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
     let config = sf_core::logging::LoggingConfig::new(None, false, false);
     let layer = sflogger_layer::SFLoggerLayer::new(jvm);
-    match sf_core::logging::init_logging(config, Some(layer), None) {
+    match sf_core::logging::init_logging(config, Some(layer)) {
         Ok(_) => jni::sys::JNI_VERSION_1_2,
         Err(e) => {
             eprintln!("Failed to initialize logging: {e:?}");

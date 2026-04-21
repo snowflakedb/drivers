@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -20,6 +21,16 @@ const SESSION_ID_ATTR: &str = "snowflake.session.id";
 /// Shared registry mapping session IDs to their exporter sessions.
 /// Connections register on init, deregister on release.
 pub type SessionRegistry = Arc<RwLock<HashMap<i64, Arc<ExporterSession>>>>;
+
+/// Process-global session registry shared between the tracing exporter layer
+/// (installed at logging init) and `DatabaseDriverV1` (which populates it
+/// when connections open). The exporter is a no-op while the registry is empty.
+static GLOBAL_SESSION_REGISTRY: LazyLock<SessionRegistry> = LazyLock::new(SessionRegistry::default);
+
+/// Returns the process-global session registry.
+pub fn global_session_registry() -> SessionRegistry {
+    GLOBAL_SESSION_REGISTRY.clone()
+}
 
 /// Shared session context that the exporter uses to POST telemetry.
 pub struct ExporterSession {
@@ -143,7 +154,7 @@ impl SpanExporter for SnowflakeInBandExporter {
                     continue;
                 };
                 let payload = serialization::spans_to_snowflake_payload(spans.as_slice());
-                send_with_token(session, &payload).await?;
+                let _ = send_with_token(session, &payload).await;
             }
 
             Ok(())

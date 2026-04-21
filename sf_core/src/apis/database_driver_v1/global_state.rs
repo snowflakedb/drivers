@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use tokio::sync::Mutex;
 
@@ -30,9 +29,6 @@ pub struct DatabaseDriverV1 {
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
-    /// Shared registry of active sessions for the in-band telemetry exporter.
-    /// Connections register on init, deregister on release.
-    telemetry_sessions: OnceLock<SessionRegistry>,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -54,14 +50,12 @@ impl DatabaseDriverV1 {
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
-            telemetry_sessions: OnceLock::new(),
         }
     }
 
-    /// Returns the session registry, initializing it on first access.
-    pub(super) fn telemetry_sessions(&self) -> &SessionRegistry {
-        self.telemetry_sessions
-            .get_or_init(SessionRegistry::default)
+    /// Returns the process-global session registry shared with the telemetry exporter layer.
+    pub(super) fn telemetry_sessions(&self) -> SessionRegistry {
+        crate::telemetry::snowflake_exporter::global_session_registry()
     }
 
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {

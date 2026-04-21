@@ -1557,7 +1557,10 @@ impl DatabaseDriverImpl {
             api_method = %api_method,
         )
     )]
-    async fn record_api_usage(session_id: i64, api_method: &str) {}
+    async fn record_api_usage(session_id: i64, api_method: &str) {
+        // Body intentionally empty — #[instrument] creates and ends the span,
+        // which is the telemetry side-effect.
+    }
 
     #[instrument(
         name = "exception",
@@ -1569,7 +1572,10 @@ impl DatabaseDriverImpl {
             exception_source = %error_source,
         )
     )]
-    async fn record_wrapper_error(session_id: i64, exception_type: &str, error_source: &str) {}
+    async fn record_wrapper_error(session_id: i64, exception_type: &str, error_source: &str) {
+        // Body intentionally empty — #[instrument] creates and ends the span,
+        // which is the telemetry side-effect.
+    }
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}

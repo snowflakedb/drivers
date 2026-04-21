@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
@@ -11,6 +12,10 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
+
+/// Keeps the `SdkTracerProvider` alive for the process lifetime so the batch
+/// exporter worker is not shut down when the local variable goes out of scope.
+static TELEMETRY_PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLock::new();
 
 pub mod c_api;
 mod callback_layer;
@@ -38,14 +43,10 @@ struct EmptyLayer;
 impl<S: Subscriber> Layer<S> for EmptyLayer {}
 
 pub fn init(config: LoggingConfig) -> Result<(), LogError> {
-    init_logging::<EmptyLayer>(config, None, None)
+    init_logging::<EmptyLayer>(config, None)
 }
 
-pub fn init_logging<L>(
-    config: LoggingConfig,
-    extra_layer: Option<L>,
-    telemetry_sessions: Option<crate::telemetry::snowflake_exporter::SessionRegistry>,
-) -> Result<(), LogError>
+pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<(), LogError>
 where
     L: Layer<Registry> + Send + Sync,
 {
@@ -74,17 +75,19 @@ where
     };
     let subscriber = subscriber.with(opentelemetry_layer);
 
-    let snowflake_layer = if let Some(sessions) = telemetry_sessions {
+    let snowflake_layer = {
+        let sessions = crate::telemetry::snowflake_exporter::global_session_registry();
         let exporter = crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
             .with_batch_exporter(exporter)
             .build();
         let tracer = provider.tracer("snowflake.telemetry");
-        Some(OpenTelemetryLayer::new(tracer))
-    } else {
-        None
+        // Keep the provider alive for the process lifetime so the batch
+        // exporter worker thread is not shut down.
+        TELEMETRY_PROVIDER.get_or_init(|| provider);
+        OpenTelemetryLayer::new(tracer)
     };
-    let subscriber = subscriber.with(snowflake_layer);
+    let subscriber = subscriber.with(Some(snowflake_layer));
 
     let stderr_layer = if config.stderr {
         Some(

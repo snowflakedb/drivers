@@ -293,6 +293,8 @@ impl DatabaseDriverV1 {
                         query_parameters: QueryParameters {
                             server_url: login_parameters.server_url.clone(),
                             client_info: login_parameters.client_info.clone(),
+                            log_max_query_length:
+                                crate::config::rest_parameters::DEFAULT_LOG_MAX_QUERY_LENGTH,
                         },
                         session_token: conn.tokens.clone(),
                     });
@@ -342,9 +344,14 @@ impl DatabaseDriverV1 {
     /// carry `snowflake.session.id` for routing by the shared exporter.
     pub async fn telemetry_context(&self, handle: Handle) -> Option<(tracing::Span, i64)> {
         let conn_ptr = self.connections.get_obj(handle)?;
-        let conn = conn_ptr.lock().await;
-        let span = conn.telemetry_span.clone()?;
-        let session_id = conn.tokens.read().await.as_ref()?.session_id;
+        let (span, tokens_arc) = {
+            let conn = conn_ptr.lock().await;
+            let span = conn.telemetry_span.clone()?;
+            (span, conn.tokens.clone())
+        };
+        // Mutex dropped before reading the tokens RwLock to avoid deadlock
+        // if a concurrent token refresh holds the write lock.
+        let session_id = tokens_arc.read().await.as_ref()?.session_id;
         Some((span, session_id))
     }
 
@@ -352,10 +359,12 @@ impl DatabaseDriverV1 {
     /// session registry, then release the connection handle.
     pub async fn flush_telemetry_on_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
         if let Some(conn_ptr) = self.connections.get_obj(conn_handle) {
-            let mut conn = conn_ptr.lock().await;
-            let span = conn.telemetry_span.take();
-            let session_id = conn.tokens.read().await.as_ref().map(|t| t.session_id);
-            drop(conn);
+            let (span, tokens_arc) = {
+                let mut conn = conn_ptr.lock().await;
+                (conn.telemetry_span.take(), conn.tokens.clone())
+            };
+            // Mutex dropped before reading the tokens RwLock to avoid deadlock.
+            let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
 
             // Drop the tracing span — this ends the underlying OTel span
             // so the BatchSpanProcessor can export it.
