@@ -1153,9 +1153,8 @@ async fn execute_sync_query<'a>(
     };
 
     let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
-    let policy = RetryPolicy::default();
 
-    let response = execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
         .await
         .context(HttpRetrySnafu {
             context: "query request",
@@ -2225,6 +2224,7 @@ mod tests {
                 describe_only: None,
             };
 
+            let retry_policy = RetryPolicy::default();
             let result = execute_sync_query(
                 &client,
                 &query_parameters,
@@ -2232,6 +2232,7 @@ mod tests {
                 &query_input,
                 uuid::Uuid::new_v4(),
                 false,
+                &retry_policy,
             )
             .await;
 
