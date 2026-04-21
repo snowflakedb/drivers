@@ -4,9 +4,21 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <cerrno>
+#include <csetjmp>
+#include <csignal>
+#include <cstring>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_tostring.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 
@@ -43,6 +55,100 @@ struct StringMaker<OdbcResult> {
   }
 };
 }  // namespace Catch
+
+// ---------------------------------------------------------------------------
+// InvalidHandleProbe — result of a crash-isolated SQLFreeHandle call.
+// Used to verify that an ODBC handle has been invalidated without crashing
+// the test runner if the Driver Manager dereferences freed memory.
+// ---------------------------------------------------------------------------
+struct InvalidHandleProbe {
+  bool crashed = false;
+  SQLRETURN returnCode = SQL_SUCCESS;
+};
+
+namespace Catch {
+template <>
+struct StringMaker<InvalidHandleProbe> {
+  static std::string convert(const InvalidHandleProbe& probe) {
+    if (probe.crashed) return "handle access caused crash (SIGSEGV/access violation)";
+    return "SQLFreeHandle returned " + return_code_to_string(probe.returnCode);
+  }
+};
+}  // namespace Catch
+
+// ---------------------------------------------------------------------------
+// probe_invalid_handle — crash-isolated SQLFreeHandle probe.
+//
+// Per the ODBC spec, using a freed handle is undefined behavior: some Driver
+// Managers return SQL_INVALID_HANDLE while others let the driver dereference
+// freed memory.  Both outcomes prove the handle is no longer valid.
+//
+// Platform strategies:
+//   MSVC:          SEH __try/__except  (scoped, compiler-native)
+//   MinGW/non-MSVC Windows: signal(SIGSEGV) + setjmp/longjmp  (MSVCRT translates
+//                           EXCEPTION_ACCESS_VIOLATION → SIGSEGV)
+//   POSIX:         fork() child process  (full address-space isolation)
+// ---------------------------------------------------------------------------
+#if defined(_WIN32) && defined(_MSC_VER)
+
+inline InvalidHandleProbe probe_invalid_handle(SQLSMALLINT handle_type, SQLHANDLE handle) {
+  InvalidHandleProbe probe;
+  __try {
+    probe.returnCode = SQLFreeHandle(handle_type, handle);
+  } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER
+                                                               : EXCEPTION_CONTINUE_SEARCH) {
+    probe.crashed = true;
+  }
+  return probe;
+}
+
+#elif defined(_WIN32)
+
+inline InvalidHandleProbe probe_invalid_handle(SQLSMALLINT handle_type, SQLHANDLE handle) {
+  static thread_local std::jmp_buf rih_jmp_buf;
+  auto prev_handler = std::signal(SIGSEGV, [](int) { std::longjmp(rih_jmp_buf, 1); });
+
+  InvalidHandleProbe probe;
+  if (setjmp(rih_jmp_buf) == 0) {
+    probe.returnCode = SQLFreeHandle(handle_type, handle);
+  } else {
+    probe.crashed = true;
+  }
+
+  std::signal(SIGSEGV, prev_handler);
+  return probe;
+}
+
+#else
+
+inline InvalidHandleProbe probe_invalid_handle(SQLSMALLINT handle_type, SQLHANDLE handle) {
+  pid_t pid = fork();
+  if (pid == -1) {
+    FAIL("fork() failed: " << std::strerror(errno));
+  }
+  if (pid == 0) {
+    SQLRETURN r = SQLFreeHandle(handle_type, handle);
+    _exit(r == SQL_INVALID_HANDLE ? 0 : 1);
+  }
+
+  int status = 0;
+  while (waitpid(pid, &status, 0) == -1) {
+    if (errno != EINTR) {
+      FAIL("waitpid() failed: " << std::strerror(errno));
+    }
+  }
+
+  InvalidHandleProbe probe;
+  probe.crashed = WIFSIGNALED(status) && (WTERMSIG(status) == SIGSEGV || WTERMSIG(status) == SIGBUS);
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    probe.returnCode = SQL_INVALID_HANDLE;
+  } else if (!probe.crashed) {
+    probe.returnCode = SQL_SUCCESS;
+  }
+  return probe;
+}
+
+#endif
 
 namespace OdbcMatchers {
 
@@ -136,6 +242,16 @@ class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string describe() const override { return "has diagnostic message containing \"" + substring_ + "\""; }
 };
 
+// Matches when a handle probe shows the handle is invalid (either the DM
+// returned SQL_INVALID_HANDLE or the call crashed with an access violation).
+class IsHandleInvalid : public Catch::Matchers::MatcherBase<InvalidHandleProbe> {
+ public:
+  bool match(const InvalidHandleProbe& probe) const override {
+    return probe.crashed || probe.returnCode == SQL_INVALID_HANDLE;
+  }
+  std::string describe() const override { return "handle is invalid (SQL_INVALID_HANDLE or access violation)"; }
+};
+
 }  // namespace OdbcMatchers
 
 // ---------------------------------------------------------------------------
@@ -170,5 +286,9 @@ class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
 #define REQUIRE_EXPECTED_WARNING(ret, expectedState, handle, handleType) \
   REQUIRE_THAT(OdbcResult(ret, handleType, handle),                      \
                OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState(expectedState))
+
+// Asserts that an ODBC handle has been invalidated (crash or SQL_INVALID_HANDLE).
+#define REQUIRE_INVALID_HANDLE(handle_type, handle) \
+  REQUIRE_THAT(probe_invalid_handle(handle_type, handle), OdbcMatchers::IsHandleInvalid())
 
 #endif  // ODBC_MATCHERS_HPP

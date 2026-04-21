@@ -8,7 +8,6 @@
 
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -103,7 +102,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: HY010 without prior SQL_NEE
                  "[odbc-api][putdata][submitting_request][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPutData(stmt_handle(), const_cast<char*>("x"), 1);
+  const SQLRETURN ret = SQLPutData(stmt_handle(), const_cast<char*>("x"), 1);
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 }
 

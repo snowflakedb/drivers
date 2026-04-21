@@ -7,7 +7,9 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "SessionParameterOverride.hpp"
+#include "compatibility.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -903,11 +905,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeStmt: SQL_DROP frees statement ha
   ret = SQLFreeStmt(stmt, SQL_DROP);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Using a freed handle is undefined behavior per ODBC spec. The reference
-  // driver returns SQL_INVALID_HANDLE for statement handles but crashes for
-  // connection handles.
-  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
 
   SQLDisconnect(dbc_handle());
 }
