@@ -502,7 +502,26 @@ impl ReadODBC for SnowflakeReal {
 
 impl WriteJson for SnowflakeReal {
     fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.to_string()))
+        // Snowflake's JSON parameter-binding parser is stricter than its
+        // SQL `TO_DOUBLE()` text parser. The SQL parser accepts any of
+        // `nan`, `inf`, `infinity` (case-insensitive), but the JSON bind
+        // parser requires the full word `"Infinity"` / `"-Infinity"` with
+        // the leading `I` capitalized. Rust's `<f64 as Display>::fmt`
+        // emits the short form `"inf"` / `"-inf"`, which the server
+        // rejects with `SQL compilation error: Invalid bind value (inf)`.
+        //
+        // `NaN` happens to match what Rust already produces, and finite
+        // values flow through unchanged.
+        let s = if value.is_nan() {
+            "NaN".to_string()
+        } else if value == f64::INFINITY {
+            "Infinity".to_string()
+        } else if value == f64::NEG_INFINITY {
+            "-Infinity".to_string()
+        } else {
+            value.to_string()
+        };
+        Ok(Value::String(s))
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
