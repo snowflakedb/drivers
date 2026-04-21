@@ -316,8 +316,6 @@ impl DatabaseDriverV1 {
                         .as_ref()
                         .map(crate::telemetry::environment::EnvironmentInfo::with_wrapper)
                         .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
-                    let compiler = env_info.language_compiler.clone().unwrap_or_default();
-
                     // Long-lived connection span carries all telemetry events
                     // (session_init, api_usage, wrapper_error) for this session.
                     // Events are exported when the span ends on connection release.
@@ -330,37 +328,37 @@ impl DatabaseDriverV1 {
                         use tracing_opentelemetry::OpenTelemetrySpanExt;
                         let otel_ctx = conn_span.context();
                         let otel_span = otel_ctx.span();
-                        otel_span.add_event(
-                            "session_init",
-                            vec![
-                                opentelemetry::KeyValue::new(
-                                    "service.name",
-                                    env_info.driver_name.clone(),
-                                ),
-                                opentelemetry::KeyValue::new(
-                                    "service.version",
-                                    env_info.driver_version.clone(),
-                                ),
-                                opentelemetry::KeyValue::new(
-                                    "process.runtime.name",
-                                    env_info.language_runtime.clone(),
-                                ),
-                                opentelemetry::KeyValue::new(
-                                    "process.runtime.version",
-                                    env_info.language_version.clone(),
-                                ),
-                                opentelemetry::KeyValue::new("os.type", env_info.os_name.clone()),
-                                opentelemetry::KeyValue::new(
-                                    "os.version",
-                                    env_info.os_version.clone(),
-                                ),
-                                opentelemetry::KeyValue::new(
-                                    "host.arch",
-                                    env_info.os_architecture.clone(),
-                                ),
-                                opentelemetry::KeyValue::new("process.runtime.compiler", compiler),
-                            ],
-                        );
+                        let mut attrs = vec![
+                            opentelemetry::KeyValue::new(
+                                "service.name",
+                                env_info.driver_name.clone(),
+                            ),
+                            opentelemetry::KeyValue::new(
+                                "service.version",
+                                env_info.driver_version.clone(),
+                            ),
+                            opentelemetry::KeyValue::new(
+                                "process.runtime.name",
+                                env_info.language_runtime.clone(),
+                            ),
+                            opentelemetry::KeyValue::new(
+                                "process.runtime.version",
+                                env_info.language_version.clone(),
+                            ),
+                            opentelemetry::KeyValue::new("os.type", env_info.os_name.clone()),
+                            opentelemetry::KeyValue::new("os.version", env_info.os_version.clone()),
+                            opentelemetry::KeyValue::new(
+                                "host.arch",
+                                env_info.os_architecture.clone(),
+                            ),
+                        ];
+                        if let Some(ref compiler) = env_info.language_compiler {
+                            attrs.push(opentelemetry::KeyValue::new(
+                                "process.runtime.compiler",
+                                compiler.clone(),
+                            ));
+                        }
+                        otel_span.add_event("session_init", attrs);
                     }
 
                     conn.telemetry_span = Some(conn_span);

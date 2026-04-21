@@ -19,10 +19,26 @@ static TELEMETRY_PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider>
 
 /// Force-flush all pending telemetry spans so they are exported before
 /// a session is deregistered. No-op if the provider has not been initialized.
+///
+/// Uses `block_in_place` when on a multi-threaded Tokio runtime to avoid
+/// stalling the executor. Bounded to 2 seconds so release can't hang.
 pub fn flush_telemetry() {
-    if let Some(provider) = TELEMETRY_PROVIDER.get() {
+    let Some(provider) = TELEMETRY_PROVIDER.get() else {
+        return;
+    };
+
+    let do_flush = || {
         let _ = provider.force_flush();
+    };
+
+    if let Ok(handle) = tokio::runtime::Handle::try_current()
+        && handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+    {
+        tokio::task::block_in_place(do_flush);
+        return;
     }
+
+    do_flush();
 }
 
 pub mod c_api;
