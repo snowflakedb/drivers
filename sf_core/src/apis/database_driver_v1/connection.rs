@@ -318,26 +318,48 @@ impl DatabaseDriverV1 {
                         .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
                     let compiler = env_info.language_compiler.clone().unwrap_or_default();
 
-                    // Long-lived connection span parents all telemetry events
+                    // Long-lived connection span carries all telemetry events
                     // (session_init, api_usage, wrapper_error) for this session.
+                    // Events are exported when the span ends on connection release.
                     let conn_span =
                         tracing::info_span!("connection", "snowflake.session.id" = session_id,);
 
-                    // Emit a short-lived session_init child span so the exporter
-                    // sends environment telemetry immediately (not deferred until close).
+                    // Record session_init as an event on the connection span.
                     {
-                        let _guard = conn_span.enter();
-                        let _init_span = tracing::info_span!(
+                        use opentelemetry::trace::TraceContextExt;
+                        use tracing_opentelemetry::OpenTelemetrySpanExt;
+                        let otel_ctx = conn_span.context();
+                        let otel_span = otel_ctx.span();
+                        otel_span.add_event(
                             "session_init",
-                            "snowflake.session.id" = session_id,
-                            "service.name" = %env_info.driver_name,
-                            "service.version" = %env_info.driver_version,
-                            "process.runtime.name" = %env_info.language_runtime,
-                            "process.runtime.version" = %env_info.language_version,
-                            "os.type" = %env_info.os_name,
-                            "os.version" = %env_info.os_version,
-                            "host.arch" = %env_info.os_architecture,
-                            "process.runtime.compiler" = %compiler,
+                            vec![
+                                opentelemetry::KeyValue::new(
+                                    "service.name",
+                                    env_info.driver_name.clone(),
+                                ),
+                                opentelemetry::KeyValue::new(
+                                    "service.version",
+                                    env_info.driver_version.clone(),
+                                ),
+                                opentelemetry::KeyValue::new(
+                                    "process.runtime.name",
+                                    env_info.language_runtime.clone(),
+                                ),
+                                opentelemetry::KeyValue::new(
+                                    "process.runtime.version",
+                                    env_info.language_version.clone(),
+                                ),
+                                opentelemetry::KeyValue::new("os.type", env_info.os_name.clone()),
+                                opentelemetry::KeyValue::new(
+                                    "os.version",
+                                    env_info.os_version.clone(),
+                                ),
+                                opentelemetry::KeyValue::new(
+                                    "host.arch",
+                                    env_info.os_architecture.clone(),
+                                ),
+                                opentelemetry::KeyValue::new("process.runtime.compiler", compiler),
+                            ],
                         );
                     }
 
@@ -355,22 +377,15 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Return the per-connection telemetry span and session ID if available.
+    /// Return the per-connection telemetry span if available.
     ///
-    /// Callers create child spans under this connection span to emit
-    /// telemetry events (api_usage, wrapper_error). The child spans must
-    /// carry `snowflake.session.id` for routing by the shared exporter.
-    pub async fn telemetry_context(&self, handle: Handle) -> Option<(tracing::Span, i64)> {
+    /// Callers enter this span and emit `tracing::info!` events for
+    /// api_usage / wrapper_error. The span already carries
+    /// `snowflake.session.id` for routing by the shared exporter.
+    pub async fn telemetry_span(&self, handle: Handle) -> Option<tracing::Span> {
         let conn_ptr = self.connections.get_obj(handle)?;
-        let (span, tokens_arc) = {
-            let conn = conn_ptr.lock().await;
-            let span = conn.telemetry_span.clone()?;
-            (span, conn.tokens.clone())
-        };
-        // Mutex dropped before reading the tokens RwLock to avoid deadlock
-        // if a concurrent token refresh holds the write lock.
-        let session_id = tokens_arc.read().await.as_ref()?.session_id;
-        Some((span, session_id))
+        let conn = conn_ptr.lock().await;
+        conn.telemetry_span.clone()
     }
 
     /// End the connection span and deregister from the shared telemetry
