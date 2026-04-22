@@ -39,6 +39,7 @@ def write_pandas(
     quote_identifiers: bool = True,
     infer_schema: bool = False,
     auto_create_table: bool = False,
+    create_temp_table: bool = False,
     overwrite: bool = False,
     table_type: Literal["", "temp", "temporary", "transient"] = "",
     use_logical_type: bool | None = None,
@@ -52,6 +53,9 @@ def write_pandas(
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
     """
+    # create_temp_table=True is equivalent to table_type="temp"
+    if create_temp_table and not table_type:
+        table_type = "temp"
     cfg = WritePandasConfig(
         conn,
         df,

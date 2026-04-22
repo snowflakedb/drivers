@@ -163,6 +163,9 @@ class SnowflakeCursorBase(abc.ABC):
 
         # Keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
+
+        # Backward compat: Snowpark reads _request_id for logging
+        self._request_id: str | None = None
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
         self._prefetch_hook: Callable[[], None] | None = None
 
@@ -1044,3 +1047,22 @@ class SnowflakeCursorBase(abc.ABC):
         )
         response = self._connection.db_api.connection_abort_query(request)
         return response.success
+
+    # ------------------------------------------------------------------
+    # File transfer stubs (backward compat for Snowpark)
+    # ------------------------------------------------------------------
+
+    def upload_stream(self, *args: Any, **kwargs: Any) -> None:
+        raise NotSupportedError("upload_stream is not yet supported by the Universal Driver")
+
+    def _upload(self, *args: Any, **kwargs: Any) -> None:
+        raise NotSupportedError("_upload is not yet supported by the Universal Driver")
+
+    def _download(self, *args: Any, **kwargs: Any) -> None:
+        raise NotSupportedError("_download is not yet supported by the Universal Driver")
+
+    def _upload_stream(self, *args: Any, **kwargs: Any) -> None:
+        raise NotSupportedError("_upload_stream is not yet supported by the Universal Driver")
+
+    def _download_stream(self, *args: Any, **kwargs: Any) -> None:
+        raise NotSupportedError("_download_stream is not yet supported by the Universal Driver")

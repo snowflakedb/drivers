@@ -377,6 +377,12 @@ class Connection:
         """
         return self._closed
 
+    @property
+    @backward_compatibility
+    def expired(self) -> bool:
+        """Whether the connection token has expired (backward compat — always False)."""
+        return False
+
     def _get_session_parameter(self, name: str) -> str | None:
         """
         Get a session parameter value (internal method).
