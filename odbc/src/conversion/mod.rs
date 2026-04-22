@@ -54,37 +54,51 @@ use crate::conversion::error::{
 };
 use crate::conversion::warning::Warnings;
 
-pub trait Converter<'a> {
+/// Per-column converter that dispatches Arrow values to ODBC buffers.
+///
+/// Built once per column per `RecordBatch` and reused for every cell in that
+/// column. The array reference is passed in at `convert_arrow_value` time
+/// rather than stored inside the converter, so the trait object is `'static`
+/// and trivial to cache. The per-cell cost collapses to a single vtable call
+/// plus one cheap `Any` downcast.
+pub trait Converter {
     fn convert_arrow_value(
         &self,
+        array: &dyn Array,
         row_idx: usize,
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, ConversionError>;
 }
 
-struct GenericConverter<'a, ArrowArrayType, T> {
+struct GenericConverter<ArrowArrayType, T> {
     snowflake_type: T,
-    arrow_array: &'a ArrowArrayType,
+    // `fn() -> ArrowArrayType` keeps the converter covariant over the array
+    // type while not requiring `ArrowArrayType` itself to impl any auto traits.
+    _phantom: std::marker::PhantomData<fn() -> ArrowArrayType>,
 }
 
-impl<'a, ArrowArrayType: Array, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
-    Converter<'a> for GenericConverter<'a, ArrowArrayType, T>
+impl<
+    ArrowArrayType: Array + 'static,
+    T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>,
+> Converter for GenericConverter<ArrowArrayType, T>
 {
     fn convert_arrow_value(
         &self,
+        array: &dyn Array,
         row_idx: usize,
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, ConversionError> {
-        tracing::debug!(
-            "convert_arrow_value: row_idx={}, binding={:?}",
-            row_idx,
-            binding
-        );
+        let arrow_array = array.as_any().downcast_ref::<ArrowArrayType>().ok_or(
+            ArrowArrayDowncastSnafu {
+                expected_type: std::any::type_name::<ArrowArrayType>().to_string(),
+            }
+            .build(),
+        )?;
         let value = self
             .snowflake_type
-            .read_arrow_type(self.arrow_array, row_idx)
+            .read_arrow_type(arrow_array, row_idx)
             .context(ReadArrowValueSnafu)?;
         self.snowflake_type
             .write_odbc_type(value, binding, get_data_offset)
@@ -93,56 +107,41 @@ impl<'a, ArrowArrayType: Array, T: SnowflakeType + WriteODBCType + ReadArrowType
 }
 
 macro_rules! make_converter {
-    ($arrow_array_type:ty, $snowflake_type:expr, $arrow_array:expr, $nullable:expr) => {{
-        let arrow_array = $arrow_array
-            .as_any()
-            .downcast_ref::<$arrow_array_type>()
-            .ok_or(
-                ArrowArrayDowncastSnafu {
-                    expected_type: stringify!($arrow_array_type).to_string(),
-                }
-                .build(),
-            )?;
+    ($arrow_array_type:ty, $snowflake_type:expr, $nullable:expr) => {{
         if $nullable {
-            Ok(Box::new(GenericConverter {
+            Ok(Box::new(GenericConverter::<$arrow_array_type, _> {
                 snowflake_type: nullable::Nullable {
                     value: $snowflake_type,
                 },
-                arrow_array,
-            }))
+                _phantom: std::marker::PhantomData,
+            }) as Box<dyn Converter>)
         } else {
-            Ok(Box::new(GenericConverter {
+            Ok(Box::new(GenericConverter::<$arrow_array_type, _> {
                 snowflake_type: $snowflake_type,
-                arrow_array,
-            }))
+                _phantom: std::marker::PhantomData,
+            }) as Box<dyn Converter>)
         }
     }};
 }
 
 macro_rules! make_primitive_data_converter {
-    ($arrow_type:ty, $snowflake_type:expr, $arrow_array:expr, $nullable:expr) => {{
+    ($arrow_type:ty, $snowflake_type:expr, $nullable:expr) => {{
         make_converter!(
             arrow::array::PrimitiveArray<$arrow_type>,
             $snowflake_type,
-            $arrow_array,
             $nullable
         )
     }};
 }
 
 macro_rules! make_timestamp_converter {
-    ($snowflake_type:expr, $field:expr, $arrow_array:expr, $nullable:expr) => {
+    ($snowflake_type:expr, $field:expr, $nullable:expr) => {
         match $field.data_type() {
             DataType::Struct(_) => {
-                make_converter!(
-                    arrow::array::StructArray,
-                    $snowflake_type,
-                    $arrow_array,
-                    $nullable
-                )
+                make_converter!(arrow::array::StructArray, $snowflake_type, $nullable)
             }
             _ => {
-                make_primitive_data_converter!(Int64Type, $snowflake_type, $arrow_array, $nullable)
+                make_primitive_data_converter!(Int64Type, $snowflake_type, $nullable)
             }
         }
     };
@@ -337,11 +336,20 @@ impl SnowflakeFieldType {
     }
 }
 
-pub fn make_converter<'a>(
+/// Build a converter for a column based on its Arrow `Field`.
+///
+/// The returned `Box<dyn Converter>` is `'static` and can be cached and
+/// reused across every cell of the column within a `RecordBatch`. The
+/// caller supplies the Arrow array at `convert_arrow_value` time.
+///
+/// Note: the expensive work here is `SnowflakeFieldType::from_field`, which
+/// performs HashMap lookups and `u32` parses on the field's metadata. Call
+/// sites in the fetch hot path build converters once per column per batch
+/// rather than once per cell.
+pub fn make_converter(
     field: &Field,
-    arrow_array: &'a dyn Array,
     numeric_settings: &NumericSettings,
-) -> Result<Box<dyn Converter<'a> + 'a>, ConversionError> {
+) -> Result<Box<dyn Converter>, ConversionError> {
     let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
     let nullable = field.is_nullable();
     match field_type {
@@ -349,30 +357,24 @@ pub fn make_converter<'a>(
             make_converter!(
                 arrow::array::GenericByteArray<arrow::datatypes::Utf8Type>,
                 snowflake_type,
-                arrow_array,
                 nullable
             )
         }
         SnowflakeFieldType::Number(snowflake_type) => match field.data_type() {
             DataType::Int8 => {
-                make_primitive_data_converter!(Int8Type, snowflake_type, arrow_array, nullable)
+                make_primitive_data_converter!(Int8Type, snowflake_type, nullable)
             }
             DataType::Int16 => {
-                make_primitive_data_converter!(Int16Type, snowflake_type, arrow_array, nullable)
+                make_primitive_data_converter!(Int16Type, snowflake_type, nullable)
             }
             DataType::Int32 => {
-                make_primitive_data_converter!(Int32Type, snowflake_type, arrow_array, nullable)
+                make_primitive_data_converter!(Int32Type, snowflake_type, nullable)
             }
             DataType::Int64 => {
-                make_primitive_data_converter!(Int64Type, snowflake_type, arrow_array, nullable)
+                make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
             }
             DataType::Decimal128(_, _) => {
-                make_primitive_data_converter!(
-                    Decimal128Type,
-                    snowflake_type,
-                    arrow_array,
-                    nullable
-                )
+                make_primitive_data_converter!(Decimal128Type, snowflake_type, nullable)
             }
             dt => UnsupportedArrowDataTypeSnafu {
                 data_type: dt.clone(),
@@ -380,46 +382,35 @@ pub fn make_converter<'a>(
             .fail(),
         },
         SnowflakeFieldType::Date(snowflake_type) => {
-            make_primitive_data_converter!(Date32Type, snowflake_type, arrow_array, nullable)
+            make_primitive_data_converter!(Date32Type, snowflake_type, nullable)
         }
         SnowflakeFieldType::Time(snowflake_type) => {
-            make_primitive_data_converter!(Int64Type, snowflake_type, arrow_array, nullable)
+            make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
         }
         SnowflakeFieldType::TimestampNtz(snowflake_type) => {
-            make_timestamp_converter!(snowflake_type, field, arrow_array, nullable)
+            make_timestamp_converter!(snowflake_type, field, nullable)
         }
         SnowflakeFieldType::TimestampLtz(snowflake_type) => {
-            make_timestamp_converter!(snowflake_type, field, arrow_array, nullable)
+            make_timestamp_converter!(snowflake_type, field, nullable)
         }
         SnowflakeFieldType::TimestampTz(snowflake_type) => {
-            make_timestamp_converter!(snowflake_type, field, arrow_array, nullable)
+            make_timestamp_converter!(snowflake_type, field, nullable)
         }
         SnowflakeFieldType::Boolean(snowflake_type) => {
-            make_converter!(
-                arrow::array::BooleanArray,
-                snowflake_type,
-                arrow_array,
-                nullable
-            )
+            make_converter!(arrow::array::BooleanArray, snowflake_type, nullable)
         }
         SnowflakeFieldType::Binary(snowflake_type) => {
             make_converter!(
                 arrow::array::GenericByteArray<arrow::datatypes::GenericBinaryType<i32>>,
                 snowflake_type,
-                arrow_array,
                 nullable
             )
         }
         SnowflakeFieldType::Real(snowflake_type) => {
-            make_primitive_data_converter!(Float64Type, snowflake_type, arrow_array, nullable)
+            make_primitive_data_converter!(Float64Type, snowflake_type, nullable)
         }
         SnowflakeFieldType::Decfloat(snowflake_type) => {
-            make_converter!(
-                arrow::array::StructArray,
-                snowflake_type,
-                arrow_array,
-                nullable
-            )
+            make_converter!(arrow::array::StructArray, snowflake_type, nullable)
         }
     }
 }
