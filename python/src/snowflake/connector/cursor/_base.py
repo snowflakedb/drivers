@@ -27,7 +27,7 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
-from .._internal.decorators import pep249
+from .._internal.decorators import backward_compatibility, pep249
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -569,6 +569,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         return self._query_result.description
 
+    @backward_compatibility
     def _describe_internal(
         self,
         operation: str,
@@ -1061,17 +1062,22 @@ class SnowflakeCursorBase(abc.ABC):
     # File transfer stubs (backward compat for Snowpark)
     # ------------------------------------------------------------------
 
+    @backward_compatibility
     def upload_stream(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("upload_stream is not yet supported by the Universal Driver")
 
+    @backward_compatibility
     def _upload(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_upload is not yet supported by the Universal Driver")
 
+    @backward_compatibility
     def _download(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_download is not yet supported by the Universal Driver")
 
+    @backward_compatibility
     def _upload_stream(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_upload_stream is not yet supported by the Universal Driver")
 
+    @backward_compatibility
     def _download_stream(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_download_stream is not yet supported by the Universal Driver")
