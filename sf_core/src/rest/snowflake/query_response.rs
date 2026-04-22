@@ -670,6 +670,9 @@ impl TryFrom<&RowType> for query_types::RowType {
                     &name, nullable, precision, scale,
                 ))
             }
+            "GEOGRAPHY" => Ok(query_types::RowType::geography(&name, nullable)),
+            "GEOMETRY" => Ok(query_types::RowType::geometry(&name, nullable)),
+            "VECTOR" => Ok(query_types::RowType::vector(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -1175,7 +1178,7 @@ mod tests {
     fn test_unsupported_column_type_returns_error() {
         let row_type = RowType {
             name: "bad_col".to_string(),
-            type_: "GEOGRAPHY".to_string(),
+            type_: "UNSUPPORTED_TYPE_XYZ".to_string(),
             nullable: false,
             scale: None,
             precision: None,
@@ -1187,10 +1190,33 @@ mod tests {
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
         match result {
             Err(err) => assert!(
-                err.to_string().contains("GEOGRAPHY"),
+                err.to_string().contains("UNSUPPORTED_TYPE_XYZ"),
                 "Error should mention the unsupported type: {err}"
             ),
-            Ok(_) => panic!("Expected error for unsupported column type GEOGRAPHY"),
+            Ok(_) => panic!("Expected error for unsupported column type UNSUPPORTED_TYPE_XYZ"),
+        }
+    }
+
+    #[test]
+    fn test_geography_geometry_vector_types_are_supported() {
+        for type_name in &["GEOGRAPHY", "GEOMETRY", "VECTOR"] {
+            let row_type = RowType {
+                name: "col".to_string(),
+                type_: type_name.to_string(),
+                nullable: true,
+                scale: None,
+                precision: None,
+                length: None,
+                byte_length: None,
+                _fields: None,
+            };
+
+            let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+            assert!(
+                result.is_ok(),
+                "{type_name} should be a supported column type but got error: {}",
+                result.unwrap_err()
+            );
         }
     }
 

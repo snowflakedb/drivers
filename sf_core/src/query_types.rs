@@ -1,4 +1,4 @@
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RowType {
     Fixed {
         name: String,
@@ -77,6 +77,18 @@ pub enum RowType {
         nullable: bool,
         precision: u64,
         scale: u64,
+    },
+    Geography {
+        name: String,
+        nullable: bool,
+    },
+    Geometry {
+        name: String,
+        nullable: bool,
+    },
+    Vector {
+        name: String,
+        nullable: bool,
     },
 }
 
@@ -213,6 +225,27 @@ impl RowType {
             nullable,
             precision,
             scale,
+        }
+    }
+
+    pub fn geography(name: &str, nullable: bool) -> Self {
+        RowType::Geography {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn geometry(name: &str, nullable: bool) -> Self {
+        RowType::Geometry {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn vector(name: &str, nullable: bool) -> Self {
+        RowType::Vector {
+            name: name.to_string(),
+            nullable,
         }
     }
 }

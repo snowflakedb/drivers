@@ -249,6 +249,30 @@ pub fn create_field_with_type(
             )
             .with_metadata(metadata))
         }
+        RowType::Geography { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "GEOGRAPHY".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Geometry { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "GEOMETRY".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Vector { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "VECTOR".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
     }
 }
 

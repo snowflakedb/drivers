@@ -425,6 +425,96 @@ class TestCursorDescription:
         # At minimum, verify the structure is correct
         assert len(result[0]) == 7
 
+    # Type codes used by dbt contract enforcement. When dbt checks column types,
+    # it runs `SELECT * FROM (<sql>) AS __dbt_sbq WHERE false LIMIT 0` and reads
+    # cursor.description type_code. These tests verify the driver returns correct
+    # type metadata even for zero-row results (which hit the SchemaOnly code path).
+    EMPTY_SUBQUERY_TYPES = [
+        ("1", 0, "FIXED"),
+        ("'1'", 2, "TEXT"),
+        ("cast('2019-01-01' as date)", 3, "DATE"),
+        ("true", 13, "BOOLEAN"),
+        ("'2013-11-03 00:00:00-07'::timestamptz", 7, "TIMESTAMP_TZ"),
+        ("'2013-11-03 00:00:00-07'::timestamp", 8, "TIMESTAMP_NTZ"),
+        ("ARRAY_CONSTRUCT('a','b','c')", 10, "ARRAY"),
+        ("TO_GEOGRAPHY('POINT(-122.35 37.55)')", 14, "GEOGRAPHY"),
+        ("TO_GEOMETRY('POINT(1820.12 890.56)')", 15, "GEOMETRY"),
+        (
+            """TO_VARIANT(PARSE_JSON('{"key3": "value3"}'))""",
+            5,
+            "VARIANT",
+        ),
+    ]
+
+    @pytest.mark.parametrize(
+        "sql_expr,expected_type_code,expected_type_name",
+        EMPTY_SUBQUERY_TYPES,
+        ids=[name for _, _, name in EMPTY_SUBQUERY_TYPES],
+    )
+    def test_description_empty_subquery_type_code(
+        self, cursor, sql_expr, expected_type_code, expected_type_name
+    ):
+        """Verify cursor.description type_code for zero-row results.
+
+        dbt wraps model SQL in:
+            SELECT * FROM (<model_sql>) AS __dbt_sbq WHERE false LIMIT 0
+        to get column metadata without scanning data. The driver must return
+        correct type_code even for zero-row results.
+        """
+        sql = (
+            f"SELECT * FROM ("
+            f"  SELECT {sql_expr} AS col"
+            f") AS __dbt_sbq WHERE false LIMIT 0"
+        )
+        cursor.execute(sql)
+
+        desc = cursor.description
+        assert desc is not None, (
+            "cursor.description should not be None for empty subquery"
+        )
+        actual_type_code = desc[0].type_code
+        assert actual_type_code == expected_type_code, (
+            f"Type code mismatch for '{sql_expr}': "
+            f"got {actual_type_code}, expected {expected_type_code} ({expected_type_name})"
+        )
+
+    CAST_NULL_TYPES = [
+        ("INT", 0, "FIXED"),
+        ("TEXT", 2, "TEXT"),
+        ("DATE", 3, "DATE"),
+        ("BOOLEAN", 13, "BOOLEAN"),
+        ("TIMESTAMP_TZ", 7, "TIMESTAMP_TZ"),
+        ("TIMESTAMP_NTZ", 8, "TIMESTAMP_NTZ"),
+        ("ARRAY", 10, "ARRAY"),
+        ("GEOGRAPHY", 14, "GEOGRAPHY"),
+        ("GEOMETRY", 15, "GEOMETRY"),
+        ("VARIANT", 5, "VARIANT"),
+    ]
+
+    @pytest.mark.parametrize(
+        "cast_type,expected_type_code,expected_type_name",
+        CAST_NULL_TYPES,
+        ids=[name for _, _, name in CAST_NULL_TYPES],
+    )
+    def test_description_cast_null_empty_subquery(
+        self, cursor, cast_type, expected_type_code, expected_type_name
+    ):
+        """Verify cursor.description for CAST(null AS <type>) in empty subquery."""
+        sql = (
+            f"SELECT * FROM ("
+            f"  SELECT CAST(null AS {cast_type}) AS col"
+            f") AS __dbt_sbq WHERE false LIMIT 0"
+        )
+        cursor.execute(sql)
+
+        desc = cursor.description
+        assert desc is not None
+        actual_type_code = desc[0].type_code
+        assert actual_type_code == expected_type_code, (
+            f"Type code mismatch for CAST(null AS {cast_type}): "
+            f"got {actual_type_code}, expected {expected_type_code} ({expected_type_name})"
+        )
+
 
 class TestCursorRowcount:
     """Integration tests for Cursor.rowcount property."""

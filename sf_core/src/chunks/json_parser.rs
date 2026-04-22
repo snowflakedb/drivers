@@ -275,7 +275,10 @@ impl ColumnBuilder {
             RowType::Text { .. }
             | RowType::Variant { .. }
             | RowType::Object { .. }
-            | RowType::Array { .. } => ColumnBuilder::Text {
+            | RowType::Array { .. }
+            | RowType::Geography { .. }
+            | RowType::Geometry { .. }
+            | RowType::Vector { .. } => ColumnBuilder::Text {
                 builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
             },
             RowType::Boolean { .. } => ColumnBuilder::Boolean {
