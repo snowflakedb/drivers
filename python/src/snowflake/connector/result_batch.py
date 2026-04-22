@@ -20,6 +20,7 @@ from ._internal.arrow_stream_utils import (
     create_row_iterator,
     create_table_iterator,
 )
+from ._internal.backward_compatibility import install_backward_compatibility_getattr
 from ._internal.decorators import backward_compatibility
 from ._internal.extras import pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -315,3 +316,7 @@ class JSONResultBatch(ResultBatch):
 
 
 __all__ = ["IterUnit", "IterTableStructure", "ResultBatch", "ArrowResultBatch", "JSONResultBatch"]
+
+
+# Must be the last statement; see ``install_backward_compatibility_getattr``.
+install_backward_compatibility_getattr(__name__)
