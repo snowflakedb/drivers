@@ -444,6 +444,12 @@ class TestCursorDescription:
             5,
             "VARIANT",
         ),
+        pytest.param(
+            "[1.0, 2.0, 3.0]::VECTOR(FLOAT, 3)",
+            16,
+            "VECTOR",
+            marks=pytest.mark.xfail(reason="VECTOR response parsing not yet supported"),
+        ),
     ]
 
     @pytest.mark.parametrize(
