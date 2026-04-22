@@ -58,7 +58,7 @@ class ResultMetadata(NamedTuple):
         return None
 
     @classmethod
-    def create_description_from_descriptor(cls, descriptor: ResultSetDescriptor | None) -> list[ResultMetadata] | None:
+    def _create_description_from_descriptor(cls, descriptor: ResultSetDescriptor | None) -> list[ResultMetadata] | None:
         """Extract description from ResultSetDescriptor column metadata.
 
         Args:

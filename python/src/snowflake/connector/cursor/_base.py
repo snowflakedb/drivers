@@ -130,6 +130,36 @@ def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
     return decorator
 
 
+def _create_config_setting(value: Any) -> ConfigSetting:
+    """Create a ConfigSetting protobuf from a Python value.
+
+    Args:
+        value: Python value (int, str, bool, float, or bytes).
+
+    Returns:
+        ConfigSetting protobuf message.
+
+    Raises:
+        TypeError: If value type is not supported.
+    """
+    config_setting = ConfigSetting()
+    if isinstance(value, bool):  # Check bool before int (bool is subclass of int)
+        config_setting.bool_value = value
+    elif isinstance(value, int):
+        config_setting.int_value = value
+    elif isinstance(value, str):
+        config_setting.string_value = value
+    elif isinstance(value, float):
+        config_setting.double_value = value
+    elif isinstance(value, bytes):
+        config_setting.bytes_value = value
+    else:
+        raise TypeError(
+            f"Unsupported parameter type: {type(value).__name__}. Supported types: int, str, bool, float, bytes"
+        )
+    return config_setting
+
+
 class SnowflakeCursorBase(abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
@@ -338,6 +368,7 @@ class SnowflakeCursorBase(abc.ABC):
         self.execute(command, args)
         return args
 
+    @_requires_open
     def set_statement_parameter(self, key: str, value: Any) -> None:
         """Set a statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
 
@@ -354,9 +385,6 @@ class SnowflakeCursorBase(abc.ABC):
             cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
             cursor.execute("SELECT 1; SELECT 2; SELECT 3")
         """
-        if self.is_closed():
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
-
         # Store in cursor for application in _execute
         self._statement_parameters[key] = value
 
@@ -465,6 +493,7 @@ class SnowflakeCursorBase(abc.ABC):
             num_statements (int, optional): Number of statements in a multistatement query.
         """
         if num_statements is not None:
+            # TODO Create a global known parameters registry
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
         self.reset()
@@ -574,7 +603,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         # Fetch the result set (metadata + arrow stream)
         result_set_response = self._fetch_result_set(stmt_handle, descriptor.query_id)
-        self._query_result = _QueryResult.from_result_set_response(result_set_response, descriptor, query)
+        self._query_result = _QueryResult._from_result_set_response(result_set_response, descriptor, query)
         # For single-statement, pass the query_id to chunks request
         self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle, query_id=descriptor.query_id)
 
@@ -587,6 +616,8 @@ class SnowflakeCursorBase(abc.ABC):
         # Store parent query ID and child IDs
         parent = multi_result.parent
         self._multi_statement_parent_qid = parent.query_id if parent.query_id else None
+
+        # Extract query IDs from multi-statement result
         self._multi_statement_query_ids = list(multi_result.query_ids)
         self._multi_statement_current_index = 0
 
@@ -603,7 +634,7 @@ class SnowflakeCursorBase(abc.ABC):
         descriptor = result_set_response.result_descriptor
 
         # For first result in multistatement, pass the full query
-        self._query_result = _QueryResult.from_result_set_response(result_set_response, descriptor, query)
+        self._query_result = _QueryResult._from_result_set_response(result_set_response, descriptor, query)
         self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle, first_qid)
         self._multi_statement_current_index = 1
 
@@ -615,23 +646,10 @@ class SnowflakeCursorBase(abc.ABC):
         # Build options map with ConfigSetting values
         options = {}
         for key, value in self._statement_parameters.items():
-            config_setting = ConfigSetting()
-            if isinstance(value, int):
-                config_setting.int_value = value
-            elif isinstance(value, str):
-                config_setting.string_value = value
-            elif isinstance(value, bool):
-                config_setting.bool_value = value
-            elif isinstance(value, float):
-                config_setting.double_value = value
-            elif isinstance(value, bytes):
-                config_setting.bytes_value = value
-            else:
-                raise TypeError(
-                    f"Unsupported parameter type for key '{key}': {type(value).__name__}. "
-                    f"Supported types: int, str, bool, float, bytes"
-                )
-            options[key] = config_setting
+            try:
+                options[key] = _create_config_setting(value)
+            except TypeError as err:
+                raise TypeError(f"Cannot set parameter '{key}': {err}") from err
 
         # Send single RPC with all options
         request = StatementSetOptionsRequest(stmt_handle=stmt_handle, options=options)
@@ -868,6 +886,7 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @pep249
+    @_requires_open
     def nextset(self) -> SnowflakeCursorBase | None:
         """
         Skip to the next available result set, discarding remaining rows from current set.
@@ -892,9 +911,6 @@ class SnowflakeCursorBase(abc.ABC):
             print(cursor.fetchone())  # (3,)
             result = cursor.nextset()  # None - no more results
         """
-        if self.is_closed():
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
-
         # Check if there are more child results to fetch
         if self._multi_statement_current_index >= len(self._multi_statement_query_ids):
             return None
@@ -923,7 +939,7 @@ class SnowflakeCursorBase(abc.ABC):
         result_set_response = self._connection.db_api.connection_get_result_set(request)
         descriptor = result_set_response.result_descriptor
 
-        self._query_result = _QueryResult.from_result_set_response(result_set_response, descriptor)
+        self._query_result = _QueryResult._from_result_set_response(result_set_response, descriptor)
         self._rownumber = -1
         # Note: chunk metadata not available for child results without statement handle
         self._result_chunks = None
@@ -1199,7 +1215,7 @@ class SnowflakeCursorBase(abc.ABC):
                     query_id=first_qid,
                 )
                 result_set = self._connection.db_api.connection_get_result_set(result_request)
-                self._query_result = _QueryResult.from_result_set_response(result_set)
+                self._query_result = _QueryResult._from_result_set_response(result_set)
             else:
                 self._query_result = _QueryResult()
         else:
@@ -1210,7 +1226,7 @@ class SnowflakeCursorBase(abc.ABC):
                 query_id=descriptor.query_id,
             )
             result_set = self._connection.db_api.connection_get_result_set(result_request)
-            self._query_result = _QueryResult.from_result_set_response(result_set, descriptor)
+            self._query_result = _QueryResult._from_result_set_response(result_set, descriptor)
 
         self._rownumber = -1
 

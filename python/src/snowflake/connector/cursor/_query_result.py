@@ -106,7 +106,7 @@ class _QueryResult:
         )
 
     @staticmethod
-    def from_result_set_response(
+    def _from_result_set_response(
         response: ResultSetResponse,
         descriptor: ResultSetDescriptor | None = None,
         query: str | None = None,
@@ -125,7 +125,7 @@ class _QueryResult:
             descriptor = response.result_descriptor
 
         return _QueryResult(
-            description=ResultMetadata.create_description_from_descriptor(descriptor),
+            description=ResultMetadata._create_description_from_descriptor(descriptor),
             sqlstate=extract_sqlstate_from_descriptor(descriptor),
             sfqid=descriptor.query_id if descriptor.query_id else None,
             query=query,  # Query text passed from caller
