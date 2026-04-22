@@ -471,6 +471,7 @@ class Connection:
             )
         )
 
+    @property
     @internal_api
     @backward_compatibility
     def _telemetry(self) -> TelemetryClient:
