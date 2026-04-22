@@ -26,7 +26,7 @@ use crate::token_cache::{TokenCache, TokenType};
 use reqwest::{self, Method, header};
 use serde_json;
 use serde_json::value::RawValue;
-use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
@@ -958,11 +958,15 @@ async fn execute_async_with_fallback<'a>(
     Ok(response)
 }
 
-/// Execute query synchronously with requestId-based retry on transport failures.
+/// Execute a sync query with HTTP-level retries for transient transport / 5xx
+/// failures.
 ///
-/// On connection errors (network timeout, connection reset), the query is retried
-/// with the same `requestId` and `retry=true`. Snowflake uses requestId for
-/// idempotency - if the original query completed, the retry returns the existing result.
+/// Retry handling lives in [`execute_sync_query`], which wraps the actual
+/// `POST /queries/v1/query-request` call with [`execute_with_retry`]. The
+/// `requestId` is generated here once and threaded through so that every
+/// HTTP-level replay reuses the same id; the second and subsequent attempts
+/// also carry `retry=true`, giving the server the hint it needs to dedupe
+/// against an already-running/completed query.
 async fn execute_sync_with_retry<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
@@ -970,7 +974,6 @@ async fn execute_sync_with_retry<'a>(
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
-    // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
 
     tracing::debug!(
@@ -979,96 +982,15 @@ async fn execute_sync_with_retry<'a>(
         "Executing sync query"
     );
 
-    // First attempt
-    match execute_sync_query(
+    execute_sync_query(
         client,
         query_parameters,
         session_token,
         query_input,
         request_id,
-        false, // not a retry
         retry_policy,
     )
     .await
-    {
-        Ok(response) => return Ok(response),
-        Err(RestError::Communication {
-            context, source, ..
-        }) => {
-            // Transport error - retry with same requestId
-            tracing::warn!(
-                request_id = %request_id,
-                error = %source,
-                context,
-                "Transport error on sync query; retrying with same requestId"
-            );
-        }
-        Err(e) => return Err(e),
-    }
-
-    // Retry with retry=true - Snowflake will return existing result if query completed
-    let max_retries = retry_policy.max_attempts.saturating_sub(1).max(1);
-    let mut last_error = None;
-
-    for attempt in 1..=max_retries {
-        let backoff = std::time::Duration::from_millis(
-            (retry_policy.backoff.base.as_millis() as f64
-                * retry_policy.backoff.factor.powi(attempt as i32)) as u64,
-        )
-        .min(retry_policy.backoff.cap);
-
-        tokio::time::sleep(backoff).await;
-
-        tracing::info!(
-            request_id = %request_id,
-            attempt,
-            max_retries,
-            backoff_ms = backoff.as_millis(),
-            "Retrying sync query with retry=true"
-        );
-
-        match execute_sync_query(
-            client,
-            query_parameters,
-            session_token,
-            query_input,
-            request_id,
-            true, // is retry
-            retry_policy,
-        )
-        .await
-        {
-            Ok(response) => {
-                tracing::info!(
-                    request_id = %request_id,
-                    attempt,
-                    query_id = response.data.query_id.as_deref().unwrap_or_default(),
-                    "Sync query retry succeeded"
-                );
-                return Ok(response);
-            }
-            Err(RestError::Communication {
-                context, source, ..
-            }) => {
-                tracing::warn!(
-                    request_id = %request_id,
-                    attempt,
-                    error = %source,
-                    context,
-                    "Transport error on retry; will try again"
-                );
-                last_error = Some(CommunicationSnafu { context }.into_error(source));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    // Exhausted retries - return the last transport error
-    tracing::error!(
-        request_id = %request_id,
-        "Exhausted all retry attempts for sync query"
-    );
-    Err(last_error.expect("last_error must be set after retry loop"))
 }
 
 /// Map a Snowflake query response into a `Result`, converting
@@ -1096,14 +1018,21 @@ fn into_query_result(
     Ok(response)
 }
 
-/// Execute a single sync query request.
+/// Execute a single sync query request with HTTP-level retries.
+///
+/// The `requestId` is stable across every HTTP attempt inside
+/// `execute_with_retry` so that Snowflake can dedupe replays via its usual
+/// request-id machinery. The first attempt is sent as a fresh request; every
+/// replay (attempt ≥ 2) additionally carries `retry=true`, which is the
+/// Snowflake-documented hint for "look up this requestId in the dedup
+/// table". If the retry budget is exhausted the error surfaces as
+/// [`RestError::HttpRetry`].
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
-    is_retry: bool,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
@@ -1130,11 +1059,10 @@ async fn execute_sync_query<'a>(
             path: QUERY_REQUEST_PATH,
         })?;
 
-    // Base query parameters - the `requestId` is stable across HTTP-level
-    // retries so the server can dedupe replays via its normal request-id
-    // machinery. The `retry=true` flag is the documented Snowflake hint that
-    // signals "look up requestId in the dedup table"; for unknown requestIds
-    // the server simply executes the query as a fresh request.
+    // Base query parameters. `retry=true` is added for every HTTP replay
+    // inside `execute_with_retry` below (attempt ≥ 2) — it is always safe
+    // per Snowflake docs, and when the server has already seen this
+    // `requestId` it improves dedupe accuracy.
     let base_query_params = vec![
         ("requestId", request_id.to_string()),
         ("request_guid", uuid::Uuid::new_v4().to_string()),
@@ -1144,12 +1072,8 @@ async fn execute_sync_query<'a>(
     let attempt_counter = std::sync::atomic::AtomicU32::new(0);
     let build_request = || {
         let n = attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // Set retry=true if either the outer caller already considers this a
-        // retry, or this is a second-or-later HTTP-level attempt within
-        // execute_with_retry. Always safe per Snowflake docs; only increases
-        // dedupe accuracy when the server has already seen this requestId.
         let mut params = base_query_params.clone();
-        if is_retry || n >= 1 {
+        if n >= 1 {
             params.push(("retry", "true".to_string()));
         }
         apply_json_content_type(apply_query_headers(
@@ -1177,7 +1101,6 @@ async fn execute_sync_query<'a>(
     tracing::debug!(
         elapsed_ms,
         request_id = %request_id,
-        is_retry,
         query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
         "Sync query response received"
     );
@@ -2244,7 +2167,6 @@ mod tests {
                 "mock_session_token",
                 &query_input,
                 uuid::Uuid::new_v4(),
-                false,
                 &retry_policy,
             )
             .await;
