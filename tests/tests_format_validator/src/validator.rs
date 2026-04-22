@@ -65,6 +65,20 @@ pub enum OrphanReason {
     MethodsWithoutScenarioTags,
 }
 
+// WHEN/THEN Gherkin comment structure validation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MethodGherkinViolation {
+    pub method_name: String,
+    pub line_number: usize,
+    pub missing_keywords: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileGherkinValidation {
+    pub file_path: PathBuf,
+    pub violations: Vec<MethodGherkinViolation>,
+}
+
 // Behavior Differences related structures
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BehaviorDifferenceInfo {
@@ -94,12 +108,42 @@ pub struct BehaviorDifferencesReport {
     pub behavior_differences_by_language: HashMap<String, Vec<BehaviorDifferenceInfo>>,
 }
 
+// Language-specific test method (no matching shared feature)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LanguageSpecificMethod {
+    pub name: String,
+    pub line_number: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behavior_differences: Vec<String>,
+}
+
+// Language-specific test file (no matching shared feature)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LanguageSpecificTestFile {
+    pub file_path: PathBuf,
+    pub methods: Vec<LanguageSpecificMethod>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behavior_differences: Vec<String>,
+}
+
+// Language-specific tests grouped by language, split into e2e and integration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LanguageSpecificTests {
+    pub language: Language,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub e2e_files: Vec<LanguageSpecificTestFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integration_files: Vec<LanguageSpecificTestFile>,
+}
+
 // Enhanced validation result that includes Behavior Differences information
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EnhancedValidationResult {
     pub validation_results: Vec<ValidationResult>,
     pub orphan_results: Vec<OrphanValidation>,
     pub behavior_differences_report: BehaviorDifferencesReport,
+    #[serde(default)]
+    pub language_specific_tests: Vec<LanguageSpecificTests>,
 }
 
 impl GherkinValidator {
@@ -141,6 +185,11 @@ impl GherkinValidator {
         let (all_scenarios, feature_language_requirements, scenario_language_requirements) =
             self.collect_all_scenarios_and_languages()?;
 
+        // Build (language, feature_stem) pairs where the feature has @{language}_int scenarios.
+        // Integration test files are only orphan-checked when a matching shared feature
+        // declares integration-level scenarios for that language.
+        let integration_defined = self.build_integration_defined_set()?;
+
         // Check each language's test directories
         for language in &[
             Language::Rust,
@@ -153,6 +202,7 @@ impl GherkinValidator {
                 &all_scenarios,
                 &feature_language_requirements,
                 &scenario_language_requirements,
+                &integration_defined,
             )?;
             if !orphaned_files.is_empty() {
                 orphan_validations.push(OrphanValidation {
@@ -190,8 +240,113 @@ impl GherkinValidator {
         Ok(untagged_features)
     }
 
+    /// Validate that every test method in e2e and integration test files contains
+    /// at least one non-empty `When` step comment and at least one non-empty `Then` step comment.
+    ///
+    /// Rules:
+    /// - E2E test files: always checked.
+    /// - Integration test files: only checked when the matching shared feature
+    ///   declares @{language}_int scenario-level tags for that language.
+    pub fn validate_gherkin_step_structure(&self) -> Result<Vec<FileGherkinValidation>> {
+        let integration_defined = self.build_integration_defined_set()?;
+
+        let mut results = Vec::new();
+
+        for language in &[
+            Language::Rust,
+            Language::Jdbc,
+            Language::Odbc,
+            Language::Python,
+        ] {
+            let step_finder = StepFinder::new(language.clone());
+
+            for (test_dir, is_integration) in self.get_all_test_directories_for_language(language) {
+                if !test_dir.exists() {
+                    continue;
+                }
+
+                for entry in WalkDir::new(&test_dir)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().is_file())
+                    .filter(|e| self.is_test_file_for_language(e.path(), language))
+                    .filter(|e| !self.is_utility_file(e.path()))
+                {
+                    // For integration dirs, only check files whose matching shared feature
+                    // declares integration-level scenarios for this language.
+                    if is_integration {
+                        let file_name = entry
+                            .path()
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let has_integration_definition =
+                            integration_defined.iter().any(|(lang, stem)| {
+                                lang == language
+                                    && self.file_name_matches_feature(file_name, stem)
+                            });
+                        if !has_integration_definition {
+                            continue;
+                        }
+                    }
+
+                    let violations =
+                        step_finder.find_methods_missing_when_then(entry.path())?;
+                    if !violations.is_empty() {
+                        results.push(FileGherkinValidation {
+                            file_path: entry.path().to_path_buf(),
+                            violations: violations
+                                .into_iter()
+                                .map(|(method_name, line_number, missing_keywords)| {
+                                    MethodGherkinViolation {
+                                        method_name,
+                                        line_number,
+                                        missing_keywords,
+                                    }
+                                })
+                                .collect(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Returns `(dir_path, is_integration)` pairs for a language's test directories.
+    fn get_all_test_directories_for_language(&self, language: &Language) -> Vec<(PathBuf, bool)> {
+        match language {
+            Language::Rust => vec![
+                (self._workspace_root.join("sf_core/tests/e2e"), false),
+                (self._workspace_root.join("sf_core/tests/integration"), true),
+            ],
+            Language::Jdbc => vec![
+                (
+                    self._workspace_root
+                        .join("jdbc/src/test/java/net/snowflake/jdbc/e2e"),
+                    false,
+                ),
+                (
+                    self._workspace_root
+                        .join("jdbc/src/test/java/net/snowflake/jdbc/integration"),
+                    true,
+                ),
+            ],
+            Language::Odbc => vec![
+                (self._workspace_root.join("odbc_tests/tests/e2e"), false),
+                (self._workspace_root.join("odbc_tests/tests/integration"), true),
+            ],
+            Language::Python => vec![
+                (self._workspace_root.join("python/tests/e2e"), false),
+                (self._workspace_root.join("python/tests/integ"), true),
+            ],
+            _ => vec![],
+        }
+    }
+
     /// Get a unique feature ID that includes the relative path to distinguish
-    /// features with the same name in different directories (e.g., shared/session/logout vs core/session/logout)
+    /// features with the same name in different directories (e.g., shared/session/logout)
     fn get_feature_id(&self, feature_path: &Path) -> String {
         // Get path relative to features_dir
         let raw_id = if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
@@ -220,37 +375,67 @@ impl GherkinValidator {
             .to_string()
     }
 
-    /// Validate that a feature file is in a valid top-level directory.
+    /// Validate that a feature file is in the `shared/` directory.
     ///
-    /// This catches misconfigurations early (e.g., typos like `shares/` instead of `shared/`,
-    /// or incorrect paths like `rust/` instead of `core/`). Without this validation,
-    /// features in unknown directories would be silently ignored during orphan detection,
-    /// leading to false positives.
-    ///
-    /// Uses `TestDiscovery::get_language_from_path()` as the single source of truth for
-    /// valid language-specific folders, plus explicit handling for `shared/`.
+    /// All feature files must live under `definitions/shared/`. Language-specific
+    /// subfolders (`core/`, `python/`, etc.) are no longer supported.
     fn validate_feature_prefix(&self, feature_path: &Path, feature_id: &str) -> Result<()> {
         let first_component = feature_id.split('/').next().unwrap_or("");
 
-        // shared/ is valid for all languages
         if first_component == "shared" {
             return Ok(());
         }
 
-        // Check if it's a known language folder using existing detection logic
-        // (get_language_from_path returns Some for core/, python/, odbc/, jdbc/, csharp/, javascript/)
-        if TestDiscovery::get_language_from_path(feature_path).is_some() {
-            return Ok(());
-        }
-
-        // Unknown folder - error
         anyhow::bail!(
-            "Feature file '{}' is in an invalid directory '{}'. \
-             Feature files must be under 'shared/' or a language-specific folder \
-             (core/, python/, odbc/, jdbc/, csharp/, javascript/).",
+            "Feature file '{}' is in an invalid directory '{}/'.\n\
+             All feature files must be under 'shared/'. Non-shared (language-specific) \
+             test Gherkin steps should be added directly in test files as comments, \
+             not in separate feature files.",
             feature_path.display(),
             first_component,
         );
+    }
+
+    /// Build the set of (language, feature_stem) pairs where the shared feature has at least one
+    /// scenario with integration-level tags for that language.  Used to decide whether an
+    /// integration test file is subject to orphan / When-Then validation.
+    fn build_integration_defined_set(
+        &self,
+    ) -> Result<std::collections::HashSet<(Language, String)>> {
+        use crate::feature_parser::Feature;
+        use crate::test_discovery::TestLevel;
+
+        let mut integration_defined = std::collections::HashSet::new();
+
+        for entry in WalkDir::new(&self.features_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+        {
+            let feature = Feature::parse_from_file(entry.path())?;
+            let feature_stem = entry
+                .path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            for scenario in &feature.scenarios {
+                for language in
+                    crate::test_discovery::TestDiscovery::get_target_languages(&scenario.tags)
+                {
+                    if crate::test_discovery::TestDiscovery::get_test_level_for_language(
+                        &scenario.tags,
+                        &language,
+                    ) == TestLevel::Integration
+                    {
+                        integration_defined.insert((language, feature_stem.clone()));
+                    }
+                }
+            }
+        }
+
+        Ok(integration_defined)
     }
 
     fn collect_all_scenarios_and_languages(
@@ -283,14 +468,8 @@ impl GherkinValidator {
             self.validate_feature_prefix(feature_path, &feature_id)?;
 
             // Get generic languages declared at feature level
-            let mut feature_declared_languages =
+            let feature_declared_languages =
                 TestDiscovery::get_generic_languages(&feature.tags);
-            // Also check if feature is in a language-specific folder
-            if let Some(folder_lang) = TestDiscovery::get_language_from_path(feature_path) {
-                if !feature_declared_languages.contains(&folder_lang) {
-                    feature_declared_languages.push(folder_lang);
-                }
-            }
             let feature_excluded = TestDiscovery::get_excluded_languages(&feature.tags);
             let mut required_languages = std::collections::HashSet::new();
 
@@ -340,12 +519,11 @@ impl GherkinValidator {
         all_scenarios: &[(String, String)],
         feature_language_requirements: &std::collections::HashMap<String, Vec<Language>>,
         scenario_language_requirements: &std::collections::HashMap<(String, String), Vec<Language>>,
+        integration_defined: &std::collections::HashSet<(Language, String)>,
     ) -> Result<Vec<OrphanedTestFile>> {
         let mut orphaned_files = Vec::new();
 
-        let test_dirs = self.get_test_directories_for_language(language);
-
-        for test_dir in test_dirs {
+        for (test_dir, is_integration) in self.get_all_test_directories_for_language(language) {
             if !test_dir.exists() {
                 continue;
             }
@@ -359,12 +537,6 @@ impl GherkinValidator {
                 .filter(|e| !self.is_utility_file(e.path()))
             {
                 let test_file_path = entry.path();
-                let orphaned_methods = self.find_orphaned_methods_in_file(
-                    test_file_path,
-                    language,
-                    all_scenarios,
-                    scenario_language_requirements,
-                )?;
 
                 let file_name = test_file_path
                     .file_stem()
@@ -372,6 +544,25 @@ impl GherkinValidator {
                     .to_str()
                     .unwrap()
                     .to_string();
+
+                // For integration dirs, only check files whose matching shared feature
+                // declares @{language}_int scenarios — same filter as When/Then check.
+                if is_integration {
+                    let has_integration_definition =
+                        integration_defined.iter().any(|(lang, stem)| {
+                            lang == language && self.file_name_matches_feature(&file_name, stem)
+                        });
+                    if !has_integration_definition {
+                        continue;
+                    }
+                }
+
+                let orphaned_methods = self.find_orphaned_methods_in_file(
+                    test_file_path,
+                    language,
+                    all_scenarios,
+                    scenario_language_requirements,
+                )?;
 
                 // Find ALL features that match this test file name
                 // (language relevance is determined by tags in feature_language_requirements)
@@ -386,8 +577,13 @@ impl GherkinValidator {
                     .into_iter()
                     .collect();
 
-                // Sort for deterministic ordering: prefer language-specific folders over shared/
-                // (non-shared sorts before shared alphabetically, then by full path)
+                // Skip files that have no matching shared feature — tests without a
+                // shared definition are not subject to orphan validation.
+                if matching_feature_ids.is_empty() {
+                    continue;
+                }
+
+                // Sort for deterministic ordering
                 matching_feature_ids.sort_by(|a, b| {
                     let a_shared = a.starts_with("shared/");
                     let b_shared = b.starts_with("shared/");
@@ -398,40 +594,31 @@ impl GherkinValidator {
                     }
                 });
 
-                if !matching_feature_ids.is_empty() {
-                    // Check if ANY of the matching features require this language
-                    let any_feature_requires_language = matching_feature_ids.iter().any(|fid| {
-                        feature_language_requirements
-                            .get(*fid)
-                            .map(|langs| langs.contains(language))
-                            .unwrap_or(false)
-                    });
+                // Check if ANY of the matching features require this language
+                let any_feature_requires_language = matching_feature_ids.iter().any(|fid| {
+                    feature_language_requirements
+                        .get(*fid)
+                        .map(|langs| langs.contains(language))
+                        .unwrap_or(false)
+                });
 
-                    if !any_feature_requires_language {
-                        // No matching feature requires this language - determine why
-                        // Use the first matching feature (language-specific preferred over shared)
-                        let reason =
-                            self.determine_orphan_reason(matching_feature_ids[0], language)?;
+                if !any_feature_requires_language {
+                    // No matching feature requires this language - determine why
+                    // Use the first matching feature (language-specific preferred over shared)
+                    let reason =
+                        self.determine_orphan_reason(matching_feature_ids[0], language)?;
 
-                        orphaned_files.push(OrphanedTestFile {
-                            file_path: test_file_path.to_path_buf(),
-                            orphaned_methods: vec![],
-                            reason,
-                        });
-                    } else if !orphaned_methods.is_empty() {
-                        // File matches feature AND feature requires language, but has orphaned methods
-                        orphaned_files.push(OrphanedTestFile {
-                            file_path: test_file_path.to_path_buf(),
-                            orphaned_methods,
-                            reason: OrphanReason::MethodsWithoutScenarioTags,
-                        });
-                    }
-                } else {
-                    // File doesn't match any relevant feature
                     orphaned_files.push(OrphanedTestFile {
                         file_path: test_file_path.to_path_buf(),
                         orphaned_methods: vec![],
-                        reason: OrphanReason::NoMatchingFeature,
+                        reason,
+                    });
+                } else if !orphaned_methods.is_empty() {
+                    // File matches feature AND feature requires language, but has orphaned methods
+                    orphaned_files.push(OrphanedTestFile {
+                        file_path: test_file_path.to_path_buf(),
+                        orphaned_methods,
+                        reason: OrphanReason::MethodsWithoutScenarioTags,
                     });
                 }
             }
@@ -463,20 +650,6 @@ impl GherkinValidator {
             || file_path.to_string_lossy().contains("/steps/")
             || file_path.to_string_lossy().contains("/utils/")
             || file_path.to_string_lossy().contains("/helpers/")
-    }
-
-    fn get_test_directories_for_language(&self, language: &Language) -> Vec<PathBuf> {
-        // Only check e2e tests for orphaned tests as per requirements
-        match language {
-            Language::Rust => vec![self._workspace_root.join("sf_core/tests/e2e")],
-            Language::Jdbc => vec![
-                self._workspace_root
-                    .join("jdbc/src/test/java/net/snowflake/jdbc/e2e"),
-            ],
-            Language::Odbc => vec![self._workspace_root.join("odbc_tests/tests/e2e")],
-            Language::Python => vec![self._workspace_root.join("python/tests/e2e")],
-            _ => vec![],
-        }
     }
 
     fn is_test_file_for_language(&self, file_path: &Path, language: &Language) -> bool {
@@ -577,7 +750,11 @@ impl GherkinValidator {
 
         match language {
             Language::Rust => {
-                let test_regex = Regex::new(r"#\[test\]\s*(?:\n\s*)*fn\s+(\w+)\s*\(")?;
+                // Match #[test], #[tokio::test], #[tokio::test(flavor = "multi_thread")], etc.
+                // Also handle async fn for tokio::test cases.
+                let test_regex = Regex::new(
+                    r"#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\([^)]*\))?\s*\]\s*(?:\n\s*)*(?:async\s+)?fn\s+(\w+)\s*\(",
+                )?;
                 for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
@@ -634,11 +811,9 @@ impl GherkinValidator {
         let feature_path = self.find_feature_file_by_id(feature_id)?;
         let feature = Feature::parse_from_file(&feature_path)?;
 
-        // Check if feature has generic language tag OR is in a language-specific folder for this language
+        // Check if feature has generic language tag for this language
         let feature_generic_languages = TestDiscovery::get_generic_languages(&feature.tags);
-        let folder_language = TestDiscovery::get_language_from_path(&feature_path);
-        let has_generic_tag = feature_generic_languages.contains(language)
-            || folder_language.as_ref() == Some(language);
+        let has_generic_tag = feature_generic_languages.contains(language);
 
         // Check if language is explicitly excluded (e.g., @python_not_needed)
         let feature_excluded = TestDiscovery::get_excluded_languages(&feature.tags);
@@ -709,58 +884,6 @@ impl GherkinValidator {
 
         let mut tag_errors = Vec::new();
 
-        // Check if feature is in a language-specific folder
-        let folder_language = TestDiscovery::get_language_from_path(feature_path);
-
-        if let Some(only_lang) = &folder_language {
-            // This is a language-specific feature - validate that all tags match the folder language
-            let only_lang_name = match only_lang {
-                Language::Rust => "core",
-                Language::Python => "python",
-                Language::Jdbc => "jdbc",
-                Language::Odbc => "odbc",
-                _ => "language",
-            };
-
-            // Check feature-level tags
-            let feature_generic_languages = TestDiscovery::get_generic_languages(&feature.tags);
-            for lang in &feature_generic_languages {
-                if lang != only_lang {
-                    let lang_name = match lang {
-                        Language::Rust => "core",
-                        Language::Python => "python",
-                        Language::Jdbc => "jdbc",
-                        Language::Odbc => "odbc",
-                        _ => "language",
-                    };
-                    tag_errors.push(format!(
-                        "VALIDATION ERROR: Feature is in {0}/ folder but has @{1} tag. Only @{0} tag should be used in language-specific folders.",
-                        only_lang_name, lang_name
-                    ));
-                }
-            }
-
-            // Check scenario-level tags
-            for scenario in &feature.scenarios {
-                let scenario_languages = TestDiscovery::get_target_languages(&scenario.tags);
-                for lang in scenario_languages {
-                    if &lang != only_lang {
-                        let lang_name = match lang {
-                            Language::Rust => "core",
-                            Language::Python => "python",
-                            Language::Jdbc => "jdbc",
-                            Language::Odbc => "odbc",
-                            _ => "language",
-                        };
-                        tag_errors.push(format!(
-                            "VALIDATION ERROR: Scenario '{}' is in {}/ folder but has @{}_e2e or @{}_int tags. Only @{}_e2e or @{}_int tags should be used.",
-                            scenario.name, only_lang_name, lang_name, lang_name, only_lang_name, only_lang_name
-                        ));
-                    }
-                }
-            }
-        }
-
         for tag in &feature.tags {
             // Check if tag has level suffix (_e2e or _int)
             if tag.ends_with("_e2e") || tag.ends_with("_int") {
@@ -777,67 +900,48 @@ impl GherkinValidator {
         let feature_excluded = TestDiscovery::get_excluded_languages(&feature.tags);
         let mut language_set = std::collections::HashSet::new();
 
-        // If feature is in a language-specific folder, only validate that language
-        // BUT only if there are scenarios with implementation tags for it
-        if let Some(only_lang) = &folder_language {
-            // Check if any scenario has implementation tags for this language
-            let has_implementation_tags = feature.scenarios.iter().any(|scenario| {
-                let scenario_languages = TestDiscovery::get_target_languages(&scenario.tags);
-                scenario_languages.contains(only_lang)
-            });
-            if has_implementation_tags {
-                language_set.insert(only_lang.clone());
-            }
-        } else {
-            // Collect all unique languages from scenario tags
-            // BUT only if the feature declares that language at feature level
-            // ALSO validate that scenarios don't have tags for languages marked as not_needed at feature level
-            for scenario in &feature.scenarios {
-                let scenario_excluded = TestDiscovery::get_excluded_languages(&scenario.tags);
-                let scenario_languages = TestDiscovery::get_target_languages(&scenario.tags);
+        // Collect all unique languages from scenario tags
+        // BUT only if the feature declares that language at feature level
+        // ALSO validate that scenarios don't have tags for languages marked as not_needed at feature level
+        for scenario in &feature.scenarios {
+            let scenario_excluded = TestDiscovery::get_excluded_languages(&scenario.tags);
+            let scenario_languages = TestDiscovery::get_target_languages(&scenario.tags);
 
-                // Check if scenario has tags for languages that are marked as not_needed at feature level
-                for language in &scenario_languages {
-                    if feature_excluded.contains(language) {
-                        let lang_tag = match language {
-                            Language::Rust => "core",
-                            Language::Python => "python",
-                            Language::Jdbc => "jdbc",
-                            Language::Odbc => "odbc",
-                            _ => "language",
-                        };
-                        tag_errors.push(format!(
-                            "VALIDATION ERROR: Scenario '{}' has @{} tags but feature has @{}_not_needed. Remove scenario-level tags for excluded languages.",
-                            scenario.name, lang_tag, lang_tag
-                        ));
-                    }
+            // Check if scenario has tags for languages that are marked as not_needed at feature level
+            for language in &scenario_languages {
+                if feature_excluded.contains(language) {
+                    let lang_tag = match language {
+                        Language::Rust => "core",
+                        Language::Python => "python",
+                        Language::Jdbc => "jdbc",
+                        Language::Odbc => "odbc",
+                        _ => "language",
+                    };
+                    tag_errors.push(format!(
+                        "VALIDATION ERROR: Scenario '{}' has @{} tags but feature has @{}_not_needed. Remove scenario-level tags for excluded languages.",
+                        scenario.name, lang_tag, lang_tag
+                    ));
                 }
+            }
 
-                for language in scenario_languages {
-                    // Language is validated if:
-                    // 1. Feature has generic tag for this language (e.g., @core, @python)
-                    // 2. Not excluded at feature or scenario level
-                    if feature_declared_languages.contains(&language)
-                        && !feature_excluded.contains(&language)
-                        && !scenario_excluded.contains(&language)
-                    {
-                        language_set.insert(language);
-                    }
+            for language in scenario_languages {
+                // Language is validated if:
+                // 1. Feature has generic tag for this language (e.g., @core, @python)
+                // 2. Not excluded at feature or scenario level
+                if feature_declared_languages.contains(&language)
+                    && !feature_excluded.contains(&language)
+                    && !scenario_excluded.contains(&language)
+                {
+                    language_set.insert(language);
                 }
             }
         }
 
         // Check if feature declares languages but scenarios don't have tags for them
-        // Skip this check for language-specific folder features as they're validated differently
         let mut missing_scenario_tags_errors = Vec::new();
-        if folder_language.is_none()
-            && !feature_declared_languages.is_empty()
-            && !feature.scenarios.is_empty()
-        {
-            // Check each declared language to see if scenarios have tags for it
+        if !feature_declared_languages.is_empty() && !feature.scenarios.is_empty() {
             for language in &feature_declared_languages {
                 if !feature_excluded.contains(language) && !language_set.contains(language) {
-                    // Feature declares this language but no scenario has level tags for it
                     let lang_tag = match language {
                         Language::Rust => "core",
                         Language::Python => "python",
@@ -1164,6 +1268,180 @@ impl GherkinValidator {
         norm_impl == norm_feature
     }
 
+    /// Find test files that have no matching shared feature file (language-specific tests).
+    /// These are tests that exist in driver test directories but don't correspond to any
+    /// shared Gherkin feature — they are tracked separately in the coverage report.
+    pub fn find_language_specific_tests(&self) -> Result<Vec<LanguageSpecificTests>> {
+        let mut results = Vec::new();
+
+        // Collect all feature names so we can identify files with no match
+        let mut feature_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for entry in WalkDir::new(&self.features_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+        {
+            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
+                feature_names.insert(stem.to_string());
+            }
+        }
+
+        for language in &[
+            Language::Rust,
+            Language::Jdbc,
+            Language::Odbc,
+            Language::Python,
+        ] {
+            let mut e2e_files: Vec<LanguageSpecificTestFile> = Vec::new();
+            let mut integration_files: Vec<LanguageSpecificTestFile> = Vec::new();
+
+            for (test_dir, is_integration) in self.get_all_test_directories_for_language(language)
+            {
+                if !test_dir.exists() {
+                    continue;
+                }
+
+                for entry in WalkDir::new(&test_dir)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().is_file())
+                    .filter(|e| self.is_test_file_for_language(e.path(), language))
+                    .filter(|e| !self.is_utility_file(e.path()))
+                {
+                    let test_file_path = entry.path();
+                    let file_name = test_file_path
+                        .file_stem()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string();
+
+                    // Check if this file matches ANY shared feature
+                    let has_matching_feature = feature_names
+                        .iter()
+                        .any(|feat| self.file_name_matches_feature(&file_name, feat));
+
+                    if has_matching_feature {
+                        continue;
+                    }
+
+                    // No matching feature — this is a language-specific test file
+                    let content = std::fs::read_to_string(test_file_path)?;
+                    let method_names = self.get_all_test_methods_in_file(&content, language)?;
+
+                    if method_names.is_empty() {
+                        continue;
+                    }
+
+                    // Find line numbers for each method and attribute BD# per method
+                    let bd_regex = regex::Regex::new(r"BD#\d+")?;
+                    let lines: Vec<&str> = content.lines().collect();
+
+                    // Build (method_name, start_line) pairs by scanning for method declarations
+                    let method_line_regex = match language {
+                        Language::Rust => Some(regex::Regex::new(r"(?:async\s+)?fn\s+(\w+)\s*\(")?),
+                        Language::Python => Some(regex::Regex::new(r"def\s+(test_\w+)\s*\(")?),
+                        Language::Odbc => Some(regex::Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\([^"]*"([^"]+)""#)?),
+                        Language::Jdbc => Some(regex::Regex::new(r"(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(")?),
+                        _ => None,
+                    };
+
+                    let mut method_positions: Vec<(String, usize)> = Vec::new();
+                    if let Some(ref re) = method_line_regex {
+                        for (i, line) in lines.iter().enumerate() {
+                            if let Some(caps) = re.captures(line) {
+                                let name = caps[1].to_string();
+                                if method_names.contains(&name) {
+                                    method_positions.push((name, i));
+                                }
+                            }
+                        }
+                    }
+
+                    // For each method, scan from its start to the next method for BD# refs
+                    let methods: Vec<LanguageSpecificMethod> = if method_positions.is_empty() {
+                        method_names
+                            .into_iter()
+                            .map(|name| LanguageSpecificMethod {
+                                name,
+                                line_number: 0,
+                                behavior_differences: vec![],
+                            })
+                            .collect()
+                    } else {
+                        method_positions
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, (name, start))| {
+                                let end = method_positions
+                                    .get(idx + 1)
+                                    .map(|(_, l)| *l)
+                                    .unwrap_or(lines.len());
+                                let method_content = lines[*start..end].join("\n");
+                                let mut bds: Vec<String> = bd_regex
+                                    .find_iter(&method_content)
+                                    .map(|m| m.as_str().to_string())
+                                    .collect();
+                                bds.sort();
+                                bds.dedup();
+                                LanguageSpecificMethod {
+                                    name: name.clone(),
+                                    line_number: *start + 1,
+                                    behavior_differences: bds,
+                                }
+                            })
+                            .collect()
+                    };
+
+                    // Collect file-level BD list (union of all methods)
+                    let mut file_bds: Vec<String> = methods
+                        .iter()
+                        .flat_map(|m| m.behavior_differences.iter().cloned())
+                        .collect();
+                    file_bds.sort();
+                    file_bds.dedup();
+
+                    // Strip the e2e/integration dir itself to get just the relative path within
+                    let relative_path = test_file_path
+                        .strip_prefix(&test_dir)
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|_| {
+                            test_file_path
+                                .strip_prefix(&self._workspace_root)
+                                .unwrap_or(test_file_path)
+                                .to_path_buf()
+                        });
+
+                    let file_entry = LanguageSpecificTestFile {
+                        file_path: relative_path,
+                        methods,
+                        behavior_differences: file_bds,
+                    };
+
+                    if is_integration {
+                        integration_files.push(file_entry);
+                    } else {
+                        e2e_files.push(file_entry);
+                    }
+                }
+            }
+
+            e2e_files.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+            integration_files.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
+            if !e2e_files.is_empty() || !integration_files.is_empty() {
+                results.push(LanguageSpecificTests {
+                    language: language.clone(),
+                    e2e_files,
+                    integration_files,
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
     pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
         let validation_results = self.validate_all_features()?;
         let orphan_results = self.find_orphaned_tests()?;
@@ -1230,10 +1508,85 @@ impl GherkinValidator {
         let behavior_differences_report =
             behavior_differences_processor.process_behavior_differences(&features)?;
 
+        let language_specific_tests = self.find_language_specific_tests()?;
+
         Ok(EnhancedValidationResult {
             validation_results,
             orphan_results,
             behavior_differences_report,
+            language_specific_tests,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_rust_methods(content: &str) -> Vec<String> {
+        let validator = GherkinValidator::new(
+            std::path::PathBuf::from("."),
+            std::path::PathBuf::from("."),
+        )
+        .expect("validator creation should not fail");
+        validator
+            .get_all_test_methods_in_file(content, &Language::Rust)
+            .expect("regex should not fail")
+    }
+
+    #[test]
+    fn test_plain_test_attribute() {
+        let content = r#"
+#[test]
+fn my_test() {}
+"#;
+        assert_eq!(get_rust_methods(content), vec!["my_test"]);
+    }
+
+    #[test]
+    fn test_tokio_test_attribute() {
+        let content = r#"
+#[tokio::test]
+async fn my_async_test() {}
+"#;
+        assert_eq!(get_rust_methods(content), vec!["my_async_test"]);
+    }
+
+    #[test]
+    fn test_tokio_test_with_flavor() {
+        let content = r#"
+#[tokio::test(flavor = "multi_thread")]
+async fn my_multi_thread_test() {}
+"#;
+        assert_eq!(get_rust_methods(content), vec!["my_multi_thread_test"]);
+    }
+
+    #[test]
+    fn test_multiple_mixed_attributes() {
+        let content = r#"
+#[test]
+fn sync_test() {}
+
+#[tokio::test]
+async fn async_test() {}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn multi_thread_test() {}
+"#;
+        let mut methods = get_rust_methods(content);
+        methods.sort();
+        assert_eq!(methods, vec!["async_test", "multi_thread_test", "sync_test"]);
+    }
+
+    #[test]
+    fn test_non_test_fn_not_matched() {
+        let content = r#"
+fn helper() {}
+
+pub fn public_fn() {}
+
+async fn async_helper() {}
+"#;
+        assert!(get_rust_methods(content).is_empty());
     }
 }

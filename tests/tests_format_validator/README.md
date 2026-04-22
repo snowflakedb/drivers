@@ -2,6 +2,10 @@
 
 Validates that Gherkin feature files have corresponding test implementations across all supported languages.
 
+## Feature file location
+
+All feature files must live under `tests/definitions/shared/`. Language-specific subfolders (`core/`, `python/`, etc.) are not supported.
+
 ## Tag System
 
 **Scenario-level tags** specify which languages/levels to test (required on each scenario):
@@ -62,6 +66,7 @@ cargo run -- --help
 
 ## What it validates
 
+- ✅ All feature files are in `tests/definitions/shared/`
 - ✅ Each scenario has corresponding test files in required languages (from scenario tags)
 - ✅ Test methods match scenario names
 - ✅ All Gherkin steps are implemented as comments in test methods
@@ -69,6 +74,7 @@ cargo run -- --help
 - ✅ Feature-level tags are only generic (`@core`, `@python`) or exclusions (`@*_not_needed`)
 - ✅ Feature declares language but scenarios have no level tags → validation error
 - ✅ Feature has `@{language}_not_needed` but scenario has `@{language}_e2e` → validation error
+- ✅ Every test method in e2e and integration dirs has at least one non-empty `When` and `Then` step comment
 - ⚠️ Reports orphaned test files and missing test methods
 
 ## Output
