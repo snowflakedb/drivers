@@ -29,26 +29,32 @@ impl From<sql::Handle> for HandleId {
 }
 
 pub struct RemovalGuard<T: Send + Sync + Clone> {
-    value: T,
+    value: Option<T>,
     guard: ArcMutexGuard<RawMutex, Option<T>>,
 }
 
 impl<T: Send + Sync + Clone> RemovalGuard<T> {
-    pub fn complete(self) -> T {
-        self.value.clone()
+    pub fn complete(mut self) -> T {
+        self.value
+            .take()
+            .expect("complete called on already-completed RemovalGuard")
     }
 }
 
 impl<T: Send + Sync + Clone> Drop for RemovalGuard<T> {
     fn drop(&mut self) {
-        *self.guard = Some(self.value.clone());
+        if let Some(value) = self.value.take() {
+            *self.guard = Some(value);
+        }
     }
 }
 
 impl<T: Send + Sync + Clone> Deref for RemovalGuard<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        &self.value
+        self.value
+            .as_ref()
+            .expect("deref on completed RemovalGuard")
     }
 }
 
@@ -102,8 +108,11 @@ impl<T: Send + Sync + Clone> HandleRegistry<T> {
             .ok_or_else(|| InvalidHandleSnafu.build())?;
         let mut guard = handle.lock_arc();
         let value_opt = guard.take();
-        if let Some(value) = value_opt {
-            return Ok(RemovalGuard { value, guard });
+        if value_opt.is_some() {
+            return Ok(RemovalGuard {
+                value: value_opt,
+                guard,
+            });
         }
         InvalidHandleSnafu.fail()
     }
