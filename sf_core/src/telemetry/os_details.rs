@@ -46,8 +46,11 @@ pub fn detect_os_details(fs: &dyn FsAdapter) -> Option<HashMap<String, String>> 
 
 /// Parse an `os-release(5)` file body and return the allow-listed keys.
 ///
-/// Each line is expected to be `KEY=value` or `KEY="value"`. Lines that do
-/// not match or whose key is not in [`ALLOWED_KEYS`] are ignored.
+/// Each line is expected to be `KEY=value`, `KEY="value"`, or `KEY='value'`.
+/// Lines that do not match or whose key is not in [`ALLOWED_KEYS`] are
+/// ignored. Inside double quotes the shell-style escapes `\$`, `\"`, `\\`,
+/// and `` \` `` are honored (per `os-release(5)`); single-quoted values are
+/// taken literally. Malformed lines (e.g. unterminated quotes) are skipped.
 fn parse_os_release(contents: &str) -> HashMap<String, String> {
     let mut result = HashMap::new();
     for line in contents.lines() {
@@ -61,8 +64,10 @@ fn parse_os_release(contents: &str) -> HashMap<String, String> {
         if !is_valid_key(key) || !ALLOWED_KEYS.contains(&key) {
             continue;
         }
-        let value = strip_surrounding_double_quotes(raw_value);
-        result.insert(key.to_string(), value.to_string());
+        let Some(value) = unquote_value(raw_value) else {
+            continue;
+        };
+        result.insert(key.to_string(), value);
     }
     result
 }
@@ -74,11 +79,58 @@ fn is_valid_key(key: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
-fn strip_surrounding_double_quotes(value: &str) -> &str {
-    if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        &value[1..value.len() - 1]
+/// Unquote an `os-release(5)` value.
+///
+/// Returns `None` when the value is malformed (e.g. an unterminated quote or
+/// trailing garbage after a closing quote).
+fn unquote_value(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    match bytes.first() {
+        Some(&b'"') => unquote_double(&value[1..]),
+        Some(&b'\'') => unquote_single(&value[1..]),
+        _ => Some(value.to_string()),
+    }
+}
+
+/// Parse the remainder of a double-quoted value (opening `"` already stripped).
+///
+/// Honors `\\`, `\"`, `\$`, and `` \` `` escapes. Any other backslash is kept
+/// verbatim, matching the behavior of common `os-release` producers.
+fn unquote_double(inner: &str) -> Option<String> {
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                return if chars.next().is_none() {
+                    Some(out)
+                } else {
+                    None
+                };
+            }
+            '\\' => match chars.next() {
+                Some(next @ ('\\' | '"' | '$' | '`')) => out.push(next),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => return None,
+            },
+            other => out.push(other),
+        }
+    }
+    None
+}
+
+/// Parse the remainder of a single-quoted value (opening `'` already stripped).
+///
+/// Single-quoted values are literal: no escape sequences are interpreted.
+fn unquote_single(inner: &str) -> Option<String> {
+    let (content, rest) = inner.split_once('\'')?;
+    if rest.is_empty() {
+        Some(content.to_string())
     } else {
-        value
+        None
     }
 }
 
@@ -149,6 +201,29 @@ LOGO=archlinux-logo
         let parsed = parse_os_release(contents);
         assert_eq!(parsed.get("NAME").map(String::as_str), Some("Upper"));
         assert!(!parsed.contains_key("name"));
+    }
+
+    #[test]
+    fn single_quoted_values_are_literal() {
+        let contents = "NAME='Arch Linux'\nID='a\\$b'\n";
+        let parsed = parse_os_release(contents);
+        assert_eq!(parsed.get("NAME").map(String::as_str), Some("Arch Linux"));
+        assert_eq!(parsed.get("ID").map(String::as_str), Some("a\\$b"));
+    }
+
+    #[test]
+    fn double_quoted_escapes_and_malformed_quotes() {
+        let contents = concat!(
+            "NAME=\"a\\\"b\\\\c\\$d\\`e\"\n",
+            "PRETTY_NAME=\"unterminated\n",
+            "VERSION=\"ok\"junk\n",
+            "ID=arch\n",
+        );
+        let parsed = parse_os_release(contents);
+        assert_eq!(parsed.get("NAME").map(String::as_str), Some("a\"b\\c$d`e"));
+        assert!(!parsed.contains_key("PRETTY_NAME"));
+        assert!(!parsed.contains_key("VERSION"));
+        assert_eq!(parsed.get("ID").map(String::as_str), Some("arch"));
     }
 
     #[test]
