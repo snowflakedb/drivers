@@ -454,15 +454,9 @@ fn execute_bindings_for_row(
             }
             let array_ref = record_batch.column(arrow_col);
             let field = schema.field(arrow_col);
-            let w = read_arrow_value(
-                adjusted,
-                array_ref,
-                field,
-                batch_idx,
-                &stmt.conn()?.connection.numeric_settings,
-                &mut None,
-            )
-            .context(ConversionSnafu)?;
+            let settings = stmt.conn()?.connection.lock().numeric_settings;
+            let w = read_arrow_value(adjusted, array_ref, field, batch_idx, &settings, &mut None)
+                .context(ConversionSnafu)?;
             warnings.extend(w);
         }
     }
@@ -576,12 +570,13 @@ pub fn get_data(
                 datetime_interval_precision: ard_binding
                     .and_then(|b| b.datetime_interval_precision),
             };
+            let settings = stmt.conn()?.connection.lock().numeric_settings;
             let conversion_warnings = read_arrow_value(
                 &binding,
                 array_ref,
                 field,
                 *batch_idx,
-                &stmt.conn()?.connection.numeric_settings,
+                &settings,
                 &mut offset,
             )
             .context(ConversionSnafu)?;

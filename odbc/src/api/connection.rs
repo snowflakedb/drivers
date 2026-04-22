@@ -12,7 +12,7 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, Dbc, GetDataExtensions, OdbcResult, conn_from_handle,
+    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
 };
 use crate::conversion::warning::{Warning, Warnings};
@@ -20,7 +20,6 @@ use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tracing;
 
 const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
@@ -236,16 +235,21 @@ fn connect_with_params(
     }
 
     let dbc = conn_from_handle(connection_handle)?;
-    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
-    let connection = &mut dbc.connection;
-    apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
-
-    // Check before moving `options` into the RPC call below.
-    let login_timeout_in_options = options.contains_key("authentication_timeout");
-    let login_timeout_in_attrs = connection
-        .pre_connection_attrs
-        .contains_key(&ConnectionAttribute::LoginTimeout);
-    let pre_connection_attrs = connection.pre_connection_attrs.clone();
+    // Read pre-connection data under lock, then release before the async call.
+    let (pre_connection_attrs, login_timeout_in_options, login_timeout_in_attrs) = {
+        let connection = dbc.connection.lock();
+        apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
+        let login_timeout_in_options = options.contains_key("authentication_timeout");
+        let login_timeout_in_attrs = connection
+            .pre_connection_attrs
+            .contains_key(&ConnectionAttribute::LoginTimeout);
+        let pre_connection_attrs = connection.pre_connection_attrs.clone();
+        (
+            pre_connection_attrs,
+            login_timeout_in_options,
+            login_timeout_in_attrs,
+        )
+    };
 
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let db_handle = c
@@ -303,7 +307,7 @@ fn connect_with_params(
 
     tracing::info!("connect_with_params: connection_init completed");
 
-    connection.state = ConnectionState::Connected {
+    dbc.connection.lock().state = ConnectionState::Connected {
         db_handle,
         conn_handle,
     };
@@ -312,7 +316,7 @@ fn connect_with_params(
     // already established (state = Connected). Use warn-and-continue rather than `?`
     // to avoid returning an error after the state was set to Connected.
     // ConnectionHandle is Copy, so conn_handle is still accessible after the move above.
-    connection.current_catalog = match global().context(OdbcRuntimeSnafu) {
+    let current_catalog = match global().context(OdbcRuntimeSnafu) {
         Ok(rt) => rt
             .block_on(async |c| {
                 let info = c
@@ -335,6 +339,7 @@ fn connect_with_params(
             None
         }
     };
+    dbc.connection.lock().current_catalog = current_catalog;
 
     Ok(())
 }
@@ -565,12 +570,14 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let dbc = conn_from_handle(connection_handle)?;
-    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
-    let connection = &mut dbc.connection;
+    let old_state = {
+        let mut connection = dbc.connection.lock();
+        std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
+    };
     if let ConnectionState::Connected {
         db_handle,
         conn_handle,
-    } = std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
+    } = old_state
     {
         global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
             if let Err(e) = c
@@ -627,9 +634,7 @@ pub fn native_sql<E: OdbcEncoding>(
     }
 
     let dbc = conn_from_handle(connection_handle)?;
-    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
-    let conn = &mut dbc.connection;
-    if matches!(conn.state, ConnectionState::Disconnected) {
+    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
         return crate::api::error::DisconnectedSnafu.fail();
     }
 
@@ -673,8 +678,6 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let dbc = conn_from_handle(connection_handle)?;
-    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
-    let connection = &mut dbc.connection;
     tracing::debug!("set_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
@@ -697,7 +700,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 }
                 .build()
             })?;
-            connection.access_mode = mode;
+            dbc.connection.lock().access_mode = mode;
             Ok(())
         }
         ConnectionAttribute::Autocommit => {
@@ -710,16 +713,24 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             })?;
             // NOTE: Per ODBC spec, HY011 must be returned if a transaction is currently open.
             // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.
-            match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => {
+            let maybe_conn_handle = {
+                let connection = dbc.connection.lock();
+                match &connection.state {
+                    ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
+                    ConnectionState::Disconnected => None,
+                }
+            };
+            match maybe_conn_handle {
+                Some(conn_handle) => {
                     let autocommit_on = matches!(val, AutocommitValue::On);
                     global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                         c.connection_set_autocommit(ConnectionSetAutocommitRequest {
-                            conn_handle: Some(*conn_handle),
+                            conn_handle: Some(conn_handle),
                             autocommit: autocommit_on,
                         })
                         .await
                     })?;
+                    let mut connection = dbc.connection.lock();
                     connection.cached_autocommit = val;
                     // Keep pre_connection_attrs in sync so a reconnect on the same handle
                     // re-applies the value set while connected rather than the stale pre-connect value.
@@ -728,7 +739,8 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                         .insert(attr, val.as_raw().to_string());
                     Ok(())
                 }
-                ConnectionState::Disconnected => {
+                None => {
+                    let mut connection = dbc.connection.lock();
                     connection.cached_autocommit = val;
                     connection
                         .pre_connection_attrs
@@ -738,6 +750,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             }
         }
         ConnectionAttribute::LoginTimeout => {
+            let mut connection = dbc.connection.lock();
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
                     attribute: attr.as_raw(),
@@ -761,34 +774,38 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::CurrentCatalog => {
-            let conn_handle = match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-                ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
-            };
-            // Return 24000 if any statement has an open cursor.
-            for (weak, raw_ptr) in &connection.child_statements {
-                // Use strong_count to check liveness without constructing Arc<Statement>
-                // (i.e., &Statement), which would coexist with the outer &mut Connection
-                // and create an aliasing hazard via Statement::conn: *mut Connection.
-                if weak.strong_count() == 0 {
-                    continue;
-                }
-                // SAFETY: strong_count > 0 guarantees the Arc allocation (and the Statement
-                // it points to) is still alive. We project to `state` via addr_of! rather than
-                // forming &Statement to avoid aliasing conn: *mut Connection with &mut Connection.
-                let is_cursor_open = unsafe {
-                    let state_ptr = std::ptr::addr_of!((*(*raw_ptr)).state);
-                    matches!(
-                        (*state_ptr).as_ref(),
-                        StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
-                    )
+            let (conn_handle, catalog) = {
+                let connection = dbc.connection.lock();
+                let conn_handle = match &connection.state {
+                    ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+                    ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
                 };
-                if is_cursor_open {
-                    return InvalidCursorStateSnafu.fail();
+                // Return 24000 if any statement has an open cursor.
+                for (weak, raw_ptr) in &connection.child_statements {
+                    // Use strong_count to check liveness without constructing Arc<Statement>
+                    // (i.e., &Statement), which would coexist with the outer &mut Connection
+                    // and create an aliasing hazard via Statement::conn: *mut Connection.
+                    if weak.strong_count() == 0 {
+                        continue;
+                    }
+                    // SAFETY: strong_count > 0 guarantees the Arc allocation (and the Statement
+                    // it points to) is still alive. We project to `state` via addr_of! rather than
+                    // forming &Statement to avoid aliasing conn: *mut Connection with &mut Connection.
+                    let is_cursor_open = unsafe {
+                        let state_ptr = std::ptr::addr_of!((*(*raw_ptr)).state);
+                        matches!(
+                            (*state_ptr).as_ref(),
+                            StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
+                        )
+                    };
+                    if is_cursor_open {
+                        return InvalidCursorStateSnafu.fail();
+                    }
                 }
-            }
-            let catalog = read_string_from_pointer::<E>(value_ptr, string_length)?;
-            let catalog = catalog.trim().to_string();
+                let catalog = read_string_from_pointer::<E>(value_ptr, string_length)?;
+                let catalog = catalog.trim().to_string();
+                (conn_handle, catalog)
+            };
             global()
                 .context(OdbcRuntimeSnafu)?
                 .block_on(async |c| {
@@ -811,14 +828,15 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                         _ => e.into(),
                     }
                 })?;
-            connection.current_catalog = Some(catalog);
+            dbc.connection.lock().current_catalog = Some(catalog);
             Ok(())
         }
         ConnectionAttribute::QuietMode => {
-            connection.quiet_mode = value_ptr;
+            dbc.connection.lock().quiet_mode = value_ptr;
             Ok(())
         }
         ConnectionAttribute::PacketSize => {
+            let mut connection = dbc.connection.lock();
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
                     attribute: attr.as_raw(),
@@ -834,7 +852,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         }
         ConnectionAttribute::MetadataId => {
             let val = value_ptr as sql::ULen;
-            connection.metadata_id = val != 0;
+            dbc.connection.lock().metadata_id = val != 0;
             Ok(())
         }
         ConnectionAttribute::ConnectionDead | ConnectionAttribute::AutoIpd => {
@@ -858,6 +876,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         | ConnectionAttribute::PrivKeyPassword
         | ConnectionAttribute::PrivKeyBase64
         | ConnectionAttribute::Application => {
+            let mut connection = dbc.connection.lock();
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
                     attribute: attr.as_raw(),
@@ -882,8 +901,6 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let dbc = conn_from_handle(connection_handle)?;
-    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
-    let connection = &mut dbc.connection;
     tracing::debug!("get_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
@@ -896,9 +913,10 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 
     match attr {
         ConnectionAttribute::AccessMode => {
+            let access_mode = dbc.connection.lock().access_mode;
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::UInteger) = connection.access_mode.as_raw();
+                    *(value_ptr as *mut sql::UInteger) = access_mode.as_raw();
                 }
             }
             if !string_length_ptr.is_null() {
@@ -912,34 +930,40 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             // Per spec: query the server for the actual autocommit state when connected;
             // fall back to the cached value if the RPC fails or the parameter is absent.
             // The cache is the authoritative source when disconnected.
-            let val: sql::UInteger = match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => {
-                    match get_session_parameter(conn_handle, "AUTOCOMMIT") {
-                        Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
-                            connection.cached_autocommit = AutocommitValue::On;
-                            AutocommitValue::On.as_raw()
-                        }
-                        Ok(Some(_)) => {
-                            connection.cached_autocommit = AutocommitValue::Off;
-                            AutocommitValue::Off.as_raw()
-                        }
-                        Ok(None) => {
-                            tracing::warn!(
-                                "get_connect_attr: AUTOCOMMIT session parameter missing, \
-                                 falling back to cached value"
-                            );
-                            connection.cached_autocommit.as_raw()
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "get_connect_attr: failed to read AUTOCOMMIT session parameter \
-                                 ({e}), falling back to cached value"
-                            );
-                            connection.cached_autocommit.as_raw()
-                        }
+            let (maybe_conn_handle, cached) = {
+                let connection = dbc.connection.lock();
+                let maybe_conn_handle = match &connection.state {
+                    ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
+                    ConnectionState::Disconnected => None,
+                };
+                (maybe_conn_handle, connection.cached_autocommit)
+            };
+            let val: sql::UInteger = match maybe_conn_handle {
+                Some(conn_handle) => match get_session_parameter(&conn_handle, "AUTOCOMMIT") {
+                    Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
+                        dbc.connection.lock().cached_autocommit = AutocommitValue::On;
+                        AutocommitValue::On.as_raw()
                     }
-                }
-                ConnectionState::Disconnected => connection.cached_autocommit.as_raw(),
+                    Ok(Some(_)) => {
+                        dbc.connection.lock().cached_autocommit = AutocommitValue::Off;
+                        AutocommitValue::Off.as_raw()
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "get_connect_attr: AUTOCOMMIT session parameter missing, \
+                                 falling back to cached value"
+                        );
+                        cached.as_raw()
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "get_connect_attr: failed to read AUTOCOMMIT session parameter \
+                                 ({e}), falling back to cached value"
+                        );
+                        cached.as_raw()
+                    }
+                },
+                None => cached.as_raw(),
             };
             if !value_ptr.is_null() {
                 unsafe {
@@ -954,6 +978,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::LoginTimeout => {
+            let connection = dbc.connection.lock();
             let timeout: sql::UInteger = match connection.pre_connection_attrs.get(&attr) {
                 Some(s) => s.parse().unwrap_or_else(|_| {
                     tracing::warn!(
@@ -964,6 +989,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }),
                 None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
             };
+            drop(connection);
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::UInteger) = timeout;
@@ -996,9 +1022,16 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
-            let database = match &connection.state {
-                ConnectionState::Connected { conn_handle, .. } => {
-                    let conn_handle = *conn_handle;
+            let (maybe_conn_handle, cached_catalog) = {
+                let connection = dbc.connection.lock();
+                let maybe_conn_handle = match &connection.state {
+                    ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
+                    ConnectionState::Disconnected => None,
+                };
+                (maybe_conn_handle, connection.current_catalog.clone())
+            };
+            let database = match maybe_conn_handle {
+                Some(conn_handle) => {
                     match global().context(OdbcRuntimeSnafu).and_then(|rt| {
                         rt.block_on(async |c| {
                             let info = c
@@ -1012,7 +1045,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                         })
                     }) {
                         Ok(db) => {
-                            connection.current_catalog = db.clone();
+                            dbc.connection.lock().current_catalog = db.clone();
                             db
                         }
                         Err(e) => {
@@ -1020,7 +1053,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                                 "get_connect_attr: failed to fetch current catalog from server: \
                                  {e:?}; falling back to cached value"
                             );
-                            connection.current_catalog.clone()
+                            cached_catalog
                         }
                     }
                 }
@@ -1028,7 +1061,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 // Per ODBC spec the catalog is indeterminate before connecting;
                 // returning an error would break applications that probe this attribute
                 // before calling SQLConnect.
-                ConnectionState::Disconnected => connection.current_catalog.clone(),
+                None => cached_catalog,
             };
             let database_str = database.as_deref().unwrap_or("");
             write_string_bytes_i32::<E>(
@@ -1041,17 +1074,19 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::QuietMode => {
+            let quiet_mode = dbc.connection.lock().quiet_mode;
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::Pointer) = connection.quiet_mode;
+                    *(value_ptr as *mut sql::Pointer) = quiet_mode;
                 }
             }
             Ok(())
         }
         ConnectionAttribute::PacketSize => {
+            let packet_size = dbc.connection.lock().packet_size;
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::UInteger) = connection.packet_size;
+                    *(value_ptr as *mut sql::UInteger) = packet_size;
                 }
             }
             if !string_length_ptr.is_null() {
@@ -1075,7 +1110,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::ConnectionDead => {
-            let dead = match &connection.state {
+            let dead = match dbc.connection.lock().state {
                 ConnectionState::Connected { .. } => SQL_CD_FALSE,
                 ConnectionState::Disconnected => SQL_CD_TRUE,
             };
@@ -1105,9 +1140,10 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::MetadataId => {
+            let metadata_id = dbc.connection.lock().metadata_id;
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = connection.metadata_id as sql::ULen;
+                    *(value_ptr as *mut sql::ULen) = metadata_id as sql::ULen;
                 }
             }
             if !string_length_ptr.is_null() {
@@ -1121,13 +1157,16 @@ pub fn get_connect_attr<E: OdbcEncoding>(
         | ConnectionAttribute::PrivKeyPassword
         | ConnectionAttribute::PrivKeyBase64
         | ConnectionAttribute::Application => {
+            let connection = dbc.connection.lock();
             let value = connection
                 .pre_connection_attrs
                 .get(&attr)
                 .map(|s| s.as_str())
-                .unwrap_or("");
+                .unwrap_or("")
+                .to_owned();
+            drop(connection);
             write_string_bytes_i32::<E>(
-                value,
+                &value,
                 value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,

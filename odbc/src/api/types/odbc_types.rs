@@ -900,7 +900,7 @@ pub enum ConnectionState {
 pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
 
 pub struct Dbc {
-    pub connection: Connection,
+    pub connection: Mutex<Connection>,
     pub env: Weak<Env>,
 }
 
@@ -911,10 +911,6 @@ impl Dbc {
             .ok_or(ConnectionHasNoEnvironmentSnafu.build())
     }
 }
-
-// Temporary — same pattern as Env; will be cleaned up later in the stack.
-unsafe impl Send for Dbc {}
-unsafe impl Sync for Dbc {}
 
 pub struct Connection {
     pub state: ConnectionState,
@@ -947,12 +943,9 @@ pub struct Connection {
     pub metadata_id: bool,
 }
 
-// Safety: Send is required so that the async runtime can transfer ownership of the
-// Connection allocation between threads (e.g. when a Tokio task completes on a
-// different thread than it started). All ODBC API access remains serialised on the
-// single caller thread — the raw-pointer DBC handle is never shared across threads.
-// `*const Statement` inside `child_statements` is `!Send`, but Connection is never
-// accessed concurrently, so this is safe.
+// Safety: `*const Statement` inside `child_statements` is `!Send`, but access to
+// Connection is always serialised through the Mutex<Connection> in Dbc, and ODBC
+// guarantees that a single connection handle is only used from one thread at a time.
 unsafe impl Send for Connection {}
 
 /// Application Parameter Descriptor (APD) record.
@@ -1273,12 +1266,10 @@ pub struct Statement {
     pub cancel_token: CancellationToken,
 }
 
-/// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
-// `Send` allows moving the allocation across threads (e.g. when the runtime hands the raw
-// Arc pointer back on an arbitrary thread). `Sync` is NOT implemented: sharing `&Statement`
-// across threads is unsound because `conn` is a `Weak<Dbc>` with no synchronisation on
-// the Connection fields. Connection itself uses `unsafe impl Send` to suppress auto-trait
-// checks on `Vec<(Weak<Statement>, *const Statement)>`, so `Statement: Sync` is not required.
+// Safety: `Send` allows moving the Statement allocation across threads when the Arc is
+// handed back on an arbitrary thread. `Sync` is NOT derived: sharing `&Statement`
+// across threads is unsound because `child_statements` contains `*const Statement`
+// pointers that carry no synchronisation.
 unsafe impl Send for Statement {}
 
 impl Statement {
@@ -1312,19 +1303,6 @@ impl Statement {
         self.conn
             .upgrade()
             .ok_or_else(|| InvalidHandleSnafu.build())
-    }
-
-    /// Return the raw connection pointer without upgrading the `Weak`.
-    ///
-    /// Use this when you need a `*mut Dbc` independently of the `Weak` lifetime,
-    /// for example to remove a child_statements entry via `retain` while also
-    /// holding the `Arc<Statement>`.
-    ///
-    /// # Safety
-    /// The caller must ensure the connection is still alive (i.e., `conn()` would
-    /// succeed) and that no other mutable borrow of the `Dbc` exists concurrently.
-    pub(crate) unsafe fn conn_ptr(&self) -> *mut Dbc {
-        self.conn.as_ptr() as *mut Dbc
     }
 }
 
