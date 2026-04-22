@@ -8,9 +8,8 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
-#include "test_macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================
@@ -97,14 +96,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Verify the statement is no longer usable by trying to allocate a new one.
-  // After disconnect, the DBC is in a disconnected state and cannot allocate
-  // new statements (08003: Connection not open).
-  // Note: We do NOT use the old `stmt` handle after disconnect as that is
-  // undefined and segfaults on some platforms.
-  SQLHSTMT new_stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &new_stmt);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactions",
@@ -160,8 +152,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
 }
 
 // ============================================================================
@@ -232,14 +223,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt1, sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
-
-  ret = SQLExecDirect(stmt2, sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
-
-  ret = SQLExecDirect(stmt3, sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt1);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt2);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt3);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection handle for reuse",
