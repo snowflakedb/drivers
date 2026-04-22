@@ -58,9 +58,10 @@ use crate::conversion::warning::Warnings;
 
 /// Per-column converter from Arrow values to ODBC buffers.
 ///
-/// `'static` so it can be cached and reused across every cell of a column
-/// within a `RecordBatch`. The array is passed in per call rather than held
-/// by the converter.
+/// `'static` so it can be cached per column per `RecordBatch`. Two entry
+/// points: `convert_arrow_value` for single-cell `SQLGetData`, and
+/// `convert_arrow_range` for `SQLFetch` segments (overridden to amortise the
+/// Arrow downcast across the whole segment).
 ///
 /// This is the type-erased handle stored in the per-batch cache as
 /// `Box<dyn ColumnConverter>`. The single concrete implementation is
@@ -74,6 +75,35 @@ pub trait ColumnConverter {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, ConversionError>;
+
+    /// Convert each row in `arrow_row_range` into `outputs[i]`, skipping
+    /// rows that already hold `Err` (preserving row-major "first error
+    /// aborts the row" semantics). Default impl is per-cell;
+    /// `Converter<A, T>` overrides it to downcast once per segment.
+    fn convert_arrow_range(
+        &self,
+        array: &dyn Array,
+        arrow_row_range: std::ops::Range<usize>,
+        binding_fn: &mut dyn FnMut(usize) -> Binding,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        for (i, batch_idx) in arrow_row_range.enumerate() {
+            if outputs[i].is_err() {
+                continue;
+            }
+            let binding = binding_fn(i);
+            match self.convert_arrow_value(array, batch_idx, &binding, &mut None) {
+                Ok(w) => {
+                    if let Ok(existing) = &mut outputs[i] {
+                        existing.extend(w);
+                    }
+                }
+                Err(e) => {
+                    outputs[i] = Err(e);
+                }
+            }
+        }
+    }
 }
 
 /// Concrete column converter, parameterised over a single Arrow array type
@@ -111,6 +141,74 @@ impl<
         self.snowflake_type
             .write_odbc_type(value, binding, get_data_offset)
             .context(WriteOdbcValueSnafu)
+    }
+
+    /// Column-major hot path.
+    ///
+    /// Performs the `Any` downcast exactly once for the whole segment and
+    /// then iterates over rows with statically-dispatched
+    /// [`ReadArrowType`]/[`WriteODBCType`] calls — the compiler inlines
+    /// both through `self.snowflake_type: T`. The only dynamic dispatch
+    /// remaining per fetch is one vtable call per `(column, segment)`
+    /// pair, versus one per cell under the per-row scheme.
+    ///
+    /// If the downcast fails (a schema/converter mismatch that the driver
+    /// would consider a bug) we fall back to the trait's default
+    /// implementation so that each row reports the real downcast error
+    /// through its own `outputs` slot, matching the old per-cell
+    /// behaviour.
+    fn convert_arrow_range(
+        &self,
+        array: &dyn Array,
+        arrow_row_range: std::ops::Range<usize>,
+        binding_fn: &mut dyn FnMut(usize) -> Binding,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        let Some(arrow_array) = array.as_any().downcast_ref::<ArrowArrayType>() else {
+            for (i, batch_idx) in arrow_row_range.enumerate() {
+                if outputs[i].is_err() {
+                    continue;
+                }
+                let binding = binding_fn(i);
+                match self.convert_arrow_value(array, batch_idx, &binding, &mut None) {
+                    Ok(w) => {
+                        if let Ok(existing) = &mut outputs[i] {
+                            existing.extend(w);
+                        }
+                    }
+                    Err(e) => {
+                        outputs[i] = Err(e);
+                    }
+                }
+            }
+            return;
+        };
+
+        for (i, batch_idx) in arrow_row_range.enumerate() {
+            if outputs[i].is_err() {
+                continue;
+            }
+            let binding = binding_fn(i);
+            let result = self
+                .snowflake_type
+                .read_arrow_type(arrow_array, batch_idx)
+                .context(ReadArrowValueSnafu)
+                .and_then(|value| {
+                    self.snowflake_type
+                        .write_odbc_type(value, &binding, &mut None)
+                        .context(WriteOdbcValueSnafu)
+                });
+            match result {
+                Ok(w) => {
+                    if let Ok(existing) = &mut outputs[i] {
+                        existing.extend(w);
+                    }
+                }
+                Err(e) => {
+                    outputs[i] = Err(e);
+                }
+            }
+        }
     }
 }
 

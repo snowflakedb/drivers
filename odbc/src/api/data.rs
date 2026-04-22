@@ -36,9 +36,9 @@ fn read_arrow_value(
 }
 
 /// Per-batch cache of converters and `Binding` snapshots for the bound
-/// columns. Lets the `SQLFetch` inner loop avoid rebuilding a converter and
-/// re-reading the ARD `HashMap` for every cell. Lives for one fetch call and
-/// is rebuilt whenever the cursor crosses into a new `RecordBatch`.
+/// columns. Built once per `RecordBatch` and reused across the column-major
+/// segments processed by `Converter::convert_arrow_range`, keeping both the
+/// ARD `HashMap` and the per-cell Arrow downcast out of the inner loop.
 struct FetchConverterCache {
     /// `Arc::as_ptr(record_batch.column(0))` when the batch has columns,
     /// otherwise the schema `Arc` pointer. Null means "no cache yet".
@@ -287,17 +287,28 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let bind_offset_ptr = stmt.ard.bind_offset_ptr;
     let row_status_ptr = stmt.ird.array_status_ptr;
     let rows_fetched_ptr = stmt.ird.rows_processed_ptr;
+    let bind_offset = if !bind_offset_ptr.is_null() {
+        unsafe { *bind_offset_ptr }
+    } else {
+        0
+    };
 
     let mut cache = FetchConverterCache::new();
+    let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
 
+    // Single-row fast path: old behaviour propagated the first conversion
+    // error to the caller (rather than marking the row as Error and
+    // returning Ok). We preserve that by funnelling the single row through
+    // the same segment helper but inspecting its outcome here.
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut stmt.state)?;
-        let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
         cache.refresh_if_needed(stmt, &numeric_settings)?;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
-        match execute_bindings_for_row(stmt, &cache, 0, 0, 0) {
+        let arrow_start = current_batch_idx(stmt);
+        let outputs = execute_bindings_for_segment(stmt, &cache, arrow_start, 1, 0, 0, 0);
+        match outputs.into_iter().next().unwrap_or_else(|| Ok(Vec::new())) {
             Ok(row_warnings) => {
                 let status = if row_warnings.is_empty() {
                     RowStatus::Success
@@ -309,59 +320,27 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
             }
             Err(e) => {
                 write_row_status(row_status_ptr, 0, RowStatus::Error);
-                return Err(e);
+                return Err(e).context(ConversionSnafu);
             }
         }
         return Ok(());
     }
 
-    let bind_offset = if !bind_offset_ptr.is_null() {
-        unsafe { *bind_offset_ptr }
-    } else {
-        0
-    };
-
     let mut rows_fetched: usize = 0;
     let mut has_error = false;
-    let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
 
-    for row_idx in 0..array_size {
+    // Column-major block-cursor loop. Each iteration advances into the next
+    // available row, then processes as many rows as fit in the current
+    // record batch in a single column-major segment. `advance_cursor`
+    // handles both "move one row inside the current batch" and "load the
+    // next batch" exactly as before; `bump_batch_idx` then skips over the
+    // rest of the segment we just consumed so the next `advance_cursor`
+    // call lands on the following row (or on the next batch).
+    while rows_fetched < array_size {
         match advance_cursor(&mut stmt.state) {
-            Ok(()) => {
-                if let Err(e) = cache.refresh_if_needed(stmt, &numeric_settings) {
-                    if rows_fetched == 0 {
-                        return Err(e);
-                    }
-                    write_row_status(row_status_ptr, row_idx, RowStatus::Error);
-                    has_error = true;
-                    // Errored rows count toward `SQL_ATTR_ROWS_FETCHED_PTR`
-                    // per the ODBC spec, so the row-status array and the
-                    // reported count stay consistent.
-                    rows_fetched += 1;
-                    for remaining in (row_idx + 1)..array_size {
-                        write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
-                    }
-                    break;
-                }
-                rows_fetched += 1;
-                match execute_bindings_for_row(stmt, &cache, row_idx, bind_type, bind_offset) {
-                    Ok(w) => {
-                        let status = if w.is_empty() {
-                            RowStatus::Success
-                        } else {
-                            RowStatus::SuccessWithInfo
-                        };
-                        write_row_status(row_status_ptr, row_idx, status);
-                        warnings.extend(w);
-                    }
-                    Err(_) => {
-                        write_row_status(row_status_ptr, row_idx, RowStatus::Error);
-                        has_error = true;
-                    }
-                }
-            }
+            Ok(()) => {}
             Err(crate::api::OdbcError::NoMoreData { .. }) => {
-                for remaining in row_idx..array_size {
+                for remaining in rows_fetched..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
                 break;
@@ -370,14 +349,82 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 if rows_fetched == 0 {
                     return Err(e);
                 }
-                write_row_status(row_status_ptr, row_idx, RowStatus::Error);
+                write_row_status(row_status_ptr, rows_fetched, RowStatus::Error);
                 has_error = true;
+                // Errored rows count toward `SQL_ATTR_ROWS_FETCHED_PTR`
+                // per the ODBC spec, so the row-status array and the
+                // reported count stay consistent.
                 rows_fetched += 1;
-                for remaining in (row_idx + 1)..array_size {
+                for remaining in rows_fetched..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
                 break;
             }
+        }
+
+        if let Err(e) = cache.refresh_if_needed(stmt, &numeric_settings) {
+            if rows_fetched == 0 {
+                return Err(e);
+            }
+            write_row_status(row_status_ptr, rows_fetched, RowStatus::Error);
+            has_error = true;
+            rows_fetched += 1;
+            for remaining in rows_fetched..array_size {
+                write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+            }
+            break;
+        }
+
+        let (arrow_start, segment_len) = {
+            let StatementState::Fetching {
+                record_batch,
+                batch_idx,
+                ..
+            } = stmt.state.as_ref()
+            else {
+                unreachable!("advance_cursor must leave state in Fetching");
+            };
+            let in_batch_remaining = record_batch.num_rows().saturating_sub(*batch_idx);
+            let wanted = array_size - rows_fetched;
+            (*batch_idx, in_batch_remaining.min(wanted).max(1))
+        };
+
+        let outputs = execute_bindings_for_segment(
+            stmt,
+            &cache,
+            arrow_start,
+            segment_len,
+            rows_fetched,
+            bind_type,
+            bind_offset,
+        );
+
+        for (i, outcome) in outputs.into_iter().enumerate() {
+            let out_row = rows_fetched + i;
+            match outcome {
+                Ok(w) => {
+                    let status = if w.is_empty() {
+                        RowStatus::Success
+                    } else {
+                        RowStatus::SuccessWithInfo
+                    };
+                    write_row_status(row_status_ptr, out_row, status);
+                    warnings.extend(w);
+                }
+                Err(_) => {
+                    write_row_status(row_status_ptr, out_row, RowStatus::Error);
+                    has_error = true;
+                }
+            }
+        }
+        rows_fetched += segment_len;
+
+        // advance_cursor already put us on the first row of this segment; if
+        // we processed more than one row we need to bump batch_idx so the
+        // next advance_cursor call lands on the row after the segment (or
+        // on the next batch when the segment ends exactly at a boundary).
+        if segment_len > 1 {
+            bump_batch_idx(&mut stmt.state, segment_len - 1);
         }
     }
 
@@ -394,6 +441,58 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     }
 
     Ok(())
+}
+
+fn current_batch_idx(stmt: &Statement) -> usize {
+    match stmt.state.as_ref() {
+        StatementState::Fetching { batch_idx, .. } => *batch_idx,
+        _ => 0,
+    }
+}
+
+/// Advance `batch_idx` by `delta` rows within the current `RecordBatch`
+/// without crossing a batch boundary.
+///
+/// The caller is responsible for calling this only when the state is
+/// `Fetching` and the current batch has at least `delta` additional rows
+/// remaining. This is the post-condition we guarantee by deriving
+/// `segment_len` from `record_batch.num_rows() - batch_idx` in
+/// [`fetch_impl`].
+fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) {
+    if delta == 0 {
+        return;
+    }
+    let _: Result<(), ()> = state.transition_or_err(|s| match s {
+        StatementState::Fetching {
+            reader,
+            record_batch,
+            batch_idx,
+            rows_affected,
+            origin,
+        } => {
+            debug_assert!(
+                batch_idx + delta < record_batch.num_rows(),
+                "bump_batch_idx crossed batch boundary (delta={}, batch_idx={}, num_rows={})",
+                delta,
+                batch_idx,
+                record_batch.num_rows(),
+            );
+            Ok((
+                StatementState::Fetching {
+                    reader,
+                    record_batch,
+                    batch_idx: batch_idx + delta,
+                    rows_affected,
+                    origin,
+                },
+                (),
+            ))
+        }
+        other => {
+            debug_assert!(false, "bump_batch_idx called outside Fetching state",);
+            Err((other, ()))
+        }
+    });
 }
 
 /// `SQLFetchScroll` — currently only `SQL_FETCH_NEXT` is supported.
@@ -532,38 +631,51 @@ fn adjust_binding_for_row(
     }
 }
 
-/// Execute column bindings for a single row within a block-cursor fetch
-/// using the pre-built `FetchConverterCache`.
-fn execute_bindings_for_row(
+/// Column-major hot path for `SQLFetch`/`SQLExtendedFetch`. Iterates over
+/// the cached columns and dispatches each one to
+/// [`Converter::convert_arrow_range`] once for the whole segment, so the
+/// Arrow downcast and vtable call are paid per `(column, segment)` rather
+/// than per cell. Returns one `Result` per row, preserving the row-major
+/// "first error aborts the row" semantics.
+fn execute_bindings_for_segment(
     stmt: &Statement,
     cache: &FetchConverterCache,
-    row_idx: usize,
+    arrow_start: usize,
+    segment_len: usize,
+    out_row_start: usize,
     bind_type: usize,
     bind_offset: isize,
-) -> OdbcResult<Warnings> {
-    let mut warnings = vec![];
-    if let StatementState::Fetching {
-        record_batch,
-        batch_idx,
-        ..
-    } = stmt.state.as_ref()
-    {
-        let batch_idx = *batch_idx;
+) -> Vec<Result<Warnings, ConversionError>> {
+    let mut outputs: Vec<Result<Warnings, ConversionError>> =
+        (0..segment_len).map(|_| Ok(Vec::new())).collect();
 
-        for cached in &cache.entries {
-            // Out-of-range columns were reported once in `refresh_if_needed`.
-            let Some(converter) = cached.converter.as_deref() else {
-                continue;
-            };
-            let adjusted = adjust_binding_for_row(&cached.binding, row_idx, bind_type, bind_offset);
-            let array_ref = record_batch.column(cached.arrow_col);
-            let w = converter
-                .convert_arrow_value(array_ref.as_ref(), batch_idx, &adjusted, &mut None)
-                .context(ConversionSnafu)?;
-            warnings.extend(w);
-        }
+    let StatementState::Fetching { record_batch, .. } = stmt.state.as_ref() else {
+        return outputs;
+    };
+
+    let arrow_row_range = arrow_start..(arrow_start + segment_len);
+
+    for cached in &cache.entries {
+        // Out-of-range columns were reported once in `refresh_if_needed`.
+        let Some(converter) = cached.converter.as_deref() else {
+            continue;
+        };
+        let array_ref = record_batch.column(cached.arrow_col);
+        // `cached.binding` is a plain `Copy`; the closure can capture it by
+        // value and compute each output row's adjusted binding on the fly.
+        let base_binding = cached.binding;
+        let mut binding_fn = |i: usize| {
+            adjust_binding_for_row(&base_binding, out_row_start + i, bind_type, bind_offset)
+        };
+        converter.convert_arrow_range(
+            array_ref.as_ref(),
+            arrow_row_range.clone(),
+            &mut binding_fn,
+            &mut outputs,
+        );
     }
-    Ok(warnings)
+
+    outputs
 }
 
 /// Get data from a specific column
