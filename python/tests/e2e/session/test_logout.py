@@ -46,6 +46,7 @@ class TestLogoutTokenCleanup:
         [False, True, None],
         ids=["keep_alive=False", "keep_alive=True", "keep_alive=None"],
     )
+    @pytest.mark.skip_reference(reason="conn.rest is None on reference connector (different token access pattern)")
     def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(
         self, int_test_connection_factory, server_session_keep_alive
     ):
@@ -142,6 +143,7 @@ class TestLogoutEdgeCases:
             # And No errors are thrown
             assert conn.is_closed()
 
+    @pytest.mark.skip_reference(reason="Old connector has no close idempotency — 5 threads send 5 logouts")
     def test_should_handle_concurrent_close_calls_safely(self, int_test_connection_factory):
         """Verify that concurrent close() calls are thread-safe and send only one logout request."""
         with WiremockClient().start() as wiremock:
@@ -249,6 +251,7 @@ class TestLogoutPythonWrapper:
 
             assert conn.is_closed()
 
+    @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_pass_correct_parameters_when_server_session_keep_alive_is_none_and_auto_detection_true(
         self, int_test_connection_factory, core_proxy
     ):
@@ -293,6 +296,7 @@ class TestLogoutPythonWrapper:
         msgs = [str(w.message) for w in deprecation_warnings]
         assert len(deprecation_warnings) == 0, f"None + True should not emit deprecation warning, got: {msgs}"
 
+    @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_remap_server_session_keep_alive_false_to_none_when_auto_detection_defaults_to_true(
         self, int_test_connection_factory, core_proxy
     ):
@@ -343,6 +347,7 @@ class TestLogoutPythonWrapper:
                 f"server_session_keep_alive=False should send exactly one logout request, got {len(logout_requests)}"
             )
 
+    @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_pass_server_session_keep_alive_false_to_core_when_auto_detection_explicitly_disabled(
         self, int_test_connection_factory, core_proxy
     ):
@@ -386,6 +391,7 @@ class TestLogoutPythonWrapper:
             f"got: {[str(w.message) for w in deprecation_warnings]}"
         )
 
+    @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     @pytest.mark.parametrize(
         "auto_detection",
         [True, False],
@@ -441,6 +447,7 @@ class TestLogoutPythonWrapper:
                 f"got: {[str(w.message) for w in deprecation_warnings]}"
             )
 
+    @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_use_python_default_15_second_timeout_and_3_max_retries(
         self, int_test_connection_factory, core_proxy
     ):
@@ -471,6 +478,7 @@ class TestLogoutPythonWrapper:
             # And Logout request completes within 15 seconds
             assert elapsed < 15.0, f"Close should complete within 15 seconds, took {elapsed:.1f}s"
 
+    @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_use_best_effort_error_handling_strategy_by_default(
         self, int_test_connection_factory, core_proxy, tmp_path
     ):
@@ -546,6 +554,7 @@ class TestLogoutRetryBehavior:
     retries a failed logout request.
     """
 
+    @pytest.mark.skip_reference(reason="Old connector (v4.3.0) does not retry logout on 503")
     def test_should_retry_logout_on_transient_failure_when_close_called_with_default_retry(
         self, int_test_connection_factory
     ):
@@ -602,6 +611,11 @@ class TestLogoutRetryBehavior:
             )
 
 
+@pytest.mark.skip_reference(reason="subprocess imports Connection (not SnowflakeConnection)")
+@pytest.mark.skipif(
+    sys.version_info[:2] == (3, 9),
+    reason="SNOW-3416420: Rust tokio runtime teardown crashes during Py_Finalize on py3.9",
+)
 class TestAutoCleanup:
     """Auto-cleanup deprecation tests from python/session/logout.feature.
 
@@ -799,7 +813,6 @@ class TestAutoCleanup:
                 text=True,
                 timeout=120,
             )
-
             # Then Auto-cleanup is triggered for all 10 leaked connections
             logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) == 10, (

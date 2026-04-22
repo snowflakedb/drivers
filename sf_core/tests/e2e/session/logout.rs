@@ -5,6 +5,8 @@
 //! use WireMock so "Only one logout request is sent" can be honestly verified
 //! via HTTP request counting.
 
+use std::sync::Arc;
+
 use crate::common::mocks::auth::mount_jwt_login_success;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use serde_json::json;
@@ -77,20 +79,37 @@ async fn should_be_idempotent_when_close_called_multiple_times() {
     mount_logout_success(&server).await;
 
     let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    let client = Arc::new(
+        tokio::task::spawn_blocking(move || {
+            SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+        })
+        .await
+        .unwrap(),
+    );
+
+    //When Connection is closed
+    let result1 = tokio::task::spawn_blocking({
+        let c = Arc::clone(&client);
+        move || c.connection_close_blocking()
     })
     .await
     .unwrap();
 
-    //When Connection is closed
-    let result1 = client.connection_close_blocking();
-
     //And Connection is closed again
-    let result2 = client.connection_close_blocking();
+    let result2 = tokio::task::spawn_blocking({
+        let c = Arc::clone(&client);
+        move || c.connection_close_blocking()
+    })
+    .await
+    .unwrap();
 
     //And Connection is closed a third time
-    let result3 = client.connection_close_blocking();
+    let result3 = tokio::task::spawn_blocking({
+        let c = Arc::clone(&client);
+        move || c.connection_close_blocking()
+    })
+    .await
+    .unwrap();
 
     //Then Only one logout request is sent
     let requests = server.received_requests().await.unwrap();
