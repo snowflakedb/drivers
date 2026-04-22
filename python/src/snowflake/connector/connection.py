@@ -43,14 +43,14 @@ from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
-from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, ProgrammingError
-from .telemetry import TelemetryClient
+from .telemetry import TelemetryClient as _BackwardCompatTelemetryClient
 from .version import __version__
 
 
@@ -213,7 +213,9 @@ class Connection:
                 ),
             )
         )
-        # TODO: Wire up TelemetryClient for api_usage/wrapper_error.
+        from ._internal.telemetry import TelemetryClient
+
+        self._telemetry_client = TelemetryClient(db_api=self.db_api, conn_handle=self.conn_handle)
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
@@ -222,6 +224,7 @@ class Connection:
         self._errorhandler: Callable
 
     @pep249
+    @api_telemetry
     def close(self) -> None:
         """Close the connection now.
 
@@ -276,6 +279,7 @@ class Connection:
         self._messages = value
 
     @pep249
+    @api_telemetry
     def commit(self) -> None:
         """Commit any pending transaction to the database."""
         cur = self.cursor()
@@ -285,6 +289,7 @@ class Connection:
             cur.close()
 
     @pep249
+    @api_telemetry
     def rollback(self) -> None:
         """Roll back to the start of any pending transaction."""
         cur = self.cursor()
@@ -294,6 +299,7 @@ class Connection:
             cur.close()
 
     @pep249
+    @api_telemetry
     def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
         """
         Return a new Cursor object using the connection.
@@ -341,6 +347,7 @@ class Connection:
         value = self._get_session_parameter("AUTOCOMMIT")
         return value is not None and value.lower() == "true"
 
+    @api_telemetry
     def set_autocommit(self, autocommit: bool) -> None:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
         if not isinstance(autocommit, bool):
@@ -354,6 +361,7 @@ class Connection:
         finally:
             cur.close()
 
+    @api_telemetry
     def get_autocommit(self) -> bool:
         """
         Get the current autocommit mode.
@@ -422,6 +430,7 @@ class Connection:
         """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
         self.paramstyle = value
 
+    @api_telemetry
     def execute_string(
         self,
         sql_text: str,
@@ -439,6 +448,7 @@ class Connection:
             pass
         return []
 
+    @api_telemetry
     def execute_stream(
         self,
         stream: StringIO,
@@ -473,8 +483,8 @@ class Connection:
 
     @internal_api
     @backward_compatibility
-    def _telemetry(self) -> TelemetryClient:
-        return TelemetryClient()
+    def _telemetry(self) -> _BackwardCompatTelemetryClient:
+        return _BackwardCompatTelemetryClient()
 
     @backward_compatibility
     def _rewrite_private_key_password(self, kwargs: ConnectionParameters) -> ConnectionParameters:
@@ -719,11 +729,13 @@ class Connection:
             row: dict[str, Any] = cur.fetchone()  # type: ignore[assignment]
         return str(row["VERSION"]).split(" ")[0]
 
+    @api_telemetry
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
         status, _ = self._get_query_status_with_response(sf_qid)
         return status
 
+    @api_telemetry
     def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
         status, response = self._get_query_status_with_response(sf_qid)

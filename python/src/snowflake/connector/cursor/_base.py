@@ -27,7 +27,7 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
-from .._internal.decorators import pep249
+from .._internal.decorators import api_telemetry, pep249
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -283,6 +283,7 @@ class SnowflakeCursorBase(abc.ABC):
     def callproc(self, procname: str, args: T) -> T: ...
 
     @pep249
+    @api_telemetry
     @_requires_open
     def callproc(self, procname: str, args: Any = None) -> Any:
         """Call a stored procedure.
@@ -388,6 +389,7 @@ class SnowflakeCursorBase(abc.ABC):
             return operation, bindings
 
     @pep249
+    @api_telemetry
     @_requires_open
     def execute(
         self,
@@ -465,6 +467,7 @@ class SnowflakeCursorBase(abc.ABC):
             raise
 
     @pep249
+    @api_telemetry
     @_requires_open
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
         """
@@ -528,6 +531,7 @@ class SnowflakeCursorBase(abc.ABC):
         # Execute using array binding (existing path handles list values)
         self.execute(operation, transposed)
 
+    @api_telemetry
     @_requires_open
     def describe(
         self,
@@ -594,6 +598,7 @@ class SnowflakeCursorBase(abc.ABC):
         """Fetch the next row of a query result set."""
 
     @pep249
+    @api_telemetry
     @_requires_open
     @_requires_fetch_mode(FetchMode.ROW)
     def fetchmany(self, size: int | None = None) -> list[Any]:
@@ -625,6 +630,7 @@ class SnowflakeCursorBase(abc.ABC):
         return rows
 
     @pep249
+    @api_telemetry
     @_requires_open
     @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
@@ -687,6 +693,7 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @pep249
+    @api_telemetry
     def nextset(self) -> None:
         """
         Skip to the next available set, discarding any remaining rows from current set.
@@ -716,6 +723,7 @@ class SnowflakeCursorBase(abc.ABC):
         return None
 
     @pep249
+    @api_telemetry
     def scroll(self, value: int, mode: str = "relative") -> None:
         """Scroll the cursor in the result set."""
         raise NotSupportedError("scroll is not supported")
@@ -766,6 +774,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._prefetch_hook = None
 
     @pep249
+    @api_telemetry
     def close(self) -> bool | None:
         """Close the cursor now.
 
@@ -855,6 +864,7 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @requires_dependency(pyarrow)
+    @api_telemetry
     @_requires_open
     @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ARROW)
@@ -872,6 +882,7 @@ class SnowflakeCursorBase(abc.ABC):
             yield pyarrow.Table.from_batches([batch])
 
     @requires_dependency(pyarrow)
+    @api_telemetry
     @_requires_open
     @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ARROW)
@@ -893,6 +904,7 @@ class SnowflakeCursorBase(abc.ABC):
         )
 
     @requires_dependency(pandas)
+    @api_telemetry
     @_requires_open
     def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
         """Fetch Pandas DataFrames in batches."""
@@ -900,6 +912,7 @@ class SnowflakeCursorBase(abc.ABC):
             yield table.to_pandas()
 
     @requires_dependency(pandas)
+    @api_telemetry
     @_requires_open
     def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
@@ -916,6 +929,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Distributed fetch
     # ------------------------------------------------------------------
 
+    @api_telemetry
     @_requires_open
     def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
@@ -925,6 +939,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Async query support
     # ------------------------------------------------------------------
 
+    @api_telemetry
     @_requires_open
     def query_result(self, qid: str) -> SnowflakeCursorBase:
         """Fetch the result of a previously executed query by its Snowflake Query ID.
@@ -956,6 +971,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         return self
 
+    @api_telemetry
     @_requires_open
     def get_results_from_sfqid(self, sfqid: str) -> None:
         """Get results from a previously executed query.
@@ -989,6 +1005,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         self._prefetch_hook = prefetch_hook
 
+    @api_telemetry
     @_requires_open
     def execute_async(
         self,
@@ -1035,6 +1052,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         return {"queryId": query_id}
 
+    @api_telemetry
     @_requires_open
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
