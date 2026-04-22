@@ -650,6 +650,7 @@ impl TryFrom<&RowType> for query_types::RowType {
             "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
             "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
             "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
+<<<<<<< HEAD
             "INTERVAL_YEAR_MONTH" => {
                 let precision = value.precision.context(MissingParameterSnafu {
                     parameter: format!(
@@ -678,6 +679,8 @@ impl TryFrom<&RowType> for query_types::RowType {
                     &name, nullable, precision, scale,
                 ))
             }
+=======
+>>>>>>> 2998f4a6 (Add GEOGRAPHY, GEOMETRY, VECTOR support to Rust core type parser)
             "GEOGRAPHY" => Ok(query_types::RowType::geography(&name, nullable)),
             "GEOMETRY" => Ok(query_types::RowType::geometry(&name, nullable)),
             "VECTOR" => Ok(query_types::RowType::vector(&name, nullable)),
