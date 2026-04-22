@@ -72,8 +72,8 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     }
 
     // Validate connection before committing to NeedData state.
-    let conn = unsafe { &mut *stmt.conn_ptr() };
-    match &mut conn.state {
+    let dbc = unsafe { &mut *stmt.conn_ptr() };
+    match &mut dbc.connection.state {
         ConnectionState::Disconnected => {
             tracing::error!("exec_direct: connection is disconnected");
             return DisconnectedSnafu.fail();
@@ -111,7 +111,8 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     }
 
     // Re-borrow connection for execution.
-    let conn = unsafe { &mut *stmt.conn_ptr() };
+    let dbc = unsafe { &mut *stmt.conn_ptr() };
+    let conn = &mut dbc.connection;
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -253,8 +254,9 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    let conn = unsafe { &mut *stmt.conn_ptr() };
-    match &mut conn.state {
+    let dbc = unsafe { &mut *stmt.conn_ptr() };
+    let connection = &mut dbc.connection;
+    match &mut connection.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle: _,
@@ -302,7 +304,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
                 .build()
             })?;
             stmt.prepared_param_count = Some(param_count);
-            let max_varchar = conn.numeric_settings.max_varchar_size;
+            let max_varchar = connection.numeric_settings.max_varchar_size;
             stmt.ipd.records.retain(|&k, _| k <= param_count);
             for i in 1..=param_count {
                 stmt.ipd
@@ -351,7 +353,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     let is_prepared = origin.is_prepared();
 
     // Validate connection before committing to NeedData state.
-    let conn = unsafe { &mut *stmt.conn_ptr() };
+    let dbc = unsafe { &mut *stmt.conn_ptr() };
+    let conn = &mut dbc.connection;
     match &mut conn.state {
         ConnectionState::Disconnected => {
             tracing::error!("execute: connection is disconnected");
@@ -380,7 +383,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     }
 
     // Re-borrow connection for execution.
-    let conn = unsafe { &mut *stmt.conn_ptr() };
+    let dbc = unsafe { &mut *stmt.conn_ptr() };
+    let conn = &mut dbc.connection;
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
