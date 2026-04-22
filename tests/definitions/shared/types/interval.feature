@@ -120,14 +120,46 @@ Feature: INTERVAL datatype handling
   @odbc_e2e @python_e2e
   Scenario: should select INTERVAL DAY TO HOUR literals
     Given Snowflake client is logged in
-    When Query "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR, '-1 2'::INTERVAL DAY TO HOUR, '999999999 23'::INTERVAL DAY TO HOUR, '-999999999 23'::INTERVAL DAY TO HOUR" is executed
+    When Query "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR, '-1 2'::INTERVAL DAY TO HOUR" is executed
     Then the result should contain expected INTERVAL DAY TO HOUR literal values in order
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO HOUR max literal
+    # Snowflake spec max for DAY TO HOUR: '999999999 23'.
+    Given Snowflake client is logged in
+    When Query "SELECT '999999999 23'::INTERVAL DAY TO HOUR" is executed
+    Then the result should contain expected INTERVAL DAY TO HOUR max value
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO HOUR min literal
+    # Snowflake spec min for DAY TO HOUR: '-999999999 23'.
+    # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
+    # ODBC returns it as a scaled-nanosecond string.
+    Given Snowflake client is logged in
+    When Query "SELECT '-999999999 23'::INTERVAL DAY TO HOUR" is executed
+    Then the result should contain expected INTERVAL DAY TO HOUR min value
 
   @odbc_e2e @python_e2e
   Scenario: should select INTERVAL DAY TO MINUTE literals
     Given Snowflake client is logged in
-    When Query "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE, '-1 2:30'::INTERVAL DAY TO MINUTE, '999999999 23:59'::INTERVAL DAY TO MINUTE, '-999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+    When Query "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE, '-1 2:30'::INTERVAL DAY TO MINUTE" is executed
     Then the result should contain expected INTERVAL DAY TO MINUTE literal values in order
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO MINUTE max literal
+    # Snowflake spec max for DAY TO MINUTE: '999999999 23:59'.
+    Given Snowflake client is logged in
+    When Query "SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+    Then the result should contain expected INTERVAL DAY TO MINUTE max value
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO MINUTE min literal
+    # Snowflake spec min for DAY TO MINUTE: '-999999999 23:59'.
+    # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
+    # ODBC returns it as a scaled-nanosecond string.
+    Given Snowflake client is logged in
+    When Query "SELECT '-999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+    Then the result should contain expected INTERVAL DAY TO MINUTE min value
 
   @odbc_e2e @python_e2e
   Scenario: should select INTERVAL HOUR TO MINUTE literals
@@ -253,16 +285,16 @@ Feature: INTERVAL datatype handling
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL YEAR TO MONTH, ?::INTERVAL YEAR TO MONTH, ?::INTERVAL YEAR TO MONTH" is executed with bound string values ['0-0', '1-2', '999999999-11']
     Then the result should contain:
-      | col1 | col2 | col3           |
-      | 0-0  | 1-2  | 999999999-11   |
+      | col1 | col2 | col3         |
+      | 0-0  | 1-2  | 999999999-11 |
 
   @odbc_e2e @python_e2e
   Scenario: should select INTERVAL DAY TO SECOND values using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::INTERVAL DAY TO SECOND, ?::INTERVAL DAY TO SECOND, ?::INTERVAL DAY TO SECOND" is executed with bound string values ['0 0:0:0.0', '12 3:4:5.678', '99999 23:59:59.999999']
     Then the result should contain:
-      | col1           | col2           | col3                        |
-      | 0 0:0:0.0      | 12 3:4:5.678   | 99999 23:59:59.999999       |
+      | col1      | col2         | col3                  |
+      | 0 0:0:0.0 | 12 3:4:5.678 | 99999 23:59:59.999999 |
 
   @odbc_e2e @python_e2e
   Scenario: should select NULL INTERVAL values using parameter binding
@@ -309,16 +341,48 @@ Feature: INTERVAL datatype handling
     Then the result should contain expected INTERVAL SECOND bound values in order
 
   @odbc_e2e @python_e2e
-  Scenario: should select INTERVAL DAY TO HOUR values using parameter binding
+  Scenario: should select INTERVAL DAY TO HOUR value using parameter binding
     Given Snowflake client is logged in
-    When Query "SELECT ?::INTERVAL DAY TO HOUR, ?::INTERVAL DAY TO HOUR" is executed with bound string values ['1 2', '-999999999 23']
-    Then the result should contain expected INTERVAL DAY TO HOUR bound values in order
+    When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '1 2'
+    Then the result should contain expected INTERVAL DAY TO HOUR bound value
 
   @odbc_e2e @python_e2e
-  Scenario: should select INTERVAL DAY TO MINUTE values using parameter binding
+  Scenario: should select INTERVAL DAY TO HOUR max value using parameter binding
+    # Snowflake spec max for DAY TO HOUR: '999999999 23'.
     Given Snowflake client is logged in
-    When Query "SELECT ?::INTERVAL DAY TO MINUTE, ?::INTERVAL DAY TO MINUTE" is executed with bound string values ['1 2:30', '-999999999 23:59']
-    Then the result should contain expected INTERVAL DAY TO MINUTE bound values in order
+    When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '999999999 23'
+    Then the result should contain expected INTERVAL DAY TO HOUR max bound value
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO HOUR min value using parameter binding
+    # Snowflake spec min for DAY TO HOUR: '-999999999 23'.
+    # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
+    # ODBC returns it as a scaled-nanosecond string.
+    Given Snowflake client is logged in
+    When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '-999999999 23'
+    Then the result should contain expected INTERVAL DAY TO HOUR min bound value
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO MINUTE value using parameter binding
+    Given Snowflake client is logged in
+    When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '1 2:30'
+    Then the result should contain expected INTERVAL DAY TO MINUTE bound value
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO MINUTE max value using parameter binding
+    # Snowflake spec max for DAY TO MINUTE: '999999999 23:59'.
+    Given Snowflake client is logged in
+    When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '999999999 23:59'
+    Then the result should contain expected INTERVAL DAY TO MINUTE max bound value
+
+  @odbc_e2e @python_e2e
+  Scenario: should select INTERVAL DAY TO MINUTE min value using parameter binding
+    # Snowflake spec min for DAY TO MINUTE: '-999999999 23:59'.
+    # Overflows Python's timedelta.min, so Python surfaces an InterfaceError (Snowflake error 252005).
+    # ODBC returns it as a scaled-nanosecond string.
+    Given Snowflake client is logged in
+    When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '-999999999 23:59'
+    Then the result should contain expected INTERVAL DAY TO MINUTE min bound value
 
   @odbc_e2e @python_e2e
   Scenario: should select INTERVAL HOUR TO MINUTE values using parameter binding
@@ -370,7 +434,7 @@ Feature: INTERVAL datatype handling
     Given Snowflake client is logged in
     When Query "SELECT TO_DATE('2019-02-28') + INTERVAL '1 day, 1 year' AS d1, TO_DATE('2019-02-28') + INTERVAL '1 year, 1 day' AS d2" is executed
     Then the result should contain:
-      | d1        | d2        |
+      | d1         | d2         |
       | 2020-03-01 | 2020-02-29 |
 
   @odbc_e2e @python_e2e

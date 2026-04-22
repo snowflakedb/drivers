@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 PARAMETER_TIMEZONE = "TIMEZONE"
-
 logger = getLogger(__name__)
 
 

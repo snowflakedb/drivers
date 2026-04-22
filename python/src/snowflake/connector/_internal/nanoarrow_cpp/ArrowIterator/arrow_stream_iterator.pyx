@@ -5,6 +5,9 @@ from cpython.ref cimport PyObject
 from libc.stdint cimport int64_t, uintptr_t
 from libcpp.memory cimport unique_ptr
 
+from .errorcode import ER_FAILED_TO_CONVERT_ROW_TO_PYTHON_TYPE
+from ..errors import InterfaceError
+
 try:
     import pyarrow as pa
 except ImportError:
@@ -106,7 +109,10 @@ cdef class ArrowStreamIterator:
         # Check for exception
         if ret.exception != NULL:
             error_msg = <object>ret.exception
-            raise RuntimeError(f"Error converting row: {error_msg}")
+            raise InterfaceError(
+                msg=f'Failed to convert current row, cause: {error_msg}',
+                errno=ER_FAILED_TO_CONVERT_ROW_TO_PYTHON_TYPE,
+            )
 
         # Check for end of iteration
         if ret.successObj == NULL:
@@ -121,14 +127,20 @@ cdef class ArrowStreamIterator:
         try:
             return self.iterator.get().nextN(size)
         except Exception as e:
-            raise RuntimeError(f"Error converting row: {e}") from e
+            raise InterfaceError(
+                msg=f'Failed to convert rows, cause: {e}',
+                errno=ER_FAILED_TO_CONVERT_ROW_TO_PYTHON_TYPE,
+            )
 
     def fetch_all(self):
         """Fetch all remaining rows as a list in a single C++ call."""
         try:
             return self.iterator.get().nextAll()
         except Exception as e:
-            raise RuntimeError(f"Error converting row: {e}") from e
+            raise InterfaceError(
+                msg=f'Failed to convert rows, cause: {e}',
+                errno=ER_FAILED_TO_CONVERT_ROW_TO_PYTHON_TYPE,
+            )
 
 cdef class ArrowStreamTableIterator:
     """
@@ -169,7 +181,10 @@ cdef class ArrowStreamTableIterator:
 
         if ret.exception != NULL:
             error_msg = <object>ret.exception
-            raise RuntimeError(f"Error in dummy iterator: {error_msg}")
+            raise InterfaceError(
+                msg=f'Failed to convert current row, cause: {error_msg}',
+                errno=ER_FAILED_TO_CONVERT_ROW_TO_PYTHON_TYPE,
+            )
 
         if ret.successObj == NULL:
             raise StopIteration
