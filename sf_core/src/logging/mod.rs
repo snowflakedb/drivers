@@ -108,7 +108,7 @@ where
             let exporter =
                 crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
             opentelemetry_sdk::trace::SdkTracerProvider::builder()
-                .with_batch_exporter(exporter)
+                .with_simple_exporter(exporter)
                 .build()
         });
         let tracer = provider.tracer("snowflake.telemetry");
