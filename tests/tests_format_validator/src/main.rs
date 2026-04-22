@@ -55,10 +55,26 @@ fn main() -> anyhow::Result<()> {
 
     for result in &results {
         total_features += 1;
+
+        let feature_has_failures = !result.scenario_structure_errors.is_empty()
+            || result.validations.iter().any(|v| {
+                !v.test_file_found
+                    || !v.warnings.is_empty()
+                    || !v.missing_steps.is_empty()
+                    || !v.empty_steps.is_empty()
+            });
+
+        if feature_has_failures {
+            has_failures = true;
+        }
+
+        if !feature_has_failures && !args.verbose {
+            continue;
+        }
+
         println!("\n📋 Feature: {}", result.feature_file.display());
 
         if !result.scenario_structure_errors.is_empty() {
-            has_failures = true;
             for error in &result.scenario_structure_errors {
                 println!("  ❌ {error}");
             }
@@ -67,15 +83,11 @@ fn main() -> anyhow::Result<()> {
         for validation in &result.validations {
             if validation.test_file_found {
                 // Check if this validation has any issues
-                let has_missing_methods = validation
-                    .warnings
-                    .iter()
-                    .any(|w| w.contains("No test method found for scenario"));
+                let has_missing_methods = !validation.warnings.is_empty();
                 let has_missing_steps = !validation.missing_steps.is_empty();
                 let has_empty_steps = !validation.empty_steps.is_empty();
 
                 if has_missing_methods || has_missing_steps || has_empty_steps {
-                    has_failures = true;
                     println!(
                         "  ❌ {:?}: {} (validation failed)",
                         validation.language,
@@ -143,7 +155,6 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             } else {
-                has_failures = true;
                 println!("  ❌ {:?}: No test file found", validation.language);
 
                 // Show validation errors even when no test file

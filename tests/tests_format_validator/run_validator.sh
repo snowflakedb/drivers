@@ -18,4 +18,5 @@ cd "$SCRIPT_DIR"
 # Run the validator with project-specific paths
 cargo run --release -- \
     --workspace "$PROJECT_ROOT" \
-    --features "$PROJECT_ROOT/tests/definitions"
+    --features "$PROJECT_ROOT/tests/definitions" \
+    "$@"
