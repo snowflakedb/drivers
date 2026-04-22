@@ -34,7 +34,6 @@ def assert_logout_request_format(logout_request: dict) -> None:
     assert auth_header[:16] == "Snowflake Token=", "Authorization header should start with 'Snowflake Token='"
 
 
-@pytest.mark.skip_reference(reason="conn.rest is None on reference connector (different token access pattern)")
 class TestLogoutTokenCleanup:
     """Token cleanup tests from shared/session/logout.feature.
 
@@ -47,6 +46,7 @@ class TestLogoutTokenCleanup:
         [False, True, None],
         ids=["keep_alive=False", "keep_alive=True", "keep_alive=None"],
     )
+    @pytest.mark.skip_reference(reason="conn.rest is None on reference connector (different token access pattern)")
     def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(
         self, int_test_connection_factory, server_session_keep_alive
     ):
@@ -611,9 +611,7 @@ class TestLogoutRetryBehavior:
             )
 
 
-@pytest.mark.skip_reference(
-    reason="subprocess imports Connection (not SnowflakeConnection), _close_at_process_exit missing"
-)
+@pytest.mark.skip_reference(reason="subprocess imports Connection (not SnowflakeConnection)")
 @pytest.mark.skipif(
     sys.version_info[:2] == (3, 9),
     reason="SNOW-3416420: Rust tokio runtime teardown crashes during Py_Finalize on py3.9",

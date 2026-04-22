@@ -143,10 +143,10 @@ class TestLogoutIdempotency:
             assert len(logout_requests) == 1, f"Should send exactly 1 logout, got {len(logout_requests)}"
 
 
-@pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
 class TestLogoutConfigPassing:
     """Verify Python wrapper correctly passes logout config to Core."""
 
+    @pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
     def test_should_have_enable_server_session_keep_alive_auto_detection_default_to_true(self, core_mock):
         """Verify enable_server_session_keep_alive_auto_detection defaults to True.
 
@@ -179,6 +179,7 @@ class TestLogoutConfigPassing:
             "enable_server_session_keep_alive_auto_detection was not set" in str(w.message) for w in warning_list
         ), f"Expected FutureWarning about auto_detection default, got: {[str(w.message) for w in warning_list]}"
 
+    @pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
     def test_should_not_emit_auto_detection_deprecation_warning_when_explicitly_set_to_true(self, core_mock):
         """Verify no FutureWarning when user explicitly passes auto_detection=True.
 
@@ -211,10 +212,10 @@ class TestLogoutConfigPassing:
         )
 
 
-@pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
 class TestAutoCleanupConfig:
     """Verify auto_cleanup defaults and atexit handler registration."""
 
+    @pytest.mark.skip_reference(reason="core_mock fixture imports _internal protobuf types")
     def test_should_have_auto_cleanup_enabled_by_default(self, core_mock):
         """Verify auto_cleanup defaults to True and atexit handler is registered."""
         from snowflake.connector.connection import Connection
