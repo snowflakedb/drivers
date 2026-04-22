@@ -11,6 +11,8 @@ mod binary_tests;
 mod boolean;
 #[cfg(test)]
 mod boolean_tests;
+#[cfg(test)]
+mod converter_tests;
 mod date;
 mod decfloat;
 #[cfg(test)]

@@ -33,27 +33,41 @@ fn read_arrow_value(
     Ok(warnings)
 }
 
-/// Per-batch cache of converters for the currently-bound columns.
+/// Per-batch cache of converters + binding snapshots for the currently-bound
+/// columns.
 ///
 /// The fetch hot path (`SQLFetch` with `SQL_ATTR_ROW_ARRAY_SIZE > 1`) used to
 /// rebuild a `Box<dyn Converter>` for every cell — millions of heap
 /// allocations and HashMap/`parse::<u32>()` calls on a 1M-row × 15-col
-/// select. The cache lives for the duration of a single fetch call and is
-/// invalidated whenever we cross into a new `RecordBatch` (detected via the
-/// data pointer of the batch's first column).
+/// select. Caching both the converter and a copy of the `Binding` per bound
+/// column lets the per-cell work collapse to a vtable call + `Any` downcast +
+/// pointer-stride math; the ARD `HashMap` is not touched at all during the
+/// inner row loop.
+///
+/// The cache lives for the duration of a single fetch call. It is rebuilt
+/// whenever we cross into a new `RecordBatch` (detected via the data pointer
+/// of the batch's first column, or the schema `Arc` pointer for the rare
+/// zero-column case) and also whenever it has no entries yet.
 struct FetchConverterCache {
-    /// Data pointer of `record_batch.column(0)`, used as batch identity.
-    /// `std::ptr::null()` means "no cache yet".
+    /// Batch identity: `Arc::as_ptr(record_batch.column(0))` when the batch
+    /// has columns, otherwise the schema `Arc` pointer. `std::ptr::null()`
+    /// means "no cache yet".
     batch_identity: *const (),
-    /// For each bound column: `(column_number_1_based, arrow_column_index, converter)`.
-    /// `arrow_column_index == usize::MAX` sentinels an out-of-range column
-    /// (matches the existing skip-with-warning behaviour below).
+    /// One entry per bound column, in a stable iteration order captured at
+    /// cache-build time. Entries with `arrow_col == usize::MAX` represent
+    /// out-of-range columns and are logged + skipped on the hot path, matching
+    /// the previous per-cell behaviour.
     entries: Vec<CachedColumn>,
 }
 
 struct CachedColumn {
     column_number: u16,
     arrow_col: usize,
+    /// Snapshot of the ARD `Binding` at cache-build time. Copied (not
+    /// referenced) so the fetch loop never touches the ARD `HashMap`. Safe
+    /// because the application cannot legally mutate bindings between
+    /// `SQLFetch` entry and return.
+    binding: Binding,
     converter: Option<Box<dyn Converter>>,
 }
 
@@ -65,10 +79,11 @@ impl FetchConverterCache {
         }
     }
 
-    /// Refresh the cache if `record_batch` differs from the cached batch.
-    /// Building a converter is idempotent, so we just tolerate the rare
-    /// "same pointer, different batch" edge case by also comparing schema
-    /// pointers.
+    /// Rebuild the cache if `record_batch` differs from the cached batch, or
+    /// if the cache is empty. The batch identity used is the data pointer of
+    /// the first column (stable for the life of the batch, different across
+    /// batches); the schema `Arc` pointer is the fallback for zero-column
+    /// batches.
     fn refresh_if_needed(
         &mut self,
         stmt: &Statement,
@@ -79,11 +94,8 @@ impl FetchConverterCache {
         };
 
         let identity: *const () = if record_batch.num_columns() > 0 {
-            // `Arc::as_ptr` on the first column gives a stable address for
-            // the lifetime of the batch and a different one across batches.
             std::sync::Arc::as_ptr(record_batch.column(0)) as *const ()
         } else {
-            // Empty column set — use the schema Arc pointer as a fallback.
             std::sync::Arc::as_ptr(&record_batch.schema()) as *const ()
         };
 
@@ -95,12 +107,13 @@ impl FetchConverterCache {
         self.entries.clear();
         self.entries.reserve(stmt.ard.bindings.len());
 
-        for &column_number in stmt.ard.bindings.keys() {
+        for (&column_number, binding) in &stmt.ard.bindings {
             let arrow_col = column_number as usize - 1;
             if arrow_col >= schema.fields().len() {
                 self.entries.push(CachedColumn {
                     column_number,
                     arrow_col: usize::MAX,
+                    binding: *binding,
                     converter: None,
                 });
                 continue;
@@ -110,6 +123,7 @@ impl FetchConverterCache {
             self.entries.push(CachedColumn {
                 column_number,
                 arrow_col,
+                binding: *binding,
                 converter: Some(converter),
             });
         }
@@ -524,10 +538,17 @@ fn adjust_binding_for_row(
 
 /// Execute column bindings for a single row within a block-cursor fetch.
 ///
-/// Uses the pre-built `FetchConverterCache` so the per-cell work is reduced
-/// to an `Arc` deref, one vtable dispatch, and one cheap `Any` downcast.
+/// Uses the pre-built `FetchConverterCache`, which holds both a ready-to-use
+/// `Box<dyn Converter>` and a snapshot of each column's `Binding`. Per-cell
+/// work is therefore:
+///   * pointer-stride math in `adjust_binding_for_row` (plain arithmetic),
+///   * one `Arc` deref on the cached `ArrayRef`,
+///   * one vtable call into the converter,
+///   * one cheap `Any` downcast inside the converter.
+///
+/// The ARD `HashMap` is not consulted at all in this inner loop.
 fn execute_bindings_for_row(
-    stmt: &mut Statement,
+    stmt: &Statement,
     cache: &FetchConverterCache,
     row_idx: usize,
     bind_type: usize,
@@ -543,10 +564,6 @@ fn execute_bindings_for_row(
         let batch_idx = *batch_idx;
 
         for cached in &cache.entries {
-            let Some(binding) = stmt.ard.bindings.get(&cached.column_number) else {
-                // Binding was removed between cache build and now — skip.
-                continue;
-            };
             if cached.arrow_col == usize::MAX {
                 tracing::error!(
                     "execute_bindings_for_row: column_number {} is out of range",
@@ -557,7 +574,7 @@ fn execute_bindings_for_row(
             let Some(converter) = cached.converter.as_deref() else {
                 continue;
             };
-            let adjusted = adjust_binding_for_row(binding, row_idx, bind_type, bind_offset);
+            let adjusted = adjust_binding_for_row(&cached.binding, row_idx, bind_type, bind_offset);
             let array_ref = record_batch.column(cached.arrow_col);
             let w = converter
                 .convert_arrow_value(array_ref.as_ref(), batch_idx, &adjusted, &mut None)

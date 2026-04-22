@@ -76,7 +76,7 @@ pub enum LengthOrNull {
     Length(sql::Len),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Binding {
     pub target_type: CDataType,
     pub target_value_ptr: sql::Pointer,
