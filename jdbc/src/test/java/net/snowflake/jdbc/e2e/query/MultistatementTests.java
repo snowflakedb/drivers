@@ -139,19 +139,16 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void shouldFailWhenMultistatementSqlIsSentWithoutMultiStatementCount() throws Exception {
+  public void shouldSucceedWhenMultistatementSqlIsSentWithoutMultiStatementCount() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
     // When Multistatement SQL is executed without configuring multi_statement_count
-    assertThrows(
-        SQLException.class,
-        () -> {
-          // Then an error is returned indicating multi-statement is not enabled
-          try (Statement statement = connection.createStatement()) {
-            statement.execute("SELECT 1; SELECT 2; SELECT 3");
-          }
-        });
+    // the driver transparently sends MULTI_STATEMENT_COUNT=0 (unlimited).
+    try (Statement statement = connection.createStatement()) {
+      // Then the statement succeeds
+      assertTrue(statement.execute("SELECT 1; SELECT 2; SELECT 3"));
+    }
   }
 
   @Test

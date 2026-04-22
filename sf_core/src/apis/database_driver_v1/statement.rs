@@ -938,6 +938,16 @@ fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
 const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] =
     &[(param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT")];
 
+/// Default `MULTI_STATEMENT_COUNT` sent on every query when the caller did not
+/// explicitly set `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT`.
+///
+/// `0` means "unlimited" to Snowflake — any number of statements is accepted
+/// in a single request. This mirrors the common behavior of translation
+/// layers (e.g. DTM/Hyper-Q) that may expand a single caller statement into
+/// multiple Snowflake statements after server-side rewriting. Callers who
+/// need the strict "exactly N" check can still opt in via `SQLSetStmtAttr`.
+const DEFAULT_MULTI_STATEMENT_COUNT: i64 = 0;
+
 fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde_json::Value>> {
     let mut params = HashMap::new();
     for (key, server_name) in QUERY_PARAMETER_NAMES {
@@ -945,11 +955,10 @@ fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde
             params.insert(server_name.to_string(), setting_to_json_value(setting));
         }
     }
-    if params.is_empty() {
-        None
-    } else {
-        Some(params)
-    }
+    params
+        .entry("MULTI_STATEMENT_COUNT".to_string())
+        .or_insert_with(|| serde_json::json!(DEFAULT_MULTI_STATEMENT_COUNT));
+    Some(params)
 }
 
 fn parse_bool_setting(setting: &Setting) -> Option<bool> {
@@ -1114,6 +1123,29 @@ mod tests {
     fn parse_bool_setting_accepts_native_bool_values() {
         assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
         assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    #[test]
+    fn build_query_parameters_defaults_multi_statement_count_to_zero() {
+        let settings = ParamStore::new();
+        let params = build_query_parameters(&settings).expect("always returns Some");
+        assert_eq!(
+            params.get("MULTI_STATEMENT_COUNT"),
+            Some(&serde_json::json!(0)),
+            "MULTI_STATEMENT_COUNT should default to 0 (unlimited) when caller didn't set it"
+        );
+    }
+
+    #[test]
+    fn build_query_parameters_preserves_caller_set_multi_statement_count() {
+        let mut settings = ParamStore::new();
+        settings.insert("multi_statement_count".to_string(), Setting::Int(7));
+        let params = build_query_parameters(&settings).expect("always returns Some");
+        assert_eq!(
+            params.get("MULTI_STATEMENT_COUNT"),
+            Some(&serde_json::json!(7)),
+            "Caller-set MULTI_STATEMENT_COUNT must win over the default"
+        );
     }
 
     #[test]

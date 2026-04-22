@@ -82,21 +82,22 @@ fn should_execute_mixed_statement_types() {
 }
 
 #[test]
-fn should_fail_when_multistatement_sql_is_sent_without_multi_statement_count() {
+fn should_succeed_when_multistatement_sql_is_sent_without_multi_statement_count() {
     // Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
 
-    // When Multistatement SQL is executed without configuring multi_statement_count
+    // When Multistatement SQL is executed without configuring multi_statement_count,
+    // the driver transparently defaults MULTI_STATEMENT_COUNT=0 (unlimited) so the
+    // statement list is accepted as-is.
     let sql = "SELECT 1; SELECT 2; SELECT 3";
     let result = client.execute_query_no_unwrap(sql);
 
-    // Then an error is returned indicating multi-statement is not enabled
+    // Then the statement succeeds
     assert!(
-        result.is_err(),
-        "Expected error when executing multi-statement without multi_statement_count"
+        result.is_ok(),
+        "Expected multi-statement SQL to succeed with default MULTI_STATEMENT_COUNT=0, got: {:?}",
+        result.err()
     );
-    let err = result.unwrap_err();
-    assert!(err.contains("Actual statement count 3 did not match the desired statement count 1"));
 }
 
 #[test]

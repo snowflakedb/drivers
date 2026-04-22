@@ -38,10 +38,10 @@ Feature: Multistatement query execution
   # ============================================================================
 
   @core_e2e @jdbc_e2e @odbc_e2e
-  Scenario: should fail when multistatement SQL is sent without multi_statement_count
+  Scenario: should succeed when multistatement SQL is sent without multi_statement_count
     Given Snowflake client is logged in
     When Multistatement SQL is executed without configuring multi_statement_count
-    Then an error is returned indicating multi-statement is not enabled
+    Then the statement succeeds with MULTI_STATEMENT_COUNT defaulting to 0 (unlimited)
 
   @core_e2e @jdbc_e2e @odbc_e2e
   Scenario: should fail when multi_statement_count does not match actual statement count

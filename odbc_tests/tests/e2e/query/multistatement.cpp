@@ -122,16 +122,24 @@ TEST_CASE("should execute mixed statement types", "[query][multistatement]") {
   CHECK(ret == SQL_NO_DATA);
 }
 
-TEST_CASE("should fail when multistatement SQL is sent without multi_statement_count", "[query][multistatement]") {
+TEST_CASE("should succeed when multistatement SQL is sent without multi_statement_count", "[query][multistatement]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When Multistatement SQL is executed without configuring multi_statement_count
+  // When Multistatement SQL is executed without configuring multi_statement_count,
+  // the driver transparently sends MULTI_STATEMENT_COUNT=0 (unlimited).
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1; SELECT 2; SELECT 3"), SQL_NTS);
 
-  // Then an error is returned indicating multi-statement is not enabled
-  CHECK(ret == SQL_ERROR);
+  // Then the statement succeeds and three result sets are produced
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLMoreResults(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
 }
 
 TEST_CASE("should fail when multi_statement_count does not match actual statement count", "[query][multistatement]") {
