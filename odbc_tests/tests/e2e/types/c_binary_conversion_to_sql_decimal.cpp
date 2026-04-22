@@ -1,7 +1,8 @@
 // ODBC E2E: SQL_C_BINARY bound via SQLBindParameter to SQL_DECIMAL / SQL_NUMERIC
 // The binary buffer is interpreted as a raw SQL_NUMERIC_STRUCT (19 bytes).
 
-#include <cstring>
+#include <cstddef>
+#include <cstdint>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,7 +18,13 @@ static SQL_NUMERIC_STRUCT make_numeric(SQLCHAR precision, SQLSCHAR scale, SQLCHA
   ns.precision = precision;
   ns.scale = scale;
   ns.sign = sign;
-  std::memcpy(ns.val, &magnitude, sizeof(magnitude));
+  // SQL_NUMERIC_STRUCT::val is defined by the ODBC spec as a little-endian byte
+  // array regardless of host endianness. Populate it explicitly so the test
+  // remains correct on big-endian targets (where memcpy of a uint64_t would
+  // produce big-endian bytes).
+  for (size_t i = 0; i < sizeof(magnitude); ++i) {
+    ns.val[i] = static_cast<SQLCHAR>((magnitude >> (i * 8)) & 0xFF);
+  }
   return ns;
 }
 
