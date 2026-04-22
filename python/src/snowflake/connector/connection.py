@@ -45,7 +45,7 @@ from snowflake.connector._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXIST
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
-from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
@@ -238,12 +238,16 @@ class Connection(ErrorHandlerMixin):
                 ),
             )
         )
+        from ._internal.telemetry import TelemetryClient as _InternalTelemetryClient
+
+        self._telemetry_client = _InternalTelemetryClient(db_api=self.db_api, conn_handle=self.conn_handle)
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
         self._close_lock = threading.Lock()
 
     @pep249
+    @api_telemetry
     def close(self) -> None:
         """Close the connection now.
 
@@ -299,6 +303,7 @@ class Connection(ErrorHandlerMixin):
         self._messages = value
 
     @pep249
+    @api_telemetry
     @_requires_open
     def commit(self) -> None:
         """Commit any pending transaction to the database."""
@@ -309,6 +314,7 @@ class Connection(ErrorHandlerMixin):
             cur.close()
 
     @pep249
+    @api_telemetry
     @_requires_open
     def rollback(self) -> None:
         """Roll back to the start of any pending transaction."""
@@ -319,6 +325,7 @@ class Connection(ErrorHandlerMixin):
             cur.close()
 
     @pep249
+    @api_telemetry
     @_requires_open
     def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
         """
@@ -362,6 +369,7 @@ class Connection(ErrorHandlerMixin):
         value = self._get_session_parameter("AUTOCOMMIT")
         return value is not None and value.lower() == "true"
 
+    @api_telemetry
     @_requires_open
     def set_autocommit(self, autocommit: bool) -> None:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
@@ -376,6 +384,7 @@ class Connection(ErrorHandlerMixin):
         finally:
             cur.close()
 
+    @api_telemetry
     def get_autocommit(self) -> bool:
         """
         Get the current autocommit mode.
@@ -444,6 +453,7 @@ class Connection(ErrorHandlerMixin):
         """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
         self.paramstyle = value
 
+    @api_telemetry
     def execute_string(
         self,
         sql_text: str,
@@ -461,6 +471,7 @@ class Connection(ErrorHandlerMixin):
             pass
         return []
 
+    @api_telemetry
     def execute_stream(
         self,
         stream: StringIO,
@@ -748,11 +759,13 @@ class Connection(ErrorHandlerMixin):
             row: dict[str, Any] = cur.fetchone()  # type: ignore[assignment]
         return str(row["VERSION"]).split(" ")[0]
 
+    @api_telemetry
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
         status, _ = self._get_query_status_with_response(sf_qid)
         return status
 
+    @api_telemetry
     def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
         status, response = self._get_query_status_with_response(sf_qid)
