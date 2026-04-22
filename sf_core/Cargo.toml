@@ -14,6 +14,10 @@ auth_mfa_e2e = []
 perf_timing = []
 test-utils = []
 cli = ["clap"]
+# Statically link OpenSSL into the consuming binary by building it from source
+# via openssl-src. Used by ODBC to ship a self-contained driver; left off for
+# JDBC so it keeps using the JVM host's OpenSSL.
+vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
