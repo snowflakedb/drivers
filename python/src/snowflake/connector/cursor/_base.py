@@ -569,6 +569,15 @@ class SnowflakeCursorBase(abc.ABC):
 
         return self._query_result.description
 
+    def _describe_internal(
+        self,
+        operation: str,
+        params: Sequence[Any] | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[ResultMetadata] | None:
+        """Backward-compat alias used by Snowpark's schema_utils."""
+        return self.describe(operation, params)
+
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # ------------------------------------------------------------------
