@@ -11,7 +11,6 @@ These deferred tests will be added as the underlying features are implemented.
 """
 
 import logging
-import os
 import subprocess
 import sys
 import textwrap
@@ -23,17 +22,6 @@ import pytest
 
 from tests.private_key_helper import get_test_private_key_path
 from tests.wiremock_client import WiremockClient
-
-
-# TODO(FFI-shutdown): remove diagnostics once SIGSEGV/SIGABRT root cause determined
-_SUBPROCESS_DIAG_PREAMBLE = """\
-import faulthandler; faulthandler.enable()
-import sys, os, traceback
-print(f"DIAG:PID={os.getpid()},PYTHON={sys.version_info[:2]}", flush=True)
-"""
-
-# TODO(FFI-shutdown): remove once sf_core_shutdown() is implemented
-_SUBPROCESS_ENV = {**os.environ, "RUST_BACKTRACE": "1"}
 
 
 def assert_logout_request_format(logout_request: dict) -> None:
@@ -640,25 +628,6 @@ class TestAutoCleanup:
 
     # test_should_have_auto_cleanup_enabled_by_default moved to integ (uses core_mock)
 
-    @staticmethod
-    def _assert_subprocess_ok(result: subprocess.CompletedProcess, msg: str = "") -> None:
-        """TODO(FFI-shutdown): remove once SIGSEGV/SIGABRT root cause determined."""
-        if result.returncode == 0:
-            return
-        import signal as _sig
-
-        signal_name = ""
-        if result.returncode < 0:
-            try:
-                signal_name = f" ({_sig.Signals(-result.returncode).name})"
-            except (ValueError, AttributeError):
-                signal_name = f" (signal {-result.returncode})"
-        raise AssertionError(
-            f"Subprocess failed (rc={result.returncode}{signal_name}){': ' + msg if msg else ''}:\n"
-            f"--- stdout ---\n{result.stdout}\n"
-            f"--- stderr ---\n{result.stderr}"
-        )
-
     def test_should_unregister_atexit_handler_when_close_called_explicitly(self, int_test_connection_factory):
         """Verify close() unregisters atexit handler so process exit doesn't trigger second close."""
         with WiremockClient().start() as wiremock:
@@ -669,7 +638,7 @@ class TestAutoCleanup:
             private_key_path = get_test_private_key_path()
 
             # Given Snowflake Python client is created with auto_cleanup enabled
-            subprocess_code = _SUBPROCESS_DIAG_PREAMBLE + textwrap.dedent(f"""\
+            subprocess_code = textwrap.dedent(f"""\
                 import atexit
                 from snowflake.connector.connection import Connection
                 conn = Connection(
@@ -702,9 +671,8 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_SUBPROCESS_ENV,
             )
-            self._assert_subprocess_ok(result, "atexit registration")
+            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
             assert "ATEXIT_REGISTERED" in result.stdout, "Subprocess must confirm atexit registration"
 
             # When close() is called explicitly
@@ -727,7 +695,7 @@ class TestAutoCleanup:
         private_key_path = get_test_private_key_path()
 
         def _build_subprocess_code(wiremock_url: str) -> str:
-            return _SUBPROCESS_DIAG_PREAMBLE + textwrap.dedent(f"""\
+            return textwrap.dedent(f"""\
                 from snowflake.connector.connection import Connection
                 conn = Connection(
                     user="test_user",
@@ -763,9 +731,8 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_SUBPROCESS_ENV,
             )
-            self._assert_subprocess_ok(result, "atexit retry=False phase A")
+            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
 
             # Then atexit handler calls close(retry=False)
             logout_requests = wiremock.get_logout_requests()
@@ -792,9 +759,10 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_SUBPROCESS_ENV,
             )
-            self._assert_subprocess_ok(result_b, "phase B: must exit cleanly despite 500")
+            assert result_b.returncode == 0, (
+                f"Process must exit cleanly despite 500 on logout.\nstderr: {result_b.stderr}"
+            )
             assert len(wiremock2.get_logout_requests()) >= 1, (
                 "Phase B must reach the logout endpoint to prove exception suppression"
             )
@@ -813,7 +781,7 @@ class TestAutoCleanup:
             private_key_path = get_test_private_key_path()
 
             # Given A separate Python subprocess is spawned
-            subprocess_code = _SUBPROCESS_DIAG_PREAMBLE + textwrap.dedent(f"""\
+            subprocess_code = textwrap.dedent(f"""\
                 import sys
                 from snowflake.connector.connection import Connection
                 connections = []
@@ -846,10 +814,7 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_SUBPROCESS_ENV,
             )
-            self._assert_subprocess_ok(result, "10 leaked connections")
-
             # Then Auto-cleanup is triggered for all 10 leaked connections
             logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) == 10, (
@@ -886,7 +851,7 @@ class TestAutoCleanup:
             private_key_path = get_test_private_key_path()
 
             # Given Snowflake Python client is created with auto_cleanup set to false
-            subprocess_code = _SUBPROCESS_DIAG_PREAMBLE + textwrap.dedent(f"""\
+            subprocess_code = textwrap.dedent(f"""\
                 import warnings
                 warnings.filterwarnings("ignore", category=FutureWarning)
                 from snowflake.connector.connection import Connection
@@ -914,9 +879,8 @@ class TestAutoCleanup:
                 capture_output=True,
                 text=True,
                 timeout=120,
-                env=_SUBPROCESS_ENV,
             )
-            self._assert_subprocess_ok(result, "auto_cleanup=False")
+            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
 
             # Then No atexit handler was registered
             logout_requests = wiremock.get_logout_requests()
