@@ -43,7 +43,7 @@ from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
-from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.decorators import backward_compatibility, internal_api, pep249, snowpark_compat
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.text_utils import split_statements
@@ -194,8 +194,10 @@ class Connection:
             for warning in response.warnings:
                 py_warnings.warn(warning.message, stacklevel=2)
 
-        # Set session parameters if provided (before connection_init).
-        # Protobuf requires string values; callers (e.g. Snowpark) may pass bools/ints.
+        # Set session parameters before connection_init.
+        # Snowpark passes session_parameters={"PYTHON_SNOWPARK_GENERATE_MULTILINE_QUERIES": True}
+        # with Python bool values.  ConnectionSetSessionParametersRequest.parameters is a
+        # protobuf map<string, string>, so bools/ints would raise TypeError — coerce to str first.
         if session_params:
             str_params = {k: str(v) for k, v in session_params.items()}
             self.db_api.connection_set_session_parameters(
@@ -380,9 +382,9 @@ class Connection:
         return self._closed
 
     @property
-    @backward_compatibility
+    @snowpark_compat
     def expired(self) -> bool:
-        """Whether the connection token has expired (backward compat — always False)."""
+        """Stub: Snowpark checks this on session init; always False in the UD."""
         return False
 
     def _get_session_parameter(self, name: str) -> str | None:

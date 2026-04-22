@@ -27,3 +27,8 @@ def backward_compatibility(func: F) -> F:
 def pep249(func: F) -> F:
     """Mark a method or property as defined by PEP 249 (required or optional)."""
     return func
+
+
+def snowpark_compat(func: F) -> F:
+    """Mark a stub added solely to satisfy Snowpark's private connector API surface."""
+    return func

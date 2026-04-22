@@ -27,7 +27,7 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
-from .._internal.decorators import backward_compatibility, pep249
+from .._internal.decorators import pep249, snowpark_compat
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -424,6 +424,21 @@ class SnowflakeCursorBase(abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        # Discard Snowpark-internal kwargs that the standard connector understands but the UD
+        # doesn't support yet.  Silently dropping them prevents unexpected-keyword-argument
+        # errors while allowing the rest of the query to proceed normally.
+        #
+        # _statement_params: {"QUERY_TAG": "...", "_PLAN_UUID": "..."} — the standard connector
+        #     uses this to set session params around the query; not yet supported in the UD.
+        # file_stream: a BytesIO passed alongside PUT statements so the connector can stream
+        #     the upload without a real local file; PUT is not yet supported in the UD.
+        # _skip_upload_on_content_match, params, num_statements: other Snowpark-internal hints.
+        kwargs.pop("_statement_params", None)
+        kwargs.pop("file_stream", None)
+        kwargs.pop("_skip_upload_on_content_match", None)
+        kwargs.pop("params", None)
+        kwargs.pop("num_statements", None)
+
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
@@ -569,14 +584,14 @@ class SnowflakeCursorBase(abc.ABC):
 
         return self._query_result.description
 
-    @backward_compatibility
+    @snowpark_compat
     def _describe_internal(
         self,
         operation: str,
         params: Sequence[Any] | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[ResultMetadata] | None:
-        """Backward-compat alias used by Snowpark's schema_utils."""
+        """Stub for Snowpark's schema_utils._describe_internal."""
         return self.describe(operation, params)
 
     # ------------------------------------------------------------------
@@ -1059,25 +1074,25 @@ class SnowflakeCursorBase(abc.ABC):
         return response.success
 
     # ------------------------------------------------------------------
-    # File transfer stubs (backward compat for Snowpark)
+    # File transfer stubs (Snowpark compatibility only)
     # ------------------------------------------------------------------
 
-    @backward_compatibility
+    @snowpark_compat
     def upload_stream(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("upload_stream is not yet supported by the Universal Driver")
 
-    @backward_compatibility
+    @snowpark_compat
     def _upload(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_upload is not yet supported by the Universal Driver")
 
-    @backward_compatibility
+    @snowpark_compat
     def _download(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_download is not yet supported by the Universal Driver")
 
-    @backward_compatibility
+    @snowpark_compat
     def _upload_stream(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_upload_stream is not yet supported by the Universal Driver")
 
-    @backward_compatibility
+    @snowpark_compat
     def _download_stream(self, *args: Any, **kwargs: Any) -> None:
         raise NotSupportedError("_download_stream is not yet supported by the Universal Driver")
