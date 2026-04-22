@@ -255,8 +255,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR with NULL indicator
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
   SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
+  // When SQL_C_CHAR "Infinity" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -264,16 +266,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR Infinity string fo
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
   ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR negative Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
   SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
+  // When SQL_C_CHAR "-Infinity" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -281,16 +286,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR negative Infinity 
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
   ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR NaN string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
   SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
+  // When SQL_C_CHAR "NaN" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -298,16 +306,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR NaN string for SQL
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
   ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
   SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
+  // When SQL_C_WCHAR "Infinity" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -315,16 +326,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR Infinity string f
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
   ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR negative Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
   SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
+  // When SQL_C_WCHAR "-Infinity" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -332,16 +346,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR negative Infinity
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
   ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR NaN string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
   SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
+  // When SQL_C_WCHAR "NaN" is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -349,7 +366,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR NaN string for SQ
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
   ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
