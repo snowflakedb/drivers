@@ -179,6 +179,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             python_version: Some("3.11.6".to_string()),
             python_runtime: Some("CPython".to_string()),
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+            os_details: login_parameters.client_info.os_details.clone(),
         },
         ..Default::default()
     }
