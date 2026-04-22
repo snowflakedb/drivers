@@ -4,7 +4,7 @@ use std::sync::RwLock;
 use sf_core::protobuf::apis::database_driver_v1::{DatabaseDriverClient, database_driver_client};
 use snafu::{Location, ResultExt, Snafu};
 
-use crate::api::handle_registry::EnvironmentHandleRegistry;
+use crate::api::handle_registry::{ConnectionHandleRegistry, EnvironmentHandleRegistry};
 
 /// Holds the shared tokio runtime and driver client used by all ODBC
 /// environments in this process.
@@ -21,6 +21,7 @@ pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
     client: DatabaseDriverClient,
     pub env_registry: EnvironmentHandleRegistry,
+    pub dbc_registry: ConnectionHandleRegistry,
 }
 
 impl OdbcGlobals {
@@ -93,6 +94,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
             runtime,
             client,
             env_registry: EnvironmentHandleRegistry::new(),
+            dbc_registry: ConnectionHandleRegistry::new(),
         });
     }
     guard.env_count += 1;

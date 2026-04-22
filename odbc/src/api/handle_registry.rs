@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex, RwLock};
 
 use crate::api::error::InvalidHandleSnafu;
-use crate::api::{Env, OdbcResult};
+use crate::api::{Dbc, Env, OdbcResult};
 use odbc_sys as sql;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -128,6 +128,7 @@ impl<T: Send + Sync + Clone> HandleRegistry<T> {
 }
 
 pub type EnvironmentHandleRegistry = HandleRegistry<Arc<Env>>;
+pub type ConnectionHandleRegistry = HandleRegistry<Weak<Dbc>>;
 
 #[cfg(test)]
 mod tests {

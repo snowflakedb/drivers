@@ -17,6 +17,7 @@ use crate::{
     conversion::warning::{Warning, Warnings},
 };
 use odbc_sys as sql;
+use std::sync::Arc;
 
 /// ODBC Diagnostic Identifiers according to the ODBC standard
 ///
@@ -259,8 +260,15 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
         guard.get_diag_info_mut().clear();
         return;
     }
+    if handle_type == sql::HandleType::Dbc {
+        let Ok(dbc) = conn_from_handle(handle) else {
+            return;
+        };
+        let dbc_ref = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
+        dbc_ref.get_diag_info_mut().clear();
+        return;
+    }
     let t: &mut dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
         sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return,
@@ -273,7 +281,6 @@ fn from_handle_type_non_env<'a>(
     handle: sql::Handle,
 ) -> Option<&'a mut dyn WithDiagnosticInfo> {
     match handle_type {
-        sql::HandleType::Dbc => Some(conn_from_handle(handle)),
         sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
         sql::HandleType::Desc => Some(desc_diag_from_handle(handle)),
         _ => {
@@ -326,6 +333,17 @@ pub fn set_diag_info_from_warnings(
         }
         return;
     }
+    if handle_type == sql::HandleType::Dbc {
+        let Ok(dbc) = conn_from_handle(handle) else {
+            return;
+        };
+        let dbc_ref = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
+        let diagnostic_info = dbc_ref.get_diag_info_mut();
+        for warning in warnings {
+            diagnostic_info.add_record(from_warning(warning));
+        }
+        return;
+    }
     if let Some(t) = from_handle_type_non_env(handle_type, handle) {
         let diagnostic_info = t.get_diag_info_mut();
         for warning in warnings {
@@ -357,6 +375,14 @@ pub fn set_diag_info_from_result(
         add_from_result(guard.get_diag_info_mut());
         return;
     }
+    if handle_type == sql::HandleType::Dbc {
+        let Ok(dbc) = conn_from_handle(handle) else {
+            return;
+        };
+        let dbc_ref = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
+        add_from_result(dbc_ref.get_diag_info_mut());
+        return;
+    }
     if let Some(t) = from_handle_type_non_env(handle_type, handle) {
         add_from_result(t.get_diag_info_mut());
     }
@@ -371,8 +397,11 @@ pub fn get_diag_info(
         let guard = env.environment.lock();
         return Ok(guard.get_diag_info().clone());
     }
+    if handle_type == sql::HandleType::Dbc {
+        let dbc = conn_from_handle(handle)?;
+        return Ok(dbc.get_diag_info().clone());
+    }
     let t: &dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
         sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return InvalidHandleSnafu.fail(),

@@ -12,7 +12,7 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
+    ConnectionState, Dbc, GetDataExtensions, OdbcResult, conn_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
 };
 use crate::conversion::warning::{Warning, Warnings};
@@ -20,6 +20,7 @@ use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing;
 
 const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
@@ -234,7 +235,8 @@ fn connect_with_params(
         options.insert("port".to_owned(), port_int.into());
     }
 
-    let dbc = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
+    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
     let connection = &mut dbc.connection;
     apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
 
@@ -562,7 +564,8 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
-    let dbc = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
+    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
     let connection = &mut dbc.connection;
     if let ConnectionState::Connected {
         db_handle,
@@ -623,7 +626,8 @@ pub fn native_sql<E: OdbcEncoding>(
         .fail();
     }
 
-    let dbc = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
+    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
     let conn = &mut dbc.connection;
     if matches!(conn.state, ConnectionState::Disconnected) {
         return crate::api::error::DisconnectedSnafu.fail();
@@ -668,7 +672,8 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     string_length: sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let dbc = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
+    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
     let connection = &mut dbc.connection;
     tracing::debug!("set_connect_attr: attribute={attribute}");
 
@@ -876,7 +881,8 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     string_length_ptr: *mut sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let dbc = conn_from_handle(connection_handle);
+    let dbc = conn_from_handle(connection_handle)?;
+    let dbc = unsafe { &mut *(Arc::as_ptr(&dbc) as *mut Dbc) };
     let connection = &mut dbc.connection;
     tracing::debug!("get_connect_attr: attribute={attribute}");
 
@@ -1147,7 +1153,7 @@ pub fn get_info<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
-    let _conn = conn_from_handle(connection_handle);
+    let _conn = conn_from_handle(connection_handle)?;
 
     let info_type = InfoType::try_from(info_type)?;
     tracing::debug!("get_info: info_type={info_type:?}");

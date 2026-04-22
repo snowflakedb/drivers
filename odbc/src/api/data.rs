@@ -459,9 +459,7 @@ fn execute_bindings_for_row(
                 array_ref,
                 field,
                 batch_idx,
-                // SAFETY: conn pointer is valid for the statement's lifetime;
-                // no mutable reference to the Connection exists in this scope.
-                &unsafe { stmt.conn() }.connection.numeric_settings,
+                &stmt.conn()?.connection.numeric_settings,
                 &mut None,
             )
             .context(ConversionSnafu)?;
@@ -583,9 +581,7 @@ pub fn get_data(
                 array_ref,
                 field,
                 *batch_idx,
-                // SAFETY: conn pointer is valid for the statement's lifetime;
-                // no mutable reference to the Connection exists in this scope.
-                &unsafe { stmt.conn() }.connection.numeric_settings,
+                &stmt.conn()?.connection.numeric_settings,
                 &mut offset,
             )
             .context(ConversionSnafu)?;

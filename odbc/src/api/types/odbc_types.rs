@@ -883,7 +883,7 @@ pub struct Environment {
     pub connection_pooling: sql::AttrConnectionPooling,
     pub connection_pool_match: sql::AttrCpMatch,
     pub diagnostic_info: DiagnosticInfo,
-    pub connections: Vec<*mut Dbc>,
+    pub connections: Vec<Arc<Dbc>>,
 }
 
 pub enum ConnectionState {
@@ -911,6 +911,10 @@ impl Dbc {
             .ok_or(ConnectionHasNoEnvironmentSnafu.build())
     }
 }
+
+// Temporary — same pattern as Env; will be cleaned up later in the stack.
+unsafe impl Send for Dbc {}
+unsafe impl Sync for Dbc {}
 
 pub struct Connection {
     pub state: ConnectionState,
@@ -1233,9 +1237,10 @@ impl GetDataState {
 }
 
 pub struct Statement {
-    /// Raw pointer to the owning connection. Valid for the entire lifetime of this Statement
-    /// (the connection always outlives its statements). Access via `conn()` / `conn_ptr()`.
-    conn: *mut Dbc,
+    /// Weak reference to the owning connection. Upgraded to `Arc<Dbc>` on access.
+    /// A failed upgrade means the connection was freed before the statement —
+    /// an invariant violation surfaced as an error rather than UB.
+    conn: Weak<Dbc>,
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1269,18 +1274,16 @@ pub struct Statement {
 }
 
 /// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
-// The conn raw pointer is valid for the Statement's lifetime (Connection outlives Statement).
 // `Send` allows moving the allocation across threads (e.g. when the runtime hands the raw
 // Arc pointer back on an arbitrary thread). `Sync` is NOT implemented: sharing `&Statement`
-// across threads is unsound because `conn` is a `*mut Connection` with no synchronisation.
-// Connection itself uses `unsafe impl Send` to suppress auto-trait checks on the
-// `Vec<(Weak<Statement>, *const Statement)>` field, so `Statement: Sync` is not required
-// for `Connection: Send`.
+// across threads is unsound because `conn` is a `Weak<Dbc>` with no synchronisation on
+// the Connection fields. Connection itself uses `unsafe impl Send` to suppress auto-trait
+// checks on `Vec<(Weak<Statement>, *const Statement)>`, so `Statement: Sync` is not required.
 unsafe impl Send for Statement {}
 
 impl Statement {
     /// Construct a new Statement for the given connection.
-    pub fn new(conn: *mut Dbc, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
+    pub fn new(conn: Weak<Dbc>, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
         Self {
             conn,
             stmt_handle,
@@ -1301,33 +1304,27 @@ impl Statement {
         }
     }
 
-    /// Borrow the owning connection.
+    /// Upgrade the weak connection reference to an `Arc<Dbc>`.
     ///
-    /// # Safety
-    /// The caller must ensure the Connection outlives this borrow and no other
-    /// mutable reference to the Connection exists simultaneously.
-    pub unsafe fn conn(&self) -> &Dbc {
-        debug_assert!(
-            !self.conn.is_null(),
-            "Statement::conn: connection pointer is null"
-        );
-        unsafe { &*self.conn }
+    /// Returns an error if the parent connection has already been freed.
+    pub fn conn(&self) -> Result<Arc<Dbc>, OdbcError> {
+        use crate::api::error::InvalidHandleSnafu;
+        self.conn
+            .upgrade()
+            .ok_or_else(|| InvalidHandleSnafu.build())
     }
 
-    /// Return the raw connection pointer without creating a Rust borrow on `self`.
+    /// Return the raw connection pointer without upgrading the `Weak`.
     ///
-    /// Use this when you need both a `&mut Connection` and access to other
-    /// `Statement` fields in the same scope — the raw pointer carries no borrow
-    /// on `self`, so the borrow checker treats the resulting `&mut Connection`
-    /// as independent.
+    /// Use this when you need a `*mut Dbc` independently of the `Weak` lifetime,
+    /// for example to remove a child_statements entry via `retain` while also
+    /// holding the `Arc<Statement>`.
     ///
     /// # Safety
-    /// The caller must ensure that no live `conn()` borrow (or any other `&Connection`
-    /// derived from this statement) exists while the returned pointer is dereferenced
-    /// mutably. Having both an active `&Connection` and a `&mut Connection` pointing
-    /// to the same allocation is undefined behaviour.
+    /// The caller must ensure the connection is still alive (i.e., `conn()` would
+    /// succeed) and that no other mutable borrow of the `Dbc` exists concurrently.
     pub(crate) unsafe fn conn_ptr(&self) -> *mut Dbc {
-        self.conn
+        self.conn.as_ptr() as *mut Dbc
     }
 }
 
@@ -1341,9 +1338,16 @@ pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<Arc<Env>> {
     Ok(env)
 }
 
-pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Dbc {
-    let conn_ptr = handle as *mut Dbc;
-    unsafe { conn_ptr.as_mut().unwrap() }
+pub fn conn_from_handle(handle: sql::Handle) -> OdbcResult<Arc<Dbc>> {
+    use crate::api::error::InvalidHandleSnafu;
+    use crate::api::runtime::global;
+    use snafu::ResultExt;
+    let handle_id = HandleId::from(handle);
+    let weak = global()
+        .context(OdbcRuntimeSnafu)?
+        .dbc_registry
+        .get(handle_id)?;
+    weak.upgrade().ok_or_else(|| InvalidHandleSnafu.build())
 }
 
 pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement {

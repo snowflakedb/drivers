@@ -146,11 +146,8 @@ pub fn col_attribute<E: OdbcEncoding>(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            // SAFETY: conn pointer is valid for the statement's lifetime;
-            // no mutable reference to the Connection exists in this scope.
-            let sql_type =
-                sql_type_from_field(field, &unsafe { stmt.conn() }.connection.numeric_settings)
-                    .context(ConversionSnafu)?;
+            let sql_type = sql_type_from_field(field, &stmt.conn()?.connection.numeric_settings)
+                .context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
                     std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
@@ -250,9 +247,7 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     let field = schema.field(col_idx);
-    // SAFETY: conn pointer is valid for the statement's lifetime;
-    // no mutable reference to the Connection exists in this scope.
-    let dbc = unsafe { stmt.conn() };
+    let dbc = stmt.conn()?;
     let numeric_settings = &dbc.connection.numeric_settings;
 
     let name = field.name();
