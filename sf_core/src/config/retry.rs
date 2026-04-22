@@ -14,6 +14,9 @@ pub struct RetryPolicy {
     pub backoff: BackoffConfig,
     /// Maximum total duration spent on the operation before we stop retrying.
     pub max_elapsed: Duration,
+    /// Additional HTTP status codes to treat as retryable beyond the built-in set
+    /// (408, 429, 307, 308, and 5xx).
+    pub extra_retryable_statuses: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +60,7 @@ impl Default for RetryPolicy {
                 jitter: Jitter::Decorrelated,
             },
             max_elapsed: Duration::from_secs(120),
+            extra_retryable_statuses: Vec::new(),
         }
     }
 }

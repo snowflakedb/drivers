@@ -1,0 +1,100 @@
+@python
+Feature: Pandas fetch methods (Python-specific)
+
+  # =========================================================================== #
+  #                         fetch_pandas_all                                    #
+  # =========================================================================== #
+
+  @python_e2e
+  Scenario Outline: should fetch <type_name> with null as pandas DataFrame
+    Given Snowflake client is logged in
+    And Query "ALTER SESSION SET TIMEZONE = 'UTC'" is executed
+    When Query "SELECT <value_expr> AS val, <null_expr> AS null_val" is executed
+    And fetch_pandas_all is called
+    Then The result should be a pandas.DataFrame with 1 row
+    And Column VAL should have the correct value for <type_name>
+    And Column NULL_VAL should be null
+
+    Examples:
+      | type_name     | value_expr                                   | null_expr           |
+      | number        | 1::NUMBER                                    | NULL::NUMBER        |
+      | scaled_number | 3.14::NUMBER(10,2)                           | NULL::NUMBER(10,2)  |
+      | varchar       | 'hello'::VARCHAR                             | NULL::VARCHAR       |
+      | float         | 1.5::FLOAT                                   | NULL::FLOAT         |
+      | boolean       | TRUE::BOOLEAN                                | NULL::BOOLEAN       |
+      | date          | '2026-03-23'::DATE                           | NULL::DATE          |
+      | time          | '12:30:00'::TIME                             | NULL::TIME          |
+      | timestamp_ntz | '2026-03-23 10:30:00'::TIMESTAMP_NTZ         | NULL::TIMESTAMP_NTZ |
+      | timestamp_ltz | '2026-03-23 10:30:00'::TIMESTAMP_LTZ         | NULL::TIMESTAMP_LTZ |
+      | timestamp_tz  | '2026-03-23 10:30:00 +0530'::TIMESTAMP_TZ    | NULL::TIMESTAMP_TZ  |
+      | binary        | TO_BINARY('ABCD','HEX')::BINARY              | NULL::BINARY        |
+      | variant       | TO_VARIANT(42)                               | NULL::VARIANT       |
+      | array         | ARRAY_CONSTRUCT(1,2,3)::ARRAY                | NULL::ARRAY         |
+      | object        | OBJECT_CONSTRUCT('key','value')::OBJECT      | NULL::OBJECT        |
+
+  @python_e2e
+  Scenario Outline: should return empty <type_name> column with correct pandas dtype
+    Given Snowflake client is logged in
+    When Query "SELECT <value_expr> AS col WHERE 1=0" is executed
+    And fetch_pandas_all is called
+    Then The result should be a pandas.DataFrame with 0 rows
+    And Column COL should have <pandas_dtype> pandas dtype
+
+    Examples:
+      | type_name     | value_expr                                   | pandas_dtype |
+      | number        | 1::NUMBER                                    | integer      |
+      | scaled_number | 3.14::NUMBER(10,2)                           | float        |
+      | varchar       | 'hello'::VARCHAR                             | object       |
+      | float         | 1.5::FLOAT                                   | float        |
+      | boolean       | TRUE::BOOLEAN                                | bool         |
+      | date          | '2026-03-23'::DATE                           | object       |
+      | time          | '12:30:00'::TIME                             | object       |
+      | timestamp_ntz | '2026-03-23 10:30:00'::TIMESTAMP_NTZ         | datetime64   |
+      | timestamp_ltz | '2026-03-23 10:30:00'::TIMESTAMP_LTZ         | datetime64   |
+      | timestamp_tz  | '2026-03-23 10:30:00 +0530'::TIMESTAMP_TZ    | datetime64   |
+      | binary        | TO_BINARY('ABCD','HEX')::BINARY              | object       |
+      | variant       | TO_VARIANT(42)                               | object       |
+      | array         | ARRAY_CONSTRUCT(1,2,3)::ARRAY                | object       |
+      | object        | OBJECT_CONSTRUCT('key','value')::OBJECT      | object       |
+
+  @python_e2e
+  Scenario: should convert scaled fixed number to decimal via fetch_pandas_all
+    Given Snowflake client is logged in
+    And arrow_number_to_decimal is set to True on the connection
+    When Query "SELECT 3.14::NUMBER(10,2) AS pi" is executed
+    And fetch_pandas_all is called
+    Then Column PI should be a Python Decimal
+
+  @python_e2e
+  Scenario: should force microsecond precision for timestamps via fetch_pandas_all
+    Given Snowflake client is logged in
+    When Query "SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ(9) AS ts" is executed
+    And fetch_pandas_all is called with force_microsecond_precision=True
+    Then Column TS should be a pandas Timestamp
+    And Column TS value should have microsecond=123456
+
+  # =========================================================================== #
+  #                       fetch_pandas_batches                                  #
+  # =========================================================================== #
+
+  @python_e2e
+  Scenario: should yield multiple pandas DataFrames for large result set
+    Given Snowflake client is logged in
+    When Query "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 100000)) v" is executed
+    And fetch_pandas_batches is called
+    Then More than one DataFrame should be yielded
+    And Each element should be a pandas.DataFrame
+    And The total row count across all DataFrames should be 100000
+
+  # =========================================================================== #
+  #                   result batch pickle + to_pandas                           #
+  # =========================================================================== #
+
+  @python_e2e
+  Scenario: should survive pickle round-trip and convert to pandas
+    Given Snowflake client is logged in
+    When Query "SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => 100000)) v" is executed
+    And get_result_batches is called
+    And The batches are serialized with pickle
+    And The batches are deserialized with pickle
+    Then Fetching all deserialized batches via to_pandas should return 100000 total rows

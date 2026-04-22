@@ -5,4 +5,6 @@ pub mod authentication;
 pub mod config;
 pub mod http;
 pub mod put_get;
+pub mod query;
 pub mod session;
+pub mod telemetry;

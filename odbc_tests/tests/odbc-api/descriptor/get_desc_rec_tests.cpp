@@ -273,7 +273,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY007 - IRD after cursor
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][getdescrec][descriptor][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -417,4 +416,30 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: Name NULL still returns 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(name_len == 6);
   REQUIRE(type == SQL_DECIMAL);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescRec: HY010 - IRD access during SQL_NEED_DATA",
+                 "[odbc-api][getdescrec][descriptor][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
+
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLCHAR name[64] = {};
+  SQLSMALLINT name_len = 0, type_val = 0, sub_type = 0, precision = 0, scale = 0, nullable = 0;
+  SQLLEN length = 0;
+  ret = SQLGetDescRec(ird, 1, name, sizeof(name), &name_len, &type_val, &sub_type, &length, &precision, &scale,
+                      &nullable);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", ird, SQL_HANDLE_DESC);
+
+  SQLCancel(stmt_handle());
 }

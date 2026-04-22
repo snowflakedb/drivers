@@ -95,10 +95,14 @@ pub enum SqlState {
     FeatureNotSupported,
 
     // Data exception class (22)
+    /// 22001 - String data, right truncation
+    StringDataRightTruncation,
     /// 22002 - Indicator variable required but not supplied
     IndicatorVariableRequiredButNotSupplied,
     /// 22003 - Numeric value out of range
     NumericValueOutOfRange,
+    /// 22015 - Interval field overflow
+    IntervalFieldOverflow,
     /// 22018 - Invalid character value for cast
     InvalidCharacterValueForCast,
 
@@ -162,6 +166,10 @@ pub enum SqlState {
     // Invalid collation name class (2H)
     /// 2H000 - Invalid collation name
     InvalidCollationName,
+
+    // Invalid catalog name class (3D)
+    /// 3D000 - Invalid catalog name
+    InvalidCatalogName,
 
     // Syntax error or access rule violation class (42)
     /// 42000 - Syntax error or access rule violation
@@ -343,8 +351,10 @@ impl SqlState {
             SqlState::CommunicationLinkFailure => "08S01",
             SqlState::TriggeredActionException => "09000",
             SqlState::FeatureNotSupported => "0A000",
+            SqlState::StringDataRightTruncation => "22001",
             SqlState::IndicatorVariableRequiredButNotSupplied => "22002",
             SqlState::NumericValueOutOfRange => "22003",
+            SqlState::IntervalFieldOverflow => "22015",
             SqlState::InvalidCharacterValueForCast => "22018",
             SqlState::InvalidCursorState => "24000",
             SqlState::InvalidTransactionState => "25000",
@@ -365,6 +375,7 @@ impl SqlState {
             SqlState::ReadingSqlDataNotPermitted => "2F004",
             SqlState::FunctionExecutedNoReturnStatement => "2F005",
             SqlState::InvalidCollationName => "2H000",
+            SqlState::InvalidCatalogName => "3D000",
             SqlState::SyntaxErrorOrAccessRuleViolation => "42000",
             SqlState::BaseTableOrViewAlreadyExists => "42S01",
             SqlState::BaseTableOrViewNotFound => "42S02",
@@ -516,8 +527,10 @@ impl FromStr for SqlState {
             "08S01" => SqlState::CommunicationLinkFailure,
             "09000" => SqlState::TriggeredActionException,
             "0A000" => SqlState::FeatureNotSupported,
+            "22001" => SqlState::StringDataRightTruncation,
             "22002" => SqlState::IndicatorVariableRequiredButNotSupplied,
             "22003" => SqlState::NumericValueOutOfRange,
+            "22015" => SqlState::IntervalFieldOverflow,
             "22018" => SqlState::InvalidCharacterValueForCast,
             "24000" => SqlState::InvalidCursorState,
             "25000" => SqlState::InvalidTransactionState,
@@ -538,6 +551,7 @@ impl FromStr for SqlState {
             "2F004" => SqlState::ReadingSqlDataNotPermitted,
             "2F005" => SqlState::FunctionExecutedNoReturnStatement,
             "2H000" => SqlState::InvalidCollationName,
+            "3D000" => SqlState::InvalidCatalogName,
             "42000" => SqlState::SyntaxErrorOrAccessRuleViolation,
             "42S01" => SqlState::BaseTableOrViewAlreadyExists,
             "42S02" => SqlState::BaseTableOrViewNotFound,

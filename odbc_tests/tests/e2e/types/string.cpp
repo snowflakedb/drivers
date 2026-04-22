@@ -21,20 +21,43 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
+
+// ============================================================================
+// TYPE CASTING
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should cast string values to appropriate type for string and synonyms",
+                 "[datatype][string]") {
+  // Given Snowflake client is logged in
+
+  // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
+  std::vector<std::u16string> string_types = {u"VARCHAR",   u"CHAR",         u"CHARACTER",    u"NCHAR",
+                                              u"STRING",    u"TEXT",         u"VARCHAR2",     u"NVARCHAR",
+                                              u"NVARCHAR2", u"CHAR VARYING", u"NCHAR VARYING"};
+
+  for (const auto& type : string_types) {
+    std::u16string sql =
+        u"SELECT 'hello'::" + type + u"(32), 'Hello World'::" + type + u"(32), '日本語テスト'::" + type + u"(32)";
+    auto stmt = conn.executew_fetch(sql);
+
+    // Then All values should be returned as appropriate type
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+    CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "Hello World");
+    CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
+  }
+}
 
 // ============================================================================
 // SIMPLE SELECTS - LITERALS (Happy path, Corner cases)
 // ============================================================================
 
-TEST_CASE("should select hardcoded string literals", "[datatype][string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string literals", "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3"
   // is executed
@@ -46,31 +69,29 @@ TEST_CASE("should select hardcoded string literals", "[datatype][string]") {
   CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "Snowflake Driver Test");
 }
 
-TEST_CASE("should select hardcoded string literals using SQLBindCol", "[datatype][string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string literals using SQLBindCol", "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3",
       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol
   char buf1[100], buf2[100], buf3[100];
   SQLLEN ind1, ind2, ind3;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buf1, sizeof(buf1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, buf2, sizeof(buf2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_CHAR, buf3, sizeof(buf3), &ind3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain:
   CHECK(std::string(buf1, ind1) == "hello");
@@ -78,11 +99,8 @@ TEST_CASE("should select hardcoded string literals using SQLBindCol", "[datatype
   CHECK(std::string(buf3, ind3) == "Snowflake Driver Test");
 }
 
-TEST_CASE("should select string literals with corner case values", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
+TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals with corner case values", "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting corner case string literals is executed
   auto stmt = conn.executew_fetch(
@@ -119,24 +137,21 @@ TEST_CASE("should select string literals with corner case values", "[datatype][s
 // SIMPLE SELECTS - FROM TABLE (Happy path, Corner cases)
 // ============================================================================
 
-TEST_CASE("should select hardcoded string values from table", "[datatype][string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string values from table", "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("DROP TABLE IF EXISTS test_string");
-  conn.execute("CREATE TABLE test_string (id INT, val VARCHAR(1000))");
+  conn.execute("CREATE TEMPORARY TABLE str_from_table (id INT, val VARCHAR(1000))");
 
   // And The table is populated with string values
-  conn.execute("INSERT INTO test_string VALUES (1, 'hello')");
-  conn.execute("INSERT INTO test_string VALUES (2, 'Hello World')");
-  conn.execute("INSERT INTO test_string VALUES (3, 'Snowflake Driver Test')");
+  conn.execute("INSERT INTO str_from_table VALUES (1, 'hello')");
+  conn.execute("INSERT INTO str_from_table VALUES (2, 'Hello World')");
+  conn.execute("INSERT INTO str_from_table VALUES (3, 'Snowflake Driver Test')");
 
   // When Query "SELECT * FROM {table}" is executed
   auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM test_string ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM str_from_table ORDER BY id", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain the inserted hardcoded string values
   std::vector<std::string> expected = {"hello", "Hello World", "Snowflake Driver Test"};
@@ -144,7 +159,7 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     std::string actual = get_data<SQL_C_CHAR>(stmt, 1);
     INFO("Row " << row << " expected: " << expected[row] << " actual: " << actual);
     CHECK(actual == expected[row]);
@@ -153,34 +168,30 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
   CHECK(row == 3);
 }
 
-TEST_CASE("should select corner case string values from table", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
+TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values from table", "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("DROP TABLE IF EXISTS test_string");
-  conn.execute("CREATE TABLE test_string (id INT, val VARCHAR(10000))");
+  conn.execute("CREATE TEMPORARY TABLE str_corner_cases (id INT, val VARCHAR(10000))");
 
   // And The table is populated with corner case string values
-  conn.execute("INSERT INTO test_string VALUES (1, '')");                // empty string
-  conn.execute("INSERT INTO test_string VALUES (2, 'X')");               // single char
-  conn.execute("INSERT INTO test_string VALUES (3, '   ')");             // whitespace
-  conn.execute("INSERT INTO test_string VALUES (4, '\\t')");             // tab character
-  conn.execute("INSERT INTO test_string VALUES (5, '\\n')");             // newline character
-  conn.executew(u"INSERT INTO test_string VALUES (6, '⛄')");            // unicode snowman
-  conn.executew(u"INSERT INTO test_string VALUES (7, '日本語テスト')");  // Japanese
-  conn.execute("INSERT INTO test_string VALUES (8, '''')");              // escaped quote
-  conn.execute("INSERT INTO test_string VALUES (9, '\\\\')");            // escaped backslash
-  conn.execute("INSERT INTO test_string VALUES (10, NULL)");             // NULL
-  conn.executew(u"INSERT INTO test_string VALUES (11, 'y̆es')");  // combined character (y + combining breve + es)
-  conn.executew(u"INSERT INTO test_string VALUES (12, '𝄞')");    // surrogate pair (musical G clef)
+  conn.execute("INSERT INTO str_corner_cases VALUES (1, '')");                // empty string
+  conn.execute("INSERT INTO str_corner_cases VALUES (2, 'X')");               // single char
+  conn.execute("INSERT INTO str_corner_cases VALUES (3, '   ')");             // whitespace
+  conn.execute("INSERT INTO str_corner_cases VALUES (4, '\\t')");             // tab character
+  conn.execute("INSERT INTO str_corner_cases VALUES (5, '\\n')");             // newline character
+  conn.executew(u"INSERT INTO str_corner_cases VALUES (6, '⛄')");            // unicode snowman
+  conn.executew(u"INSERT INTO str_corner_cases VALUES (7, '日本語テスト')");  // Japanese
+  conn.execute("INSERT INTO str_corner_cases VALUES (8, '''')");              // escaped quote
+  conn.execute("INSERT INTO str_corner_cases VALUES (9, '\\\\')");            // escaped backslash
+  conn.execute("INSERT INTO str_corner_cases VALUES (10, NULL)");             // NULL
+  conn.executew(u"INSERT INTO str_corner_cases VALUES (11, 'y̆es')");  // combined character (y + combining breve + es)
+  conn.executew(u"INSERT INTO str_corner_cases VALUES (12, '𝄞')");    // surrogate pair (musical G clef)
 
   // When Query "SELECT * FROM {table}" is executed
   auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM test_string ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM str_corner_cases ORDER BY id", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain the inserted corner case string values
   std::vector<std::optional<std::u16string>> expected = {
@@ -202,7 +213,7 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     auto value = get_data_optional<SQL_C_WCHAR>(stmt, 1);
     INFO("Row " << row);
@@ -216,34 +227,32 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
 // SIMPLE INSERT WITH BINDING
 // ============================================================================
 
-TEST_CASE("should insert and select back hardcoded string values using parameter binding", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert and select back hardcoded string values using parameter binding",
+                 "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("DROP TABLE IF EXISTS test_string");
-  conn.execute("CREATE TABLE test_string (id INT, val VARCHAR(10000))");
+  conn.execute("CREATE TEMPORARY TABLE str_bind_insert (id INT, val VARCHAR(10000))");
 
   // When String value 'Test binding value 日本語' is inserted using parameter binding
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string (id, val) VALUES (1, ?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    SQLRETURN ret =
+        SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO str_bind_insert (id, val) VALUES (1, ?)"), SQL_NTS);
+    REQUIRE_ODBC(ret, stmt);
 
     std::string value = "Test binding value 日本語";
     SQLLEN value_len = value.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value.size(), 0,
                            (SQLCHAR*)value.c_str(), value.size(), &value_len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT * FROM {table}" is executed
-  auto stmt = conn.execute_fetch("SELECT val FROM test_string");
+  auto stmt = conn.execute_fetch("SELECT val FROM str_bind_insert");
 
   // Then the result should contain the bound string value 'Test binding value 日本語'
   CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == u"Test binding value 日本語");
@@ -253,15 +262,12 @@ TEST_CASE("should insert and select back hardcoded string values using parameter
 // SELECT BINDING TESTS
 // ============================================================================
 
-TEST_CASE("should select string literals using parameter binding", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
+TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals using parameter binding", "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   std::string value1 = "hello";
   std::string value2 = "Hello World";
@@ -273,20 +279,20 @@ TEST_CASE("should select string literals using parameter binding", "[datatype][s
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value1.size(), 0,
                          (SQLCHAR*)value1.c_str(), value1.size(), &len1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value2.size(), 0,
                          (SQLCHAR*)value2.c_str(), value2.size(), &len2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value3.size(), 0,
                          (SQLCHAR*)value3.c_str(), value3.size(), &len3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values ['hello', 'Hello
   // World', '日本語テスト']
   ret = SQLExecute(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain:
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
@@ -294,28 +300,26 @@ TEST_CASE("should select string literals using parameter binding", "[datatype][s
   CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
 }
 
-// Skipped since null handling is not yet implemented for bindings
-TEST_CASE("should select corner case string values using parameter binding", "[.][datatype][string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values using parameter binding",
+                 "[datatype][string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
   auto test_bound_value = [&](const std::string& value, const std::string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = value.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR,
                            value.size() > 0 ? value.size() : 1, 0, (SQLCHAR*)value.c_str(), value.size(), &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     INFO("Testing value: '" << value << "'");
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected);
@@ -325,18 +329,18 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
   auto test_bound_wvalue = [&](const std::u16string& value, const std::u16string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = value.size() * sizeof(char16_t);
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_WVARCHAR,
                            value.size() > 0 ? value.size() : 1, 0, (SQLWCHAR*)value.c_str(), len, &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == expected);
   };
@@ -378,18 +382,18 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN null_indicator = SQL_NULL_DATA;
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 1, 0, nullptr, 0,
                            &null_indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == std::nullopt);
   }
@@ -399,12 +403,11 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
 // MULTIPLE CHUNKS DOWNLOADING
 // ============================================================================
 
-TEST_CASE("should download string data in multiple chunks", "[datatype][string][large_result_set]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download string data in multiple chunks",
+                 "[datatype][string][large_result_set]") {
   // This test ensures proper handling of large result sets that span multiple chunks
   // ~10^6 values ensures data is downloaded in at least two chunks
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   const int num_values = 10000;
 
   // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
@@ -413,14 +416,14 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
   const char* sql =
       "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 10000 rows returned and all string values should match the generated values in order
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Verify we can read the string value
     auto value = get_data<SQL_C_CHAR>(stmt, 1);
@@ -435,13 +438,13 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
 // UTF-16 TO ASCII CONVERSION
 // ============================================================================
 
-TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
-          "[.][datatype][string][conversion]") {
-  // ODBC-specific: When reading UTF-16 data using SQL_C_CHAR target type,
-  // non-ASCII characters (> 0x7F) should be replaced with 0x1a (SUB character)
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
+                 "[datatype][string][conversion]") {
+  if (!is_ascii_locale()) {
+    SKIP("0x1a substitution only applies on non-UTF-8 locales");
+  }
+
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting strings with non-ASCII Unicode characters is executed
   auto stmt = conn.executew_fetch(
@@ -453,52 +456,39 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
       u"'Hello' AS ascii_only, "
       u"'y̆es' AS combined, "
       u"'𝄞' AS surrogate_pair");
-
   // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
-  auto japanese = get_data<SQL_C_CHAR>(stmt, 1);
-  CHECK(japanese == "\x1a\x1a\x1a");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "\x1a\x1a\x1a");
 
-  // And Mixed string should have ASCII preserved and non-ASCII replaced with 0x1a
+  // And pure ASCII string should remain unchanged
+  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "Hello");
+
+  // And mixed string should have ASCII preserved and non-ASCII replaced with 0x1a
   auto mixed = get_data<SQL_C_CHAR>(stmt, 2);
-  CHECK(mixed.substr(0, 5) == "Hello");
-  CHECK(mixed[5] == '\x1a');
-  CHECK(mixed.substr(mixed.size() - 5) == "World");
+  CHECK(mixed == "Hello\x1aWorld");
 
-  // And Emojis should all be replaced with 0x1a
-  auto emojis = get_data<SQL_C_CHAR>(stmt, 3);
-  for (char c : emojis) {
-    CHECK(c == '\x1a');
-  }
+  // And emojis should all be replaced with 0x1a
+  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "\x1a\x1a\x1a");
 
   // And Greek letters should be replaced with 0x1a
-  auto greek = get_data<SQL_C_CHAR>(stmt, 4);
-  for (char c : greek) {
-    CHECK(c == '\x1a');
-  }
+  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "\x1a\x1a\x1a\x1a");
 
-  // And Pure ASCII string should remain unchanged
-  auto ascii_only = get_data<SQL_C_CHAR>(stmt, 5);
-  CHECK(ascii_only == "Hello");
-
-  // And Combined string should have ASCII preserved and non-ASCII replaced with 0x1a
+  // And combined string should have ASCII preserved and non-ASCII replaced with 0x1a
   auto combined = get_data<SQL_C_CHAR>(stmt, 6);
-  CHECK(combined.substr(0, 1) == "y");
-  CHECK(combined[1] == '\x1a');
-  CHECK(combined[2] == 'e');
-  CHECK(combined[3] == 's');
+  CHECK(combined ==
+        "y\x1a"
+        "es");
 
-  auto surrogate_pair = get_data<SQL_C_CHAR>(stmt, 7);
-  CHECK(surrogate_pair == "\x1a");
+  // And surrogate pair should be replaced with 0x1a
+  CHECK(get_data<SQL_C_CHAR>(stmt, 7) == "\x1a");
 }
 
 // ============================================================================
 // MULTIPLE CHUNKS DOWNLOADING WITH SQLBindCol
 // ============================================================================
 
-TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[datatype][string][large_result_set]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download string data in multiple chunks using SQLBindCol",
+                 "[datatype][string][large_result_set]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Expected row count is defined
   const int expected_row_count = 10000;
@@ -509,7 +499,7 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   const char* sql =
       "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol
   SQLBIGINT id;
@@ -517,16 +507,16 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   char str_buffer[64];
   SQLLEN str_indicator;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &id, sizeof(id), &id_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, str_buffer, sizeof(str_buffer), &str_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 10000 rows returned and all string values should match the generated values in order
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Verify id is not null
     REQUIRE(id_indicator != SQL_NULL_DATA);

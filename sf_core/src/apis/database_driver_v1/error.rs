@@ -3,9 +3,11 @@ use snafu::{Location, Snafu};
 
 pub use crate::apis::database_driver_v1::query::QueryResponseProcessingError;
 pub use crate::apis::database_driver_v1::statement::StatementError;
+use crate::chunks::ChunkError;
 pub use crate::config::ConfigError;
 pub use crate::rest::snowflake::RestError;
 use crate::tls::error::TlsError;
+use crate::token_cache::TokenCacheError;
 
 #[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
@@ -90,6 +92,19 @@ pub enum ApiError {
         location: Location,
         source: RestError,
     },
+    #[snafu(display("HTTP request failed: {context}: {source}"))]
+    HttpRequest {
+        context: String,
+        #[snafu(implicit)]
+        location: Location,
+        source: reqwest::Error,
+    },
+    #[snafu(display("Token request failed: {source}"))]
+    TokenRequest {
+        #[snafu(implicit)]
+        location: Location,
+        source: RestError,
+    },
     #[snafu(display("Master token expired, full re-authentication required"))]
     MasterTokenExpired {
         #[snafu(implicit)]
@@ -98,6 +113,32 @@ pub enum ApiError {
     #[snafu(display("Invalid refresh state: {message}"))]
     InvalidRefreshState {
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "MFA token caching was requested but the token cache failed to initialize: {source}"
+    ))]
+    TokenCacheInitialization {
+        source: TokenCacheError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to fetch chunk data"))]
+    ChunkFetch {
+        source: ChunkError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse Arrow IPC data"))]
+    ArrowParsing {
+        source: arrow::error::ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to decode base64 chunk data"))]
+    Base64Decoding {
+        source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
     },

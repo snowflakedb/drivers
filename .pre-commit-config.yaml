@@ -4,8 +4,8 @@ repos:
     -   id: rust-linting
         name: Rust formatting
         description: Run cargo fmt on files included in the commit. rustfmt should be installed before-hand.
-        entry: cargo fmt --all --
-        pass_filenames: true
+        entry: cargo fmt --all
+        pass_filenames: false
         types: [file, rust]
         language: system
     -   id: rust-clippy
@@ -40,7 +40,7 @@ repos:
     -   id: python-checks
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files
-        entry: bash -c 'cd python && hatch run precommit:check'
+        entry: bash -c 'cd python && uv run hatch run precommit:check'
         pass_filenames: false
         files: ^python/.*\.py$
         language: system
@@ -63,4 +63,11 @@ repos:
         entry: bash -c 'cd jdbc && bash ./gradlew spotlessCheck'
         pass_filenames: false
         files: ^jdbc/
+        language: system
+    -   id: behavior-differences-validator
+        name: Behavioral Differences format check
+        description: Validate BehaviorDifferences.yaml schema (status, type, required fields)
+        entry: python3 odbc_tests/validate_behavior_differences.py
+        pass_filenames: false
+        files: ^odbc_tests/BehaviorDifferences\.yaml$
         language: system

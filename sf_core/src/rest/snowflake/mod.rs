@@ -2,9 +2,11 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
+pub mod telemetry;
 
 use std::collections::HashMap;
 
@@ -20,11 +22,12 @@ use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
-use reqwest::{self, header};
+use crate::token_cache::{TokenCache, TokenType};
+use reqwest::{self, Method, header};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
 
@@ -54,6 +57,14 @@ pub struct LoginResult {
     pub tokens: SessionTokens,
     /// Session parameters returned by the server
     pub session_parameters: Option<HashMap<String, String>>,
+    /// Server-echoed database name from sessionInfo
+    pub database_name: Option<String>,
+    /// Server-echoed schema name from sessionInfo
+    pub schema_name: Option<String>,
+    /// Server-echoed warehouse name from sessionInfo
+    pub warehouse_name: Option<String>,
+    /// Server-echoed role name from sessionInfo
+    pub role_name: Option<String>,
 }
 
 impl SessionTokens {
@@ -90,9 +101,9 @@ struct RefreshSessionResponse {
 #[derive(Debug, serde::Deserialize)]
 struct RefreshSessionData {
     #[serde(rename = "sessionToken")]
-    session_token: String,
+    session_token: SensitiveString,
     #[serde(rename = "masterToken")]
-    master_token: String,
+    master_token: SensitiveString,
     #[serde(rename = "sessionId")]
     session_id: i64,
     #[serde(
@@ -107,6 +118,29 @@ struct RefreshSessionData {
         default
     )]
     master_validity: Option<std::time::Duration>,
+}
+
+/// Response from the token request endpoint (ISSUE/RENEW).
+/// Unlike `RefreshSessionResponse`, fields like `masterToken` and `sessionId`
+/// may be absent depending on the request type.
+#[derive(Debug, serde::Deserialize)]
+struct TokenRequestResponse {
+    data: Option<TokenRequestData>,
+    message: Option<String>,
+    code: Option<String>,
+    success: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TokenRequestData {
+    #[serde(rename = "sessionToken")]
+    session_token: SensitiveString,
+    #[serde(
+        rename = "validityInSecondsST",
+        deserialize_with = "auth::deserialize_seconds_as_duration",
+        default
+    )]
+    validity: Option<std::time::Duration>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +175,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
+            platforms: login_parameters.client_info.platforms.clone(),
             python_version: Some("3.11.6".to_string()),
             python_runtime: Some("CPython".to_string()),
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
@@ -149,12 +184,90 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
+const EXT_AUTHN_ERROR_CODES: [i32; 5] = [
+    390120, // EXT_AUTHN_DENIED
+    390123, // EXT_AUTHN_LOCKED
+    390126, // EXT_AUTHN_TIMEOUT
+    390127, // EXT_AUTHN_INVALID
+    390129, // EXT_AUTHN_EXCEPTION
+];
+
+fn extract_host_from_url(server_url: &str) -> Option<String> {
+    Url::parse(server_url)
+        .ok()?
+        .host_str()
+        .map(|h| h.to_string())
+}
+
+fn try_get_cached_mfa_token(
+    server_url: &str,
+    username: &str,
+    token_cache: Option<&dyn TokenCache>,
+) -> Option<SensitiveString> {
+    let host = extract_host_from_url(server_url)?;
+    let cache = token_cache?;
+    match cache.get_token(&host, username, TokenType::MfaToken) {
+        Ok(Some(token)) if !token.is_empty() => {
+            tracing::info!("Found cached MFA token");
+            Some(token.into())
+        }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to retrieve cached MFA token");
+            None
+        }
+    }
+}
+
+fn store_mfa_token_in_cache(
+    server_url: &str,
+    username: &str,
+    mfa_token: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let Some(host) = extract_host_from_url(server_url) else {
+        tracing::warn!("Cannot cache MFA token: unable to extract host from server URL");
+        return;
+    };
+    let Some(cache) = token_cache else {
+        tracing::debug!("No token cache available for MFA token storage");
+        return;
+    };
+    if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
+        tracing::warn!(error = %e, "Failed to cache MFA token");
+    } else {
+        tracing::info!("Cached MFA token for future use");
+    }
+}
+
+fn remove_mfa_token_from_cache(
+    server_url: &str,
+    username: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let Some(host) = extract_host_from_url(server_url) else {
+        tracing::warn!("Cannot remove cached MFA token: unable to extract host from server URL");
+        return;
+    };
+    let Some(cache) = token_cache else {
+        tracing::debug!("No token cache available for MFA token removal");
+        return;
+    };
+    if let Err(e) = cache.remove_token(&host, username, TokenType::MfaToken) {
+        tracing::warn!(error = %e, "Failed to remove cached MFA token");
+    } else {
+        tracing::info!("Removed cached MFA token due to authentication error");
+    }
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
+    data.spcs_token = login_parameters.spcs_token.clone();
 
     if let Some(params) = session_parameters {
         let json_params = params
@@ -180,7 +293,6 @@ pub async fn auth_request_data(
             Credentials::Password { username, password } => {
                 data.login_name = Some(username);
                 data.password = Some(password);
-                data.authenticator = Some("SNOWFLAKE".to_string());
             }
             Credentials::Jwt { username, token } => {
                 data.login_name = Some(username);
@@ -191,6 +303,47 @@ pub async fn auth_request_data(
                 data.login_name = Some(username);
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+            }
+            Credentials::UserPasswordMfa {
+                username,
+                password,
+                passcode_in_password,
+                passcode,
+            } => {
+                let store_temp_cred = matches!(
+                    &login_parameters.login_method,
+                    LoginMethod::UserPasswordMfa {
+                        client_store_temporary_credential: true,
+                        ..
+                    }
+                );
+
+                let cached_mfa_token = if store_temp_cred {
+                    try_get_cached_mfa_token(&login_parameters.server_url, &username, token_cache)
+                } else {
+                    None
+                };
+
+                data.login_name = Some(username);
+                data.password = Some(password);
+                data.authenticator = Some("USERNAME_PASSWORD_MFA".to_string());
+
+                if let Some(cached_token) = cached_mfa_token {
+                    data.token = Some(cached_token);
+                } else {
+                    data.ext_authn_duo_method =
+                        Some(if passcode.is_some() || passcode_in_password {
+                            "passcode".to_string()
+                        } else {
+                            "push".to_string()
+                        });
+                    if !passcode_in_password {
+                        data.passcode = passcode.clone();
+                    }
+                    if store_temp_cred {
+                        data.client_request_mfa_token = Some(store_temp_cred);
+                    }
+                }
             }
         },
     }
@@ -206,17 +359,72 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters, session_parameters).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
+}
+
+async fn send_login_request(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    login_request: &AuthRequest,
+) -> Result<AuthResponse, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
+    let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
+    tracing::info!(login_url = %login_url, "Making Snowflake login request");
+
+    let user_agent = user_agent(&login_parameters.client_info);
+
+    let build_request = || {
+        client
+            .post(&login_url)
+            .query(&[
+                (
+                    "databaseName",
+                    login_parameters.database.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "schemaName",
+                    login_parameters.schema.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "warehouse",
+                    login_parameters.warehouse.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "roleName",
+                    login_parameters.role.as_deref().unwrap_or_default(),
+                ),
+            ])
+            .json(login_request)
+            .header("accept", "application/snowflake")
+            .header("User-Agent", &user_agent)
+            .header("Authorization", "Snowflake Token=\"None\"")
+            .timeout(Duration::from_secs(30))
+    };
+
+    let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
+    let policy = RetryPolicy::default();
+
+    let response = execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "login request",
+        })?;
+
+    read_response_json::<AuthResponse>(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)
 }
 
 #[tracing::instrument(
-    skip(client, login_parameters, session_parameters),
+    skip(client, login_parameters, session_parameters, token_cache),
     fields(account_name, login_name)
 )]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -234,10 +442,15 @@ pub async fn snowflake_login_with_client(
     );
 
     // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let auth_request_data = auth_request_data(client, login_parameters, session_parameters).await?;
-    tracing::Span::current().record("login_name", &auth_request_data.login_name);
+    let login_request_data =
+        auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
+    tracing::Span::current().record("login_name", &login_request_data.login_name);
+    let used_cached_mfa_token = matches!(
+        &login_parameters.login_method,
+        LoginMethod::UserPasswordMfa { .. }
+    ) && login_request_data.token.is_some();
     let login_request = AuthRequest {
-        data: auth_request_data,
+        data: login_request_data,
     };
 
     tracing::debug!(
@@ -246,50 +459,32 @@ pub async fn snowflake_login_with_client(
         "Login request prepared (secrets redacted)"
     );
 
-    let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
-    tracing::info!(login_url = %login_url, "Making Snowflake login request");
-    let request = client
-        .post(&login_url)
-        .query(&[
-            (
-                "databaseName",
-                login_parameters.database.as_deref().unwrap_or_default(),
-            ),
-            (
-                "schemaName",
-                login_parameters.schema.as_deref().unwrap_or_default(),
-            ),
-            (
-                "warehouse",
-                login_parameters.warehouse.as_deref().unwrap_or_default(),
-            ),
-            (
-                "roleName",
-                login_parameters.role.as_deref().unwrap_or_default(),
-            ),
-        ])
-        .json(&login_request)
-        .header("accept", "application/snowflake")
-        .header(
-            "User-Agent",
-            format!(
-                "{}/{} ({}) CPython/3.11.6",
-                login_parameters.client_info.application,
-                login_parameters.client_info.version.clone(),
-                login_parameters.client_info.os.clone()
-            ),
-        )
-        .header("Authorization", "Snowflake Token=\"None\"")
-        .build()
-        .context(RequestConstructionSnafu { request: "login" })?;
+    let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute login request",
-    })?;
-
-    let auth_response = read_response_json::<AuthResponse>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
+    // via the normal DUO push/passcode flow.
+    if !auth_response.success && used_cached_mfa_token {
+        let code = auth_response
+            ._code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        if EXT_AUTHN_ERROR_CODES.contains(&code)
+            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
+        {
+            tracing::warn!(
+                code = code,
+                "MFA authentication error detected, removing cached MFA token"
+            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+            tracing::info!("Retrying login without cached MFA token");
+            let retry_data =
+                auth_request_data(client, login_parameters, session_parameters, token_cache)
+                    .await?;
+            let retry_request = AuthRequest { data: retry_data };
+            auth_response = send_login_request(client, login_parameters, &retry_request).await?;
+        }
+    }
 
     if !auth_response.success {
         let message = auth_response
@@ -301,10 +496,35 @@ pub async fn snowflake_login_with_client(
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
+        if EXT_AUTHN_ERROR_CODES.contains(&code)
+            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
+        {
+            tracing::warn!(
+                code = code,
+                "MFA authentication error detected, removing cached MFA token"
+            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+        }
         LoginSnafu { message, code }.fail()?;
     }
 
     tracing::debug!("Login successful, extracting session tokens");
+
+    // Cache MFA token from response if caching is enabled
+    if let LoginMethod::UserPasswordMfa {
+        username,
+        client_store_temporary_credential: true,
+        ..
+    } = &login_parameters.login_method
+        && let Some(mfa_token) = &auth_response.data.mfa_token
+    {
+        store_mfa_token_in_cache(
+            &login_parameters.server_url,
+            username,
+            mfa_token.reveal(),
+            token_cache,
+        );
+    }
 
     let session_token = auth_response
         .data
@@ -357,6 +577,20 @@ pub async fn snowflake_login_with_client(
             .collect::<HashMap<String, String>>()
     });
 
+    // Extract server-echoed sessionInfo names separately so they can be
+    // stored on the connection as `final_session_names` (not mixed into
+    // session parameters).
+    let (database_name, schema_name, warehouse_name, role_name) =
+        match &auth_response.data.session_info {
+            Some(info) => (
+                info.database_name.clone(),
+                info.schema_name.clone(),
+                info.warehouse_name.clone(),
+                info.role_name.clone(),
+            ),
+            None => (None, None, None, None),
+        };
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
@@ -366,13 +600,17 @@ pub async fn snowflake_login_with_client(
     );
     Ok(LoginResult {
         tokens: SessionTokens {
-            session_token: session_token.into(),
-            master_token: master_token.into(),
+            session_token,
+            master_token,
             session_id,
             session_expires_at,
             master_expires_at,
         },
         session_parameters: session_params,
+        database_name,
+        schema_name,
+        warehouse_name,
+        role_name,
     })
 }
 
@@ -467,11 +705,116 @@ pub async fn refresh_session(
     );
 
     Ok(SessionTokens {
-        session_token: data.session_token.into(),
-        master_token: data.master_token.into(),
+        session_token: data.session_token,
+        master_token: data.master_token,
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
+    })
+}
+
+/// Result of a token request (ISSUE or RENEW).
+pub struct TokenRequestResult {
+    pub session_token: SensitiveString,
+    /// Validity in seconds as returned by the server.
+    /// `None` when the server omits the validity field.
+    pub validity_in_seconds: Option<i64>,
+}
+
+impl std::fmt::Debug for TokenRequestResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenRequestResult")
+            .field("session_token", &"[REDACTED]")
+            .field("validity_in_seconds", &self.validity_in_seconds)
+            .finish()
+    }
+}
+
+/// Send a token request (ISSUE or RENEW) to the Snowflake server.
+///
+/// This reuses the same endpoint and authentication as `refresh_session`
+/// but allows specifying the request type and returns minimal structured data.
+pub async fn token_request(
+    client: &reqwest::Client,
+    server_url: &str,
+    client_info: &ClientInfo,
+    tokens: &SessionTokens,
+    request_type: &str,
+) -> Result<TokenRequestResult, RestError> {
+    let token_url = Url::parse(server_url)
+        .and_then(|base| base.join(TOKEN_REQUEST_PATH))
+        .context(UrlJoinSnafu {
+            path: TOKEN_REQUEST_PATH,
+        })?;
+
+    let body = serde_json::json!({
+        "oldSessionToken": tokens.session_token.reveal(),
+        "requestType": request_type,
+    });
+
+    let request = client
+        .post(token_url)
+        .query(&[
+            ("requestId", uuid::Uuid::new_v4().to_string()),
+            ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ])
+        .header(
+            header::AUTHORIZATION,
+            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
+        )
+        .header(header::ACCEPT, "application/json")
+        .header("User-Agent", user_agent(client_info))
+        .json(&body)
+        .build()
+        .context(RequestConstructionSnafu {
+            request: "token request",
+        })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute token request",
+    })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return TokenRequestHttpSnafu {
+            operation: request_type.to_string(),
+            status,
+        }
+        .fail();
+    }
+
+    let token_response =
+        response
+            .json::<TokenRequestResponse>()
+            .await
+            .context(CommunicationSnafu {
+                context: "Failed to parse token request response",
+            })?;
+
+    if !token_response.success {
+        let message = token_response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_string());
+        let code = token_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        return TokenRequestFailedSnafu {
+            operation: request_type.to_string(),
+            message,
+            code,
+        }
+        .fail();
+    }
+
+    let data = token_response.data.context(MissingResponseFieldSnafu {
+        field: "token request data",
+    })?;
+
+    Ok(TokenRequestResult {
+        session_token: data.session_token,
+        validity_in_seconds: data.validity.and_then(|d| i64::try_from(d.as_secs()).ok()),
     })
 }
 
@@ -571,7 +914,11 @@ async fn execute_async_with_fallback<'a>(
             },
         ) => {
             tracing::error!(
-                sql_prefix = query_input.sql.chars().take(50).collect::<String>(),
+                sql_prefix = query_input
+                    .sql
+                    .chars()
+                    .take(query_parameters.log_max_query_length)
+                    .collect::<String>(),
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -625,11 +972,10 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = query_input.sql.chars().take(50).collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
-        sql_prefix,
+        sql_prefix = query_input.sql.chars().take(query_parameters.log_max_query_length).collect::<String>(),
         "Executing sync query"
     );
 
@@ -641,6 +987,7 @@ async fn execute_sync_with_retry<'a>(
         query_input,
         request_id,
         false, // not a retry
+        retry_policy,
     )
     .await
     {
@@ -687,6 +1034,7 @@ async fn execute_sync_with_retry<'a>(
             query_input,
             request_id,
             true, // is retry
+            retry_policy,
         )
         .await
         {
@@ -723,6 +1071,31 @@ async fn execute_sync_with_retry<'a>(
     Err(last_error.expect("last_error must be set after retry loop"))
 }
 
+/// Map a Snowflake query response into a `Result`, converting
+/// `response.success == false` into `RestError::QueryFailed` with
+/// the server's message, error code, SQL state, and query ID.
+fn into_query_result(
+    response: query_response::Response,
+) -> Result<query_response::Response, RestError> {
+    if !response.success {
+        let message = response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_owned());
+        let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+        let sql_state = response.data.sql_state.clone();
+        let query_id = response.data.query_id.clone();
+
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state,
+            query_id,
+        }
+        .fail();
+    }
+    Ok(response)
+}
+
 /// Execute a single sync query request.
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
@@ -731,6 +1104,7 @@ async fn execute_sync_query<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     is_retry: bool,
+    retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
@@ -788,26 +1162,25 @@ async fn execute_sync_query<'a>(
         request_id = %request_id,
         is_retry,
         query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
-        "Sync query completed"
+        "Sync query response received"
     );
 
-    if !query_response.success {
-        let message = query_response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_owned());
-        let code = query_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok());
-        let sql_state = query_response.data.sql_state.clone();
-        return QueryFailedSnafu {
-            message,
-            code,
-            sql_state,
-        }
-        .fail();
-    }
-    Ok(query_response)
+    let query_response = if async_exec::should_poll_for_completion(&query_response) {
+        tracing::debug!(request_id = %request_id, "detached query - polling for completion");
+        async_exec::poll_detached_query(
+            client,
+            query_parameters,
+            session_token,
+            &query_response,
+            retry_policy,
+        )
+        .await
+        .context(AsyncQuerySnafu)?
+    } else {
+        query_response
+    };
+
+    into_query_result(query_response)
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -835,7 +1208,231 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     .context(AsyncQuerySnafu)
 }
 
-async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
+/// Fetch the result of a previously executed query by its Snowflake Query ID.
+///
+/// Issues `GET /queries/{query_id}/result` using the connection's session token,
+/// validates the response, and returns the parsed query response on success.
+/// Returns `RestError` so callers can use `RefreshContext` for token refresh.
+#[tracing::instrument(skip(client, query_parameters, session_token))]
+pub async fn snowflake_get_query_result(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_id: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    let result_url = format!(
+        "{}/queries/{}/result",
+        query_parameters.server_url, query_id
+    );
+    let query_response = async_exec::poll_query_status(
+        client,
+        &query_parameters.client_info,
+        session_token,
+        &result_url,
+        retry_policy,
+    )
+    .await
+    .context(AsyncQuerySnafu)?;
+
+    into_query_result(query_response)
+}
+
+/// Result of a query status check via the monitoring endpoint.
+#[derive(Debug)]
+pub struct QueryStatusResult {
+    pub status_name: String,
+    pub error_code: Option<i32>,
+    pub error_message: Option<String>,
+}
+
+const MONITORING_QUERIES_PATH: &str = "/monitoring/queries/";
+
+/// Check the status of a query by its ID via the `/monitoring/queries/{query_id}` endpoint.
+#[tracing::instrument(skip(client, client_info, session_token))]
+pub async fn get_query_status(
+    client: &reqwest::Client,
+    server_url: &str,
+    client_info: &ClientInfo,
+    session_token: &SensitiveString,
+    query_id: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<QueryStatusResult, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
+    let mut url = Url::parse(server_url)
+        .and_then(|base| base.join(MONITORING_QUERIES_PATH))
+        .context(UrlJoinSnafu {
+            path: MONITORING_QUERIES_PATH,
+        })?;
+
+    {
+        let url_str = url.to_string();
+        url.path_segments_mut()
+            .map_err(|()| InvalidUrlSnafu { url: url_str }.build())?
+            .push(query_id);
+    }
+
+    let token_str = session_token.reveal();
+    let build_request = || {
+        apply_query_headers(client.get(url.clone()), client_info, token_str.as_ref()).query(&[
+            ("requestId", uuid::Uuid::new_v4().to_string()),
+            ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ])
+    };
+
+    let ctx = HttpContext::new(Method::GET, MONITORING_QUERIES_PATH);
+    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "query status",
+        })?;
+
+    let body: QueryStatusResponse = read_response_json(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)?;
+
+    if !body.success {
+        let message = body.message.unwrap_or_else(|| "Unknown error".to_owned());
+        let code = body.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state: None::<String>,
+            query_id: Some(query_id.to_owned()),
+        }
+        .fail();
+    }
+
+    let data = body.data.context(MissingResponseFieldSnafu {
+        field: "data in monitoring response",
+    })?;
+
+    let query_entry = data
+        .queries
+        .into_iter()
+        .next()
+        .context(MissingResponseFieldSnafu {
+            field: "queries[0] in monitoring response",
+        })?;
+
+    let error_code = query_entry
+        .error_code
+        .as_deref()
+        .and_then(|c| c.parse::<i32>().ok())
+        .and_then(|c| if c == 0 { None } else { Some(c) });
+
+    let error_message = if error_code.is_some() {
+        query_entry.error_message.filter(|m| !m.is_empty())
+    } else {
+        None
+    };
+
+    Ok(QueryStatusResult {
+        status_name: query_entry.status,
+        error_code,
+        error_message,
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueryStatusResponse {
+    success: bool,
+    message: Option<String>,
+    code: Option<String>,
+    data: Option<QueryStatusResponseData>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueryStatusResponseData {
+    queries: Vec<QueryStatusEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueryStatusEntry {
+    status: String,
+    #[serde(
+        rename = "errorCode",
+        default,
+        deserialize_with = "deserialize_string_or_int"
+    )]
+    error_code: Option<String>,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+}
+
+/// Snowflake returns `errorCode` as either a JSON string (`"002003"`) or an
+/// integer (`0`). This deserializer accepts both and normalises to `Option<String>`.
+fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(serde_json::Value::Null) | None => Ok(None),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected string or number for errorCode, got {other}"
+        ))),
+    }
+}
+
+/// Abort a running query by its Snowflake Query ID.
+///
+/// Issues `POST /queries/{query_id}/abort-request` with an empty JSON body.
+/// Returns `Ok(())` when the server acknowledges the abort (`success: true`),
+/// or `RestError::QueryFailed` when `success: false`.
+#[tracing::instrument(skip(client, query_parameters, session_token))]
+pub async fn snowflake_abort_query(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_id: &str,
+) -> Result<(), RestError> {
+    let abort_url = format!(
+        "{}/queries/{}/abort-request",
+        query_parameters.server_url, query_id
+    );
+
+    let request = apply_json_content_type(apply_query_headers(
+        client.post(&abort_url),
+        &query_parameters.client_info,
+        session_token,
+    ))
+    .json(&serde_json::json!({}))
+    .build()
+    .context(RequestConstructionSnafu {
+        request: "abort_query",
+    })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute abort query request",
+    })?;
+
+    let abort_response = read_response_json::<query_response::AbortQueryResponse>(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)?;
+
+    if !abort_response.success {
+        return QueryFailedSnafu {
+            message: abort_response
+                .message
+                .unwrap_or_else(|| "Abort query failed".to_owned()),
+            query_id: query_id.to_owned(),
+            code: Option::<i32>::None,
+            sql_state: Option::<String>::None,
+        }
+        .fail();
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn read_response_json<T>(
+    response: reqwest::Response,
+) -> Result<T, SnowflakeResponseError>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -847,16 +1444,26 @@ where
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
         }
+        let body = response_text.unwrap_or("Unknown error".to_string());
+        let truncated = if body.len() > 1024 {
+            let mut end = 1024;
+            while !body.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}… ({} bytes total)", &body[..end], body.len())
+        } else {
+            body
+        };
         return ResponseStatusSnafu {
             status: response_status,
-            message: response_text.unwrap_or("Unknown error".to_string()),
+            message: truncated,
         }
         .fail();
     }
 
     let response_text = response_text.context(ResponseTextSnafu)?;
 
-    tracing::debug!("Response text: {response_text}");
+    tracing::debug!(response_len = response_text.len(), "Received HTTP response");
     let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
     Ok(response_data)
@@ -964,6 +1571,28 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Token request ({operation}) HTTP request failed with status {status}"))]
+    TokenRequestHttp {
+        operation: String,
+        status: reqwest::StatusCode,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Token request ({operation}) failed: {message} (code: {code})"))]
+    TokenRequestFailed {
+        operation: String,
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Heartbeat failed: {message} (code: {code})"))]
+    Heartbeat {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Missing response field: {field}"))]
     MissingResponseField {
         field: &'static str,
@@ -977,6 +1606,27 @@ pub enum RestError {
         code: Option<i32>,
         /// ANSI SQL state code (e.g. "42000" for syntax error).
         sql_state: Option<String>,
+        /// Snowflake Query ID associated with the failed query.
+        query_id: Option<String>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("HTTP request failed after retries: {context}"))]
+    HttpRetry {
+        context: &'static str,
+        source: crate::http::retry::HttpError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid URL: {url}"))]
+    InvalidUrl {
+        url: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to encode telemetry payload: {reason}"))]
+    PayloadEncoding {
+        reason: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1007,4 +1657,518 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
+    use crate::token_cache::{TokenCache, TokenCacheError, TokenType};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct StubTokenCache {
+        store: Mutex<HashMap<String, String>>,
+    }
+
+    impl StubTokenCache {
+        fn new() -> Self {
+            Self {
+                store: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn with_token(host: &str, username: &str, token_type: TokenType, value: &str) -> Self {
+            let cache = Self::new();
+            cache
+                .add_token(host, username, token_type, value)
+                .expect("test: add_token should succeed");
+            cache
+        }
+
+        fn key(host: &str, username: &str, token_type: TokenType) -> String {
+            format!("{host};{username};{}", token_type.as_str())
+        }
+    }
+
+    impl TokenCache for StubTokenCache {
+        fn add_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+            token_value: &str,
+        ) -> Result<(), TokenCacheError> {
+            self.store.lock().expect("test: lock poisoned").insert(
+                Self::key(host, username, token_type),
+                token_value.to_string(),
+            );
+            Ok(())
+        }
+
+        fn remove_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+        ) -> Result<(), TokenCacheError> {
+            self.store
+                .lock()
+                .expect("test: lock poisoned")
+                .remove(&Self::key(host, username, token_type));
+            Ok(())
+        }
+
+        fn get_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+        ) -> Result<Option<String>, TokenCacheError> {
+            Ok(self
+                .store
+                .lock()
+                .expect("test: lock poisoned")
+                .get(&Self::key(host, username, token_type))
+                .cloned())
+        }
+    }
+
+    fn test_login_params() -> LoginParameters {
+        LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Password {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+            spcs_token: None,
+        }
+    }
+
+    mod try_get_cached_mfa_token_tests {
+        use super::*;
+
+        #[test]
+        fn returns_cached_token_on_hit() {
+            let cache = StubTokenCache::with_token(
+                "host.example.com",
+                "alice",
+                TokenType::MfaToken,
+                "tok123",
+            );
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert_eq!(result.unwrap().reveal(), "tok123");
+        }
+
+        #[test]
+        fn returns_none_on_cache_miss() {
+            let cache = StubTokenCache::new();
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_no_cache_provided() {
+            let result = try_get_cached_mfa_token("https://host.example.com", "alice", None);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            let result = try_get_cached_mfa_token("not-a-url", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_empty_cached_token() {
+            let cache =
+                StubTokenCache::with_token("host.example.com", "alice", TokenType::MfaToken, "");
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+    }
+
+    mod store_mfa_token_in_cache_tests {
+        use super::*;
+
+        #[test]
+        fn stores_token_successfully() {
+            let cache = StubTokenCache::new();
+            store_mfa_token_in_cache("https://host.example.com", "alice", "new_tok", Some(&cache));
+            let stored = cache
+                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .unwrap();
+            assert_eq!(stored.as_deref(), Some("new_tok"));
+        }
+
+        #[test]
+        fn no_panic_when_no_cache() {
+            store_mfa_token_in_cache("https://host.example.com", "alice", "tok", None);
+        }
+
+        #[test]
+        fn no_panic_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            store_mfa_token_in_cache("not-a-url", "alice", "tok", Some(&cache));
+        }
+    }
+
+    mod remove_mfa_token_from_cache_tests {
+        use super::*;
+
+        #[test]
+        fn removes_existing_token() {
+            let cache = StubTokenCache::with_token(
+                "host.example.com",
+                "alice",
+                TokenType::MfaToken,
+                "tok_to_remove",
+            );
+            remove_mfa_token_from_cache("https://host.example.com", "alice", Some(&cache));
+            let stored = cache
+                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .unwrap();
+            assert!(stored.is_none());
+        }
+
+        #[test]
+        fn no_panic_when_no_cache() {
+            remove_mfa_token_from_cache("https://host.example.com", "alice", None);
+        }
+
+        #[test]
+        fn no_panic_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
+        }
+    }
+
+    mod into_query_result_tests {
+        use super::*;
+        use serde_json::json;
+
+        fn response_from_json(value: serde_json::Value) -> query_response::Response {
+            serde_json::from_value(value).expect("valid response JSON")
+        }
+
+        #[test]
+        fn success_returns_response_unchanged() {
+            let resp = response_from_json(json!({
+                "success": true,
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null
+                }
+            }));
+
+            match into_query_result(resp) {
+                Ok(r) => assert!(r.success),
+                Err(e) => panic!("expected Ok, got {:?}", e),
+            }
+        }
+
+        #[test]
+        fn failure_returns_query_failed_with_all_fields() {
+            let resp = response_from_json(json!({
+                "success": false,
+                "message": "SQL compilation error",
+                "code": "1003",
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null,
+                    "sqlState": "42000",
+                    "queryId": "01abc-def-12345"
+                }
+            }));
+
+            match into_query_result(resp) {
+                Err(RestError::QueryFailed {
+                    message,
+                    code,
+                    sql_state,
+                    query_id,
+                    ..
+                }) => {
+                    assert_eq!(message, "SQL compilation error");
+                    assert_eq!(code, Some(1003));
+                    assert_eq!(sql_state, Some("42000".to_owned()));
+                    assert_eq!(query_id, Some("01abc-def-12345".to_owned()));
+                }
+                Err(other) => panic!("expected QueryFailed, got {:?}", other),
+                Ok(_) => panic!("expected Err, got Ok"),
+            }
+        }
+
+        #[test]
+        fn failure_with_missing_optional_fields() {
+            let resp = response_from_json(json!({
+                "success": false,
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null
+                }
+            }));
+
+            match into_query_result(resp) {
+                Err(RestError::QueryFailed {
+                    message,
+                    code,
+                    sql_state,
+                    query_id,
+                    ..
+                }) => {
+                    assert_eq!(message, "Unknown error");
+                    assert_eq!(code, None);
+                    assert_eq!(sql_state, None);
+                    assert_eq!(query_id, None);
+                }
+                Err(other) => panic!("expected QueryFailed, got {:?}", other),
+                Ok(_) => panic!("expected Err, got Ok"),
+            }
+        }
+    }
+
+    #[test]
+    fn deserialize_query_status_success_response() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "SUCCESS",
+                    "errorCode": 0,
+                    "errorMessage": "No error reported"
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries.len(), 1);
+        assert_eq!(data.queries[0].status, "SUCCESS");
+        assert_eq!(data.queries[0].error_code.as_deref(), Some("0"));
+        assert_eq!(
+            data.queries[0].error_message.as_deref(),
+            Some("No error reported")
+        );
+    }
+
+    #[test]
+    fn deserialize_query_status_running_response() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "RUNNING",
+                    "errorCode": 0,
+                    "errorMessage": ""
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        assert_eq!(response.data.unwrap().queries[0].status, "RUNNING");
+    }
+
+    #[test]
+    fn deserialize_query_status_error_response_with_int_code() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "FAILED_WITH_ERROR",
+                    "errorCode": 2003,
+                    "errorMessage": "SQL compilation error:\nObject 'NONEXISTENTTABLE' does not exist or not authorized."
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries[0].status, "FAILED_WITH_ERROR");
+        assert_eq!(data.queries[0].error_code.as_deref(), Some("2003"));
+        assert!(
+            data.queries[0]
+                .error_message
+                .as_ref()
+                .unwrap()
+                .contains("NONEXISTENTTABLE")
+        );
+    }
+
+    #[test]
+    fn deserialize_query_status_error_response_with_string_code() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "FAILED_WITH_ERROR",
+                    "errorCode": "002003",
+                    "errorMessage": "SQL compilation error"
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries[0].status, "FAILED_WITH_ERROR");
+        assert_eq!(data.queries[0].error_code.as_deref(), Some("002003"));
+    }
+
+    #[test]
+    fn deserialize_query_status_missing_optional_fields() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "QUEUED"
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries[0].status, "QUEUED");
+        assert_eq!(data.queries[0].error_code, None);
+        assert_eq!(data.queries[0].error_message, None);
+    }
+
+    #[test]
+    fn deserialize_query_status_server_error_response() {
+        let json = r#"{
+            "success": false,
+            "message": "Query not found",
+            "code": "000707",
+            "data": {
+                "queries": []
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.success);
+        assert_eq!(response.message.as_deref(), Some("Query not found"));
+        assert_eq!(response.code.as_deref(), Some("000707"));
+    }
+
+    #[test]
+    fn deserialize_query_status_error_without_data() {
+        let json = r#"{
+            "success": false,
+            "message": "Unauthorized",
+            "code": "000401"
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.success);
+        assert!(response.data.is_none());
+        assert_eq!(response.message.as_deref(), Some("Unauthorized"));
+    }
+
+    #[test]
+    fn password_auth_payload_does_not_include_authenticator() {
+        let login_params = test_login_params();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None))
+            .unwrap();
+
+        assert_eq!(data.login_name.as_deref(), Some("testuser"));
+        assert_eq!(data.password.as_ref().unwrap().reveal(), "testpass");
+        assert!(
+            data.authenticator.is_none(),
+            "Password auth should NOT include AUTHENTICATOR field (matching old driver behavior)"
+        );
+    }
+
+    #[test]
+    fn pat_auth_payload_includes_authenticator() {
+        let login_params = LoginParameters {
+            login_method: LoginMethod::Pat {
+                username: "testuser".to_string(),
+                token: "pat_secret".into(),
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None))
+            .unwrap();
+
+        assert_eq!(data.login_name.as_deref(), Some("testuser"));
+        assert_eq!(data.token.as_ref().unwrap().reveal(), "pat_secret");
+        assert_eq!(
+            data.authenticator.as_deref(),
+            Some("PROGRAMMATIC_ACCESS_TOKEN")
+        );
+    }
+
+    mod send_login_request_retry_tests {
+        use super::*;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        #[tokio::test]
+        async fn retries_on_503_then_succeeds() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+
+            let attempt_clone = attempt.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(move |_: &Request| {
+                    let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    if n < 2 {
+                        ResponseTemplate::new(503).set_body_string("Service Unavailable")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "mock_token",
+                                "masterToken": "mock_master_token",
+                                "sessionId": 12345
+                            }
+                        }))
+                    }
+                })
+                .expect(3)
+                .mount(&server)
+                .await;
+
+            let client = reqwest::Client::new();
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let auth_req = AuthRequest {
+                data: AuthRequestData {
+                    account_name: "testaccount".to_string(),
+                    login_name: Some("testuser".to_string()),
+                    password: Some("testpass".into()),
+                    ..Default::default()
+                },
+            };
+
+            let result = send_login_request(&client, &params, &auth_req).await;
+
+            assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
+            assert_eq!(
+                attempt.load(Ordering::SeqCst),
+                3,
+                "Expected exactly 3 attempts (2 failures + 1 success), got {}",
+                attempt.load(Ordering::SeqCst)
+            );
+        }
+    }
 }

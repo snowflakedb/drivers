@@ -1,5 +1,13 @@
 /*
- * Jenkinsfile for code coverage generation and upload to Codecov
+ * Jenkinsfile for code coverage generation.
+ *
+ * Coverage reports are generated per-component and surfaced as:
+ *   - Jenkins build status (build description + GitHub Checks via publishChecks)
+ *   - Archived artifacts (lcov/jacoco/cobertura files, downloadable from Jenkins UI)
+ *
+ * There is intentionally NO upload to Codecov or other external coverage services:
+ * Jenkins is the single source of truth. Removing the Codecov upload avoids the
+ * FUSE secret DECRYPT permission issues on merge-queue / readonly-queue callers.
  */
 
 @Library('pipeline-utils')
@@ -7,7 +15,6 @@ import com.snowflake.DevEnvUtils
 import groovy.transform.Field
 
 @Field String DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
-@Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 @Field Map coverageResults = [:]
 @Field Map DISPLAY_NAMES = [
@@ -72,14 +79,14 @@ def parseCoberturaCoverage(String xmlFile) {
 
 def reportStatus(String component, String coverage) {
     def displayName = DISPLAY_NAMES[component] ?: component
-    def codecovUrl = "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}"
-    
+    // detailsURL points at the Jenkins build page so reviewers can inspect the full
+    // coverage artifacts (lcov / jacoco / cobertura files) from the GitHub Check.
     if (coverage) {
         coverageResults[component] = coverage
         publishChecks name: "Code Coverage - ${displayName}",
                       title: "Coverage: ${coverage}%",
                       summary: "Code coverage for ${displayName}: ${coverage}%",
-                      detailsURL: codecovUrl,
+                      detailsURL: env.BUILD_URL,
                       status: 'COMPLETED',
                       conclusion: 'SUCCESS'
     } else {
@@ -87,7 +94,7 @@ def reportStatus(String component, String coverage) {
         publishChecks name: "Code Coverage - ${displayName}",
                       title: "Coverage failed",
                       summary: "Could not calculate coverage percentage from report.",
-                      detailsURL: codecovUrl,
+                      detailsURL: env.BUILD_URL,
                       status: 'COMPLETED',
                       conclusion: 'FAILURE'
     }
@@ -96,40 +103,13 @@ def reportStatus(String component, String coverage) {
 def reportFailure(String component) {
     def displayName = DISPLAY_NAMES[component] ?: component
     coverageResults[component] = 'FAILED'
-    
+
     publishChecks name: "Code Coverage - ${displayName}",
                   title: "Coverage failed",
                   summary: "Coverage collection failed for ${displayName}",
-                  detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver",
+                  detailsURL: env.BUILD_URL,
                   status: 'COMPLETED',
                   conclusion: 'FAILURE'
-}
-
-def uploadToCodecov(String flag, String file) {
-    def commitSha = ""
-    if (env.CHANGE_BRANCH) {
-        commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
-    }
-    if (!commitSha) {
-        commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-    }
-    
-    echo "Uploading to Codecov: commit=${commitSha}, branch=${env.CHANGE_BRANCH ?: env.BRANCH_NAME}"
-    
-    withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-        sh label: 'Upload to Codecov', script: """
-            set +x
-            codecovcli --verbose \
-                --enterprise-url https://snowflake.codecov.io \
-                --codecov-yml-path codecov.yml \
-                upload-process \
-                --disable-search \
-                -t "\${CODECOV_TOKEN}" \
-                -F ${flag} \
-                -f ${file} \
-                -C ${commitSha}
-        """
-    }
 }
 
 pipeline {
@@ -178,6 +158,15 @@ pipeline {
                                         export PARAMETER_PATH=$(pwd)/parameters.json
                                         cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
                                     ''')
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_test_pats.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+
                                     if (testExitCode != 0) {
                                         echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
                                         unstable(message: "Rust Core tests failed")
@@ -185,7 +174,6 @@ pipeline {
                                     sh 'mv lcov.info lcov-rust-core.info'
                                     
                                     def coverage = parseLcovCoverage('lcov-rust-core.info')
-                                    uploadToCodecov('rust-core', 'lcov-rust-core.info')
                                     reportStatus('rust-core', coverage)
                                 }
                                 archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
@@ -223,19 +211,29 @@ pipeline {
                                             export PARAMETER_PATH=$(pwd)/../parameters.json
                                             export PYTHONPATH=$(pwd)/src:$PYTHONPATH
                                             mkdir -p reports
-                                            hatch run test.py3.9:all -- \
-                                                --cov=src/snowflake \
-                                                --cov-report=term \
-                                                --cov-report=xml:reports/coverage-python.xml
+                                            hatch run test.py3.9:cov -- \
+                                                --cov-report=term
+                                            test_status=$?
+                                            if [ -f coverage.xml ]; then
+                                                mv coverage.xml reports/coverage-python.xml
+                                            fi
+                                            exit $test_status
                                         ''')
                                         if (testExitCode != 0) {
                                             echo "Python tests failed with exit code ${testExitCode}, continuing to generate coverage"
                                             unstable(message: "Python tests failed")
                                         }
                                     }
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_test_pats.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
                                     
                                     def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
-                                    uploadToCodecov('python', 'python/reports/coverage-python.xml')
                                     reportStatus('python', coverage)
                                 }
                                 archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
@@ -282,6 +280,15 @@ pipeline {
                                         # Exclude CRL tests - they require Wiremock server which is not started in coverage job
                                         ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
                                     ''')
+
+                                    sh(label: 'Cleanup test PATs', returnStatus: true, script: '''
+                                        set +x
+                                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                                        python3 scripts/cleanup_test_pats.py \
+                                            --parameter-path $(pwd)/parameters.json \
+                                            --build-tag "JNK_${BUILD_NUMBER}" || true
+                                    ''')
+
                                     if (testExitCode != 0) {
                                         echo "ODBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
                                         unstable(message: "ODBC tests failed")
@@ -304,7 +311,6 @@ pipeline {
                                     '''
                                     
                                     def coverage = parseLcovCoverage('lcov-odbc-filtered.info')
-                                    uploadToCodecov('odbc', 'lcov-odbc.info')
                                     reportStatus('odbc', coverage)
                                 }
                                 archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
@@ -347,7 +353,6 @@ pipeline {
                                     
                                     def jdbcReportPath = "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
                                     def coverage = parseJacocoCoverage(jdbcReportPath)
-                                    uploadToCodecov('jdbc', jdbcReportPath)
                                     reportStatus('jdbc', coverage)
                                 }
                                 archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
@@ -365,32 +370,9 @@ pipeline {
     post {
         always {
             script {
-                try {
-                    node {
-                        def commitSha = ""
-                        if (env.CHANGE_BRANCH) {
-                            commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
-                        }
-                        if (!commitSha) {
-                            commitSha = env.GIT_COMMIT
-                        }
-                        
-                        echo "Notifying Codecov for commit: ${commitSha}"
-                        
-                        withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-                            sh label: 'Notify Codecov', script: """
-                                codecovcli --enterprise-url https://snowflake.codecov.io \\
-                                    send-notifications \\
-                                    -t "\${CODECOV_TOKEN}" \\
-                                    --git-service github \\
-                                    -C ${commitSha} || true
-                            """
-                        }
-                    }
-                } catch (Exception e) {
-                    echo "Error notifying Codecov: ${e.message}"
-                }
-
+                // Aggregate per-component coverage into the build description so the
+                // Jenkins job list shows coverage at a glance. Values come from the
+                // coverageResults map populated by reportStatus() / reportFailure().
                 if (coverageResults.isEmpty()) {
                     currentBuild.description = "No coverage data"
                 } else {
@@ -405,7 +387,7 @@ pipeline {
                     }
                     currentBuild.description = parts.join(' | ')
                 }
-                
+
                 publishChecks name: 'Universal Driver Code Coverage',
                               title: "Build ${currentBuild.currentResult}",
                               summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",

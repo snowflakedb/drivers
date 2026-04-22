@@ -27,6 +27,8 @@ pub struct AuthRequestClientEnvironment {
     pub os_version: String,
     #[serde(rename = "OCSP_MODE", skip_serializing_if = "Option::is_none")]
     pub ocsp_mode: Option<String>,
+    #[serde(rename = "PLATFORM")]
+    pub platforms: Vec<String>,
     #[serde(rename = "PYTHON_VERSION", skip_serializing_if = "Option::is_none")]
     pub python_version: Option<String>,
     #[serde(rename = "PYTHON_RUNTIME", skip_serializing_if = "Option::is_none")]
@@ -56,6 +58,11 @@ pub struct AuthRequestData {
         skip_serializing_if = "Option::is_none"
     )]
     pub ext_authn_duo_method: Option<String>,
+    #[serde(
+        rename = "CLIENT_REQUEST_MFA_TOKEN",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub client_request_mfa_token: Option<bool>,
     #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
     pub passcode: Option<SensitiveString>,
     #[serde(rename = "AUTHENTICATOR", skip_serializing_if = "Option::is_none")]
@@ -77,6 +84,8 @@ pub struct AuthRequestData {
     pub oauth_type: Option<String>,
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    #[serde(rename = "SPCS_TOKEN", skip_serializing_if = "Option::is_none")]
+    pub spcs_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,19 +104,19 @@ pub struct NameValueParameter {
 #[derive(Debug, Deserialize)]
 pub struct AuthResponseSessionInfo {
     #[serde(rename = "databaseName")]
-    pub _database_name: Option<String>,
+    pub database_name: Option<String>,
     #[serde(rename = "schemaName")]
-    pub _schema_name: Option<String>,
+    pub schema_name: Option<String>,
     #[serde(rename = "warehouseName")]
-    pub _warehouse_name: Option<String>,
+    pub warehouse_name: Option<String>,
     #[serde(rename = "roleName")]
-    pub _role_name: Option<String>,
+    pub role_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct AuthResponseMain {
     /// Session token for authenticating requests
-    pub token: Option<String>,
+    pub token: Option<SensitiveString>,
     /// Session token validity
     #[serde(
         rename = "validityInSeconds",
@@ -117,7 +126,7 @@ pub struct AuthResponseMain {
     pub validity: Option<Duration>,
     /// Master token for refreshing expired session tokens
     #[serde(rename = "masterToken")]
-    pub master_token: Option<String>,
+    pub master_token: Option<SensitiveString>,
     /// Master token validity
     #[serde(
         rename = "masterValidityInSeconds",
@@ -126,11 +135,9 @@ pub struct AuthResponseMain {
     )]
     pub master_validity: Option<Duration>,
     #[serde(rename = "mfaToken")]
-    pub _mfa_token: Option<String>,
-    #[serde(rename = "mfaTokenValidityInSeconds")]
-    pub _mfa_token_validity: Option<u64>,
+    pub mfa_token: Option<SensitiveString>,
     #[serde(rename = "idToken")]
-    pub _id_token: Option<String>,
+    pub _id_token: Option<SensitiveString>,
     #[serde(rename = "idTokenValidityInSeconds")]
     pub _id_token_validity: Option<u64>,
     #[serde(rename = "displayUserName")]
@@ -153,7 +160,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]
-    pub _session_info: Option<AuthResponseSessionInfo>,
+    pub session_info: Option<AuthResponseSessionInfo>,
     #[serde(rename = "tokenUrl")]
     pub _token_url: Option<String>,
     #[serde(rename = "ssoUrl")]
@@ -164,6 +171,7 @@ pub struct AuthResponseMain {
 
 #[derive(Debug, Deserialize)]
 pub struct AuthResponse {
+    #[serde(default)]
     pub data: AuthResponseMain,
     pub message: Option<String>,
     #[serde(rename = "code")]

@@ -1,17 +1,21 @@
 //! Query execution and performance measurement helpers
 
 type Result<T> = std::result::Result<T, String>;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClientBlockingExt;
 use sf_core::protobuf::generated::database_driver_v1::*;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::arrow::fetch_result_rows;
-use crate::connection::{DatabaseDriver, reset_statement_query};
+use crate::connection::{DriverRuntime, reset_statement_query};
+use crate::resource_monitor::ResourceMonitor;
 use crate::results::{
-    current_unix_timestamp, print_statistics, write_csv_results, write_metadata_if_not_replay,
+    current_unix_timestamp_ms, print_statistics, write_csv_results, write_memory_timeline,
+    write_metadata_if_not_replay,
 };
 use crate::types::IterationResult;
 
 pub fn execute_fetch_test(
+    rt: &DriverRuntime,
     conn_handle: ConnectionHandle,
     stmt_handle: StatementHandle,
     sql_command: &str,
@@ -20,78 +24,90 @@ pub fn execute_fetch_test(
     test_name: &str,
 ) -> Result<()> {
     println!("\n=== Executing SELECT Test ===");
-    println!("Query: {}", sql_command);
+    println!("Query: {sql_command}");
 
     // Warmup
-    run_warmup(stmt_handle, sql_command, warmup_iterations)
-        .map_err(|e| format!("Warmup phase failed: {:?}", e))?;
+    run_warmup(rt, stmt_handle, sql_command, warmup_iterations)
+        .map_err(|e| format!("Warmup phase failed: {e:?}"))?;
 
     if warmup_iterations > 0 {
-        reset_statement_query(stmt_handle, sql_command)
-            .map_err(|e| format!("Failed to reset statement after warmup: {:?}", e))?;
+        reset_statement_query(rt, stmt_handle, sql_command)
+            .map_err(|e| format!("Failed to reset statement after warmup: {e:?}"))?;
     }
 
+    let mut monitor = ResourceMonitor::new(Duration::from_millis(100));
+    monitor.start();
+
     // Execute
-    let results = run_test_iterations(stmt_handle, sql_command, iterations)
-        .map_err(|e| format!("Test phase failed: {:?}", e))?;
+    let results = run_test_iterations(rt, stmt_handle, sql_command, iterations)
+        .map_err(|e| format!("Test phase failed: {e:?}"))?;
+
+    let memory_timeline = monitor.stop();
 
     // Write & print
     let results_file = write_csv_results(&results, test_name)
-        .map_err(|e| format!("Failed to write results: {:?}", e))?;
+        .map_err(|e| format!("Failed to write results: {e:?}"))?;
 
-    write_metadata_if_not_replay(conn_handle)?;
+    write_memory_timeline(&memory_timeline, test_name);
+
+    write_metadata_if_not_replay(rt, conn_handle)?;
 
     print_statistics(&results);
+    println!(
+        "  Memory timeline: {} samples collected",
+        memory_timeline.len()
+    );
 
-    println!("\n✓ Complete → {}", results_file);
+    println!("\n✓ Complete → {results_file}");
 
     Ok(())
 }
 
-pub fn run_warmup(stmt_handle: StatementHandle, sql: &str, warmup_iterations: usize) -> Result<()> {
+pub fn run_warmup(
+    rt: &DriverRuntime,
+    stmt_handle: StatementHandle,
+    sql: &str,
+    warmup_iterations: usize,
+) -> Result<()> {
     if warmup_iterations == 0 {
         return Ok(());
     }
 
     for i in 0..warmup_iterations {
-        let (_query_time, _fetch_time, _row_count) = execute_iteration(stmt_handle)?;
+        let _ = execute_iteration(rt, stmt_handle)?;
 
         if i < warmup_iterations - 1 {
-            reset_statement_query(stmt_handle, sql)?;
+            reset_statement_query(rt, stmt_handle, sql)?;
         }
     }
     Ok(())
 }
 
 pub fn run_test_iterations(
+    rt: &DriverRuntime,
     stmt_handle: StatementHandle,
     sql: &str,
     iterations: usize,
 ) -> Result<Vec<IterationResult>> {
     let mut results = Vec::with_capacity(iterations);
-    let mut expected_row_count = get_expected_row_count();
+    let mut expected_row_count = get_expected_row_count()?;
 
     for i in 0..iterations {
-        let (query_time, fetch_time, row_count) = execute_iteration(stmt_handle)?;
+        let result = execute_iteration(rt, stmt_handle)?;
 
-        expected_row_count = validate_row_count(row_count, expected_row_count, i)?;
+        expected_row_count = validate_row_count(result.row_count, expected_row_count, i)?;
 
-        results.push(IterationResult {
-            timestamp: current_unix_timestamp(),
-            query_time_s: query_time,
-            fetch_time_s: fetch_time,
-            row_count,
-        });
+        results.push(result);
 
         if i < iterations - 1 {
-            reset_statement_query(stmt_handle, sql)?;
+            reset_statement_query(rt, stmt_handle, sql)?;
         }
     }
 
     Ok(results)
 }
 
-fn get_expected_row_count() -> Option<usize> {
+fn get_expected_row_count() -> Result<Option<usize>> {
     let expected_from_recording = std::env::var("EXPECTED_ROW_COUNT")
         .ok()
         .and_then(|s| s.parse::<usize>().ok());
@@ -101,9 +117,10 @@ fn get_expected_row_count() -> Option<usize> {
             "Row count baseline: {} rows (from recording phase)",
             expected
         );
-        Some(expected)
+        assert_nonzero_row_count(expected)?;
+        Ok(Some(expected))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -125,28 +142,63 @@ fn validate_row_count(
             "Row count baseline: {} rows (from first iteration)",
             row_count
         );
+        assert_nonzero_row_count(row_count)?;
         Ok(Some(row_count))
     }
 }
 
-fn execute_iteration(stmt_handle: StatementHandle) -> Result<(f64, f64, usize)> {
-    // Execute query (measure query execution time)
+fn assert_nonzero_row_count(count: usize) -> Result<()> {
+    if count == 0 {
+        return Err(
+            "Row count baseline is 0 — this likely indicates a silent \
+             query failure (e.g. async execution timeout). Refusing to use 0 as baseline."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn execute_iteration(rt: &DriverRuntime, stmt_handle: StatementHandle) -> Result<IterationResult> {
+    use crate::resource_monitor::{get_peak_rss_mb, process_cpu_seconds};
+
     let start_query = Instant::now();
-    let response = DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
-        stmt_handle: Some(stmt_handle),
-        bindings: None,
-    })
-    .map_err(|e| format!("Query execution failed: {:?}", e))?;
+    let response = rt
+        .client()
+        .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+            })
+        .map_err(|e| format!("Query execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();
 
-    // Fetch results (measure fetch time)
+    sf_core::perf_timing::reset_perf_counters();
+
+    let cpu_before = process_cpu_seconds();
     let start_fetch = Instant::now();
     let row_count = if let Some(result) = response.result {
-        fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {:?}", e))?
+        fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {e:?}"))?
     } else {
-        0
+        return Err(
+            "Query returned no result set (response.result is None). \
+             This may indicate a silent async execution timeout or server error."
+                .to_string(),
+        );
     };
     let fetch_time = start_fetch.elapsed().as_secs_f64();
+    let cpu_time_s = process_cpu_seconds() - cpu_before;
+    let peak_rss_mb = get_peak_rss_mb();
 
-    Ok((query_time, fetch_time, row_count))
+    let perf = sf_core::perf_timing::get_perf_data();
+
+    Ok(IterationResult {
+        timestamp: current_unix_timestamp_ms(),
+        query_time_s: query_time,
+        fetch_time_s: fetch_time,
+        core_batch_wait_s: perf.core_batch_wait_ns as f64 / 1e9,
+        core_chunk_download_s: perf.core_chunk_download_ns as f64 / 1e9,
+        core_arrow_decode_s: perf.core_arrow_decode_ns as f64 / 1e9,
+        row_count,
+        cpu_time_s,
+        peak_rss_mb,
+    })
 }

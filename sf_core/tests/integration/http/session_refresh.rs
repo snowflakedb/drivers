@@ -1,27 +1,13 @@
 //! Integration tests for session token refresh functionality.
 
-use sf_core::config::rest_parameters::ClientInfo;
-use sf_core::crl::config::CrlConfig;
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::{SessionTokens, refresh_session};
 use sf_core::sensitive::SensitiveString;
-use sf_core::tls::config::TlsConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-
-fn test_client_info() -> ClientInfo {
-    ClientInfo {
-        application: "test".to_string(),
-        version: "1.0".to_string(),
-        os: "test-os".to_string(),
-        os_version: "1.0".to_string(),
-        ocsp_mode: None,
-        crl_config: CrlConfig::default(),
-        tls_config: TlsConfig::insecure(),
-    }
-}
 
 fn test_tokens() -> SessionTokens {
     SessionTokens {

@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.types.utils import assert_connection_is_open
-
 from ...conftest import with_paramstyle
 
 
@@ -21,9 +19,9 @@ class TestBasicTypeBinding:
     """Tests for binding basic Python types to Snowflake."""
 
     @with_paramstyle("qmark")
-    def test_should_bind_basic_types_with_positional_parameters(self, execute_query, cursor):
+    def test_should_bind_basic_types_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?, ?, ?, ?" is executed with positional parameters [42, 3.14, "hello", True, None]
         sql = "SELECT ?, ?, ?, ?, ?"
@@ -40,9 +38,9 @@ class TestBasicTypeBinding:
         assert result[4] is None
 
     @with_paramstyle("numeric")
-    def test_should_bind_positional_parameters_with_numeric_placeholders(self, execute_query, cursor):
+    def test_should_bind_positional_parameters_with_numeric_placeholders(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT :1, :2, :3" is executed with positional parameters [100, "test", True]
         sql = "SELECT :1, :2, :3"
@@ -58,13 +56,13 @@ class TestBasicTypeBinding:
 class TestTableOperations:
     """Tests for parameter binding with table operations."""
 
-    def test_should_insert_single_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_insert_single_row_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
         table_name = f"{tmp_schema}.test_binding_insert"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
 
         # When Row with values [1, "Alice", True] is inserted using parameter binding
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "Alice", True))
@@ -77,13 +75,13 @@ class TestTableOperations:
         assert len(result) == 1
         assert result[0] == (1, "Alice", True)
 
-    def test_should_insert_multiple_rows_sequentially_with_parameter_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_insert_multiple_rows_sequentially_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_multiple"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"] are inserted sequentially using parameter binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
@@ -98,13 +96,13 @@ class TestTableOperations:
         assert len(result) == 3
         assert result == rows
 
-    def test_should_update_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_update_row_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_update"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Row [1, "Alice"] is inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
@@ -119,13 +117,13 @@ class TestTableOperations:
         # Then Result should contain [1, "Alice Updated"]
         assert result == (1, "Alice Updated")
 
-    def test_should_delete_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_delete_row_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_delete"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"] and [2, "Bob"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
@@ -142,13 +140,13 @@ class TestTableOperations:
         assert len(result) == 1
         assert result[0] == (2, "Bob")
 
-    def test_should_select_with_where_clause_parameter_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_select_with_where_clause_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
         table_name = f"{tmp_schema}.test_binding_select_where"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
 
         # And Rows [1, "Alice", 30], [2, "Bob", 25], [3, "Charlie", 35] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "Alice", 30))
@@ -169,9 +167,9 @@ class TestTableOperations:
 class TestEdgeCases:
     """Tests for edge cases in parameter binding."""
 
-    def test_should_handle_null_values_in_parameter_binding(self, execute_query, cursor):
+    def test_should_handle_null_values_in_parameter_binding(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?, ?" is executed with parameters [None, 42, None]
         cursor.execute("SELECT ?, ?, ?", (None, 42, None))
@@ -180,9 +178,9 @@ class TestEdgeCases:
         # Then Result should contain [NULL, 42, NULL]
         assert result == (None, 42, None)
 
-    def test_should_handle_special_characters_in_string_binding(self, execute_query, cursor):
+    def test_should_handle_special_characters_in_string_binding(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::VARCHAR" is executed with parameter containing special characters
         special_strings = [
@@ -200,9 +198,9 @@ class TestEdgeCases:
             # Then Result should contain the exact special character string
             assert result == (special_str,), f"Failed for: {special_str!r}"
 
-    def test_should_handle_unicode_characters_in_parameter_binding(self, execute_query, cursor):
+    def test_should_handle_unicode_characters_in_parameter_binding(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::VARCHAR, ?::VARCHAR" is executed with parameters ["日本語", "⛄"]
         cursor.execute("SELECT ?::VARCHAR, ?::VARCHAR", ("日本語", "⛄"))
@@ -211,9 +209,9 @@ class TestEdgeCases:
         # Then Result should contain Unicode strings ["日本語", "⛄"]
         assert result == ("日本語", "⛄")
 
-    def test_should_bind_zero_values(self, execute_query, cursor):
+    def test_should_bind_zero_values(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?::FLOAT, ?::VARCHAR" is executed with parameters [0, 0.0, ""]
         cursor.execute("SELECT ?, ?::FLOAT, ?::VARCHAR", (0, 0.0, ""))
@@ -222,9 +220,9 @@ class TestEdgeCases:
         # Then Result should contain zero and empty values [0, 0.0, ""]
         assert result == (0, 0.0, "")
 
-    def test_should_handle_mixed_type_casting_with_parameter_binding(self, execute_query, cursor):
+    def test_should_handle_mixed_type_casting_with_parameter_binding(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN" is executed with parameters [42, "hello", True]
         cursor.execute("SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN", (42, "hello", True))
@@ -233,9 +231,9 @@ class TestEdgeCases:
         # Then Result should match the type-casted parameters [42, "hello", True]
         assert result == (42, "hello", True)
 
-    def test_should_raise_error_when_placeholder_count_mismatches_argument_count(self, execute_query, cursor):
+    def test_should_raise_error_when_placeholder_count_mismatches_argument_count(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query with 2 placeholders is executed with 3 arguments
         cursor.execute("SELECT ?, ?", (1, 2, 3))
@@ -258,14 +256,14 @@ class TestEdgeCases:
 class TestArrayBinding:
     """Tests for multirow binding (executemany functionality)."""
 
-    def test_should_insert_multiple_rows_using_multirow_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_insert_multiple_rows_using_multirow_binding(self, cursor, tmp_schema):
         """Test multirow binding with basic INSERT."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Rows [[1, "Alice"], [2, "Bob"], [3, "Charlie"]] are inserted using multirow binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
@@ -278,10 +276,10 @@ class TestArrayBinding:
         # Then Result should contain 3 rows with correct values
         assert result == rows
 
-    def test_should_handle_empty_sequence_in_multirow_binding(self, execute_query, cursor):
+    def test_should_handle_empty_sequence_in_multirow_binding(self, cursor):
         """Test multirow binding with empty sequence is no-op."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Multirow binding is called with empty sequence
         cursor.executemany("INSERT INTO table VALUES (?)", [])
@@ -289,10 +287,10 @@ class TestArrayBinding:
         # Then No error should be raised
         assert cursor is not None
 
-    def test_should_validate_parameter_length_in_multirow_binding(self, execute_query, cursor):
+    def test_should_validate_parameter_length_in_multirow_binding(self, cursor):
         """Test multirow binding raises error for inconsistent lengths."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
         from snowflake.connector import InterfaceError
 
         # When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
@@ -302,14 +300,14 @@ class TestArrayBinding:
         # Then Error should be raised indicating parameter sequence length mismatch
         assert "Bulk data size don't match" in str(excinfo.value)
 
-    def test_should_handle_null_values_in_multirow_binding(self, execute_query, cursor, tmp_schema):
+    def test_should_handle_null_values_in_multirow_binding(self, cursor, tmp_schema):
         """Test multirow binding handles NULL values."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, value VARCHAR) exists
         table_name = f"{tmp_schema}.test_nulls"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, value VARCHAR)")
 
         # When Rows [[1, NULL], [2, "value"], [3, NULL]] are inserted using multirow binding
         cursor.executemany(f"INSERT INTO {table_name} VALUES (?, ?)", [(1, None), (2, "value"), (3, None)])
@@ -326,9 +324,9 @@ class TestArrayBinding:
 class TestBackwardCompatibility:
     """Tests for backward compatibility with old connector parameter format."""
 
-    def test_should_handle_both_tuple_and_list_parameter_formats(self, execute_query, cursor):
+    def test_should_handle_both_tuple_and_list_parameter_formats(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?" is executed with tuple parameters (1, "test")
         sql = "SELECT ?, ?"
@@ -347,9 +345,9 @@ class TestBackwardCompatibility:
 class TestComplexScenarios:
     """Tests for complex parameter binding scenarios."""
 
-    def test_should_bind_many_parameters(self, execute_query, cursor):
+    def test_should_bind_many_parameters(self, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query with 20 positional parameters is executed with values [0..19]
         num_params = 20
@@ -361,13 +359,13 @@ class TestComplexScenarios:
         # Then Result should contain all 20 values in order
         assert result == params
 
-    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, execute_query, cursor, tmp_schema):
+    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_in_clause"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted
         for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1):

@@ -22,8 +22,8 @@ import java.sql.SQLXML;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
-import java.util.Arrays;
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
@@ -32,43 +32,38 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.HexUtil;
 
-/**
- * Snowflake JDBC PreparedStatement implementation
- *
- * <p>This is a stub implementation that provides the basic JDBC PreparedStatement interface.
- */
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     implements PreparedStatement, SnowflakePreparedStatement {
   private static final SFLogger logger =
       SFLoggerFactory.getLogger(SnowflakePreparedStatementImpl.class);
 
   private final String sql;
-  private final PreparedStatementBindingSerializer.ParameterValue[] parameterValues;
+  private final SqlPlaceholderMetadata placeholderMetadata;
+  private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
 
   public SnowflakePreparedStatementImpl(SnowflakeConnectionImpl connection, String sql) {
     super(connection);
     this.sql = sql;
-    // TODO: Align with snowflake-jdbc by deriving bind count from server-side describe metadata
-    // rather than counting '?' directly in raw SQL text.
-    int paramCount = sql.length() - sql.replace("?", "").length();
-    this.parameterValues = new PreparedStatementBindingSerializer.ParameterValue[paramCount];
+    this.placeholderMetadata = SqlPlaceholderMetadata.analyze(sql);
+    this.parameterValues = new HashMap<>();
   }
 
   @Override
   public ResultSet executeQuery() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      return executeQueryWithBindings(sql, serializedBindings.bindings());
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+      return executeQueryWithBindings(sql, nativeBindings.bindings());
     }
   }
 
   @Override
   public int executeUpdate() throws SQLException {
     checkClosed();
-    execute();
-    // TODO return real number of rows affected
-    return 0;
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+      return executeUpdateWithBindings(sql, nativeBindings.bindings());
+    }
   }
 
   @Override
@@ -176,8 +171,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void clearParameters() throws SQLException {
     checkClosed();
-    logger.trace("Clearing prepared parameters: placeholders={}", parameterValues.length);
-    Arrays.fill(parameterValues, null);
+    logger.trace(
+        "Clearing prepared parameters: placeholders={}", placeholderMetadata.placeholderCount());
+    parameterValues.clear();
   }
 
   @Override
@@ -285,13 +281,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public boolean execute() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      try (ResultSet ignored = executeQueryWithBindings(sql, serializedBindings.bindings())) {
-        // TODO: Align execute() return value and update-count behavior with snowflake-jdbc by using
-        // backend statement-type metadata (true for result sets, false for update counts).
-        return true;
-      }
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+      return executeWithBindings(sql, nativeBindings.bindings());
     }
   }
 
@@ -461,21 +453,31 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   private void setParameter(int parameterIndex, String bindType, Object value) throws SQLException {
-    if (parameterIndex < 1 || parameterIndex > parameterValues.length) {
+    if (parameterIndex < 1) {
       logger.warn(
           "Invalid prepared parameter index: index={}, placeholders={}",
           parameterIndex,
-          parameterValues.length);
+          placeholderMetadata.placeholderCount());
       throw new SQLException("Invalid parameter index: " + parameterIndex);
     }
-    parameterValues[parameterIndex - 1] =
-        new PreparedStatementBindingSerializer.ParameterValue(bindType, value);
+    if (placeholderMetadata.hasMixedPlaceholderStyles()) {
+      throw new SQLException("Mixed positional and numeric placeholders are not supported");
+    }
+    if (!placeholderMetadata.referencesParameterIndex(parameterIndex)) {
+      logger.debug(
+          "Ignoring extra prepared parameter to preserve legacy JDBC behavior: index={}, placeholders={}",
+          parameterIndex,
+          placeholderMetadata.placeholderCount());
+      return;
+    }
+    parameterValues.put(
+        parameterIndex, new PreparedStatementBindingSerializer.ParameterValue(bindType, value));
     logger.debug(
         "Prepared parameter set: index={}, bindType={}, isNull={}, placeholders={}",
         parameterIndex,
         bindType,
         value == null,
-        parameterValues.length);
+        placeholderMetadata.placeholderCount());
   }
 
   private <T> void setNullableParameter(

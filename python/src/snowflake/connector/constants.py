@@ -1,41 +1,28 @@
-"""BACKWARD COMPATIBILITY MODULE ONLY"""
+"""Constants module for snowflake-connector-python."""
 
-from collections import defaultdict
+from enum import Enum, unique
 
-from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa
+from ._internal.type_codes import FIELD_ID_TO_NAME  # noqa: F401 - backward compatibility re-exports
+from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa: F401 - backward compatibility re-exports
 
 
-# Maps Snowflake type IDs to type name strings.
-# Values from snowflake-connector-python constants.py.
-FIELD_ID_TO_NAME: defaultdict = defaultdict(
-    str,
-    {
-        0: "FIXED",
-        1: "REAL",
-        2: "TEXT",
-        3: "DATE",
-        4: "TIMESTAMP",
-        5: "VARIANT",
-        6: "TIMESTAMP_LTZ",
-        7: "TIMESTAMP_TZ",
-        8: "TIMESTAMP_NTZ",
-        9: "OBJECT",
-        10: "ARRAY",
-        11: "BINARY",
-        12: "TIME",
-        13: "BOOLEAN",
-        14: "GEOGRAPHY",
-        15: "GEOMETRY",
-        16: "VECTOR",
-        17: "MAP",
-        18: "FILE",
-        19: "INTERVAL_YEAR_MONTH",
-        20: "INTERVAL_DAY_TIME",
-    },
-)
+@unique
+class QueryStatus(Enum):
+    RUNNING = 0
+    ABORTING = 1
+    SUCCESS = 2
+    FAILED_WITH_ERROR = 3
+    ABORTED = 4
+    QUEUED = 5
+    FAILED_WITH_INCIDENT = 6
+    DISCONNECTED = 7
+    RESUMING_WAREHOUSE = 8
+    QUEUED_REPARING_WAREHOUSE = 9  # intentional typo, matches server-side QueryDTO.java
+    RESTARTED = 10
+    BLOCKED = 11
+    NO_DATA = 12
 
-# Environment variable name for partner application identification.
+
+# backward compatibility constants
 ENV_VAR_PARTNER = "SF_PARTNER"
-
-# UTF-8 encoding constant used by compat.py PKCS5_PAD.
 UTF8 = "utf-8"

@@ -3,7 +3,11 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <iomanip>
+#include <iterator>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -16,7 +20,7 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "require.hpp"
 #include "test_setup.hpp"
 
@@ -41,6 +45,28 @@ class PatSetup {
 
   ~PatSetup() { cleanup(); }
 
+  static std::string sanitize(const std::string& s) {
+    std::string result;
+    std::copy_if(s.begin(), s.end(), std::back_inserter(result), ::isalnum);
+    return result;
+  }
+
+  static std::string ci_build_tag() {
+    struct CiVar {
+      const char* env;
+      const char* prefix;
+    };
+    for (auto [env, prefix] :
+         {CiVar{"BUILDKITE_BUILD_NUMBER", "BK"}, CiVar{"BUILD_NUMBER", "JNK"}, CiVar{"GITHUB_RUN_NUMBER", "GHA"}}) {
+      const char* raw = std::getenv(env);
+      if (raw) {
+        auto s = sanitize(raw);
+        if (!s.empty()) return std::string(prefix) + "_" + s;
+      }
+    }
+    return "LOCAL_0";
+  }
+
   PatResult acquire() {
     PatResult result;
 
@@ -49,7 +75,7 @@ class PatSetup {
     std::uniform_int_distribution<uint32_t> dis;
     uint32_t random_number = dis(gen);
     std::stringstream ss;
-    ss << "pat_" << std::hex << std::setw(8) << std::setfill('0') << random_number;
+    ss << "UD_ODBC_" << ci_build_tag() << "_" << std::hex << std::setw(8) << std::setfill('0') << random_number;
     token_name = ss.str();
     result.token_name = token_name;
 
@@ -74,7 +100,7 @@ class PatSetup {
     SQLLEN token_name_length;
     SQLRETURN ret =
         SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, token_name_buffer, sizeof(token_name_buffer), &token_name_length);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     result.token_name = std::string((char*)token_name_buffer, token_name_length);
     token_name = result.token_name;
 
@@ -82,7 +108,7 @@ class PatSetup {
     SQLLEN token_secret_length;
     ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, token_secret_buffer, sizeof(token_secret_buffer),
                      &token_secret_length);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     result.token_secret = std::string((char*)token_secret_buffer, token_secret_length);
 
     return result;
@@ -97,7 +123,7 @@ class PatSetup {
 EnvironmentHandleWrapper setup_pat_environment() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -131,20 +157,20 @@ std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
 void attempt_pat_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 }
 
 void verify_pat_simple_query_execution(ConnectionHandleWrapper& dbc) {
   StatementHandleWrapper stmt = dbc.createStatementHandle();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER result = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(result == 1);
 }
 
@@ -199,6 +225,43 @@ TEST_CASE("should authenticate using PAT as token", "[pat]") {
     auto env = setup_pat_environment();
     auto dbc = get_pat_connection_handle(env);
     std::string connection_string = get_pat_as_token_connection_string(pat.token_secret);
+
+    // When Trying to Connect
+    attempt_pat_connection(dbc, connection_string);
+
+    // Then Login is successful and simple query can be executed
+    verify_pat_simple_query_execution(dbc);
+
+    SQLDisconnect(dbc.getHandle());
+  }
+}
+
+TEST_CASE("should authenticate using PAT as token with lowercase authenticator", "[pat]") {
+  // Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
+  PatSetup pat_setup;
+  PatResult pat = pat_setup.acquire();
+
+  OLD_DRIVER_ONLY("BD#7") {
+    CHECK(pat.fetch_ret == SQL_ERROR);
+    REQUIRE(pat.diag_records.size() == 1);
+    CHECK(pat.diag_records[0].sqlState == "24000");
+    CHECK(pat.diag_records[0].nativeError == 10510);
+    CHECK_THAT(pat.diag_records[0].messageText, ContainsSubstring("Invalid cursor state"));
+  }
+
+  NEW_DRIVER_ONLY("BD#7") {
+    REQUIRE(pat.fetch_ret == SQL_SUCCESS);
+
+    std::string connection_string = get_pat_as_token_connection_string(pat.token_secret);
+    const std::string upper_auth = "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
+    const std::string lower_auth = "AUTHENTICATOR=programmatic_access_token;";
+    auto auth_pos = connection_string.find(upper_auth);
+    if (auth_pos != std::string::npos) {
+      connection_string.replace(auth_pos, upper_auth.size(), lower_auth);
+    }
+
+    auto env = setup_pat_environment();
+    auto dbc = get_pat_connection_handle(env);
 
     // When Trying to Connect
     attempt_pat_connection(dbc, connection_string);

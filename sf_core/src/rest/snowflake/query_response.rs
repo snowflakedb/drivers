@@ -6,6 +6,13 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
+/// Response from the `POST /queries/{qid}/abort-request` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct AbortQueryResponse {
+    pub success: bool,
+    pub message: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct Response {
     pub data: Data,
@@ -20,7 +27,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<String>>>,
+    pub rowset: Option<Vec<Vec<Option<String>>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -65,15 +72,15 @@ pub struct Data {
     #[serde(rename = "databaseProvider")]
     _database_provider: Option<String>,
     #[serde(rename = "finalDatabaseName")]
-    _final_database_name: Option<String>,
+    pub final_database_name: Option<String>,
     #[serde(rename = "finalSchemaName")]
-    _final_schema_name: Option<String>,
+    pub final_schema_name: Option<String>,
     #[serde(rename = "finalWarehouseName")]
-    _final_warehouse_name: Option<String>,
+    pub final_warehouse_name: Option<String>,
     #[serde(rename = "finalRoleName")]
-    _final_role_name: Option<String>,
+    pub final_role_name: Option<String>,
     #[serde(rename = "numberOfBinds")]
-    _number_of_binds: Option<i32>,
+    pub number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
     pub statement_type_id: Option<i64>,
     #[serde(rename = "version")]
@@ -89,7 +96,7 @@ pub struct Data {
     #[serde(rename = "resultTypes")]
     _result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
-    query_result_format: Option<String>,
+    pub query_result_format: Option<String>,
     #[serde(rename = "asyncResult")]
     _async_result: Option<SnowflakeResult>,
     #[serde(rename = "asyncRows")]
@@ -125,26 +132,26 @@ pub struct QueryContext {
 pub struct QueryContextEntry {
     //unused fields
     #[serde(rename = "id")]
-    _id: i32,
+    _id: i64,
     #[serde(rename = "timestamp")]
     _timestamp: i64,
     #[serde(rename = "priority")]
-    _priority: i32,
+    _priority: i64,
     #[serde(rename = "context")]
-    _context: String,
+    _context: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct Chunk {
     #[serde(rename = "url")]
-    url: String,
+    pub url: String,
     //unused fields
     #[serde(rename = "rowCount")]
-    _row_count: i32,
+    pub row_count: i32,
     #[serde(rename = "uncompressedSize")]
-    _uncompressed_size: i64,
+    pub uncompressed_size: i64,
     #[serde(rename = "compressedSize")]
-    _compressed_size: i64,
+    pub compressed_size: i64,
 }
 
 #[derive(Deserialize)]
@@ -227,23 +234,25 @@ pub struct StageInfo {
     #[serde(rename = "endPoint")]
     end_point: Option<String>,
 
-    // unused fields
     #[serde(rename = "locationType")]
-    _location_type: Option<String>,
+    location_type: Option<String>,
+    #[serde(rename = "presignedUrl")]
+    presigned_url: Option<String>,
+
+    #[serde(rename = "storageAccount")]
+    storage_account: Option<String>,
+
+    // unused fields
     #[serde(rename = "path")]
     _path: Option<String>,
-    #[serde(rename = "storageAccount")]
-    _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     _is_client_side_encrypted: Option<bool>,
-    #[serde(rename = "presignedUrl")]
-    _presigned_url: Option<String>,
     #[serde(rename = "useS3RegionalUrl")]
     _use_s3_regional_url: Option<bool>,
     #[serde(rename = "useRegionalUrl")]
-    _use_regional_url: Option<bool>,
+    use_regional_url: Option<bool>,
     #[serde(rename = "useVirtualUrl")]
-    _use_virtual_url: Option<bool>,
+    use_virtual_url: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -255,15 +264,17 @@ pub struct Credentials {
     #[serde(rename = "AWS_TOKEN")]
     aws_token: Option<String>,
 
+    #[serde(rename = "GCS_ACCESS_TOKEN")]
+    gcs_access_token: Option<String>,
+
+    #[serde(rename = "AZURE_SAS_TOKEN")]
+    azure_sas_token: Option<String>,
+
     // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
     #[serde(rename = "AWS_KEY")]
     _aws_key: Option<String>,
-    #[serde(rename = "AZURE_SAS_TOKEN")]
-    _azure_sas_token: Option<String>,
-    #[serde(rename = "GCS_ACCESS_TOKEN")]
-    _gcs_access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -278,6 +289,7 @@ pub struct EncryptionMaterial {
 
 impl Data {
     /// Copies the fields necessary for file transfer.
+    /// Encryption material is optional — SSE stages omit it from the response.
     pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
@@ -305,27 +317,22 @@ impl Data {
             })?
             .try_into()?;
 
-        let encryption_materials: Vec<_> = self
+        let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
             .encryption_material
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .into();
-
-        if encryption_materials.len() != 1 {
-            InvalidFormatSnafu {
-                message: "Expected exactly one encryption material for upload".to_string(),
+        {
+            Some(materials) => {
+                let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                match converted.len() {
+                    0 => None,
+                    1 => converted.into_iter().next(),
+                    _ => InvalidFormatSnafu {
+                        message: "Expected exactly one encryption material for upload".to_string(),
+                    }
+                    .fail()?,
+                }
             }
-            .fail()?;
-        }
-
-        let encryption_material = encryption_materials
-            .first()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .clone();
+            None => None,
+        };
 
         let auto_compress = self.auto_compress.context(MissingParameterSnafu {
             parameter: "auto compress",
@@ -339,8 +346,6 @@ impl Data {
             })?
             .clone();
 
-        // TODO: We should support other names for existing compression types that were supported in Python Connector,
-        // like "BR" and "X-BR" for Brotli etc.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
@@ -368,6 +373,7 @@ impl Data {
         })
     }
 
+    /// Encryption material is optional — SSE stages omit it from the response.
     pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
@@ -392,21 +398,25 @@ impl Data {
             })?
             .try_into()?;
 
-        let encryption_materials: Vec<_> = self
-            .encryption_material
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .into();
-
-        if src_locations.len() != encryption_materials.len() {
-            InvalidFormatSnafu {
-                message: "Number of source locations must match number of encryption materials"
-                    .to_string(),
-            }
-            .fail()?;
-        }
+        let encryption_materials: Vec<Option<file_manager::EncryptionMaterial>> =
+            match &self.encryption_material {
+                Some(materials) => {
+                    let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                    if converted.is_empty() {
+                        vec![None; src_locations.len()]
+                    } else if src_locations.len() != converted.len() {
+                        InvalidFormatSnafu {
+                        message:
+                            "Number of source locations must match number of encryption materials"
+                                .to_string(),
+                    }
+                    .fail()?
+                    } else {
+                        converted.into_iter().map(Some).collect()
+                    }
+                }
+                None => vec![None; src_locations.len()],
+            };
 
         let local_location: String = self
             .local_location
@@ -450,7 +460,14 @@ impl Data {
             }
             Some("json") => {
                 if let Some((rowset, rowtype)) = self.to_json_rowset() {
-                    RowsetData::JsonRowset { rowset, rowtype }
+                    match self.to_chunk_download_data() {
+                        Some(chunk_download_data) => RowsetData::JsonMultiChunk {
+                            rowset,
+                            rowtype,
+                            chunk_download_data,
+                        },
+                        None => RowsetData::JsonRowset { rowset, rowtype },
+                    }
                 } else {
                     tracing::error!("Rowset and/or rowtype are missing for JSON result format");
                     RowsetData::NoData
@@ -466,19 +483,20 @@ impl Data {
 
     pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
         match (self.chunks.as_ref(), self.chunk_headers.as_ref()) {
-            (Some(chunks), Some(chunk_headers)) => {
+            (Some(chunks), chunk_headers_opt) => {
+                let empty_headers = HashMap::new();
+                let chunk_headers = chunk_headers_opt.unwrap_or(&empty_headers);
+                if chunk_headers_opt.is_none() {
+                    tracing::warn!("Chunks found without chunk headers; using empty headers");
+                }
                 let chunk_download_data = chunks
                     .iter()
-                    .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
+                    .map(|chunk| ChunkDownloadData::new(chunk, chunk_headers))
                     .collect();
                 Some(chunk_download_data)
             }
             (None, Some(_)) => {
                 tracing::error!("Chunk headers found but chunks are missing");
-                None
-            }
-            (Some(_), None) => {
-                tracing::error!("Chunks found but chunk headers are missing");
                 None
             }
             _ => None,
@@ -490,7 +508,8 @@ impl Data {
         if value.is_empty() { None } else { Some(value) }
     }
 
-    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+    #[allow(clippy::type_complexity)]
+    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<Option<String>>>, &Vec<RowType>)> {
         match (self.rowset.as_ref(), self.row_type.as_ref()) {
             (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
             (Some(_), None) => {
@@ -519,8 +538,13 @@ pub enum RowsetData<'a> {
         chunk_base64: &'a str,
     },
     JsonRowset {
-        rowset: &'a Vec<Vec<String>>,
+        rowset: &'a Vec<Vec<Option<String>>>,
         rowtype: &'a Vec<RowType>,
+    },
+    JsonMultiChunk {
+        rowset: &'a Vec<Vec<Option<String>>>,
+        rowtype: &'a Vec<RowType>,
+        chunk_download_data: Vec<ChunkDownloadData>,
     },
     NoData,
 }
@@ -576,7 +600,39 @@ impl TryFrom<&RowType> for query_types::RowType {
                 let scale = value.scale.unwrap_or(9);
                 Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
             }
+            "TIMESTAMP_LTZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_ltz(&name, nullable, scale))
+            }
+            "TIMESTAMP_TZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_tz(&name, nullable, scale))
+            }
             "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
+            "TIME" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::time(&name, nullable, scale))
+            }
+            "BINARY" => {
+                let length = value.length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> length for BINARY column '{name}'"),
+                })?;
+
+                let byte_length = value.byte_length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> byte length for BINARY column '{name}'"),
+                })?;
+
+                Ok(query_types::RowType::binary(
+                    &name,
+                    nullable,
+                    length,
+                    byte_length,
+                ))
+            }
+            "DECFLOAT" => Ok(query_types::RowType::decfloat(&name, nullable)),
+            "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
+            "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
+            "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -589,6 +645,19 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
     type Error = QueryResponseError;
 
     fn try_from(value: &StageInfo) -> Result<Self, Self::Error> {
+        // Determine location type (default to S3 for backward compatibility)
+        let location_type = match value.location_type.as_deref() {
+            Some("GCS") => file_manager::LocationType::Gcs,
+            Some("AZURE") => file_manager::LocationType::Azure,
+            Some("S3") | None => file_manager::LocationType::S3,
+            Some(other) => {
+                return InvalidFormatSnafu {
+                    message: format!("Unknown location type: {other}"),
+                }
+                .fail();
+            }
+        };
+
         let location = value
             .location
             .as_ref()
@@ -598,7 +667,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .clone();
 
         let bucket_separator = location.find('/').context(InvalidFormatSnafu {
-            message: format!("Invalid S3 location format: {location}"),
+            message: format!("Invalid location format: {location}"),
         })?;
 
         let bucket = location[..bucket_separator].to_string();
@@ -615,13 +684,55 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             })?
             .clone();
 
-        let creds: file_manager::Credentials = value
-            .creds
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "stage info -> credentials",
-            })?
-            .try_into()?;
+        // Build credentials based on location type
+        let creds_data = value.creds.as_ref().context(MissingParameterSnafu {
+            parameter: "stage info -> credentials",
+        })?;
+
+        let creds = match location_type {
+            file_manager::LocationType::S3 => file_manager::CloudCredentials::S3 {
+                aws_key_id: creds_data
+                    .aws_key_id
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws key id",
+                    })?
+                    .clone(),
+                aws_secret_key: creds_data
+                    .aws_secret_key
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws secret key",
+                    })?
+                    .clone()
+                    .into(),
+                aws_token: creds_data
+                    .aws_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws token",
+                    })?
+                    .clone()
+                    .into(),
+            },
+            file_manager::LocationType::Gcs => file_manager::CloudCredentials::Gcs {
+                gcs_access_token: creds_data
+                    .gcs_access_token
+                    .as_ref()
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.clone().into()),
+            },
+            file_manager::LocationType::Azure => file_manager::CloudCredentials::Azure {
+                sas_token: creds_data
+                    .azure_sas_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AZURE_SAS_TOKEN",
+                    })?
+                    .clone()
+                    .into(),
+            },
+        };
 
         let end_point = value
             .end_point
@@ -629,48 +740,46 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .filter(|ep| !ep.is_empty())
             .cloned();
 
+        let presigned_url = value
+            .presigned_url
+            .as_ref()
+            .filter(|url| !url.is_empty())
+            .cloned();
+
+        // ME-CENTRAL2 always uses regional URLs, regardless of the flag
+        let use_regional_url =
+            value.use_regional_url.unwrap_or(false) || region.eq_ignore_ascii_case("me-central2");
+        let use_virtual_url = value.use_virtual_url.unwrap_or(false);
+
+        let storage_account = match location_type {
+            file_manager::LocationType::Azure => Some(
+                value
+                    .storage_account
+                    .as_ref()
+                    .filter(|sa| !sa.is_empty())
+                    .context(MissingParameterSnafu {
+                        parameter: "stage info -> storageAccount",
+                    })?
+                    .clone(),
+            ),
+            _ => value
+                .storage_account
+                .as_ref()
+                .filter(|sa| !sa.is_empty())
+                .cloned(),
+        };
+
         Ok(file_manager::StageInfo {
+            location_type,
             bucket,
             key_prefix,
             region,
             creds,
             end_point,
-        })
-    }
-}
-
-impl TryFrom<&Credentials> for file_manager::Credentials {
-    type Error = QueryResponseError;
-
-    fn try_from(value: &Credentials) -> Result<Self, Self::Error> {
-        let aws_key_id = value
-            .aws_key_id
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws key id",
-            })?
-            .clone();
-
-        let aws_secret_key = value
-            .aws_secret_key
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws secret key",
-            })?
-            .clone();
-
-        let aws_token = value
-            .aws_token
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws token",
-            })?
-            .clone();
-
-        Ok(file_manager::Credentials {
-            aws_key_id,
-            aws_secret_key: aws_secret_key.into(),
-            aws_token: aws_token.into(),
+            presigned_url,
+            use_virtual_url,
+            use_regional_url,
+            storage_account,
         })
     }
 }
@@ -724,4 +833,379 @@ pub enum QueryResponseError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_rowset_with_null_values() {
+        let json = r#"{
+            "data": {
+                "rowset": [["val1", null, "val3"], [null, "val2", null]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": false, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c3", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset.len(), 2);
+
+        // First row: "val1", null, "val3"
+        assert_eq!(rowset[0][0], Some("val1".to_string()));
+        assert_eq!(rowset[0][1], None);
+        assert_eq!(rowset[0][2], Some("val3".to_string()));
+
+        // Second row: null, "val2", null
+        assert_eq!(rowset[1][0], None);
+        assert_eq!(rowset[1][1], Some("val2".to_string()));
+        assert_eq!(rowset[1][2], None);
+    }
+
+    #[test]
+    fn test_deserialize_rowset_all_nulls() {
+        let json = r#"{
+            "data": {
+                "rowset": [[null, null]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset[0][0], None);
+        assert_eq!(rowset[0][1], None);
+    }
+
+    #[test]
+    fn test_to_json_rowset_with_nulls() {
+        let json = r#"{
+            "data": {
+                "rowset": [["a", null], [null, "b"]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let (rowset, row_types) = response.data.to_json_rowset().unwrap();
+        assert_eq!(rowset.len(), 2);
+        assert_eq!(row_types.len(), 2);
+    }
+
+    #[test]
+    fn test_arrow_chunks_without_headers_still_build_chunk_download_data() {
+        let json = r#"{
+            "data": {
+                "queryResultFormat": "arrow",
+                "chunks": [
+                    {
+                        "url": "https://example.com/chunk-1",
+                        "rowCount": 1,
+                        "uncompressedSize": 16,
+                        "compressedSize": 16
+                    }
+                ],
+                "rowtype": [
+                    {
+                        "name": "c1",
+                        "type": "TEXT",
+                        "nullable": true,
+                        "scale": null,
+                        "byteLength": 64,
+                        "length": 16,
+                        "precision": null
+                    }
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let chunk_download_data = response.data.to_chunk_download_data().unwrap();
+
+        assert_eq!(chunk_download_data.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_chunks_without_headers_use_multi_chunk_rowset_data() {
+        let json = r#"{
+            "data": {
+                "queryResultFormat": "arrow",
+                "chunks": [
+                    {
+                        "url": "https://example.com/chunk-1",
+                        "rowCount": 1,
+                        "uncompressedSize": 16,
+                        "compressedSize": 16
+                    }
+                ],
+                "rowtype": [
+                    {
+                        "name": "c1",
+                        "type": "TEXT",
+                        "nullable": true,
+                        "scale": null,
+                        "byteLength": 64,
+                        "length": 16,
+                        "precision": null
+                    }
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+
+        assert!(matches!(
+            response.data.to_rowset_data(),
+            RowsetData::ArrowMultiChunk { .. }
+        ));
+    }
+
+    #[test]
+    fn test_object_type_maps_to_object() {
+        let row_type = RowType {
+            name: "obj_col".to_string(),
+            type_: "OBJECT".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(1024),
+            byte_length: Some(4096),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Object {
+                ref name,
+                nullable: true,
+            } if name == "obj_col"
+        ));
+    }
+
+    #[test]
+    fn test_variant_type_maps_to_variant() {
+        let row_type = RowType {
+            name: "var_col".to_string(),
+            type_: "VARIANT".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Variant {
+                ref name,
+                nullable: false,
+            } if name == "var_col"
+        ));
+    }
+
+    #[test]
+    fn test_array_type_maps_to_array() {
+        let row_type = RowType {
+            name: "arr_col".to_string(),
+            type_: "ARRAY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(512),
+            byte_length: Some(2048),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Array {
+                ref name,
+                nullable: true,
+            } if name == "arr_col"
+        ));
+    }
+
+    // ---------------------------------------------------------------
+    // Upload encryption material parsing (to_file_upload_data)
+    // ---------------------------------------------------------------
+
+    fn make_upload_json(encryption_material_fragment: &str) -> String {
+        format!(
+            r#"{{
+                "src_locations": ["path/to/file.csv"],
+                "stageInfo": {{
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "creds": {{ "GCS_ACCESS_TOKEN": "fake" }},
+                    "region": "us-central1"
+                }},
+                {encryption_material_fragment}
+                "autoCompress": false,
+                "sourceCompression": "NONE",
+                "overwrite": false
+            }}"#
+        )
+    }
+
+    #[test]
+    fn upload_encryption_material_null_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": null,"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_absent_returns_none() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_empty_array_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": [],"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_single_returns_some() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42},"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_some());
+    }
+
+    #[test]
+    fn upload_encryption_material_array_of_one_returns_some() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42}],"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_some());
+    }
+
+    #[test]
+    fn upload_encryption_material_array_of_many_returns_error() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": [
+                {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 1},
+                {"queryStageMasterKey": "b3l6","queryId": "qid-2","smkId": 2}
+            ],"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let result = data.to_file_upload_data();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Expected exactly one encryption material"),
+            "Error should mention the constraint: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_unsupported_column_type_returns_error() {
+        let row_type = RowType {
+            name: "bad_col".to_string(),
+            type_: "GEOGRAPHY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("GEOGRAPHY"),
+                "Error should mention the unsupported type: {err}"
+            ),
+            Ok(_) => panic!("Expected error for unsupported column type GEOGRAPHY"),
+        }
+    }
+
+    #[test]
+    fn test_query_context_entry_id_exceeding_i32_max() {
+        let json = r#"{
+            "data": {
+                "queryContext": {
+                    "entries": [
+                        {"id": 3575747553, "timestamp": 1681400000, "priority": 0, "context": "some_ctx"}
+                    ]
+                }
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+    }
+
+    #[test]
+    fn test_query_context_entry_missing_context_field() {
+        let json = r#"{
+            "data": {
+                "queryContext": {
+                    "entries": [
+                        {"id": 42, "timestamp": 1681400000, "priority": 1}
+                    ]
+                }
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+    }
+
+    #[test]
+    fn test_query_context_entry_with_all_large_values() {
+        let json = r#"{
+            "data": {
+                "queryContext": {
+                    "entries": [
+                        {"id": 3575748941, "timestamp": 9999999999999, "priority": 3000000000, "context": "ctx"},
+                        {"id": 3575748745, "timestamp": 1681400000, "priority": 0}
+                    ]
+                }
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+    }
 }

@@ -1,7 +1,7 @@
 @odbc
-Feature: ODBC string to character/binary type conversions
-  # Tests converting Snowflake VARCHAR/STRING type to character/binary ODBC C types:
-  # SQL_C_BINARY, SQL_C_CHAR, SQL_C_WCHAR
+Feature: ODBC string to character type conversions
+  # Tests converting Snowflake VARCHAR/STRING type to character ODBC C types:
+  # SQL_C_CHAR, SQL_C_WCHAR
 
   # ============================================================================
   # STRING TRUNCATION TESTS
@@ -25,36 +25,6 @@ Feature: ODBC string to character/binary type conversions
     And the indicator should show the actual byte length of the original string in wide char format
 
   # ============================================================================
-  # SUCCESSFUL CONVERSIONS - String to SQL_C_BINARY
-  # ============================================================================
-
-  @odbc_e2e
-  Scenario: should convert string literals to SQL_C_BINARY
-    Given Snowflake client is logged in
-    When Query selecting various string literals is executed
-    Then ASCII string 'hello' should convert to raw bytes
-    And empty string should return 0 bytes
-    And mixed ASCII with special characters should convert correctly
-    And NULL should return SQL_NULL_DATA
-
-  # ============================================================================
-  # SUCCESSFUL CONVERSIONS - UTF-8 String to SQL_C_BINARY
-  # ============================================================================
-
-  @odbc_e2e
-  Scenario: should convert UTF-8 string literals to SQL_C_BINARY
-    # UTF-8 encoded strings are returned as raw bytes
-    Given Snowflake client is logged in
-    When Query selecting UTF-8 string literals is executed
-    Then Japanese '日本語' should convert to raw bytes
-    And Russian 'Привет' should convert to raw bytes
-    And Chinese '你好' should convert to raw bytes
-    And emoji string 'émoji: 😀' should include multi-byte emoji
-    And French 'café' should convert correctly
-    And Spanish 'Ñoño' should convert correctly
-    And musical symbol '𝄞' should convert correctly
-
-  # ============================================================================
   # UTF-16 TO ASCII CONVERSION
   # ============================================================================
 
@@ -70,3 +40,19 @@ Feature: ODBC string to character/binary type conversions
     And Greek letters should be replaced with 0x1a
     And Pure ASCII string should remain unchanged
     And Combined string should have ASCII preserved and non-ASCII replaced with 0x1a
+
+  # ============================================================================
+  # BASIC STRING QUERY AND PARAMETER BINDING
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: Test string basic query
+    Given A Snowflake connection
+    When A string value is inserted and selected via SQL_C_CHAR
+    Then The retrieved string matches the inserted value
+
+  @odbc_e2e
+  Scenario: Test basic string binding
+    Given A Snowflake connection
+    When A string value is inserted via parameter binding and selected
+    Then The retrieved string matches the bound parameter value

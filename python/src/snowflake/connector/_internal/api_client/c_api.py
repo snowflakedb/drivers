@@ -1,5 +1,7 @@
 import ctypes
+import functools
 import logging
+import os
 import sys
 
 from enum import Enum
@@ -9,7 +11,8 @@ from typing import Any
 from ..logging import get_sf_core_logger
 
 
-_CORE_LIB_NAME = "libsf_core"
+_CORE_LIB_STEM = "sf_core"
+_CORE_LIB_NAME = f"lib{_CORE_LIB_STEM}"
 
 
 class CORE_API(Enum):
@@ -21,9 +24,11 @@ class CAPIHandle(ctypes.Structure):
 
 
 def _get_core_path() -> Any:
-    # Define the file name for each platform
+    # Define the file name for each platform.
+    # On Windows, cdylib crates produce "sf_core.dll" (no lib prefix).
+    # On Unix, they produce "libsf_core.so" / "libsf_core.dylib".
     if sys.platform.startswith("win"):
-        lib_name = f"{_CORE_LIB_NAME}.dll"
+        lib_name = f"{_CORE_LIB_STEM}.dll"
     elif sys.platform.startswith("darwin"):
         lib_name = f"{_CORE_LIB_NAME}.dylib"
     else:
@@ -34,14 +39,17 @@ def _get_core_path() -> Any:
 
 
 def _load_core() -> ctypes.CDLL:
-    # This context manager is the safe way to get a
-    # file path from importlib.resources. It handles cases
-    # where the file is inside a zip and needs to be extracted
-    # to a temporary location.
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
-        core = ctypes.CDLL(str(lib_path))
-    return core
+        lib_path_str = str(lib_path)
+        if sys.platform.startswith("win"):
+            # ctypes.CDLL on Python 3.8+ uses restricted DLL search; register
+            # _core/ so the Windows loader finds sf_core.dll's co-located deps.
+            os.add_dll_directory(os.fspath(lib_path.parent))
+        try:
+            return ctypes.CDLL(lib_path_str)
+        except OSError as err:
+            raise OSError(f"Couldn't load core driver (path={lib_path_str})") from err
 
 
 try:
@@ -70,6 +78,31 @@ core.sf_core_free_buffer.argtypes = [
     ctypes.POINTER(ctypes.c_ubyte),  # uint8_t* buffer
     ctypes.c_size_t,  # size_t len
 ]
+
+
+# Performance instrumentation FFI bindings (see sf_core/src/c_api.rs).
+# These symbols are always present in libsf_core; when the perf_timing feature
+# is off they return empty/no-op results. Callers use sf_core_perf_enabled() to
+# check whether real data is available.
+core.sf_core_perf_enabled.argtypes = []
+core.sf_core_perf_enabled.restype = ctypes.c_bool
+
+
+class CoreInstrumentationData(ctypes.Structure):
+    """Mirrors #[repr(C)] CoreInstrumentationData from sf_core::perf_timing."""
+
+    _fields_ = [
+        ("core_batch_wait_ns", ctypes.c_uint64),
+        ("core_chunk_download_ns", ctypes.c_uint64),
+        ("core_arrow_decode_ns", ctypes.c_uint64),
+    ]
+
+
+core.sf_core_get_perf_data.argtypes = []
+core.sf_core_get_perf_data.restype = CoreInstrumentationData
+
+core.sf_core_reset_perf_metrics.argtypes = []
+core.sf_core_reset_perf_metrics.restype = None
 
 
 def sf_core_api_call_proto(
@@ -134,3 +167,22 @@ def register_default_logger_callback() -> None:
     """
     sf_core_init_logger(c_logger_callback)
     logging.getLogger("sf_core").setLevel(level=logging.INFO)
+
+
+@functools.lru_cache(maxsize=1)
+def sf_core_perf_enabled() -> bool:
+    return bool(core.sf_core_perf_enabled())
+
+
+def sf_core_get_perf_data() -> dict[str, float]:
+    """Atomically read-and-reset perf counters, returning seconds."""
+    data: CoreInstrumentationData = core.sf_core_get_perf_data()
+    return {
+        "core_batch_wait_s": data.core_batch_wait_ns / 1e9,
+        "core_chunk_download_s": data.core_chunk_download_ns / 1e9,
+        "core_arrow_decode_s": data.core_arrow_decode_ns / 1e9,
+    }
+
+
+def sf_core_reset_perf_metrics() -> None:
+    core.sf_core_reset_perf_metrics()

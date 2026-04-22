@@ -1,0 +1,138 @@
+name: Cargo Cache
+description: >
+  Restore or save Cargo registry and target directory.
+  Use mode=restore after checkout, mode=save at end of job.
+  All branches save to cache. GitHub scopes caches per branch automatically.
+
+inputs:
+  mode:
+    description: '"restore" to restore caches, "save" to save them'
+    required: true
+  shared-key:
+    description: Unique key prefix for this job's target directory cache
+    required: true
+  target-dir:
+    description: Path to the Rust target directory
+    default: target
+  lockfiles:
+    description: Glob pattern for Cargo.lock files to include in cache key
+    default: "**/Cargo.lock"
+  # Cache-hit indicators captured from the restore invocation, passed back on save.
+  # When either is 'true', the corresponding save step is skipped — avoids concurrent
+  # writes racing on the same key (which produce benign but noisy "Unable to reserve
+  # cache" warnings). The registry cache key is shared across all shared-keys in a given
+  # OS, so the race is real on any workflow with multiple Rust jobs on the same OS.
+  registry-cache-hit:
+    description: Value of registry-cache-hit from the restore step. If 'true', skip the save.
+    default: ''
+  target-cache-hit:
+    description: Value of target-cache-hit from the restore step. If 'true', skip the save.
+    default: ''
+
+outputs:
+  rustc-hash:
+    description: Short hash of the rustc version (included in target cache key)
+    value: ${{ steps.rustc.outputs.hash }}
+  registry-cache-key:
+    description: Exact cache key used for Cargo registry (pass to save step)
+    value: ${{ steps.keys.outputs.registry }}
+  target-cache-key:
+    description: Exact cache key used for target directory (pass to save step)
+    value: ${{ steps.keys.outputs.target }}
+  registry-cache-hit:
+    description: "'true' if an exact registry cache-key hit was found on restore"
+    value: ${{ steps.restore-registry.outputs.cache-hit }}
+  target-cache-hit:
+    description: "'true' if an exact target cache-key hit was found on restore"
+    value: ${{ steps.restore-target.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # ── Shared: compute keys (runs in both modes) ──
+    - name: Hash rustc version
+      id: rustc
+      shell: bash
+      run: echo "hash=$(rustc -vV | (sha256sum 2>/dev/null || shasum -a 256) | cut -d' ' -f1 | head -c 16)" >> $GITHUB_OUTPUT
+
+    - name: Compute cache keys
+      id: keys
+      shell: bash
+      run: |
+        LOCK_HASH="${{ hashFiles(inputs.lockfiles) }}"
+        echo "registry=${{ runner.os }}-cargo-registry-${LOCK_HASH}" >> $GITHUB_OUTPUT
+        echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
+
+    # ── Restore mode ──
+    - name: Restore Cargo registry cache
+      id: restore-registry
+      if: inputs.mode == 'restore'
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: ${{ steps.keys.outputs.registry }}
+        restore-keys: ${{ runner.os }}-cargo-registry-
+
+    - name: Restore Rust target cache
+      id: restore-target
+      if: inputs.mode == 'restore'
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ inputs.target-dir }}
+        key: ${{ steps.keys.outputs.target }}
+        restore-keys: |
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-
+
+    # ── Save mode ──
+    # Two-layer guard before calling actions/cache/save@v5 (which is the slow step — tar of
+    # a multi-hundred-MB Windows cache can take 3+ minutes, and if reservation ultimately
+    # fails we've wasted all that tar time):
+    #
+    #   1. inputs.*-cache-hit != 'true': skip if restore already saw an exact-key hit.
+    #      Catches the common "cache is already warm for this lockfile" case.
+    #
+    #   2. lookup-only pre-check: cheap server roundtrip that checks if the key exists NOW,
+    #      after the build phase. Catches the race where another concurrent job saved this
+    #      key while our job was still building. Without this pre-check we'd tar for 3 min
+    #      only to have actions/cache/save@v5 fail with "Unable to reserve cache".
+    - name: Pre-save check — registry cache already exists?
+      id: precheck-registry
+      if: inputs.mode == 'save' && inputs.registry-cache-hit != 'true'
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: ${{ steps.keys.outputs.registry }}
+        lookup-only: true
+
+    - name: Save Cargo registry cache
+      if: inputs.mode == 'save' && inputs.registry-cache-hit != 'true' && steps.precheck-registry.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: ${{ steps.keys.outputs.registry }}
+
+    - name: Pre-save check — target cache already exists?
+      id: precheck-target
+      if: inputs.mode == 'save' && inputs.target-cache-hit != 'true'
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ inputs.target-dir }}
+        key: ${{ steps.keys.outputs.target }}
+        lookup-only: true
+
+    - name: Save Rust target cache
+      if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ inputs.target-dir }}
+        key: ${{ steps.keys.outputs.target }}

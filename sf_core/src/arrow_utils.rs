@@ -1,15 +1,25 @@
+pub use crate::chunks::convert_string_rowset_to_arrow_reader;
 use crate::query_types::RowType;
-use arrow::array::{Array, BooleanArray, Float64Array, Int8Array, Int64Array, StringArray};
-use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type, Schema};
+use arrow::array::Array;
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use snafu::{Location, ResultExt, Snafu};
+use hex::FromHexError;
+use snafu::{Location, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
+pub fn create_field(row_type: &RowType) -> Result<Field, ArrowUtilsError> {
+    create_field_with_type(row_type, None)
+}
+
+/// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
 /// Takes specific_data_type to allow overriding the default type inference for FIXED types based on scale/precision
-pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field {
+pub fn create_field_with_type(
+    row_type: &RowType,
+    data_type: Option<DataType>,
+) -> Result<Field, ArrowUtilsError> {
     match row_type {
         RowType::Text {
             name,
@@ -21,7 +31,10 @@ pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field 
             metadata.insert("logicalType".to_string(), "TEXT".to_string());
             metadata.insert("charLength".to_string(), length.to_string());
             metadata.insert("byteLength".to_string(), byte_length.to_string());
-            Field::new(name, data_type, *nullable).with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::Fixed {
             name,
@@ -33,254 +46,184 @@ pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field 
             metadata.insert("logicalType".to_string(), "FIXED".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
             metadata.insert("precision".to_string(), precision.to_string());
-            Field::new(name, data_type, *nullable).with_metadata(metadata)
+            let data_type = match data_type {
+                Some(dt) => Ok(dt),
+                None => GenericSnafu {
+                    message: "Data type must be provided for FIXED column".to_string(),
+                }
+                .fail(),
+            }?;
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
         RowType::Boolean { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "BOOLEAN".to_string());
-            Field::new(name, data_type, *nullable).with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Boolean), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::Real { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "REAL".to_string());
-            Field::new(name, data_type, *nullable).with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Float64), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::Date { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DATE".to_string());
-            Field::new(name, data_type, *nullable).with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Date32), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::TimestampNtz {
             name,
             nullable,
             scale,
+        }
+        | RowType::TimestampLtz {
+            name,
+            nullable,
+            scale,
+        } => {
+            let logical_type = match row_type {
+                RowType::TimestampNtz { .. } => "TIMESTAMP_NTZ",
+                RowType::TimestampLtz { .. } => "TIMESTAMP_LTZ",
+                _ => unreachable!(),
+            };
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), logical_type.to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            let data_type = if scale <= &7 {
+                data_type.unwrap_or(DataType::Int64)
+            } else {
+                data_type.unwrap_or_else(|| {
+                    DataType::Struct(
+                        vec![
+                            Field::new("epoch", DataType::Int64, true)
+                                .with_metadata(metadata.clone()),
+                            Field::new("fraction", DataType::Int32, true)
+                                .with_metadata(metadata.clone()),
+                        ]
+                        .into(),
+                    )
+                })
+            };
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
+        }
+        RowType::TimestampTz {
+            name,
+            nullable,
+            scale,
         } => {
             let mut metadata = HashMap::new();
-            metadata.insert("logicalType".to_string(), "TIMESTAMP_NTZ".to_string());
+            metadata.insert("logicalType".to_string(), "TIMESTAMP_TZ".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
-            let fields = vec![
-                Field::new("epoch", DataType::Int64, false),
-                Field::new("fraction", DataType::Int32, false),
-            ];
-            Field::new(name, DataType::Struct(fields.into()), *nullable).with_metadata(metadata)
-        }
-    }
-}
-
-/// Parses a decimal string like "123.45" into the unscaled i128 representation
-/// that Arrow's Decimal128Array expects. For scale=2, "123.45" becomes 12345i128.
-fn parse_decimal_str(v: &str, scale: u32) -> Result<i128, ArrowUtilsError> {
-    if scale == 0 {
-        return v.parse::<i128>().context(IntegerParsingSnafu {
-            value: v.to_string(),
-        });
-    }
-
-    let (integer_str, frac_str) = match v.split_once('.') {
-        Some((int_part, frac_part)) => (int_part, frac_part),
-        None => (v, ""),
-    };
-
-    let negative = integer_str.starts_with('-');
-    let abs_int: i128 = integer_str
-        .trim_start_matches('-')
-        .parse::<i128>()
-        .context(IntegerParsingSnafu {
-            value: v.to_string(),
-        })?;
-
-    let frac_scaled: i128 = if frac_str.is_empty() {
-        0
-    } else {
-        let scale_usize = scale as usize;
-        // Pad with trailing zeros or truncate to match the target scale
-        let adjusted = if frac_str.len() < scale_usize {
-            format!("{:0<width$}", frac_str, width = scale_usize)
-        } else {
-            frac_str[..scale_usize].to_string()
-        };
-        adjusted.parse::<i128>().context(IntegerParsingSnafu {
-            value: v.to_string(),
-        })?
-    };
-
-    let unscaled = abs_int * 10i128.pow(scale) + frac_scaled;
-    Ok(if negative { -unscaled } else { unscaled })
-}
-
-/// Creates an Arrow array from column values and data type
-fn create_column_array(
-    values: Vec<&str>,
-    row_type: &RowType,
-) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError> {
-    match row_type {
-        RowType::Text { .. } => Ok((
-            create_field_with_type(row_type, DataType::Utf8),
-            Arc::new(StringArray::from(values)),
-        )),
-        RowType::Fixed {
-            scale, precision, ..
-        } => {
-            let decimal_values: Result<Vec<i128>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| parse_decimal_str(v, *scale as u32))
-                .collect();
-
-            let decimal_values = decimal_values?;
-            if decimal_values.is_empty() {
-                return Ok((
-                    create_field_with_type(row_type, DataType::Int64), // TODO is it correct? We have to assume something, but it probably doesn't matter.
-                    Arc::new(Int64Array::new_null(0)),
-                ));
-            }
-            let min_value: i128 = decimal_values.iter().min().copied().unwrap();
-            let max_value: i128 = decimal_values.iter().max().copied().unwrap();
-
-            if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
-                let int8_values: Vec<i8> = decimal_values.into_iter().map(|v| v as i8).collect();
-                Ok((
-                    create_field_with_type(row_type, DataType::Int8),
-                    Arc::new(Int8Array::from(int8_values)),
-                ))
-            } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
-                let int16_values: Vec<i16> = decimal_values.into_iter().map(|v| v as i16).collect();
-                Ok((
-                    create_field_with_type(row_type, DataType::Int16),
-                    Arc::new(arrow::array::Int16Array::from(int16_values)),
-                ))
-            } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
-                let int32_values: Vec<i32> = decimal_values.into_iter().map(|v| v as i32).collect();
-                Ok((
-                    create_field_with_type(row_type, DataType::Int32),
-                    Arc::new(arrow::array::Int32Array::from(int32_values)),
-                ))
-            } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
-                let int64_values: Vec<i64> = decimal_values.into_iter().map(|v| v as i64).collect();
-                Ok((
-                    create_field_with_type(row_type, DataType::Int64),
-                    Arc::new(Int64Array::from(int64_values)),
-                ))
+            let data_type = if scale <= &3 {
+                DataType::Struct(
+                    vec![
+                        Field::new("epoch", DataType::Int64, true).with_metadata(metadata.clone()),
+                        Field::new("timezone", DataType::Int32, true)
+                            .with_metadata(metadata.clone()),
+                    ]
+                    .into(),
+                )
             } else {
-                Ok((
-                    create_field_with_type(
-                        row_type,
-                        DataType::Decimal128(*precision as u8, *scale as i8),
-                    ),
-                    Arc::new(
-                        arrow::array::Decimal128Array::from(decimal_values)
-                            .with_precision_and_scale(*precision as u8, *scale as i8)
-                            .expect("valid decimal precision/scale"),
-                    ),
-                ))
-            }
+                DataType::Struct(
+                    vec![
+                        Field::new("epoch", DataType::Int64, true).with_metadata(metadata.clone()),
+                        Field::new("fraction", DataType::Int32, true)
+                            .with_metadata(metadata.clone()),
+                        Field::new("timezone", DataType::Int32, true)
+                            .with_metadata(metadata.clone()),
+                    ]
+                    .into(),
+                )
+            };
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
-        RowType::Boolean { .. } => {
-            let bool_values: Result<Vec<bool>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    "true" => Ok(true),
-                    "false" => Ok(false),
-                    other => BooleanParsingSnafu {
-                        value: other.to_string(),
-                    }
-                    .fail(),
-                })
-                .collect();
-            Ok((
-                create_field_with_type(row_type, DataType::Boolean),
-                Arc::new(BooleanArray::from(bool_values?)),
-            ))
+        RowType::Time {
+            name,
+            nullable,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "TIME".to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            let data_type = if scale <= &4 {
+                data_type.unwrap_or(DataType::Int32)
+            } else {
+                data_type.unwrap_or(DataType::Int64)
+            };
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
-        RowType::Real { .. } => {
-            let float_values: Result<Vec<f64>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| {
-                    v.parse::<f64>().context(FloatParsingSnafu {
-                        value: v.to_string(),
-                    })
-                })
-                .collect();
-            Ok((
-                create_field_with_type(row_type, DataType::Float64),
-                Arc::new(Float64Array::from(float_values?)),
-            ))
+        RowType::Binary {
+            name,
+            nullable,
+            length,
+            byte_length,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "BINARY".to_string());
+            metadata.insert("byteLength".to_string(), byte_length.to_string());
+            metadata.insert("charLength".to_string(), length.to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Binary), *nullable)
+                    .with_metadata(metadata),
+            )
         }
-        RowType::Date { .. } => {
-            let day_values: Result<Vec<i32>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| {
-                    v.parse::<i32>().context(IntegerParsingSnafu {
-                        value: v.to_string(),
-                    })
-                })
-                .collect();
-            Ok((
-                create_field_with_type(row_type, DataType::Date32),
-                Arc::new(arrow::array::PrimitiveArray::<Date32Type>::from(
-                    day_values?,
-                )),
-            ))
+        RowType::Decfloat { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "DECFLOAT".to_string());
+            let data_type = data_type.unwrap_or_else(|| {
+                DataType::Struct(
+                    vec![
+                        Field::new("exponent", DataType::Int16, false)
+                            .with_metadata(metadata.clone()),
+                        Field::new("significand", DataType::Binary, false)
+                            .with_metadata(metadata.clone()),
+                    ]
+                    .into(),
+                )
+            });
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
-        RowType::TimestampNtz { .. } => {
-            let epoch: Arc<dyn Array> = Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
-                Vec::<i64>::new(),
-            ));
-            let fraction: Arc<dyn Array> = Arc::new(
-                arrow::array::PrimitiveArray::<Int32Type>::from(Vec::<i32>::new()),
-            );
-            let values = vec![
-                (Arc::new(Field::new("epoch", DataType::Int64, false)), epoch),
-                (
-                    Arc::new(Field::new("fraction", DataType::Int32, false)),
-                    fraction,
-                ),
-            ];
-            let data_type = DataType::Struct(
-                vec![
-                    Field::new("epoch", DataType::Int64, false),
-                    Field::new("fraction", DataType::Int32, false),
-                ]
-                .into(),
-            );
-            Ok((
-                create_field_with_type(row_type, data_type),
-                Arc::new(arrow::array::StructArray::from(values)),
-            ))
+        RowType::Variant { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "VARIANT".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Object { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "OBJECT".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Array { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "ARRAY".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
         }
     }
-}
-
-/// Converts a string rowset with RowType metadata to Arrow format
-/// Supports TEXT and FIXED (with scale 0) types, converting strings to appropriate Arrow types
-/// Assumes rowset and row_types have been validated to have matching column counts
-pub fn convert_string_rowset_to_arrow_reader(
-    rowset: &[Vec<String>],
-    row_types: &[RowType],
-) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowUtilsError> {
-    // Create Arrow arrays for each column
-    #[allow(clippy::type_complexity)]
-    let schema_and_columns: Result<Vec<(Field, Arc<dyn Array>)>, ArrowUtilsError> = row_types
-        .iter()
-        .enumerate()
-        .map(|(col_idx, row_type)| {
-            let values: Vec<&str> = rowset.iter().map(|row| row[col_idx].as_str()).collect();
-            create_column_array(values, row_type)
-        })
-        .collect();
-
-    let (fields, columns): (Vec<Field>, Vec<Arc<dyn Array>>) =
-        schema_and_columns?.into_iter().unzip();
-    let schema = Arc::new(Schema::new(fields));
-
-    boxed_arrow_reader(schema, columns).context(ArrowSnafu)
 }
 
 /// Creates an Arrow Schema from a list of RowType definitions
 pub fn create_schema(row_types: &[(RowType, DataType)]) -> Result<Arc<Schema>, ArrowUtilsError> {
     let fields: Vec<Field> = row_types
         .iter()
-        .map(|(r, d)| create_field_with_type(r, d.clone()))
-        .collect();
+        .map(|(r, d)| create_field_with_type(r, Some(d.clone())))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Arc::new(Schema::new(fields)))
 }
 
@@ -297,7 +240,7 @@ pub fn boxed_arrow_reader(
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum ArrowUtilsError {
-    #[snafu(display("Arrow operation failed"))]
+    #[snafu(display("Arrow operation failed: {source}"))]
     Arrow {
         source: ArrowError,
         #[snafu(implicit)]
@@ -317,9 +260,35 @@ pub enum ArrowUtilsError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to parse decfloat value: {value}"))]
+    DecfloatParsing {
+        value: String,
+        source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to parse boolean value: {value}"))]
     BooleanParsing {
         value: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse binary value"))]
+    BinaryParsing {
+        source: FromHexError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported data type '{data_type}' for row type '{row_type}'"))]
+    UnsupportedDataType {
+        data_type: String,
+        row_type: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unexpected error: {message}"))]
+    Generic {
+        message: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -328,17 +297,17 @@ pub enum ArrowUtilsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int16Array, Int64Array, StringArray};
+    use arrow::array::{BooleanArray, Float64Array, Int64Array, StringArray};
     use arrow::record_batch::RecordBatchReader;
 
     #[test]
     fn test_string_rowset_translation_with_metadata_small() {
         // Build a Snowflake-like rowset
         let rowset = vec![
-            vec!["alpha.txt".to_string(), "7".to_string()], // SB1
-            vec!["beta.md".to_string(), "123".to_string()], // SB2
-            vec!["gamma.bin".to_string(), "32767".to_string()], // SB2
-            vec!["delta.png".to_string(), "1024".to_string()], // SB2
+            vec![Some("alpha.txt".to_string()), Some("7".to_string())], // SB1
+            vec![Some("beta.md".to_string()), Some("123".to_string())], // SB2
+            vec![Some("gamma.bin".to_string()), Some("32767".to_string())], // SB2
+            vec![Some("delta.png".to_string()), Some("1024".to_string())], // SB2
         ];
 
         // Describe columns via RowType
@@ -365,7 +334,7 @@ mod tests {
 
         // FIXED column
         assert_eq!(fields[1].name(), "col_fixed");
-        assert_eq!(format!("{:?}", fields[1].data_type()), "Int16");
+        assert_eq!(*fields[1].data_type(), DataType::Int64);
         let meta1 = fields[1].metadata();
         assert_eq!(meta1.get("logicalType"), Some(&"FIXED".to_string()));
         assert_eq!(meta1.get("scale"), Some(&"0".to_string()));
@@ -389,7 +358,7 @@ mod tests {
             let col1 = batch
                 .column(1)
                 .as_any()
-                .downcast_ref::<Int16Array>()
+                .downcast_ref::<Int64Array>()
                 .unwrap();
             assert_eq!(col1.value(0), 7);
             assert_eq!(col1.value(1), 123);
@@ -404,13 +373,19 @@ mod tests {
     fn test_string_rowset_translation_with_metadata_large() {
         // Build a Snowflake-like rowset
         let rowset = vec![
-            vec!["alpha/report.csv".to_string(), "7".to_string()], // SB1
-            vec!["beta/readme.md".to_string(), "123".to_string()], // SB2
-            vec!["gamma/data.bin".to_string(), "32767".to_string()], // SB2
-            vec!["delta/image.png".to_string(), "2147483647".to_string()], // SB4
+            vec![Some("alpha/report.csv".to_string()), Some("7".to_string())], // SB1
+            vec![Some("beta/readme.md".to_string()), Some("123".to_string())], // SB2
             vec![
-                "epsilon/archive.tar.gz".to_string(),
-                "9223372036854775807".to_string(), // SB8
+                Some("gamma/data.bin".to_string()),
+                Some("32767".to_string()),
+            ], // SB2
+            vec![
+                Some("delta/image.png".to_string()),
+                Some("2147483647".to_string()),
+            ], // SB4
+            vec![
+                Some("epsilon/archive.tar.gz".to_string()),
+                Some("9223372036854775807".to_string()), // SB8
             ],
         ];
 
@@ -438,7 +413,7 @@ mod tests {
 
         // FIXED column
         assert_eq!(fields[1].name(), "col_fixed");
-        assert_eq!(format!("{:?}", fields[1].data_type()), "Int64");
+        assert_eq!(*fields[1].data_type(), DataType::Int64);
         let meta1 = fields[1].metadata();
         assert_eq!(meta1.get("logicalType"), Some(&"FIXED".to_string()));
         assert_eq!(meta1.get("scale"), Some(&"0".to_string()));
@@ -473,5 +448,482 @@ mod tests {
         } else {
             panic!("Expected one record batch");
         }
+    }
+
+    #[test]
+    fn test_null_values_in_text_column() {
+        let rowset = vec![
+            vec![Some("hello".to_string())],
+            vec![None],
+            vec![Some("world".to_string())],
+        ];
+        let row_types = vec![RowType::text("col", true, 16, 64)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert_eq!(col.value(0), "hello");
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+        assert_eq!(col.value(2), "world");
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column() {
+        let rowset = vec![
+            vec![Some("42".to_string())],
+            vec![None],
+            vec![Some("100".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col", true, 5, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 3);
+        let col = batch.column(0);
+        let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
+        assert!(arr.is_valid(0));
+        assert_eq!(arr.value(0), 42);
+        assert!(arr.is_null(1));
+        assert!(arr.is_valid(2));
+        assert_eq!(arr.value(2), 100);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 10, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int64);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_small_precision() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 2, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int64);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_with_scale() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 10, 2)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int64);
+        let schema = batch.schema();
+        let field = schema.field(0);
+        assert_eq!(field.metadata().get("scale").unwrap(), "2");
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column_medium() {
+        let rowset = vec![
+            vec![Some("1000".to_string())],
+            vec![None],
+            vec![Some("2000".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 5, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 1000);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 2000);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column_large() {
+        let rowset = vec![
+            vec![Some("100000".to_string())],
+            vec![None],
+            vec![Some("200000".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 10, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 100000);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 200000);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column_int64() {
+        let rowset = vec![
+            vec![Some("3000000000".to_string())],
+            vec![None],
+            vec![Some("4000000000".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 19, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 3_000_000_000);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 4_000_000_000);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_high_precision() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 20, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int64);
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column_decimal128() {
+        let rowset = vec![
+            vec![Some("12345678901234567890".to_string())],
+            vec![None],
+            vec![Some("98765432109876543210".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 38, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Decimal128Array>()
+                .unwrap();
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 12_345_678_901_234_567_890);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 98_765_432_109_876_543_210);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_fixed_column_with_scale() {
+        let rowset = vec![
+            vec![Some("123.45".to_string())],
+            vec![None],
+            vec![Some("678.90".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 10, 2)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
+            assert_eq!(*col.data_type(), DataType::Int64);
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 12345);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 67890);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_fixed_column_with_scale_falls_back_to_decimal128_for_large_values() {
+        let rowset = vec![vec![Some("99999999999999999.99".to_string())], vec![None]];
+        let row_types = vec![RowType::fixed("col_fixed", true, 38, 2)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Decimal128Array>()
+                .unwrap();
+            assert_eq!(*col.data_type(), DataType::Decimal128(38, 2));
+            assert_eq!(col.len(), 2);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 9999999999999999999i128);
+            assert!(col.is_null(1));
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_null_values_in_boolean_column() {
+        let rowset = vec![
+            vec![Some("true".to_string())],
+            vec![None],
+            vec![Some("false".to_string())],
+        ];
+        let row_types = vec![RowType::boolean("col", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.value(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+        assert!(!col.value(2));
+    }
+
+    #[test]
+    fn test_null_values_in_real_column() {
+        let rowset = vec![
+            vec![Some("1.5".to_string())],
+            vec![None],
+            vec![Some("2.5".to_string())],
+        ];
+        let row_types = vec![RowType::real("col", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!((col.value(0) - 1.5).abs() < f64::EPSILON);
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+        assert!((col.value(2) - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_null_values_in_date_column() {
+        let rowset = vec![
+            vec![Some("19000".to_string())],
+            vec![None],
+            vec![Some("19500".to_string())],
+        ];
+        let row_types = vec![RowType::date("col", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch.column(0);
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_null_values_in_timestamp_ntz_int64() {
+        let rowset = vec![
+            vec![Some("1234567.890".to_string())],
+            vec![None],
+            vec![Some("9876543.210".to_string())],
+        ];
+        // scale <= 7 uses Int64 representation
+        let row_types = vec![RowType::timestamp_ntz("col", true, 3)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_null_values_in_timestamp_ltz_int64() {
+        let rowset = vec![
+            vec![Some("1234567.890".to_string())],
+            vec![None],
+            vec![Some("9876543.210".to_string())],
+        ];
+        let row_types = vec![RowType::timestamp_ltz("col", true, 3)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_null_values_in_timestamp_ntz_struct_column() {
+        let rowset = vec![
+            vec![Some("1609459200.123456789".to_string())],
+            vec![None],
+            vec![Some("1609545600.987654321".to_string())],
+        ];
+        let row_types = vec![RowType::timestamp_ntz("col_ts", true, 9)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::StructArray>()
+                .unwrap();
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+
+            let epoch_col = col.column(0).as_any().downcast_ref::<Int64Array>().unwrap();
+            assert_eq!(epoch_col.value(0), 1609459200);
+            assert_eq!(epoch_col.value(2), 1609545600);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_null_values_in_timestamp_ltz_struct() {
+        let rowset = vec![
+            vec![Some("1234567.890000000".to_string())],
+            vec![None],
+            vec![Some("9876543.210000000".to_string())],
+        ];
+        let row_types = vec![RowType::timestamp_ltz("col", true, 9)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch.column(0);
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_mixed_nulls_across_multiple_columns() {
+        // Simulates a SHOW SCHEMAS-like result with mixed types and nulls
+        let rowset = vec![
+            vec![
+                Some("schema_a".to_string()),
+                Some("5".to_string()),
+                Some("a comment".to_string()),
+            ],
+            vec![Some("schema_b".to_string()), None, None],
+        ];
+        let row_types = vec![
+            RowType::text("name", false, 64, 256),
+            RowType::fixed("count", true, 5, 0),
+            RowType::text("comment", true, 256, 1024),
+        ];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.num_columns(), 3);
+
+        // name column: no nulls
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(names.is_valid(0));
+        assert!(names.is_valid(1));
+        assert_eq!(names.value(0), "schema_a");
+        assert_eq!(names.value(1), "schema_b");
+
+        // count column: second row null
+        let counts = batch.column(1);
+        assert!(counts.is_valid(0));
+        assert!(counts.is_null(1));
+
+        // comment column: second row null
+        let comments = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(comments.is_valid(0));
+        assert_eq!(comments.value(0), "a comment");
+        assert!(comments.is_null(1));
     }
 }

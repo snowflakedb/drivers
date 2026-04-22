@@ -1,5 +1,5 @@
 use super::types::{
-    EncryptedFileMetadata, EncryptionMaterial, EncryptionResult, MaterialDescription,
+    EncryptedFileMetadata, EncryptionMaterial, MaterialDescription, PreparedUpload,
 };
 use snafu::{Location, ResultExt, Snafu};
 
@@ -45,7 +45,7 @@ impl CipherSuite {
 pub fn encrypt_file_data(
     file_data: &[u8],
     encryption_material: &EncryptionMaterial,
-) -> Result<EncryptionResult, EncryptionError> {
+) -> Result<PreparedUpload, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
         .decode(encryption_material.query_stage_master_key.reveal())
@@ -81,18 +81,20 @@ pub fn encrypt_file_data(
         key_size: (cipher_suite.key_len * 8).to_string(),
     };
 
+    let digest = compute_sha256_digest(&encrypted_data).context(OpenSSLSnafu {
+        operation: "calculating SHA-256 digest",
+    })?;
+
     let metadata = EncryptedFileMetadata {
         encrypted_key: BASE64_ENGINE.encode(&encrypted_file_key),
         iv: BASE64_ENGINE.encode(&iv),
         material_desc,
-        digest: calculate_digest(&encrypted_data).context(OpenSSLSnafu {
-            operation: "calculating SHA-256 digest",
-        })?,
     };
 
-    Ok(EncryptionResult {
+    Ok(PreparedUpload {
         data: encrypted_data,
-        metadata,
+        digest,
+        encryption_metadata: Some(metadata),
     })
 }
 
@@ -100,6 +102,7 @@ pub fn encrypt_file_data(
 pub fn decrypt_file_data(
     encrypted_data: &[u8],
     metadata: &EncryptedFileMetadata,
+    digest: &str,
     encryption_material: &EncryptionMaterial,
 ) -> Result<Vec<u8>, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
@@ -124,10 +127,10 @@ pub fn decrypt_file_data(
         })?;
 
     // 3. Verify the digest of encrypted data.
-    let calculated_digest = calculate_digest(encrypted_data).context(OpenSSLSnafu {
+    let calculated_digest = compute_sha256_digest(encrypted_data).context(OpenSSLSnafu {
         operation: "calculating SHA-256 digest for verification",
     })?;
-    if calculated_digest != metadata.digest {
+    if calculated_digest != digest {
         return DigestMismatchSnafu.fail();
     }
 
@@ -155,7 +158,7 @@ fn generate_random_bytes(size: usize) -> Result<Vec<u8>, OpenSslErrorStack> {
 }
 
 /// Computes the SHA-256 digest of the data and returns it as a Base64 string.
-fn calculate_digest(data: &[u8]) -> Result<String, OpenSslErrorStack> {
+pub(super) fn compute_sha256_digest(data: &[u8]) -> Result<String, OpenSslErrorStack> {
     let digest = hash(MessageDigest::sha256(), data)?;
     Ok(BASE64_ENGINE.encode(digest))
 }

@@ -13,6 +13,8 @@ struct LanguageConfig {
     method_pattern: fn(&str) -> String,
     /// Patterns that indicate end of method (next test, top-level constructs)
     method_end_patterns: &'static [&'static str],
+    /// Whether the language uses braces to delimit method bodies (false for Python)
+    uses_braces: bool,
 }
 
 impl LanguageConfig {
@@ -23,6 +25,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for Java
             ],
+            uses_braces: true,
         }
     }
 
@@ -36,6 +39,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for Rust
             ],
+            uses_braces: true,
         }
     }
 
@@ -54,6 +58,7 @@ impl LanguageConfig {
                 "global ",     // Global variable declaration
                 "nonlocal ",   // Nonlocal variable declaration
             ],
+            uses_braces: false,
         }
     }
 
@@ -64,18 +69,20 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C#
             ],
+            uses_braces: true,
         }
     }
 
     fn odbc() -> Self {
         Self {
-            test_annotation: "TEST_CASE(", // Catch2 style
+            test_annotation: "TEST_CASE(", // Catch2 style (also matches TEST_CASE_METHOD)
             method_pattern: |method_name| {
-                format!(r#"TEST_CASE\s*\(\s*"{}""#, regex::escape(method_name))
+                format!(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#, regex::escape(method_name))
             },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C++
             ],
+            uses_braces: true,
         }
     }
 
@@ -88,6 +95,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for JavaScript
             ],
+            uses_braces: true,
         }
     }
 }
@@ -117,7 +125,7 @@ impl MethodBoundaryFinder {
 
         // Pre-compile regexes outside the loop
         let test_method_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
-        let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
+        let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
         // Rust: support optional async before fn
         let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
         // Match Java method declarations (not annotation lines like @MethodSource(...))
@@ -139,11 +147,26 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "TEST_CASE(" => {
-                    // C++ Catch2: TEST_CASE("method_name")
-                    if trimmed.starts_with("TEST_CASE(") {
+                    // C++ Catch2: TEST_CASE("method_name") or TEST_CASE_METHOD(Fixture, "method_name")
+                    // Declarations may span multiple lines.
+                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(") {
                         if let Some(captures) = catch2_regex.captures(trimmed) {
                             let method_name = captures[1].to_string();
-                            methods.push((method_name, i + 1)); // +1 for 1-indexed line numbers
+                            methods.push((method_name, i + 1));
+                        } else {
+                            let mut combined = trimmed.to_string();
+                            for j in (i + 1)..lines.len().min(i + 5) {
+                                combined.push(' ');
+                                combined.push_str(lines[j].trim());
+                                if let Some(captures) = catch2_regex.captures(&combined) {
+                                    let method_name = captures[1].to_string();
+                                    methods.push((method_name, i + 1));
+                                    break;
+                                }
+                                if combined.contains('{') {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -250,17 +273,33 @@ impl MethodBoundaryFinder {
                 || (self.config.test_annotation.contains("pytest")
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
-                    && trimmed.starts_with("TEST_CASE("))
+                    && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
             {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
+                // (or on a continuation line for multi-line declarations)
                 if self.config.test_annotation == "TEST_CASE(" {
                     let pattern = (self.config.method_pattern)(method_name);
                     let method_regex = Regex::new(&pattern)?;
                     if method_regex.is_match(trimmed) {
                         method_start_line = Some(i);
+                        break;
+                    }
+                    let mut combined = trimmed.to_string();
+                    for j in (i + 1)..lines.len().min(i + 5) {
+                        combined.push(' ');
+                        combined.push_str(lines[j].trim());
+                        if method_regex.is_match(&combined) {
+                            method_start_line = Some(i);
+                            break;
+                        }
+                        if combined.contains('{') {
+                            break;
+                        }
+                    }
+                    if method_start_line.is_some() {
                         break;
                     }
                 } else {
@@ -325,45 +364,49 @@ impl MethodBoundaryFinder {
         let mut found_opening_brace = false;
         let search_limit = start_idx + 500; // Allow larger bodies (async runtimes, long setups)
 
-        // First, check if the method start line itself contains the opening brace
-        let start_line = lines[start_idx].trim();
-        let mut in_string = false;
-        let mut string_delimiter = '\0';
-        let mut escaped = false;
+        // For brace-delimited languages, scan for matching braces to find method end.
+        // Skipped for Python which uses indentation-based boundaries instead, since
+        // dict/set literals (e.g. {"key": "value"}) would falsely terminate the method.
+        if self.config.uses_braces {
+            let start_line = lines[start_idx].trim();
+            let mut in_string = false;
+            let mut string_delimiter = '\0';
+            let mut escaped = false;
 
-        for ch in start_line.chars() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-
-            match ch {
-                '\\' if in_string => {
-                    escaped = true;
+            for ch in start_line.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
                 }
-                '"' | '\'' => {
-                    if !in_string {
-                        in_string = true;
-                        string_delimiter = ch;
-                    } else if ch == string_delimiter {
-                        in_string = false;
-                        string_delimiter = '\0';
+
+                match ch {
+                    '\\' if in_string => {
+                        escaped = true;
                     }
-                }
-                '{' if !in_string => {
-                    brace_depth += 1;
-                    found_opening_brace = true;
-                }
-                '}' if !in_string => {
-                    if found_opening_brace {
-                        brace_depth -= 1;
-                        if brace_depth == 0 {
-                            method_end_line = Some(start_idx);
-                            break;
+                    '"' | '\'' => {
+                        if !in_string {
+                            in_string = true;
+                            string_delimiter = ch;
+                        } else if ch == string_delimiter {
+                            in_string = false;
+                            string_delimiter = '\0';
                         }
                     }
+                    '{' if !in_string => {
+                        brace_depth += 1;
+                        found_opening_brace = true;
+                    }
+                    '}' if !in_string => {
+                        if found_opening_brace {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                method_end_line = Some(start_idx);
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -378,55 +421,55 @@ impl MethodBoundaryFinder {
                     break;
                 }
 
-                // Track brace depth for proper nesting (ignoring braces in strings)
-                let mut in_string = false;
-                let mut string_delimiter = '\0';
-                let mut escaped = false;
+                if self.config.uses_braces {
+                    // Track brace depth for proper nesting (ignoring braces in strings)
+                    let mut in_string = false;
+                    let mut string_delimiter = '\0';
+                    let mut escaped = false;
 
-                for ch in line.chars() {
-                    if escaped {
-                        escaped = false;
-                        continue;
-                    }
-
-                    match ch {
-                        '\\' if in_string => {
-                            escaped = true;
+                    for ch in line.chars() {
+                        if escaped {
+                            escaped = false;
+                            continue;
                         }
-                        '"' | '\'' => {
-                            if !in_string {
-                                in_string = true;
-                                string_delimiter = ch;
-                            } else if ch == string_delimiter {
-                                in_string = false;
-                                string_delimiter = '\0';
+
+                        match ch {
+                            '\\' if in_string => {
+                                escaped = true;
                             }
-                        }
-                        '{' if !in_string => {
-                            brace_depth += 1;
-                            found_opening_brace = true;
-                        }
-                        '}' if !in_string => {
-                            if found_opening_brace {
-                                brace_depth -= 1;
-                                // If we've closed all braces, this is the method end
-                                if brace_depth == 0 {
-                                    method_end_line = Some(i);
-                                    break;
+                            '"' | '\'' => {
+                                if !in_string {
+                                    in_string = true;
+                                    string_delimiter = ch;
+                                } else if ch == string_delimiter {
+                                    in_string = false;
+                                    string_delimiter = '\0';
                                 }
                             }
+                            '{' if !in_string => {
+                                brace_depth += 1;
+                                found_opening_brace = true;
+                            }
+                            '}' if !in_string => {
+                                if found_opening_brace {
+                                    brace_depth -= 1;
+                                    if brace_depth == 0 {
+                                        method_end_line = Some(i);
+                                        break;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+
+                    // If we found the method end by brace counting, stop
+                    if method_end_line.is_some() {
+                        break;
                     }
                 }
 
-                // If we found the method end by brace counting, stop
-                if method_end_line.is_some() {
-                    break;
-                }
-
-                // Fallback: Check if any end pattern matches (mainly for Python)
-                // Only match if the line is at the same or lower indentation level as the method start
+                // Check if any end pattern matches (for indentation-based languages like Python)
                 if !self.config.method_end_patterns.is_empty() {
                     // Note: `line` is shadowed to trimmed above, use lines[i] for indent
                     let original_line = lines[i];
@@ -717,12 +760,35 @@ impl StepFinder {
                     comment_prefix,
                 )?;
             }
-            let empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
+            let mut empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
                 &content,
                 start_idx,
                 end_idx,
                 comment_prefix,
             )?;
+
+            // When a Catch2 TEST_CASE_METHOD fixture is used, the "Given" step that
+            // establishes a connection is handled by the fixture constructor — allow
+            // it to be empty.  Recognized phrasings (case-insensitive):
+            //   - "Given Snowflake client is logged in"
+            //   - "Given A Snowflake connection is established"
+            //   - "Given A Snowflake connection"
+            // New fixture-based tests should reuse one of these; add new variants
+            // here if a different phrasing becomes necessary.
+            if !empty_steps.is_empty() {
+                let lines: Vec<&str> = content.lines().collect();
+                let uses_fixture = (start_idx..end_idx.min(lines.len()))
+                    .any(|i| lines[i].trim().starts_with("TEST_CASE_METHOD("));
+                if uses_fixture {
+                    empty_steps.retain(|step| {
+                        let s = step.to_lowercase();
+                        !(s.starts_with("given") && (s.contains("logged in")
+                            || s.contains("connection is established")
+                            || s.contains("snowflake connection")))
+                    });
+                }
+            }
+
             Ok((steps, empty_steps))
         } else {
             Ok((vec![], vec![]))
@@ -1000,6 +1066,58 @@ def test_second():
         // Should NOT include the second test
         assert!(!method_content.contains("def test_second"));
         assert!(!method_content.contains("y = 2"));
+    }
+
+    /// Regression test: dict literals like {"key": "value"} in Python should NOT
+    /// cause the method boundary to end prematurely due to brace counting.
+    #[test]
+    fn test_python_method_boundary_not_truncated_by_dict_literals() {
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::python());
+
+        let content = r#"
+class TestFetchAll:
+    def test_fetch_with_nulls(self, cursor):
+        # Given Snowflake client is logged in
+        cursor.execute("SELECT 1")
+
+        # And Row 1 should have correct typed values for all columns
+        row1 = result.iloc[0]
+        assert row1["OBJ_COL"] == {"key": "value"}
+
+        # And Row 2 should have nulls for all nullable columns
+        row2 = result.iloc[1]
+        assert row2["TEXT_COL"] is None
+
+    def test_next_method(self):
+        pass
+"#;
+
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, "test_fetch_with_nulls")
+            .expect("Should find method boundaries");
+
+        assert!(boundaries.is_some(), "Should find the method");
+        let (start, end) = boundaries.unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let method_content: String = lines[start..end].join("\n");
+
+        assert!(
+            method_content.contains(r#"{"key": "value"}"#),
+            "Method should include dict literal line"
+        );
+        assert!(
+            method_content.contains("Row 2 should have nulls"),
+            "Method should include steps after dict literal"
+        );
+        assert!(
+            method_content.contains("row2[\"TEXT_COL\"] is None"),
+            "Method should include assertions after dict literal"
+        );
+        assert!(
+            !method_content.contains("def test_next_method"),
+            "Method should NOT include the next test method"
+        );
     }
 
     #[test]

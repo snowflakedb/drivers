@@ -17,22 +17,21 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Signed Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to signed integer types", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to signed c_type",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing integers is executed
   auto stmt = conn.execute_fetch(
@@ -44,45 +43,52 @@ TEST_CASE("should convert string literals to signed integer types", "[datatype][
       "'50' AS c14, '-50' AS c15, "
       "'9223372036854775807' AS c16, '-9223372036854775808' AS c17, '1234567890123456789' AS c18");
 
-  // Then SQL_C_LONG conversions should work
-  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_LONG>(stmt, 2) == -456);
-  CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
-  CHECK(get_data<SQL_C_LONG>(stmt, 4) == 2147483647);
-  CHECK(get_data<SQL_C_LONG>(stmt, 5) == -2147483648);
-
-  // And SQL_C_SLONG conversions should work
-  CHECK(get_data<SQL_C_SLONG>(stmt, 6) == 999);
-  CHECK(get_data<SQL_C_SLONG>(stmt, 7) == -999);
-
-  // And SQL_C_SHORT conversions should work
-  CHECK(get_data<SQL_C_SHORT>(stmt, 8) == 32767);
-  CHECK(get_data<SQL_C_SHORT>(stmt, 9) == -32768);
-
-  // And SQL_C_TINYINT conversions should work
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 10) == 100);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 11) == -100);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 12) == 127);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 13) == -128);
-
-  // And SQL_C_STINYINT conversions should work
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 14) == 50);
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 15) == -50);
-
-  // And SQL_C_SBIGINT conversions should work
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 16) == 9223372036854775807LL);
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 17) == (-9223372036854775807LL - 1));
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 18) == 1234567890123456789LL);
+  // Then <c_type> conversions should work
+  {
+    INFO("SQL_C_LONG");
+    CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
+    CHECK(get_data<SQL_C_LONG>(stmt, 2) == -456);
+    CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
+    CHECK(get_data<SQL_C_LONG>(stmt, 4) == 2147483647);
+    CHECK(get_data<SQL_C_LONG>(stmt, 5) == -2147483648);
+  }
+  {
+    INFO("SQL_C_SLONG");
+    CHECK(get_data<SQL_C_SLONG>(stmt, 6) == 999);
+    CHECK(get_data<SQL_C_SLONG>(stmt, 7) == -999);
+  }
+  {
+    INFO("SQL_C_SHORT");
+    CHECK(get_data<SQL_C_SHORT>(stmt, 8) == 32767);
+    CHECK(get_data<SQL_C_SHORT>(stmt, 9) == -32768);
+  }
+  {
+    INFO("SQL_C_TINYINT");
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 10) == 100);
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 11) == -100);
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 12) == 127);
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 13) == -128);
+  }
+  {
+    INFO("SQL_C_STINYINT");
+    CHECK(get_data<SQL_C_STINYINT>(stmt, 14) == 50);
+    CHECK(get_data<SQL_C_STINYINT>(stmt, 15) == -50);
+  }
+  {
+    INFO("SQL_C_SBIGINT");
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 16) == 9223372036854775807LL);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 17) == (-9223372036854775807LL - 1));
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 18) == 1234567890123456789LL);
+  }
 }
 
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Unsigned Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to unsigned integer types", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to unsigned c_type",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing unsigned integers is executed
   auto stmt = conn.execute_fetch(
@@ -92,34 +98,40 @@ TEST_CASE("should convert string literals to unsigned integer types", "[datatype
       "'18446744073709551615' AS c6, '12345678901234567890' AS c7, "
       "'100' AS c8, '200' AS c9");
 
-  // Then SQL_C_ULONG conversions should work
-  CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_ULONG>(stmt, 2) == 0);
-  CHECK(get_data<SQL_C_ULONG>(stmt, 3) == 4294967295U);
-
-  // And SQL_C_USHORT conversions should work
-  CHECK(get_data<SQL_C_USHORT>(stmt, 4) == 65535);
-
-  // And SQL_C_UTINYINT conversions should work
-  CHECK(get_data<SQL_C_UTINYINT>(stmt, 5) == 255);
-
-  // And SQL_C_UBIGINT conversions should work
-  CHECK(get_data<SQL_C_UBIGINT>(stmt, 6) == 18446744073709551615ULL);
-  CHECK(get_data<SQL_C_UBIGINT>(stmt, 7) == 12345678901234567890ULL);
-
-  // And SQL_C_SSHORT conversions should work
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 8) == 100);
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 9) == 200);
+  // Then <c_type> conversions should work
+  {
+    INFO("SQL_C_ULONG");
+    CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
+    CHECK(get_data<SQL_C_ULONG>(stmt, 2) == 0);
+    CHECK(get_data<SQL_C_ULONG>(stmt, 3) == 4294967295U);
+  }
+  {
+    INFO("SQL_C_USHORT");
+    CHECK(get_data<SQL_C_USHORT>(stmt, 4) == 65535);
+  }
+  {
+    INFO("SQL_C_UTINYINT");
+    CHECK(get_data<SQL_C_UTINYINT>(stmt, 5) == 255);
+  }
+  {
+    INFO("SQL_C_UBIGINT");
+    CHECK(get_data<SQL_C_UBIGINT>(stmt, 6) == 18446744073709551615ULL);
+    CHECK(get_data<SQL_C_UBIGINT>(stmt, 7) == 12345678901234567890ULL);
+  }
+  {
+    INFO("SQL_C_SSHORT");
+    CHECK(get_data<SQL_C_SSHORT>(stmt, 8) == 100);
+    CHECK(get_data<SQL_C_SSHORT>(stmt, 9) == 200);
+  }
 }
 
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to BIT Type
 // ============================================================================
 
-TEST_CASE("should convert string literals to SQL_C_BIT", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to SQL_C_BIT",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing boolean values is executed
   auto stmt = conn.execute_fetch("SELECT '1' AS true_val, '0' AS false_val, ' 1 ' AS c3, ' 0 ' AS c4");
@@ -135,10 +147,9 @@ TEST_CASE("should convert string literals to SQL_C_BIT", "[datatype][string][con
 // FAILING CONVERSIONS - String to BIT Type
 // ============================================================================
 
-TEST_CASE("should fail converting string literals with to SQL_C_BIT", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting string literals with to SQL_C_BIT",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals with leading/trailing whitespace is executed
   auto stmt = conn.execute_fetch("SELECT 'abc' AS invalid, '456' AS whole, '6' AS single_digit, '1.1' AS fractional");
@@ -154,65 +165,83 @@ TEST_CASE("should fail converting string literals with to SQL_C_BIT", "[datatype
 // TRUNCATION TESTS
 // ============================================================================
 
-TEST_CASE("should truncate decimal string literals with fractional part when converting to integer types",
-          "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should truncate decimal string literals with fractional part when converting to integer types",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals with decimal parts is executed
-  auto stmt = conn.execute_fetch(
+  const auto query =
       "SELECT '123.999' AS round_down, '-456.001' AS neg_round, '0.9' AS less_than_one, "
-      "'1.2345678901241242141241241e9' AS scientific_notation");
+      "'1.2345678901241242141241241e9' AS scientific_notation";
 
-  SECTION("TEST") {
+  {
+    INFO("TEST");
+    auto stmt = conn.execute_fetch(query);
+    // Then the string values should be truncated when converted to integer types
     auto value = get_data<SQL_C_SBIGINT>(stmt, 1);
     CHECK(value == 123);
   }
-  // Then the string values should be truncated when converted to integer types
-  SECTION("SQL_C_BIGINT") {
+  {
+    INFO("SQL_C_BIGINT");
+    auto stmt = conn.execute_fetch(query);
+    // Then the string values should be truncated when converted to integer types
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 1) == 123);
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 2) == -456);
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_LONG") {
+  {
+    INFO("SQL_C_LONG");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 1) == 123);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 2) == -456);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_SHORT") {
+  {
+    INFO("SQL_C_SHORT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_SHORT>(stmt, 1) == 123);
     CHECK(check_fractional_truncation<SQL_C_SHORT>(stmt, 2) == -456);
     CHECK(check_fractional_truncation<SQL_C_SHORT>(stmt, 3) == 0);
     check_numeric_out_of_range<SQL_C_SHORT>(stmt, 4);
   }
-  SECTION("SQL_C_TINYINT") {
+  {
+    INFO("SQL_C_TINYINT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_TINYINT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_TINYINT>(stmt, 3) == 0);
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 4);
   }
-  SECTION("SQL_C_UBIGINT") {
+  {
+    INFO("SQL_C_UBIGINT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_UBIGINT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_UBIGINT>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_UBIGINT>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_ULONG") {
+  {
+    INFO("SQL_C_ULONG");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_ULONG>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_ULONG>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_ULONG>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_USHORT") {
+  {
+    INFO("SQL_C_USHORT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_USHORT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_USHORT>(stmt, 3) == 0);
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 4);
   }
-  SECTION("SQL_C_UTINYINT") {
+  {
+    INFO("SQL_C_UTINYINT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_UTINYINT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_UTINYINT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_UTINYINT>(stmt, 3) == 0);
@@ -220,13 +249,13 @@ TEST_CASE("should truncate decimal string literals with fractional part when con
   }
 }
 
-TEST_CASE("should truncate decimal string literals without fractional part when converting to integer types",
-          "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should truncate decimal string literals without fractional part when converting to integer types",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_BIGINT") {
+  {
+    INFO("SQL_C_BIGINT");
     // When Query selecting string literals without fractional part is executed
     auto stmt = conn.execute_fetch(
         "SELECT '9223372036854775807' AS min, '-9223372036854775808' AS max, '9223372036854775808' AS more_than_max, "
@@ -237,7 +266,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 4);
   }
-  SECTION("SQL_C_LONG") {
+  {
+    INFO("SQL_C_LONG");
     auto stmt = conn.execute_fetch(
         "SELECT '2147483647' AS max, '-2147483648' AS min, '2147483648' AS more_than_max, '-2147483649' AS "
         "less_than_min");
@@ -246,7 +276,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_LONG>(stmt, 3);
     check_numeric_out_of_range<SQL_C_LONG>(stmt, 4);
   }
-  SECTION("SQL_C_SHORT") {
+  {
+    INFO("SQL_C_SHORT");
     auto stmt = conn.execute_fetch(
         "SELECT '32767' AS max, '-32768' AS min, '32768' AS more_than_max, '-32769' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_SHORT>(stmt, 1) == 32767);
@@ -254,7 +285,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_SHORT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_SHORT>(stmt, 4);
   }
-  SECTION("SQL_C_TINYINT") {
+  {
+    INFO("SQL_C_TINYINT");
     auto stmt =
         conn.execute_fetch("SELECT '127' AS max, '-128' AS min, '128' AS more_than_max, '-129' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_TINYINT>(stmt, 1) == 127);
@@ -262,7 +294,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 4);
   }
-  SECTION("SQL_C_UBIGINT") {
+  {
+    INFO("SQL_C_UBIGINT");
     auto stmt = conn.execute_fetch(
         "SELECT '18446744073709551615' AS max, '0' AS min, '18446744073709551616' AS more_than_max, '-1' AS "
         "less_than_min");
@@ -271,7 +304,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 4);
   }
-  SECTION("SQL_C_ULONG") {
+  {
+    INFO("SQL_C_ULONG");
     auto stmt = conn.execute_fetch(
         "SELECT '4294967295' AS max, '0' AS min, '4294967296' AS more_than_max, '-1' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_ULONG>(stmt, 1) == 4294967295U);
@@ -279,7 +313,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 3);
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 4);
   }
-  SECTION("SQL_C_USHORT") {
+  {
+    INFO("SQL_C_USHORT");
     auto stmt =
         conn.execute_fetch("SELECT '65535' AS max, '0' AS min, '65536' AS more_than_max, '-1' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_USHORT>(stmt, 1) == 65535);
@@ -287,7 +322,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 4);
   }
-  SECTION("SQL_C_UTINYINT") {
+  {
+    INFO("SQL_C_UTINYINT");
     auto stmt = conn.execute_fetch("SELECT '255' AS max, '0' AS min, '256' AS more_than_max, '-1' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_UTINYINT>(stmt, 1) == 255);
     CHECK(check_no_truncation<SQL_C_UTINYINT>(stmt, 2) == 0);
@@ -300,24 +336,23 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
 // CONVERSION WITH SQLBindCol - Integer types
 // ============================================================================
 
-TEST_CASE("should convert strings to integer types using SQLBindCol", "[datatype][string][conversion][integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to integer types using SQLBindCol",
+                 "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_LONG
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '12345' AS str_num", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLINTEGER value;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then the bound integer value should match the string representation
     CHECK(value == 12345);
@@ -328,12 +363,12 @@ TEST_CASE("should convert strings to integer types using SQLBindCol", "[datatype
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not_a_number' AS str_val", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLINTEGER value;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
     CHECK(ret == SQL_ERROR);

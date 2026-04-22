@@ -1,0 +1,477 @@
+// FLOAT datatype ODBC E2E tests
+// Based on: tests/definitions/shared/types/float.feature
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include "Connection.hpp"
+#include "SchemaFixtures.hpp"
+#include "compatibility.hpp"
+#include "get_data.hpp"
+
+// Old driver returns "INFINITY"/"-INFINITY", new driver returns "inf"/"-inf"
+static bool is_positive_infinity_str(const std::string& s) {
+  std::string lower = s;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  return lower == "inf" || lower == "infinity";
+}
+
+static bool is_negative_infinity_str(const std::string& s) {
+  std::string lower = s;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  return lower == "-inf" || lower == "-infinity";
+}
+
+// ============================================================================
+// TYPE CASTING
+// ============================================================================
+
+TEST_CASE("should cast float values to appropriate type for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>, 'inf'::<type>" is executed
+  auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 123.456::FLOAT, 1.23e10::FLOAT, 'NaN'::FLOAT, 'inf'::FLOAT");
+
+  // Then All values should be returned as appropriate type
+  for (SQLUSMALLINT col = 1; col <= 5; ++col) {
+    SQLSMALLINT data_type = 0;
+    SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+    REQUIRE_ODBC(ret, stmt);
+    INFO("col=" << col);
+    CHECK(data_type == SQL_DOUBLE);
+  }
+  const std::string synonym_types[] = {"DOUBLE", "REAL", "FLOAT4", "FLOAT8"};
+  for (const auto& type : synonym_types) {
+    INFO("type=" << type);
+    auto stmt_syn = conn.execute_fetch("SELECT 0.0::" + type + ", 123.456::" + type + ", 1.23e10::" + type +
+                                       ", 'NaN'::" + type + ", 'inf'::" + type);
+    for (SQLUSMALLINT col = 1; col <= 5; ++col) {
+      SQLSMALLINT data_type = 0;
+      SQLRETURN ret =
+          SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+      REQUIRE_ODBC(ret, stmt_syn);
+      INFO("col=" << col);
+      CHECK(data_type == SQL_DOUBLE);
+    }
+  }
+  {
+    INFO("type=DOUBLE PRECISION");
+    auto stmt_syn = conn.execute_fetch(
+        "SELECT CAST(0.0 AS DOUBLE PRECISION), CAST(123.456 AS DOUBLE PRECISION), "
+        "CAST(1.23e10 AS DOUBLE PRECISION), CAST('NaN' AS DOUBLE PRECISION), CAST('inf' AS DOUBLE PRECISION)");
+    for (SQLUSMALLINT col = 1; col <= 5; ++col) {
+      SQLSMALLINT data_type = 0;
+      SQLRETURN ret =
+          SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+      REQUIRE_ODBC(ret, stmt_syn);
+      INFO("col=" << col);
+      CHECK(data_type == SQL_DOUBLE);
+    }
+  }
+  double val1 = get_data<SQL_C_DOUBLE>(stmt, 1);
+  double val2 = get_data<SQL_C_DOUBLE>(stmt, 2);
+  double val3 = get_data<SQL_C_DOUBLE>(stmt, 3);
+  double val4 = get_data<SQL_C_DOUBLE>(stmt, 4);
+  double val5 = get_data<SQL_C_DOUBLE>(stmt, 5);
+
+  // And Regular values should have approximately 15 decimal digits precision
+  CHECK(val1 == 0.0);
+  CHECK(val2 == Catch::Approx(123.456));
+  CHECK(val3 == Catch::Approx(1.23e10));
+
+  // And NaN and inf values should be identified correctly
+  CHECK(std::isnan(val4));
+  CHECK(std::isinf(val5));
+  CHECK(val5 > 0);
+}
+
+// ============================================================================
+// SELECT WITH LITERALS (no tables)
+// ============================================================================
+
+TEST_CASE("should select float literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT 0.0::<type>, 1.0::<type>, -1.0::<type>, 123.456::<type>, -123.456::<type>" is executed
+  auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 1.0::FLOAT, -1.0::FLOAT, 123.456::FLOAT, -123.456::FLOAT");
+
+  // Then Result should contain floats [0.0, 1.0, -1.0, 123.456, -123.456]
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 1.0);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == -1.0);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 4) == Catch::Approx(123.456));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 5) == Catch::Approx(-123.456));
+}
+
+TEST_CASE("should handle special float values from literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
+  auto stmt = conn.execute_fetch("SELECT 'NaN'::FLOAT, 'inf'::FLOAT, '-inf'::FLOAT");
+
+  // Then Result should contain [NaN, positive_infinity, negative_infinity]
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "NaN");
+  CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 2)));
+  CHECK(is_negative_infinity_str(get_data<SQL_C_CHAR>(stmt, 3)));
+}
+
+TEST_CASE("should handle float case boundary values from literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  {
+    INFO("max");
+    // When Query "SELECT <query_values>" is executed
+    auto stmt = conn.execute_fetch("SELECT 1.7976931348623157e308::FLOAT, -1.7976931348623157e308::FLOAT");
+
+    // Then Result should contain floats [<expected_values>]
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(1.7976931348623157e308));
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(-1.7976931348623157e308));
+  }
+
+  {
+    INFO("min");
+    // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
+    auto stmt = conn.execute_fetch("SELECT 2.2250738585072014e-308::FLOAT, 5e-324::FLOAT");
+
+    // Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(2.2250738585072014e-308));
+    double subnormal = get_data<SQL_C_DOUBLE>(stmt, 2);
+    CHECK(subnormal > 0.0);
+    CHECK(subnormal < 1e-300);
+  }
+}
+
+TEST_CASE("should handle float precision boundary values from literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
+  auto stmt = conn.execute_fetch("SELECT 123456789012345.0::FLOAT, 1234567890123456.0::FLOAT");
+
+  // Then Result should verify precision around 15 decimal digits
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123456789012345.0));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(1234567890123456.0));
+}
+
+TEST_CASE("should handle NULL values from literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
+  auto stmt = conn.execute_fetch("SELECT NULL::FLOAT, 42.5::FLOAT, NULL::FLOAT");
+
+  // Then Result should contain [NULL, 42.5, NULL]
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::optional<double>(42.5));
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+}
+
+TEST_CASE("should download large result set with multiple chunks from GENERATOR for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
+  auto stmt = conn.createStatement();
+  const auto sql = "SELECT seq8()::FLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY 1";
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then Result should contain 50000 rows with all values returned as appropriate float type
+  int row_count = 0;
+  double expected = 0.0;
+
+  while (true) {
+    ret = SQLFetch(stmt.getHandle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE_ODBC(ret, stmt);
+
+    double val = 0.0;
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &val, sizeof(val), NULL);
+    REQUIRE_ODBC(ret, stmt);
+
+    REQUIRE(val == Catch::Approx(expected));
+    expected += 1.0;
+    row_count++;
+  }
+
+  REQUIRE(row_count == 50000);
+}
+
+// ============================================================================
+// TABLE OPERATIONS
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should select floats from table for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+
+  // And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
+  conn.execute("CREATE TEMPORARY TABLE float_table (col FLOAT)");
+  conn.execute("INSERT INTO float_table VALUES (0.0), (123.456), (-789.012), (1.23e5), (-9.87e-3)");
+
+  // When Query "SELECT * FROM float_table" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM float_table");
+
+  // Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123000.0));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-0.00987));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle special float values from table for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+
+  // And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
+  conn.execute("CREATE TEMPORARY TABLE float_special (col FLOAT)");
+  conn.execute("INSERT INTO float_special SELECT 'NaN'::FLOAT");
+  conn.execute("INSERT INTO float_special SELECT 'inf'::FLOAT");
+  conn.execute("INSERT INTO float_special SELECT '-inf'::FLOAT");
+  conn.execute("INSERT INTO float_special VALUES (42.0), (-42.0)");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM float_special");
+
+  // Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "NaN");
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(is_negative_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 42.0);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == -42.0);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle float boundary values from table for float and synonyms",
+                 "[float]") {
+  // Given Snowflake client is logged in
+
+  // And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308,
+  // 2.2250738585072014e-308, 5e-324, 123456789012345.0]
+  conn.execute("CREATE TEMPORARY TABLE float_boundary (col FLOAT)");
+  conn.execute("INSERT INTO float_boundary VALUES (1.7976931348623157e308)");
+  conn.execute("INSERT INTO float_boundary VALUES (-1.7976931348623157e308)");
+  conn.execute("INSERT INTO float_boundary VALUES (2.2250738585072014e-308)");
+  conn.execute("INSERT INTO float_boundary VALUES (5e-324)");
+  conn.execute("INSERT INTO float_boundary VALUES (123456789012345.0)");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM float_boundary");
+
+  // Then Result should contain maximum, minimum, and precision boundary values preserved within float precision limits
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(1.7976931348623157e308));
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-1.7976931348623157e308));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(2.2250738585072014e-308));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  double subnormal = get_data<SQL_C_DOUBLE>(stmt, 1);
+  CHECK(subnormal > 0.0);
+  CHECK(subnormal < 1e-300);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123456789012345.0));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+
+  // And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
+  conn.execute("CREATE TEMPORARY TABLE float_null (col FLOAT)");
+  conn.execute("INSERT INTO float_null VALUES (NULL), (123.456), (NULL), (-789.012)");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM float_null");
+
+  // Then Result should contain [NULL, 123.456, NULL, -789.012]
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should select large result set from table for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+
+  // And Table with <type> column exists with 50000 sequential values
+  conn.execute("CREATE TEMPORARY TABLE float_large (col FLOAT)");
+  conn.execute("INSERT INTO float_large SELECT seq8()::FLOAT FROM TABLE(GENERATOR(ROWCOUNT => 50000))");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM float_large ORDER BY col", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then Result should contain 50000 rows with all values returned as appropriate float type
+  int row_count = 0;
+  double expected = 0.0;
+
+  while (true) {
+    ret = SQLFetch(stmt.getHandle());
+    if (ret == SQL_NO_DATA) break;
+    REQUIRE_ODBC(ret, stmt);
+
+    double val = 0.0;
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &val, sizeof(val), NULL);
+    REQUIRE_ODBC(ret, stmt);
+
+    REQUIRE(val == Catch::Approx(expected));
+    expected += 1.0;
+    row_count++;
+  }
+
+  REQUIRE(row_count == 50000);
+}
+
+// ============================================================================
+// PARAMETER BINDING
+// ============================================================================
+
+TEST_CASE("should select float using parameter binding for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::FLOAT, ?::FLOAT, ?::FLOAT", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  double v1 = 123.456;
+  double v2 = -789.012;
+  double v3 = 42.0;
+  SQLLEN len1 = 0;
+  SQLLEN len2 = 0;
+  SQLLEN len3 = 0;
+
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v1, 0, &len1);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v2, 0, &len2);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v3, 0, &len3);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then Result should contain floats [123.456, -789.012, 42.0]
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(-789.012));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == Catch::Approx(42.0));
+
+  // When Query "SELECT ?::<type>" is executed with bound NULL value
+  auto stmt2 = conn.createStatement();
+  ret = SQLPrepare(stmt2.getHandle(), (SQLCHAR*)"SELECT ?::FLOAT", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt2);
+
+  SQLLEN null_ind = SQL_NULL_DATA;
+  ret = SQLBindParameter(stmt2.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, nullptr, 0, &null_ind);
+  REQUIRE_ODBC(ret, stmt2);
+
+  ret = SQLExecute(stmt2.getHandle());
+  REQUIRE_ODBC(ret, stmt2);
+
+  ret = SQLFetch(stmt2.getHandle());
+  REQUIRE_ODBC(ret, stmt2);
+
+  // Then Result should contain NULL
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt2, 1) == std::nullopt);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert float using parameter binding for float and synonyms", "[float]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+
+  // And Table with <type> column exists
+  conn.execute("CREATE TEMPORARY TABLE float_bind_insert (col FLOAT)");
+
+  // When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
+  constexpr SQLULEN num_rows = 4;
+  double values[num_rows] = {0.0, 123.456, -789.012, 0.0};
+  SQLLEN indicators[num_rows] = {0, 0, 0, SQL_NULL_DATA};
+  SQLUSMALLINT param_status[num_rows] = {};
+  SQLULEN params_processed = 0;
+
+  auto insert_stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  REQUIRE_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
+  REQUIRE_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  REQUIRE_ODBC(ret, insert_stmt);
+
+  ret = SQLBindParameter(insert_stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, values, 0,
+                         indicators);
+  REQUIRE_ODBC(ret, insert_stmt);
+
+  ret = SQLExecDirect(insert_stmt.getHandle(), (SQLCHAR*)"INSERT INTO float_bind_insert VALUES (?)", SQL_NTS);
+  REQUIRE_ODBC(ret, insert_stmt);
+  REQUIRE(params_processed == num_rows);
+
+  // Then Result should contain the same values including NULL
+  auto stmt = conn.execute_fetch("SELECT col FROM float_bind_insert ORDER BY col NULLS LAST");
+
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
+}

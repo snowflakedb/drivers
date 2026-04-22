@@ -1,4 +1,5 @@
 pub use super::arrow_deserialize::ArrowDeserialize;
+use crate::common::file_utils::path_to_sql_uri;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 
@@ -50,7 +51,7 @@ pub fn get_file_from_stage(
     let download_dir = tempfile::TempDir::new().unwrap();
     let get_sql = format!(
         "GET @{stage_name}/{filename} file://{}/",
-        download_dir.path().to_str().unwrap().replace("\\", "/")
+        path_to_sql_uri(download_dir.path())
     );
     let get_result = client.execute_query(&get_sql);
     (get_result, download_dir)
@@ -65,10 +66,8 @@ pub fn assert_file_exists(download_dir: &tempfile::TempDir, filename: &str) {
 }
 
 pub fn build_put_command(stage_name: &str, file_path_or_pattern: &str, options: &str) -> String {
-    let mut put_sql = format!(
-        "PUT 'file://{}' @{stage_name}",
-        file_path_or_pattern.replace("\\", "/")
-    );
+    let resolved = path_to_sql_uri(std::path::Path::new(file_path_or_pattern));
+    let mut put_sql = format!("PUT 'file://{resolved}' @{stage_name}");
 
     if !options.is_empty() {
         put_sql.push_str(&format!(" {options}"));

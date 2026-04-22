@@ -5,8 +5,9 @@
 
 use crate::{
     api::{
-        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, api_utils,
-        conn_from_handle, env_from_handle,
+        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
+        encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
+        env_from_handle,
         error::{
             InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
             NoMoreDataSnafu,
@@ -186,12 +187,61 @@ impl WithDiagnosticInfo for Connection {
     }
 }
 
-impl<'a> WithDiagnosticInfo for Statement<'a> {
+impl WithDiagnosticInfo for Statement {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
     }
     fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
         &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::ArdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::ApdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::IrdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::IpdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+fn desc_diag_from_handle<'a>(handle: sql::Handle) -> &'a mut dyn WithDiagnosticInfo {
+    use crate::api::types::DescriptorKind;
+    let raw_kind = unsafe { *(handle as *const u8) };
+    let kind = DescriptorKind::try_from(raw_kind)
+        .expect("desc_diag_from_handle: invalid descriptor tag — caller passed a bad handle");
+    match kind {
+        DescriptorKind::Ard => unsafe { &mut *(handle as *mut crate::api::types::ArdDescriptor) },
+        DescriptorKind::Ird => unsafe { &mut *(handle as *mut crate::api::types::IrdDescriptor) },
+        DescriptorKind::Apd => unsafe { &mut *(handle as *mut crate::api::types::ApdDescriptor) },
+        DescriptorKind::Ipd => unsafe { &mut *(handle as *mut crate::api::types::IpdDescriptor) },
     }
 }
 
@@ -203,6 +253,7 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
+        sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return,
     };
     t.get_diag_info_mut().clear();
@@ -216,6 +267,7 @@ pub fn from_handle_type<'a>(
         sql::HandleType::Env => Some(env_from_handle(handle)),
         sql::HandleType::Dbc => Some(conn_from_handle(handle)),
         sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
+        sql::HandleType::Desc => Some(desc_diag_from_handle(handle)),
         _ => {
             tracing::info!("Invalid handle type: {:?}", handle_type);
             None
@@ -252,6 +304,9 @@ pub fn set_diag_info_from_warnings(
     handle: sql::Handle,
     warnings: &Warnings,
 ) {
+    if handle.is_null() {
+        return;
+    }
     if let Some(t) = from_handle_type(handle_type, handle) {
         let diagnostic_info = t.get_diag_info_mut();
         for warning in warnings {
@@ -272,6 +327,10 @@ pub fn set_diag_info_from_result(
         let diagnostic_info = t.get_diag_info_mut();
         match result {
             Ok(_) => {}
+            // SQL_NEED_DATA is a success-class return code, not an error.
+            // Don't post a diagnostic record — the Driver Manager uses the
+            // return code alone to drive the DAE protocol.
+            Err(OdbcError::DaeRequired { .. }) => {}
             Err(error) => {
                 diagnostic_info.add_record(error.to_diagnostic_record());
             }
@@ -287,27 +346,27 @@ pub fn get_diag_info(
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
+        sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return InvalidHandleSnafu.fail(),
     };
     Ok(t.get_diag_info().clone())
 }
 
-/// Get diagnostic record from handle
+/// Get diagnostic record from handle (SQLGetDiagRec / SQLGetDiagRecW).
 ///
 /// Retrieves diagnostic information associated with a specific handle.
-/// This corresponds to the ODBC SQLGetDiagRec function.
 ///
 /// Per the ODBC spec, `text_length_ptr` always receives the full (untruncated)
 /// message length so the caller can allocate a sufficiently large buffer.
 /// If the message is truncated, a `StringDataTruncated` warning is pushed.
 #[allow(clippy::too_many_arguments)]
-pub unsafe fn get_diag_rec(
+pub unsafe fn get_diag_rec<E: OdbcEncoding>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
-    sql_state: *mut sql::Char,
+    sql_state: *mut E::Char,
     native_error_ptr: *mut sql::Integer,
-    message_text: *mut sql::Char,
+    message_text: *mut E::Char,
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
     warnings: &mut Warnings,
@@ -325,33 +384,30 @@ pub unsafe fn get_diag_rec(
         .records
         .get((rec_number - 1) as usize)
         .unwrap();
-    let length: sql::Len = 6; // 5 chars + NUL
+
+    let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
+    write_string_chars::<E>(state, sql_state, 6, std::ptr::null_mut(), None);
+    write_string_chars::<E>(
+        &record.message_text,
+        message_text,
+        buffer_length,
+        text_length_ptr,
+        Some(warnings),
+    );
+
     unsafe {
-        let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
-        api_utils::string_to_cstr(state, sql_state, length)?;
-        api_utils::string_to_cstr(
-            &record.message_text,
-            message_text,
-            buffer_length as sql::Len,
-        )?;
         if !native_error_ptr.is_null() {
             std::ptr::write(native_error_ptr, record.native_error);
         }
-        if !text_length_ptr.is_null() {
-            std::ptr::write(text_length_ptr, record.message_text.len() as sql::SmallInt);
-        }
     }
-    if record.message_text.len() >= buffer_length.max(0) as usize {
-        warnings.push(Warning::StringDataTruncated);
-    }
+
     Ok(())
 }
 
-/// Get diagnostic field from handle
+/// Get diagnostic field from handle (SQLGetDiagField / SQLGetDiagFieldW).
 ///
 /// Retrieves a specific diagnostic field from a diagnostic record.
-/// This corresponds to the ODBC SQLGetDiagField function.
-pub fn get_diag_field(
+pub fn get_diag_field<E: OdbcEncoding>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -362,27 +418,24 @@ pub fn get_diag_field(
 ) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
     tracing::debug!(
-        "get_diag_field: handle_type={:?}, rec_number={}, diag_identifier={:?}",
+        "get_diag_field: handle_type={:?}, rec_number={rec_number}, diag_identifier={diag_identifier:?}",
         handle_type,
-        rec_number,
-        diag_identifier
     );
     if rec_number < 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
-    // Convert the diagnostic identifier
     let diag_id = DiagIdentifier::try_from(diag_identifier)?;
 
     if rec_number == 0 {
-        // Header fields
         match diag_id {
             DiagIdentifier::Number => {
+                let count = diagnostic_info
+                    .header
+                    .number_of_records
+                    .unwrap_or(diagnostic_info.records.len() as sql::Integer);
                 unsafe {
-                    std::ptr::write(
-                        diag_info_ptr as *mut sql::Integer,
-                        diagnostic_info.header.number_of_records.unwrap_or(0),
-                    );
+                    std::ptr::write(diag_info_ptr as *mut sql::Integer, count);
                 }
                 Ok(())
             }
@@ -406,19 +459,13 @@ pub fn get_diag_field(
             }
             DiagIdentifier::DynamicFunction => {
                 if let Some(ref dynamic_function) = diagnostic_info.header.dynamic_function_code {
-                    unsafe {
-                        api_utils::string_to_cstr(
-                            dynamic_function,
-                            diag_info_ptr as *mut sql::Char,
-                            buffer_length as sql::Len,
-                        )?;
-                        if !string_length_ptr.is_null() {
-                            std::ptr::write(
-                                string_length_ptr,
-                                dynamic_function.len() as sql::SmallInt,
-                            );
-                        }
-                    }
+                    write_string_bytes::<E>(
+                        dynamic_function,
+                        diag_info_ptr as *mut E::Char,
+                        buffer_length,
+                        string_length_ptr,
+                        None,
+                    );
                     Ok(())
                 } else {
                     NoMoreDataSnafu.fail()
@@ -433,10 +480,9 @@ pub fn get_diag_field(
                 }
                 Ok(())
             }
-            _ => NoMoreDataSnafu.fail(), // Header field not supported
+            _ => NoMoreDataSnafu.fail(),
         }
     } else {
-        // Record fields
         if rec_number > diagnostic_info.records.len() as i16 {
             return NoMoreDataSnafu.fail();
         }
@@ -445,16 +491,13 @@ pub fn get_diag_field(
 
         match diag_id {
             DiagIdentifier::SqlState => {
-                unsafe {
-                    api_utils::string_to_cstr(
-                        record.sql_state.as_str(),
-                        diag_info_ptr as *mut sql::Char,
-                        6,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, 5); // SQLSTATE is always 5 characters
-                    }
-                }
+                write_string_bytes::<E>(
+                    record.sql_state.as_str(),
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::Native => {
@@ -464,19 +507,13 @@ pub fn get_diag_field(
                 Ok(())
             }
             DiagIdentifier::MessageText => {
-                unsafe {
-                    api_utils::string_to_cstr(
-                        &record.message_text,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(
-                            string_length_ptr,
-                            record.message_text.len() as sql::SmallInt,
-                        );
-                    }
-                }
+                write_string_bytes::<E>(
+                    &record.message_text,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ClassOrigin | DiagIdentifier::SubclassOrigin => {
@@ -484,47 +521,33 @@ pub fn get_diag_field(
                     ClassOrigin::Odbc3_0 => "ODBC 3.0",
                     ClassOrigin::Iso9075 => "ISO 9075",
                 };
-                unsafe {
-                    api_utils::string_to_cstr(
-                        origin_str,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, origin_str.len() as sql::SmallInt);
-                    }
-                }
+                write_string_bytes::<E>(
+                    origin_str,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ConnectionName => {
-                unsafe {
-                    api_utils::string_to_cstr(
-                        &record.connection_name,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(
-                            string_length_ptr,
-                            record.connection_name.len() as sql::SmallInt,
-                        );
-                    }
-                }
+                write_string_bytes::<E>(
+                    &record.connection_name,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ServerName => {
-                // For now, return empty string as server name - this can be enhanced later
-                let server_name = "";
-                unsafe {
-                    api_utils::string_to_cstr(
-                        server_name,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, server_name.len() as sql::SmallInt);
-                    }
-                }
+                write_string_bytes::<E>(
+                    "",
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ColumnNumber => {
@@ -545,7 +568,117 @@ pub fn get_diag_field(
                 }
                 Ok(())
             }
-            _ => NoMoreDataSnafu.fail(), // Record field not supported
+            _ => NoMoreDataSnafu.fail(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::types::{
+        ApdDescriptor, ArdDescriptor, IpdDescriptor, IrdDescriptor, ToSqlReturn,
+    };
+
+    fn make_test_record() -> DiagnosticRecord {
+        DiagnosticRecord {
+            native_error: 0,
+            sql_state: SqlState::InvalidAttributeOptionIdentifier,
+            class_origin: ClassOrigin::Odbc3_0,
+            column_number: None,
+            row_number: None,
+            connection_name: String::new(),
+            message_text: "test diagnostic on descriptor".to_string(),
+        }
+    }
+
+    #[test]
+    fn desc_diag_from_handle_resolves_all_descriptor_kinds() {
+        let mut ard = ArdDescriptor::new();
+        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+
+        let mut apd = ApdDescriptor::new();
+        let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+
+        let mut ird = IrdDescriptor::new();
+        let handle = &mut ird as *mut IrdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+
+        let mut ipd = IpdDescriptor::new();
+        let handle = &mut ipd as *mut IpdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+    }
+
+    #[test]
+    fn get_diag_info_returns_records_on_descriptor() {
+        let mut ard = ArdDescriptor::new();
+        ard.diagnostic_info.add_record(make_test_record());
+
+        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
+        let info = get_diag_info(sql::HandleType::Desc, handle).unwrap();
+
+        assert_eq!(info.records.len(), 1);
+        assert_eq!(
+            info.records[0].sql_state,
+            SqlState::InvalidAttributeOptionIdentifier
+        );
+        assert_eq!(
+            info.records[0].message_text,
+            "test diagnostic on descriptor"
+        );
+    }
+
+    #[test]
+    fn clear_diag_info_clears_descriptor_diagnostics() {
+        let mut ard = ArdDescriptor::new();
+        ard.diagnostic_info.add_record(make_test_record());
+        assert_eq!(ard.diagnostic_info.records.len(), 1);
+
+        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
+        clear_diag_info(sql::HandleType::Desc, handle);
+
+        assert!(ard.diagnostic_info.records.is_empty());
+    }
+
+    #[test]
+    fn from_handle_type_returns_some_for_desc() {
+        let mut apd = ApdDescriptor::new();
+        let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
+        assert!(from_handle_type(sql::HandleType::Desc, handle).is_some());
+    }
+
+    #[test]
+    fn invalid_handle_type_returns_sql_error_not_invalid_handle() {
+        let result: OdbcResult<()> = crate::api::error::InvalidHandleTypeSnafu {
+            handle_type: sql::HandleType::Desc as i16,
+        }
+        .fail();
+        assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
+    }
+
+    #[test]
+    fn set_diag_info_from_result_posts_error_on_descriptor() {
+        let mut ird = IrdDescriptor::new();
+        let handle = &mut ird as *mut IrdDescriptor as sql::Handle;
+
+        let result: OdbcResult<()> = crate::api::error::InvalidHandleTypeSnafu {
+            handle_type: sql::HandleType::Desc as i16,
+        }
+        .fail();
+
+        set_diag_info_from_result(sql::HandleType::Desc, handle, &result);
+
+        let info = get_diag_info(sql::HandleType::Desc, handle).unwrap();
+        assert_eq!(info.records.len(), 1);
+        assert_eq!(
+            info.records[0].sql_state,
+            SqlState::InvalidAttributeOptionIdentifier
+        );
     }
 }

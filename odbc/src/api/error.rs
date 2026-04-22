@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
+    conversion::error::JsonBindingError,
     conversion::{ConversionError, error::WriteOdbcError},
-    write_json::JsonBindingError,
 };
 use arrow::error::ArrowError;
 use odbc_sys as sql;
@@ -37,6 +37,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid handle type for this operation: {handle_type}"))]
+    InvalidHandleType {
+        handle_type: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid descriptor kind: {kind}"))]
     InvalidDescriptorKind {
         kind: u16,
@@ -59,6 +66,20 @@ pub enum OdbcError {
 
     #[snafu(display("Invalid application buffer type"))]
     InvalidApplicationBufferType {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid parameter type: {value}"))]
+    InvalidParameterType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid SQL data type: {value}"))]
+    InvalidSqlDataType {
+        value: i16,
         #[snafu(implicit)]
         location: Location,
     },
@@ -98,9 +119,24 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Attribute {attribute} is read-only and cannot be set"))]
+    ReadOnlyAttribute {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Unsupported attribute: {attribute}"))]
     UnsupportedAttribute {
         attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid attribute value {value} for attribute {attribute}"))]
+    InvalidAttributeValue {
+        attribute: i32,
+        value: i64,
         #[snafu(implicit)]
         location: Location,
     },
@@ -138,8 +174,28 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("COUNT field incorrect: {reason}"))]
+    CountFieldIncorrect {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid catalog name: {name}"))]
+    InvalidCatalogName {
+        name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid cursor state: no result set associated with the statement"))]
     InvalidCursorState {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid cursor state: cursor is already open"))]
+    CursorAlreadyOpen {
         #[snafu(implicit)]
         location: Location,
     },
@@ -152,12 +208,6 @@ pub enum OdbcError {
 
     #[snafu(display("Data not fetched yet"))]
     DataNotFetched {
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("Statement execution is done"))]
-    ExecutionDone {
         #[snafu(implicit)]
         location: Location,
     },
@@ -184,6 +234,12 @@ pub enum OdbcError {
 
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Fetch type out of range"))]
+    FetchTypeOutOfRange {
         #[snafu(implicit)]
         location: Location,
     },
@@ -294,7 +350,7 @@ pub enum OdbcError {
 
     #[snafu(display("Received core protobuf error"))]
     CoreError {
-        source: CoreProtobufError,
+        source: Box<CoreProtobufError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -302,6 +358,54 @@ pub enum OdbcError {
     #[snafu(display("[Core] Required field missing: {message}"))]
     ProtoRequiredFieldMissing {
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid FreeStmt option: {option}"))]
+    InvalidFreeStmtOption {
+        option: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("ODBC runtime error"))]
+    OdbcRuntime {
+        source: crate::api::runtime::OdbcRuntimeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Data source name not found: {dsn}"))]
+    DataSourceNotFound {
+        dsn: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Operation canceled"))]
+    OperationCanceled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid connection string: {reason}"))]
+    InvalidConnectionString {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Data-at-execution required"))]
+    DaeRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "Function sequence error: cannot call this function during data-at-execution"
+    ))]
+    InvalidDuringDae {
         #[snafu(implicit)]
         location: Location,
     },
@@ -337,15 +441,51 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set
 });
 
+fn sql_state_from_server_message(message: &str) -> SqlState {
+    if message.contains("SQL compilation error") {
+        SqlState::SyntaxErrorOrAccessRuleViolation
+    } else if message.contains("out of representable range") {
+        SqlState::NumericValueOutOfRange
+    } else if message.contains("too long and would be truncated") {
+        SqlState::StringDataRightTruncation
+    } else {
+        SqlState::GeneralError
+    }
+}
+
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        let error_message = trace
-            .last()
-            .map(|entry| entry.message.clone())
-            .unwrap_or_default();
+        let error_message = self.structured_message().unwrap_or_else(|| {
+            trace
+                .last()
+                .map(|entry| entry.message.clone())
+                .unwrap_or_default()
+        });
         let trace_text = format_error_trace(&trace);
         format!("{}\nTrace:\n{}", error_message, trace_text)
+    }
+
+    /// Extract a user-facing message from structured protobuf error fields
+    /// when available; returns `None` to fall back to the generic trace-based
+    /// message.
+    fn structured_message(&self) -> Option<String> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { error, .. } => match error.as_ref() {
+                    ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
+                        explanation: Some(explanation),
+                        ..
+                    }) => Some(explanation.clone()),
+                    ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
+                        Some(format!("Missing required parameter: {parameter}"))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
@@ -361,12 +501,15 @@ impl OdbcError {
         match self {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidDescriptorKind { .. } => SqlState::GeneralError,
             OdbcError::InvalidBufferLength { .. } => SqlState::InvalidStringOrBufferLength,
             OdbcError::InvalidApplicationBufferType { .. } => {
                 SqlState::InvalidApplicationBufferType
             }
+            OdbcError::InvalidParameterType { .. } => SqlState::InvalidParameterType,
+            OdbcError::InvalidSqlDataType { .. } => SqlState::InvalidSqlDataType,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
@@ -374,19 +517,24 @@ impl OdbcError {
             OdbcError::InvalidDescriptorIndex { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidPrecisionOrScale { .. } => SqlState::InvalidPrecisionOrScaleValue,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::ReadOnlyAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
-            OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
+            OdbcError::CountFieldIncorrect { .. } => SqlState::CountFieldIncorrect,
+            OdbcError::InvalidCatalogName { .. } => SqlState::InvalidCatalogName,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
+            OdbcError::CursorAlreadyOpen { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
-            OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
@@ -408,6 +556,7 @@ impl OdbcError {
                     | WriteOdbcError::IndicatorVariableRequired { .. } => {
                         SqlState::IndicatorVariableRequiredButNotSupplied
                     }
+                    WriteOdbcError::IntervalFieldOverflow { .. } => SqlState::IntervalFieldOverflow,
                     WriteOdbcError::UnsupportedOdbcType { .. } => {
                         SqlState::RestrictedDataTypeAttributeViolation
                     }
@@ -420,57 +569,96 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::JsonBinding { .. } => SqlState::GeneralError,
-            OdbcError::CoreError {
-                source: CoreProtobufError::Application { error, message, .. },
-                ..
-            } => match error.as_ref() {
-                ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                ErrorType::GenericError(_) => {
-                    if message.contains("SQL compilation error") {
-                        SqlState::SyntaxErrorOrAccessRuleViolation
-                    } else {
-                        SqlState::GeneralError
-                    }
+            OdbcError::JsonBinding { source, .. } => match source {
+                JsonBindingError::NumericMagnitudeOverflow { .. }
+                | JsonBindingError::BindingNumericOutOfRange { .. } => {
+                    SqlState::NumericValueOutOfRange
                 }
-                ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
-                    parameter, ..
-                }) => {
-                    if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                        SqlState::InvalidAuthorizationSpecification
-                    } else {
-                        SqlState::InvalidConnectionStringAttribute
-                    }
+                JsonBindingError::UnsupportedCDataType { .. } => {
+                    SqlState::RestrictedDataTypeAttributeViolation
                 }
-                ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
-                    if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                        SqlState::InvalidAuthorizationSpecification
-                    } else {
-                        SqlState::InvalidConnectionStringAttribute
-                    }
+                JsonBindingError::InvalidBooleanValue { .. } => {
+                    SqlState::InvalidCharacterValueForCast
                 }
-                ErrorType::InternalError(_) => {
-                    if message.contains("SQL compilation error") {
-                        SqlState::SyntaxErrorOrAccessRuleViolation
-                    } else {
-                        SqlState::GeneralError
-                    }
-                }
-                ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
+                _ => SqlState::GeneralError,
             },
-            OdbcError::CoreError { source, .. } => match source {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
-                CoreProtobufError::Application { .. } => SqlState::GeneralError,
+                CoreProtobufError::Application {
+                    error,
+                    message,
+                    sql_state: server_sql_state,
+                    ..
+                } => {
+                    // Prefer the ANSI SQL state forwarded from the server when present,
+                    // but only for well-formed, recognised error states:
+                    // - "00xxx" (success) and "01xxx" (warning) must not appear in an
+                    //   error record — callers would silently ignore the error.
+                    // - "02xxx" (no-data) must be excluded: NoDataFound is not in
+                    //   is_warning(), so is_error() treats it as an error, but ODBC
+                    //   callers expect 02000 only on success returns (e.g. SQLFetch).
+                    // - Unknown states (unrecognised codes) are excluded so the
+                    //   fallback match arms below can apply heuristics instead of
+                    //   forwarding an opaque code.
+                    // SqlState::from_str is infallible (type Err = ()) — unrecognised
+                    // codes map to SqlState::Unknown, so the Unknown guard is the real
+                    // filter.
+                    if let Some(state) = server_sql_state
+                        && state.len() == 5
+                        && !state.starts_with("00")
+                        && !state.starts_with("01")
+                        && !state.starts_with("02")
+                    {
+                        // parse() for SqlState is infallible (Err = ()).
+                        let parsed: SqlState = state.parse().unwrap();
+                        if !matches!(parsed, SqlState::Unknown(_)) {
+                            return parsed;
+                        }
+                    }
+                    match error.as_ref() {
+                        ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
+                        ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
+                            sql_state_from_server_message(message)
+                        }
+                        ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
+                            parameter,
+                            ..
+                        }) => {
+                            if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                                SqlState::InvalidAuthorizationSpecification
+                            } else {
+                                SqlState::InvalidConnectionStringAttribute
+                            }
+                        }
+                        ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
+                            if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                                SqlState::InvalidAuthorizationSpecification
+                            } else {
+                                SqlState::InvalidConnectionStringAttribute
+                            }
+                        }
+                        ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
+                    }
+                }
             },
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
+            OdbcError::InvalidFreeStmtOption { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,
+            OdbcError::DataSourceNotFound { .. } => {
+                SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
+            }
+            OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
+            OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::DaeRequired { .. } => SqlState::GeneralError,
+            OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
         }
     }
 
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
-            OdbcError::CoreError { source, .. } => match source {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Application { error, .. } => match error.as_ref() {
                     ErrorType::LoginError(login_error) => login_error.code,
                     _ => 0,
@@ -496,12 +684,13 @@ impl OdbcError {
                 message: driver_exception.message,
                 status_code: driver_exception.status_code,
                 error_trace: driver_exception.error_trace,
+                sql_state: driver_exception.sql_state,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
         };
         OdbcError::CoreError {
-            source: core_error,
+            source: Box::new(core_error),
             location,
         }
     }
@@ -522,6 +711,8 @@ pub enum CoreProtobufError {
         message: String,
         status_code: i32,
         error_trace: Vec<ErrorTraceEntry>,
+        /// ANSI SQL state forwarded from the server response, if present.
+        sql_state: Option<String>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -563,5 +754,130 @@ impl ErrorTrace for CoreProtobufError {
                 }]
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conversion::error::{
+        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu,
+        UnsupportedCDataTypeSnafu,
+    };
+
+    #[test]
+    fn numeric_magnitude_overflow_maps_to_22003() {
+        let json_err = NumericMagnitudeOverflowSnafu {
+            reason: "test overflow".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn server_numeric_out_of_range_maps_to_22003() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "DML operation to table T failed on column COL with error: \
+                          Number out of representable range: type FIXED[SB2](3,0){nullable}, \
+                          value 99999"
+                    .to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn server_generic_error_maps_to_hy000() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "Some other server error".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn invalid_boolean_value_maps_to_22018() {
+        let json_err = InvalidBooleanValueSnafu {
+            value: "hello".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidCharacterValueForCast
+        );
+    }
+
+    #[test]
+    fn server_truncation_error_maps_to_22001() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "String 'hello world' is too long and would be truncated".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataRightTruncation);
+    }
+
+    #[test]
+    fn binding_numeric_out_of_range_maps_to_22003() {
+        let json_err = BindingNumericOutOfRangeSnafu {
+            reason: "SQL_C_BINARY buffer length 12 does not match SQL_DATE_STRUCT size (6)"
+                .to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn unsupported_c_data_type_maps_to_07006() {
+        let json_err = UnsupportedCDataTypeSnafu {
+            c_type: crate::api::CDataType::Char,
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
     }
 }

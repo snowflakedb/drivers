@@ -2,16 +2,14 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -62,22 +60,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes multiple pa
   }
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
                  "[odbc-api][describeparam][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
   SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      sqlchar(
-          ("CREATE OR REPLACE TABLE " + schema.name() + ".dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)").c_str()),
-      SQL_NTS);
+      stmt_handle(), sqlchar("CREATE TEMPORARY TABLE dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  ret = SQLPrepare(stmt_handle(), sqlchar(("INSERT INTO " + schema.name() + ".dp_typed_t VALUES(?, ?, ?)").c_str()),
-                   SQL_NTS);
+  ret = SQLPrepare(stmt_handle(), sqlchar("INSERT INTO dp_typed_t VALUES(?, ?, ?)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: The reference driver reports SQL_VARCHAR with the same large fixed
@@ -294,8 +286,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 for statement n
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 during SQL_NEED_DATA",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

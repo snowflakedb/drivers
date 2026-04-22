@@ -1,26 +1,34 @@
 .gradle/
-bin/
+/bin/
 .idea/
 target/
 parameters*.json
 cmake-build*
 .venv
 __pycache__/
-build/reports
+build
 jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
 parameters*.json
 **/rsa_key.p8
 .DS_Store
+odbc.log
 /.tmp
+/build
+coverage_report/
+old_odbc_cloned/
+old_coverage.txt
+weekly_report/
+
+# Local directory for AI prompts / inputs
+.ai/plans
 
 # Python/Cython build artifacts
 python/src/snowflake/connector/_internal/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp
 python/src/snowflake/connector/_internal/*.so
 *.egg-info/
 universal_driver_e2e_test_coverage.html
-sf_core/src/bin
 .vscode
 tests/wiremock/__files/*
 
@@ -32,4 +40,10 @@ python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.pyi
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_services.py
 
+# Generated protobuf Java code (built on the fly via Gradle)
+jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverV1.java
+jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverService.java
+jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverServiceClient.java
+
 .DS_Store
+tests/test_data/generated_test_data/chunks/

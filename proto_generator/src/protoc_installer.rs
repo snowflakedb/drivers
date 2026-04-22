@@ -60,7 +60,7 @@ fn download_url() -> String {
         ("linux", "aarch64") => "linux-aarch_64",
         ("macos", "x86_64") => "osx-x86_64",
         ("macos", "aarch64") => "osx-aarch_64",
-        ("windows", "x86_64") => "win64",
+        ("windows", "x86_64") | ("windows", "aarch64") => "win64",
         ("windows", "x86") => "win32",
         (os, arch) => panic!("Unsupported platform for protoc download: {os}-{arch}"),
     };

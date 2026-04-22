@@ -4,6 +4,7 @@ use std::fs;
 use url::Url;
 
 use crate::config::InvalidParameterValueSnafu;
+use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
@@ -37,17 +38,34 @@ fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
     Ok(base_url)
 }
 
+pub const DEFAULT_LOG_MAX_QUERY_LENGTH: usize = 80;
+
+/// Read `log_max_query_length` from a settings bag, clamp to non-negative,
+/// and fall back to [`DEFAULT_LOG_MAX_QUERY_LENGTH`] when absent.
+pub fn resolve_log_max_query_length(settings: &dyn Settings) -> usize {
+    settings
+        .get_int(param_names::LOG_MAX_QUERY_LENGTH.as_str())
+        .map(|v| v.max(0) as usize)
+        .unwrap_or(DEFAULT_LOG_MAX_QUERY_LENGTH)
+}
+
 #[derive(Clone)]
 pub struct QueryParameters {
     pub server_url: String,
     pub client_info: ClientInfo,
+    pub log_max_query_length: usize,
 }
 
 impl QueryParameters {
+    /// Build transport parameters from an arbitrary settings bag (e.g. tests, pre-connect paths).
+    ///
+    /// After login, prefer `Connection::query_transport_parameters` (transport snapshot)
+    /// instead of re-reading merged settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             server_url: get_server_url(settings)?,
             client_info: ClientInfo::from_settings(settings)?,
+            log_max_query_length: resolve_log_max_query_length(settings),
         })
     }
 }
@@ -60,6 +78,7 @@ pub struct ClientInfo {
     pub ocsp_mode: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
+    pub platforms: Vec<String>,
 }
 
 impl ClientInfo {
@@ -79,8 +98,32 @@ impl ClientInfo {
             ocsp_mode: Some("FAIL_OPEN".to_string()),
             crl_config,
             tls_config,
+            platforms: Vec::new(),
         };
         Ok(client_info)
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_fixtures {
+    use super::ClientInfo;
+    use crate::crl::config::CrlConfig;
+    use crate::tls::config::TlsConfig;
+
+    /// Minimal [`ClientInfo`] for tests. Uses [`TlsConfig::insecure`] so it works
+    /// with plain-HTTP mock servers. Override specific fields with struct-update
+    /// syntax: `ClientInfo { application: "foo".into(), ..test_client_info() }`.
+    pub fn test_client_info() -> ClientInfo {
+        ClientInfo {
+            application: "sf_core_test".to_string(),
+            version: "1.0.0".to_string(),
+            os: std::env::consts::OS.to_string(),
+            os_version: "1.0".to_string(),
+            ocsp_mode: None,
+            crl_config: CrlConfig::default(),
+            tls_config: TlsConfig::insecure(),
+            platforms: Vec::new(),
+        }
     }
 }
 
@@ -94,9 +137,14 @@ pub struct LoginParameters {
     pub role: Option<String>,
     pub client_info: ClientInfo,
     pub session_parameters: Option<HashMap<String, String>>,
+    pub spcs_token: Option<String>,
 }
 
 impl LoginParameters {
+    /// Build login request fields from a resolved settings map (defaults + files + connection seed).
+    ///
+    /// Session defaults (`database`, `schema`, etc.) are included only when they are part of the
+    /// resolved connect seed (`used_at_connect` session fields in the registry).
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             account_name: {
@@ -117,6 +165,7 @@ impl LoginParameters {
             role: settings.get_string("role"),
             client_info: ClientInfo::from_settings(settings)?,
             session_parameters: None,
+            spcs_token: None,
         })
     }
 }
@@ -156,6 +205,13 @@ pub enum LoginMethod {
     Pat {
         username: String,
         token: SensitiveString,
+    },
+    UserPasswordMfa {
+        username: String,
+        password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
+        client_store_temporary_credential: bool,
     },
 }
 
@@ -262,18 +318,22 @@ impl LoginMethod {
         settings.get("private_key").is_some() || settings.get_string("private_key_file").is_some()
     }
 
+    fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<String> {
+        settings.get_string(key).filter(|s| !s.is_empty())
+    }
+
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
+        let auth_upper = authenticator.to_ascii_uppercase();
 
         // Auto-detect JWT authentication if private key params are present
         // and authenticator is not explicitly set to something else
-        let use_jwt = authenticator == "SNOWFLAKE_JWT"
+        let use_jwt = auth_upper == "SNOWFLAKE_JWT"
             || (authenticator.is_empty() && Self::has_private_key_params(settings));
 
         if use_jwt {
             return Ok(Self::PrivateKey {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 private_key: Self::read_private_key(settings)?.into(),
                 passphrase: settings
@@ -282,28 +342,22 @@ impl LoginMethod {
             });
         }
 
-        match authenticator.as_str() {
-            "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
-                username: settings
-                    .get_string("user")
+        match auth_upper.as_str() {
+            "SNOWFLAKE" | "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
-                    .context(MissingParameterSnafu {
-                        parameter: "password",
-                    })?
+                password: Self::non_empty_string(settings, "password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
                     .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                token: settings
-                    .get_string("token")
+                token: Self::non_empty_string(settings, "token")
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),
             }),
-            _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
+            _ if auth_upper.starts_with("HTTPS://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
                 // This is intentionally broad (vanity domains may not contain "okta").
                 // Validate the URL is well-formed early to provide a clear error message.
@@ -316,8 +370,7 @@ impl LoginMethod {
                     .build()
                 })?;
 
-                let username = settings
-                    .get_string("user")
+                let username = Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
                 let okta_username = settings.get_string("okta_username");
                 let password = settings
@@ -345,10 +398,40 @@ impl LoginMethod {
                     authentication_timeout_secs,
                 }))
             }
+            "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
+                username: Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                password: Self::non_empty_string(settings, "password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .into(),
+                passcode_in_password: settings
+                    .get_bool("passcodeInPassword")
+                    .or_else(|| {
+                        settings
+                            .get_string("passcodeInPassword")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
+                    .unwrap_or(false),
+                passcode: settings.get_string("passcode").map(SensitiveString::from),
+                client_store_temporary_credential: settings
+                    .get_bool("client_store_temporary_credential")
+                    .or_else(|| {
+                        settings
+                            .get_string("client_store_temporary_credential")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| {
+                        settings
+                            .get_int("client_store_temporary_credential")
+                            .map(|v| v != 0)
+                    })
+                    .unwrap_or(false),
+            }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, or an https:// URL for native Okta SSO",
+                explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)",
             }
             .fail()?,
         }
@@ -505,6 +588,82 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_snowflake_lowercase_resolves_to_password() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+            ("authenticator", Setting::String("snowflake".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::Password { username, password } => {
+                assert_eq!(username, "test_user");
+                assert_eq!(password.reveal(), "test_password");
+            }
+            _ => panic!("Expected Password login method for 'snowflake'"),
+        }
+    }
+
+    #[test]
+    fn test_snowflake_mixed_case_resolves_to_password() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+            ("authenticator", Setting::String("Snowflake".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::Password { .. } => {}
+            _ => panic!("Expected Password login method for 'Snowflake'"),
+        }
+    }
+
+    #[test]
+    fn test_pat_lowercase_resolves_to_pat() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("token", Setting::String("test_token".to_string())),
+            (
+                "authenticator",
+                Setting::String("programmatic_access_token".to_string()),
+            ),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::Pat { username, token } => {
+                assert_eq!(username, "test_user");
+                assert_eq!(token.reveal(), "test_token");
+            }
+            _ => panic!("Expected Pat login method for lowercase 'programmatic_access_token'"),
+        }
+    }
+
+    #[test]
+    fn test_mfa_lowercase_resolves_to_mfa() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+            (
+                "authenticator",
+                Setting::String("username_password_mfa".to_string()),
+            ),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::UserPasswordMfa { .. } => {}
+            _ => panic!("Expected UserPasswordMfa login method"),
+        }
+    }
+
     fn okta_config(extras: Vec<(&str, Setting)>) -> NativeOktaConfig {
         let mut base = vec![
             ("user", Setting::String("okta_user".to_string())),
@@ -570,5 +729,21 @@ mod tests {
             Setting::String("true".to_string()),
         )]);
         assert!(cfg.disable_saml_url_check);
+    }
+
+    #[test]
+    fn test_empty_user_returns_missing_parameter_error() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Missing required parameter") && err_msg.contains("user"),
+            "Expected MissingParameter error for empty user, got: {err_msg}"
+        );
     }
 }

@@ -8,13 +8,11 @@ All type synonyms (FLOAT, FLOAT4, FLOAT8, DOUBLE, DOUBLE PRECISION, REAL) are te
 
 from math import inf, nan
 
+import numpy as np
 import pytest
 
-from .utils import assert_connection_is_open, assert_floats_equal, assert_type
+from .utils import assert_floats_equal, assert_type
 
-
-# NumPy is optional for these tests
-np = pytest.importorskip("numpy")
 
 FLOAT_TYPE_SYNONYMS = [
     "FLOAT",
@@ -30,13 +28,10 @@ float_type_parametrize = pytest.mark.parametrize("float_type", FLOAT_TYPE_SYNONY
 class TestFloatNumPy:
     """Test suite for FLOAT type NumPy conversion (Python-specific)."""
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     @float_type_parametrize
-    def test_should_cast_float_values_to_numpy_float64_for_float_and_synonyms(
-        self, execute_query, cursor_with_numpy, float_type
-    ):
+    def test_should_cast_float_values_to_numpy_float64_for_float_and_synonyms(self, cursor_with_numpy, float_type):
         # Given Snowflake client is logged in with NumPy mode enabled
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 0.0::<type>, 123.456::<type>, -789.012::<type>, 1.23e10::<type>" is executed
         sql = f"SELECT 0.0::{float_type}, 123.456::{float_type}, -789.012::{float_type}, 1.23e10::{float_type}"
@@ -49,13 +44,10 @@ class TestFloatNumPy:
         # And Values should match expected floats [0.0, 123.456, -789.012, 1.23e10]
         assert_floats_equal(result, (0.0, 123.456, -789.012, 1.23e10))
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     @float_type_parametrize
-    def test_should_handle_special_float_values_with_numpy_for_float_and_synonyms(
-        self, execute_query, cursor_with_numpy, float_type
-    ):
+    def test_should_handle_special_float_values_with_numpy_for_float_and_synonyms(self, cursor_with_numpy, float_type):
         # Given Snowflake client is logged in with NumPy mode enabled
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
         sql = f"SELECT 'NaN'::{float_type}, 'inf'::{float_type}, '-inf'::{float_type}"

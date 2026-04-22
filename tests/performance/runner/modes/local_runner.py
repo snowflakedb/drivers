@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 from runner.utils import perf_tests_root
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ def run_local_core_binary(
     iterations: int,
     warmup_iterations: int,
     setup_queries: list[str] = None,
-    test_type: TestType = TestType.SELECT,
+    test_type: PerfTestType = PerfTestType.SELECT,
     s3_files_dir: Path = None,
 ) -> None:
     """
@@ -35,7 +35,7 @@ def run_local_core_binary(
         iterations: Number of test iterations
         warmup_iterations: Number of warmup iterations
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
-        test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
+        test_type: Type of test (PerfTestType.SELECT or PerfTestType.PUT_GET)
         s3_files_dir: Optional directory with S3-downloaded files (for PUT/GET tests)
     """
     perf_root = perf_tests_root()
@@ -55,7 +55,7 @@ def run_local_core_binary(
         logger.error(build_result.stderr)
         raise RuntimeError(f"Cargo build failed with exit code {build_result.returncode}")
     
-    if test_type == TestType.PUT_GET and s3_files_dir:
+    if test_type == PerfTestType.PUT_GET and s3_files_dir:
         get_files_dir = perf_root / "get_files"
         
         global _get_files_cleaned

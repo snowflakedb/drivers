@@ -92,6 +92,14 @@ def dict_cursor(connection):
 
 
 @pytest.fixture
+def cursor_with_numpy(connector_adapter):
+    """Create a cursor from a connection with numpy=True."""
+    with create_connection_with_adapter(connector_adapter, numpy=True) as conn:
+        with conn.cursor() as cur:
+            yield cur
+
+
+@pytest.fixture
 def execute_query(cursor):
     """Helper replacing cursor if your only use case is to execute a query."""
 

@@ -1,0 +1,110 @@
+---
+description: Generate representative replay tests from an ODBC trace file
+alwaysApply: false
+---
+
+# ODBC Trace Replay Sampling
+
+Generate a representative sample of replay tests from a raw ODBC trace file. The user provides:
+
+- **Trace file path** (e.g. `odbc_traces.txt`)
+- **Output directory** (e.g. `odbc_tests/tests/replay/customer_name/`)
+
+## Phase 1: Split the trace
+
+```bash
+cargo run -p odbc_trace_tool -- split \
+  -i <trace_file> \
+  -o <temp_split_dir> \
+  -m statement \
+  --require-complete-sql
+```
+
+This produces one `ir.yaml` per statement handle in `<temp_split_dir>/stmt*/ir.yaml`. Report the total count to the user.
+
+## Phase 2: Select representative sample (~30 traces)
+
+Use iterative greedy farthest-point sampling:
+
+1. Pick the first trace manually -- examine a few candidates, choose one with an interesting query pattern.
+2. Create its directory under `<output_dir>/<descriptive_name>/` and copy `ir.yaml`.
+3. Loop until ~30 traces or max distance drops below ~0.05:
+   - Run: `cargo run -p odbc_trace_tool -- compare -r <output_dir>/*/ir.yaml -i <temp_split_dir>/stmt*/ir.yaml | tail -n 30`
+   - Pick a random trace from those with highest distance.
+   - Inspect its function profile to derive a descriptive directory name:
+     ```bash
+     grep 'function:' <path>/ir.yaml | sort | uniq -c | sort -rn
+     ```
+   - Create directory and copy the `ir.yaml`.
+4. Clean up `<temp_split_dir>` when done.
+
+**Directory naming convention:** describe the trace structure, e.g. `exec_direct_getdata_13col_3rows`, `exec_direct_5col_empty_result`, `select_distinct`.
+
+## Phase 3: Generate tests
+
+For each trace directory:
+
+```bash
+cargo run -p odbc_trace_tool -- generate \
+  -i <output_dir>/<name>/ir.yaml \
+  -n "<name>" \
+  -t "<tag>"
+```
+
+This produces `test.cpp` and `queries.yaml` (auto-created on first run) in each directory.
+
+Create `<output_dir>/CMakeLists.txt` with one `add_odbc_test(replay_<tag>_<name> <name>/test.cpp)` entry per test. Add `add_subdirectory(...)` to the parent `CMakeLists.txt` if needed.
+
+## Phase 4: Validate and report
+
+Run both drivers and present a summary report to the user.
+
+**Reference driver:**
+
+```bash
+./odbc_tests/run_reference.sh -R "replay_<tag>"
+```
+
+**New driver:**
+
+```bash
+./odbc_tests/run.sh -R "replay_<tag>"
+```
+
+Present the results as a table:
+
+| Test | Reference (OLD) | New Driver |
+|------|-----------------|------------|
+| test_name_1 | Pass | Pass |
+| test_name_2 | Pass | SEGFAULT |
+| test_name_3 | Failed (1/133 -- colSize) | Failed (1/133 -- colSize) |
+
+Include assertion counts (e.g. `132/133 passed`) and a brief description of each failure cause.
+
+## Phase 5: Apply SKIP for new-driver failures
+
+For tests that pass on reference but fail/segfault with the new driver, add `SKIP_NEW_DRIVER_NOT_IMPLEMENTED()` as the first line of the test body and include `compatibility.hpp`:
+
+```cpp
+#include "compatibility.hpp"
+// ... other includes ...
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "Replay: <name>", "[<tag>]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // ... rest of test body unchanged ...
+}
+```
+
+## Phase 6: Final verification
+
+- Run `./odbc_tests/run_reference.sh -R "replay_<tag>"` -- all tests must pass.
+- Run `./odbc_tests/run.sh -R "replay_<tag>"` -- new-driver failures should show as Skipped, not SEGFAULT.
+- Present the updated report to the user.
+
+## Key References
+
+- Trace tool commands: `cargo run -p odbc_trace_tool -- <split|compare|generate> --help`
+- Generator source: `odbc_trace_tool/src/generator/cpp.rs`
+- Existing example: `odbc_tests/tests/replay/datometry/`
+- Setup pattern: `odbc_tests/tests/setup/setup_datometry_replay.cpp` + `scripts/odbc/setup_datometry_replay.sql`
+- Setup CMake: `odbc_tests/tests/setup/CMakeLists.txt` (needs `BUILD_SETUP_TOOLS=ON`)

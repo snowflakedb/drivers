@@ -1,9 +1,22 @@
 use arrow::array::{Array, BooleanArray};
 use odbc_sys as sql;
+use serde_json::Value;
 
-use crate::cdata_types::CDataType;
+use crate::api::CDataType;
+use crate::api::ParameterBinding;
+use crate::conversion::error::JsonBindingError;
+use crate::conversion::error::{
+    InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::numeric_helpers::{
+    reject_multi_field_interval, write_interval_second, write_single_field_interval,
+};
+use crate::conversion::param_binding::{
+    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -115,10 +128,137 @@ impl WriteODBCType for SnowflakeBoolean {
                 Ok(vec![])
             }
             CDataType::Binary => Ok(binding.write_binary(&[int_value], get_data_offset)),
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute => write_single_field_interval(
+                binding.target_type,
+                int_value as i128,
+                false,
+                false,
+                binding,
+            ),
+            CDataType::IntervalSecond => {
+                write_interval_second(int_value as i128, int_value as u128, 0, false, binding)
+            }
+            CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => reject_multi_field_interval(binding.target_type),
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }
             .fail(),
         }
+    }
+}
+
+/// Parse a string value to a boolean per ODBC spec: the string is first
+/// converted to a numeric value, then 0 → false, nonzero → true.
+/// Also accepts "true"/"false" literals for Snowflake compatibility.
+fn parse_str_to_bool(s: &str) -> Result<bool, JsonBindingError> {
+    let trimmed = s.trim();
+    if let Ok(i) = trimmed.parse::<i64>() {
+        return Ok(i != 0);
+    }
+    if let Ok(f) = trimmed.parse::<f64>() {
+        return match f.is_finite() {
+            true => Ok(f != 0.0),
+            false => InvalidBooleanValueSnafu {
+                value: trimmed.to_string(),
+            }
+            .fail(),
+        };
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => InvalidBooleanValueSnafu {
+            value: trimmed.to_string(),
+        }
+        .fail(),
+    }
+}
+
+impl ReadODBC for SnowflakeBoolean {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        match binding.value_type {
+            CDataType::Default | CDataType::Bit | CDataType::UTinyInt => {
+                Ok(read_unaligned::<u8>(binding) != 0)
+            }
+            CDataType::TinyInt | CDataType::STinyInt => Ok(read_unaligned::<i8>(binding) != 0),
+            CDataType::Long | CDataType::SLong => Ok(read_unaligned::<i32>(binding) != 0),
+            CDataType::ULong => Ok(read_unaligned::<u32>(binding) != 0),
+            CDataType::Short | CDataType::SShort => Ok(read_unaligned::<i16>(binding) != 0),
+            CDataType::UShort => Ok(read_unaligned::<u16>(binding) != 0),
+            CDataType::SBigInt => Ok(read_unaligned::<i64>(binding) != 0),
+            CDataType::UBigInt => Ok(read_unaligned::<u64>(binding) != 0),
+            CDataType::Float => {
+                let v = read_unaligned::<f32>(binding);
+                if !v.is_finite() {
+                    return InvalidBooleanValueSnafu {
+                        value: v.to_string(),
+                    }
+                    .fail();
+                }
+                Ok(v != 0.0)
+            }
+            CDataType::Double => {
+                let v = read_unaligned::<f64>(binding);
+                if !v.is_finite() {
+                    return InvalidBooleanValueSnafu {
+                        value: v.to_string(),
+                    }
+                    .fail();
+                }
+                Ok(v != 0.0)
+            }
+            CDataType::Char => {
+                let s = read_char_str(binding)?;
+                parse_str_to_bool(&s)
+            }
+            CDataType::WChar => {
+                let s = read_wchar_str(binding)?;
+                parse_str_to_bool(&s)
+            }
+            CDataType::Numeric => {
+                let n = read_unaligned::<sql::Numeric>(binding);
+                Ok(u128::from_le_bytes(n.val) != 0)
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                if len != 1 {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY to SQL_BIT requires exactly 1 byte, got {len}"
+                        ),
+                    }
+                    .fail();
+                }
+                let byte = unsafe { *(binding.parameter_value_ptr as *const u8) };
+                Ok(byte != 0)
+            }
+            _ => UnsupportedCDataTypeSnafu {
+                c_type: binding.value_type,
+            }
+            .fail(),
+        }
+    }
+}
+
+impl WriteJson for SnowflakeBoolean {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        Ok(Value::String(value.to_string()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Boolean
     }
 }

@@ -1,7 +1,10 @@
 use proto_utils::ProtoError;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::config::param_names;
+use sf_core::protobuf::apis::database_driver_v1::{
+    DatabaseDriverClient, DatabaseDriverClientBlockingExt, DriverProviders, database_driver_client,
+    database_driver_client_with,
+};
 use sf_core::protobuf::generated::database_driver_v1::*;
-use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 
 use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
@@ -12,6 +15,7 @@ pub struct SnowflakeTestClient {
     pub db_handle: DatabaseHandle,
     pub parameters: Parameters,
     private_key_file: Option<PrivateKeyFile>,
+    client: DatabaseDriverClient,
 }
 
 impl SnowflakeTestClient {
@@ -19,27 +23,31 @@ impl SnowflakeTestClient {
     pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
-
-        let db_response = DatabaseDriverClient::database_new(DatabaseNewRequest {}).unwrap();
+        let client = database_driver_client();
+        let db_response = client.database_new_blocking(DatabaseNewRequest {}).unwrap();
         let db_handle = db_response.db_handle.unwrap();
 
-        DatabaseDriverClient::database_init(DatabaseInitRequest {
-            db_handle: Some(db_handle),
-        })
-        .unwrap();
+        client
+            .database_init_blocking(DatabaseInitRequest {
+                db_handle: Some(db_handle),
+            })
+            .unwrap();
 
-        let conn_response = DatabaseDriverClient::connection_new(ConnectionNewRequest {}).unwrap();
+        let conn_response = client
+            .connection_new_blocking(ConnectionNewRequest {})
+            .unwrap();
         let conn_handle = conn_response.conn_handle.unwrap();
 
-        let client = Self {
+        let test_client = Self {
             conn_handle,
             db_handle,
             parameters,
             private_key_file: None,
+            client,
         };
 
-        client.set_options_from_parameters();
-        client
+        test_client.set_options_from_parameters();
+        test_client
     }
 
     /// Creates a client with default parameters and JWT authentication configured
@@ -54,21 +62,42 @@ impl SnowflakeTestClient {
 
     pub fn connect_with_default_auth() -> Self {
         setup_logging();
-        let mut client = Self::with_default_params();
+        let mut test_client = Self::with_default_params();
 
-        let temp_key_file = client.setup_jwt_auth();
+        let temp_key_file = test_client.setup_jwt_auth();
 
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
+        test_client
+            .client
+            .connection_init_blocking(ConnectionInitRequest {
+                conn_handle: Some(test_client.conn_handle),
+                db_handle: Some(test_client.db_handle),
+                ..Default::default()
+            })
+            .unwrap();
 
-        client.private_key_file = Some(temp_key_file);
-        client
+        test_client.private_key_file = Some(temp_key_file);
+        test_client
     }
 
     pub fn with_int_tests_params(server_url: Option<&str>) -> Self {
+        Self::with_int_tests_params_and_client(server_url, database_driver_client())
+    }
+
+    /// Variant of [`Self::with_int_tests_params`] that installs test
+    /// providers (e.g. a mocked filesystem) on the underlying driver
+    /// before the client starts issuing requests. Add new providers by
+    /// extending [`DriverProviders`]; no new constructor is required.
+    pub fn with_int_tests_params_using(
+        server_url: Option<&str>,
+        providers: DriverProviders,
+    ) -> Self {
+        Self::with_int_tests_params_and_client(server_url, database_driver_client_with(providers))
+    }
+
+    fn with_int_tests_params_and_client(
+        server_url: Option<&str>,
+        client: DatabaseDriverClient,
+    ) -> Self {
         setup_logging();
 
         let server_url = server_url.unwrap_or("http://localhost:8090");
@@ -87,52 +116,62 @@ impl SnowflakeTestClient {
             ..Default::default()
         };
 
-        let db_response = DatabaseDriverClient::database_new(DatabaseNewRequest {}).unwrap();
+        let db_response = client.database_new_blocking(DatabaseNewRequest {}).unwrap();
         let db_handle = db_response.db_handle.unwrap();
 
-        DatabaseDriverClient::database_init(DatabaseInitRequest {
-            db_handle: Some(db_handle),
-        })
-        .unwrap();
+        client
+            .database_init_blocking(DatabaseInitRequest {
+                db_handle: Some(db_handle),
+            })
+            .unwrap();
 
-        let conn_response = DatabaseDriverClient::connection_new(ConnectionNewRequest {}).unwrap();
+        let conn_response = client
+            .connection_new_blocking(ConnectionNewRequest {})
+            .unwrap();
         let conn_handle = conn_response.conn_handle.unwrap();
 
-        let client = Self {
+        let test_client = Self {
             conn_handle,
             db_handle,
             parameters: test_parameters,
             private_key_file: None,
+            client,
         };
 
-        client.set_options_from_parameters();
-        client
+        test_client.set_options_from_parameters();
+        test_client
     }
 
     pub fn connect_integration_test(server_url: Option<&str>) -> Self {
-        let mut client = Self::with_int_tests_params(server_url);
+        let mut test_client = Self::with_int_tests_params(server_url);
 
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        test_client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
         let temp_key_file = private_key_helper::get_test_private_key_file()
             .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        test_client
+            .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
+        test_client
+            .client
+            .connection_init_blocking(ConnectionInitRequest {
+                conn_handle: Some(test_client.conn_handle),
+                db_handle: Some(test_client.db_handle),
+                ..Default::default()
+            })
+            .unwrap();
 
-        client.private_key_file = Some(temp_key_file);
-        client
+        test_client.private_key_file = Some(temp_key_file);
+        test_client
     }
 
     /// Creates a new statement handle
     pub fn new_statement(&self) -> StatementHandle {
-        let response = DatabaseDriverClient::statement_new(StatementNewRequest {
-            conn_handle: Some(self.conn_handle),
-        })
-        .unwrap();
+        let response = self
+            .client
+            .statement_new_blocking(StatementNewRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .unwrap();
         response.stmt_handle.unwrap()
     }
 
@@ -154,21 +193,23 @@ impl SnowflakeTestClient {
                 })),
             }
         });
-        DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
-            stmt_handle: Some(*stmt),
-            bindings,
-        })
-        .unwrap()
-        .result
-        .unwrap()
+        self.client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(*stmt),
+                bindings,
+            })
+            .unwrap()
+            .result
+            .unwrap()
     }
 
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
-        DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
-            stmt_handle: Some(*stmt),
-            query: query.to_string(),
-        })
-        .unwrap();
+        self.client
+            .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
+                stmt_handle: Some(*stmt),
+                query: query.to_string(),
+            })
+            .unwrap();
     }
 
     /// Builds a JSON bindings string for integer parameters.
@@ -189,25 +230,47 @@ impl SnowflakeTestClient {
         serde_json::to_string(&bindings).unwrap()
     }
 
+    pub fn result_chunks(&self, stmt: &StatementHandle) -> ResultChunksResult {
+        self.client
+            .statement_result_chunks_blocking(StatementResultChunksRequest {
+                stmt_handle: Some(*stmt),
+            })
+            .unwrap()
+            .result
+            .unwrap()
+    }
+
+    pub fn fetch_chunk(&self, chunk: ResultChunk) -> DatabaseFetchChunkResponse {
+        self.client
+            .database_fetch_chunk_blocking(DatabaseFetchChunkRequest {
+                db_handle: Some(self.db_handle),
+                chunk: Some(chunk),
+            })
+            .unwrap()
+    }
+
     pub fn release_statement(&self, stmt: &StatementHandle) {
-        DatabaseDriverClient::statement_release(StatementReleaseRequest {
-            stmt_handle: Some(*stmt),
-        })
-        .unwrap();
+        self.client
+            .statement_release_blocking(StatementReleaseRequest {
+                stmt_handle: Some(*stmt),
+            })
+            .unwrap();
     }
 
     /// Executes a SQL query and returns the result
     pub fn execute_query(&self, sql: &str) -> ExecuteResult {
         let stmt_handle = self.new_statement();
 
-        DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            query: sql.to_string(),
-        })
-        .unwrap();
+        self.client
+            .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                query: sql.to_string(),
+            })
+            .unwrap();
 
-        let response =
-            DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
+        let response = self
+            .client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
             })
@@ -219,23 +282,30 @@ impl SnowflakeTestClient {
     pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
         let stmt_handle = self.new_statement();
 
-        if let Err(e) = DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            query: sql.to_string(),
-        }) {
+        if let Err(e) = self
+            .client
+            .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                query: sql.to_string(),
+            })
+        {
             return Err(format!("Failed to set SQL query: {e:?}"));
         }
 
-        match DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            bindings: None,
-        }) {
+        match self
+            .client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+            }) {
             Ok(response) => {
                 let proto_result = response.result.unwrap();
                 Ok(proto_result)
             }
-            Err(ProtoError::Application(e)) => Err(format!("Failed to execute query: {e:?}")),
-            Err(ProtoError::Transport(e)) => Err(format!("Transport error: {e:?}")),
+            Err(e) => match e.as_ref() {
+                ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
+                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
+            },
         }
     }
 
@@ -246,9 +316,10 @@ impl SnowflakeTestClient {
     }
 
     pub fn connect(&self) -> Result<(), String> {
-        match DatabaseDriverClient::connection_init(ConnectionInitRequest {
+        match self.client.connection_init_blocking(ConnectionInitRequest {
             conn_handle: Some(self.conn_handle),
             db_handle: Some(self.db_handle),
+            ..Default::default()
         }) {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Connection failed: {e:?}")),
@@ -256,39 +327,45 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option(&self, option_name: &str, option_value: &str) {
-        DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(self.conn_handle),
-            key: option_name.to_string(),
-            value: option_value.to_string(),
-        })
-        .unwrap();
+        self.set_connection_config_setting(option_name, option_value.to_string().into());
     }
 
     pub fn set_connection_option_int(&self, option_name: &str, option_value: i64) {
-        DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
-            conn_handle: Some(self.conn_handle),
-            key: option_name.to_string(),
-            value: option_value,
-        })
-        .unwrap();
+        self.set_connection_config_setting(option_name, option_value.into());
     }
 
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
-        DatabaseDriverClient::connection_set_option_bytes(ConnectionSetOptionBytesRequest {
-            conn_handle: Some(self.conn_handle),
-            key: option_name.to_string(),
-            value: option_value.to_vec(),
-        })
-        .unwrap();
+        self.client
+            .connection_set_options_blocking(ConnectionSetOptionsRequest {
+                conn_handle: Some(self.conn_handle),
+                options: [(option_name.to_string(), option_value.to_vec().into())]
+                    .into_iter()
+                    .collect(),
+            })
+            .unwrap();
     }
 
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
-        DatabaseDriverClient::statement_set_option_string(StatementSetOptionStringRequest {
-            stmt_handle: Some(*stmt),
-            key: STATEMENT_ASYNC_EXECUTION_OPTION.to_string(),
-            value: if enabled { "true" } else { "false" }.to_string(),
-        })
-        .unwrap();
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
+                stmt_handle: Some(*stmt),
+                options: [(
+                    param_names::ASYNC_EXECUTION.as_str().to_string(),
+                    ConfigSetting::from(enabled),
+                )]
+                .into_iter()
+                .collect(),
+            })
+            .unwrap();
+    }
+
+    fn set_connection_config_setting(&self, key: &str, setting: ConfigSetting) {
+        self.client
+            .connection_set_options_blocking(ConnectionSetOptionsRequest {
+                conn_handle: Some(self.conn_handle),
+                options: [(key.to_string(), setting)].into_iter().collect(),
+            })
+            .unwrap();
     }
 
     /// Stores a temporary private key file to keep it alive for the duration of the test.
@@ -355,7 +432,7 @@ impl SnowflakeTestClient {
             self.set_connection_option("schema", schema);
         }
 
-        if let Some(warehouse) = &self.parameters.warehouse {
+        if let Some(warehouse) = &self.parameters.warehouse() {
             self.set_connection_option("warehouse", warehouse);
         }
 
@@ -384,15 +461,21 @@ impl SnowflakeTestClient {
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
         // Release the connection when the client is dropped
-        if let Err(e) = DatabaseDriverClient::connection_release(ConnectionReleaseRequest {
-            conn_handle: Some(self.conn_handle),
-        }) {
+        if let Err(e) = self
+            .client
+            .connection_release_blocking(ConnectionReleaseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+        {
             tracing::warn!("Failed to release connection in Drop: {e:?}");
         }
         // Release the database handle
-        if let Err(e) = DatabaseDriverClient::database_release(DatabaseReleaseRequest {
-            db_handle: Some(self.db_handle),
-        }) {
+        if let Err(e) = self
+            .client
+            .database_release_blocking(DatabaseReleaseRequest {
+                db_handle: Some(self.db_handle),
+            })
+        {
             tracing::warn!("Failed to release database handle in Drop: {e:?}");
         }
     }

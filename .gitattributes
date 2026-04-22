@@ -1,3 +1,17 @@
-# Force LF line endings for test data files so sizes and content match
-# cross-platform expectations in PUT/GET tests.
+# Enforce LF line endings for test data files.
+# Without this, Windows git (core.autocrlf=true) converts LF to CRLF on
+# checkout, which breaks tests that assert exact file sizes or compressed
+# byte content (e.g. PUT/GET rowset assertions).
 tests/test_data/**/*.csv text eol=lf
+tests/test_data/**/*.md text eol=lf
+tests/test_data/**/*.py text eol=lf
+tests/test_data/**/*.p8 text eol=lf
+
+# Compressed test data: binary, never touch
+tests/test_data/**/*.gz binary
+tests/test_data/**/*.br binary
+tests/test_data/**/*.bz2 binary
+tests/test_data/**/*.xz binary
+tests/test_data/**/*.zst binary
+tests/test_data/**/*.deflate binary
+tests/test_data/**/*.raw_deflate binary

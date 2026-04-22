@@ -34,8 +34,17 @@ PyObject* ObjectConverter::toPyObject(int64_t rowIndex) const {
   }
 
   PyObject* dict = PyDict_New();
+  if (dict == nullptr) {
+    return nullptr;
+  }
   for (int i = 0; i < m_propertyCount; i++) {
-    PyDict_SetItemString(dict, m_property_names[i], m_converters[i]->toPyObject(rowIndex));
+    PyObject* val = m_converters[i]->toPyObject(rowIndex);
+    if (val == nullptr || PyDict_SetItemString(dict, m_property_names[i], val) != 0) {
+      Py_XDECREF(val);
+      Py_DECREF(dict);
+      return nullptr;
+    }
+    Py_DECREF(val);
   }
   return dict;
 }

@@ -1,0 +1,25 @@
+name: Capture vcpkg version
+description: >
+  Captures the installed vcpkg version and exports it as the VCPKG_VER env var so it can be
+  embedded in cache keys. When GitHub updates the runner's vcpkg (new runner image), the key
+  changes automatically and stale caches are not reused. Windows-only.
+
+outputs:
+  version:
+    description: The captured vcpkg version string
+    value: ${{ steps.capture.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Capture vcpkg version
+      id: capture
+      shell: pwsh
+      run: |
+        $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
+          Select-String 'version\s+(\S+)' |
+          ForEach-Object { $_.Matches[0].Groups[1].Value } |
+          Select-Object -First 1
+        if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
+        echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+        echo "version=$ver" >> $env:GITHUB_OUTPUT

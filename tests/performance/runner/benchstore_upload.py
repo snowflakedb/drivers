@@ -24,9 +24,18 @@ from benchstore.client.quickstore import Quickstore
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from runner.container import get_resource_limits
-from runner.utils import perf_tests_root
+from runner.utils import perf_tests_root, collect_node_info
 
 logger = logging.getLogger(__name__)
+
+# Benchstore only allows A-Za-z0-9 - _ = . : in tag strings.
+_TAG_SANITIZE_RE = re.compile(r"[^A-Za-z0-9\-_=.:]")
+
+
+def _sanitize_tag(tag: str) -> str:
+    """Replace characters not allowed by Benchstore with underscores."""
+    return _TAG_SANITIZE_RE.sub("_", tag)
+
 
 PROJECT_NAME = "SnowDrivers"
 BENCHMARK_NAME = "Universal_Driver"
@@ -295,21 +304,100 @@ def read_csv_results(csv_path: Path) -> List[Dict]:
         List of dicts, each containing timestamp and metrics for one iteration
     """
     results = []
-    
+    known_columns = {'timestamp_ms', 'query_s', 'fetch_s', 'row_count', 'cpu_time_s', 'peak_rss_mb'}
+
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
             result = {
-                'timestamp': int(row['timestamp']),
+                'timestamp': int(row['timestamp_ms']),
                 'query_s': float(row['query_s'])
             }
             
             if 'fetch_s' in row:
                 result['fetch_s'] = float(row['fetch_s'])
+            if 'cpu_time_s' in row:
+                result['cpu_time_s'] = float(row['cpu_time_s'])
+            if 'peak_rss_mb' in row:
+                result['peak_rss_mb'] = float(row['peak_rss_mb'])
+
+            for col, val in row.items():
+                if col not in known_columns and val:
+                    try:
+                        result[col] = float(val)
+                    except ValueError:
+                        pass
             
             results.append(result)
     
     return results
+
+
+def parse_memory_timeline_filename(filename: str) -> Optional[Dict[str, str]]:
+    """
+    Parse memory timeline CSV filename.
+    
+    Expected formats:
+      - memory_timeline_{test_name}_{driver}_{driver_type}_{timestamp}.csv
+      - memory_timeline_{test_name}_{driver}_{timestamp}.csv (core)
+    Examples:
+      - memory_timeline_select_string_1M_arrow_recorded_http_python_universal_1773658001.csv
+      - memory_timeline_select_string_1M_arrow_recorded_http_core_1773658001.csv
+    
+    Args:
+        filename: CSV filename
+        
+    Returns:
+        Dict with test_name, driver, driver_type, timestamp or None if not a timeline file
+    """
+    pattern_with_type = r'memory_timeline_(.+)_(python|odbc|jdbc)_(universal|old)_(\d+)\.csv'
+    match = re.match(pattern_with_type, filename)
+    if match:
+        return {
+            'test_name': match.group(1),
+            'driver': match.group(2),
+            'driver_type': match.group(3),
+            'timestamp': match.group(4),
+        }
+    
+    pattern_core = r'memory_timeline_(.+)_(core)_(\d+)\.csv'
+    match = re.match(pattern_core, filename)
+    if match:
+        return {
+            'test_name': match.group(1),
+            'driver': match.group(2),
+            'driver_type': 'universal',
+            'timestamp': match.group(3),
+        }
+    
+    return None
+
+
+def read_memory_timeline(csv_path: Path) -> List[Dict]:
+    """
+    Read memory timeline samples from CSV file.
+    
+    Args:
+        csv_path: Path to memory timeline CSV file
+        
+    Returns:
+        List of dicts with timestamp_ms, rss_bytes, vm_bytes
+    """
+    samples = []
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row['timestamp_ms'] and row['rss_bytes'] and row['vm_bytes']:
+                samples.append({
+                    'timestamp_ms': int(row['timestamp_ms']),
+                    'rss_bytes': int(row['rss_bytes']),
+                    'vm_bytes': int(row['vm_bytes']),
+                })
+    return samples
+
+
+def bytes_to_mb(size_in_bytes: int) -> float:
+    return round(size_in_bytes / (1024 * 1024), 2)
 
 
 def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = False, parameters_json_path: Optional[str] = None):
@@ -347,7 +435,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     if not results_dir.exists():
         raise Exception(f"Results directory does not exist: {results_dir}")
     
-    csv_files = list(results_dir.glob("*.csv"))
+    csv_files = (
+        list(results_dir.glob("universal/**/*.csv")) +
+        list(results_dir.glob("old/**/*.csv"))
+    )
     if not csv_files:
         raise Exception(f"No CSV files found in: {results_dir}")
     
@@ -390,16 +481,26 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     
     # Group CSV files by their tag set (driver + driver_type)
     csv_groups = defaultdict(list)
+    timeline_groups = defaultdict(list)
     
     for csv_file in csv_files:
-        # Parse filename to get driver info
+        # Check if this is a memory timeline file first
+        timeline_info = parse_memory_timeline_filename(csv_file.name)
+        if timeline_info is not None:
+            test_name = timeline_info['test_name']
+            if test_name.endswith('_record'):
+                logger.info(f"Skipping recording phase timeline: {csv_file.name}")
+                continue
+            group_key = (timeline_info['driver'], timeline_info['driver_type'])
+            timeline_groups[group_key].append((csv_file, timeline_info))
+            continue
+        
+        # Parse as regular results CSV
         file_info = parse_csv_filename(csv_file.name)
         if file_info is None:
             logger.warning(f"Skipping {csv_file.name} - could not parse filename")
             continue
         
-        # Skip recording phase results (e.g., select_string_1M_arrow_recorded_http_record_*)
-        # Recording phase test names end with "_record" suffix
         test_name = file_info['test_name']
         if test_name.endswith('_record'):
             logger.info(f"Skipping recording phase result: {csv_file.name}")
@@ -418,6 +519,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     docker_cpu = resource_limits['cpu']
     
     jenkins_node = os.getenv('JENKINS_NODE_LABEL', 'UNKNOWN')
+    trigger_type = os.getenv('TRIGGER_TYPE', 'LOCAL' if is_local else 'unknown')
+    
+    # Collect host hardware info for node equivalence tracking
+    node_info = collect_node_info()
     
     for (driver, driver_type), csv_file_list in csv_groups.items():
         # Get versions from run metadata
@@ -451,28 +556,23 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
             f"REGION={region}",
+            f"TRIGGER_TYPE={trigger_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
             f"DOCKER_CPU={docker_cpu}",
+            f"NODE_CPU_MODEL={node_info.get('node_cpu_model', 'UNKNOWN')}",
+            f"NODE_CPU_CORES={node_info.get('node_cpu_cores', 'UNKNOWN')}",
+            f"NODE_CPU_THREADS={node_info.get('node_cpu_threads', 'UNKNOWN')}",
+            f"NODE_MEMORY_GB={node_info.get('node_memory_gb', 'UNKNOWN')}",
+            f"NODE_CPU_MAX_MHZ={node_info.get('node_cpu_max_mhz', 'UNKNOWN')}",
+            f"NODE_L3_CACHE={node_info.get('node_l3_cache', 'UNKNOWN')}",
         ]
         
-        # Create Quickstore input once for this group
-        default_comparable_tags = [
-            f"BUILD_NUMBER={build_number}",
-            f"BRANCH_NAME={branch_name}",
-            f"ARCHITECTURE={architecture}",
-            f"OS={os_info}",
-            f"DRIVER={driver_tag_value}",
-            f"SERVER_VERSION={server_version}",
-            f"DRIVER_VERSION={client_version}",
-            f"BUILD_RUST_VERSION={build_rust_version}",
-            f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
-            f"CLOUD_PROVIDER={cloud_provider}",
-            f"REGION={region}",
-            f"JENKINS_NODE={jenkins_node}",
-            f"DOCKER_MEMORY={docker_memory}",
-            f"DOCKER_CPU={docker_cpu}",
-        ]
+        if "node_instance_type" in node_info:
+            tags.append(f"NODE_INSTANCE_TYPE={node_info['node_instance_type']}")
+        
+        tags = [_sanitize_tag(t) for t in tags]
+        default_comparable_tags = list(tags)
         
         quickstore_input = benchstore_pb2.QuickstoreInput(
             benchmark_name_lookup=benchstore_pb2.BenchmarkNameLookup(
@@ -486,6 +586,8 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         # Open Quickstore once for all CSV files in this group
         try:
             with Quickstore(quickstore_input, snowflake_connection_params=snowflake_connection_params) as quickstore:
+                results_by_test = {}
+                
                 # Upload all CSV files in this group
                 for csv_file, file_info in csv_file_list:
                     test_name = file_info['test_name']
@@ -501,7 +603,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         logger.warning(f"No results in {csv_file.name}")
                         continue
                     
+                    results_by_test[test_name] = results
+                    
                     # Upload all iterations from this CSV
+                    known_result_keys = {'timestamp', 'query_s', 'fetch_s', 'cpu_time_s', 'peak_rss_mb'}
                     for idx, result in enumerate(results, 1):
                         metrics = {
                             f"{test_name}_query_s": result['query_s'],
@@ -510,9 +615,17 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         # fetch_s is only present in SELECT tests, not PUT/GET tests
                         if 'fetch_s' in result:
                             metrics[f"{test_name}_fetch_s"] = result['fetch_s']
+                        if 'cpu_time_s' in result:
+                            metrics[f"{test_name}_cpu_time_s"] = result['cpu_time_s']
+                        if 'peak_rss_mb' in result:
+                            metrics[f"{test_name}_peak_rss_mb"] = result['peak_rss_mb']
+
+                        for key, val in result.items():
+                            if key not in known_result_keys and isinstance(val, float):
+                                metrics[f"{test_name}_{key}"] = val
                         
                         timestamp = Timestamp()
-                        timestamp.FromSeconds(result['timestamp'])
+                        timestamp.FromMilliseconds(result['timestamp'])
                         
                         quickstore.add_sample_point_from_input(
                             benchstore_pb2.AddSamplePointInput(
@@ -522,12 +635,87 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         )
                         
                         total_uploaded += 1
+                
+                # Upload memory timeline data for this driver group (gauge metrics)
+                # Per BenchStore docs: memory is a gauge - upload periodic samples and
+                # let Quickstore auto-compute aggregates (max, min, mean, median, percentiles)
+                group_key = (driver, driver_type)
+                if group_key in timeline_groups:
+                    for timeline_file, timeline_info in timeline_groups[group_key]:
+                        test_name = timeline_info['test_name']
+                        
+                        try:
+                            samples = read_memory_timeline(timeline_file)
+                        except Exception as e:
+                            logger.error(f"Failed to read timeline {timeline_file.name}: {e}")
+                            continue
+                        
+                        if not samples:
+                            logger.warning(f"No samples in {timeline_file.name}")
+                            continue
+                        
+                        rss_metric = f"{test_name}_rss_memory_mb"
+                        vm_metric = f"{test_name}_vm_memory_mb"
+                        
+                        for sample in samples:
+                            timestamp = Timestamp()
+                            timestamp.FromMilliseconds(sample['timestamp_ms'])
+                            
+                            quickstore.add_sample_point_from_input(
+                                benchstore_pb2.AddSamplePointInput(
+                                    timestamp=timestamp,
+                                    metrics={
+                                        rss_metric: bytes_to_mb(sample['rss_bytes']),
+                                        vm_metric: bytes_to_mb(sample['vm_bytes']),
+                                    },
+                                )
+                            )
+                        
+                        # Upload max RSS delta as a run aggregate for quick regression detection
+                        rss_values = [s['rss_bytes'] for s in samples]
+                        rss_delta_mb = bytes_to_mb(max(rss_values) - min(rss_values))
+                        quickstore.add_run_aggregate(
+                            benchstore_pb2.AddRunAggregateInput(
+                                custom_aggregate_label=f"{test_name}_rss_memory_delta_mb",
+                                custom_aggregate_value=rss_delta_mb,
+                            )
+                        )
+                        
+                        # Upload memory growth for leak detection.
+                        # Compares the idle (minimum) RSS of the first iteration to the
+                        # last iteration. A growing value indicates memory not being
+                        # freed between iterations (potential leak).
+                        if test_name in results_by_test:
+                            iteration_results = results_by_test[test_name]
+                            if len(iteration_results) >= 2:
+                                iter_end_times_ms = [r['timestamp'] for r in iteration_results]
+                                first_iter_rss = [s['rss_bytes'] for s in samples if s['timestamp_ms'] <= iter_end_times_ms[0]]
+                                last_iter_rss = [s['rss_bytes'] for s in samples if s['timestamp_ms'] > iter_end_times_ms[-2]]
+                                
+                                if first_iter_rss and last_iter_rss:
+                                    growth_mb = max(0.0, bytes_to_mb(min(last_iter_rss) - min(first_iter_rss)))
+                                    quickstore.add_run_aggregate(
+                                        benchstore_pb2.AddRunAggregateInput(
+                                            custom_aggregate_label=f"{test_name}_rss_memory_growth_mb",
+                                            custom_aggregate_value=growth_mb,
+                                        )
+                                    )
+                                    logger.info(f"  Memory growth for {test_name}: {growth_mb} MB")
+                        
+                        timeline_uploaded = len(samples)
+                        total_uploaded += timeline_uploaded
+                        logger.info(f"  Uploaded {timeline_uploaded} memory timeline samples for {test_name}")
             
             logger.critical(f"✓ Uploaded {driver} ({driver_type}) [{architecture}/{os_info}] driver data to Benchstore")
                 
         except Exception as e:
             logger.error(f"Failed to upload {driver} ({driver_type}): {e}")
             continue
+    
+    # Warn about timeline files with no matching results group
+    orphaned = set(timeline_groups.keys()) - set(csv_groups.keys())
+    for key in orphaned:
+        logger.warning(f"Memory timeline files for {key} have no matching results CSVs - skipped")
 
 
 def main():

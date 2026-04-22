@@ -18,7 +18,7 @@ import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class DateTests extends SnowflakeIntegrationTestBase {
-  private static final int LARGE_RESULT_SET_SIZE = 50_000;
+  private static final int LARGE_RESULT_SET_SIZE = 100_000;
 
   @Test
   public void shouldCastDateValuesToAppropriateType() throws Exception {
@@ -86,21 +86,22 @@ public class DateTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void shouldSelectHistoricalDates() throws Exception {
+  public void shouldSelectHistoricalAndBoundaryDates() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Query "SELECT '0001-01-01'::DATE, '1582-10-15'::DATE" is executed
-    String sql = "SELECT '0001-01-01'::DATE, '1582-10-15'::DATE";
+    // When Query "SELECT '0001-01-01'::DATE, '1582-10-15'::DATE, '9999-12-31'::DATE" is executed
+    String sql = "SELECT '0001-01-01'::DATE, '1582-10-15'::DATE, '9999-12-31'::DATE";
     withQueryResult(
         connection,
         sql,
         resultSet -> {
 
-          // Then Result should contain dates [0001-01-01, 1582-10-15]
+          // Then Result should contain dates [0001-01-01, 1582-10-15, 9999-12-31]
           assertTrue(resultSet.next());
           assertDateGetters(resultSet, 1, LocalDate.of(1, 1, 1));
           assertDateGetters(resultSet, 2, LocalDate.of(1582, 10, 15));
+          assertDateGetters(resultSet, 3, LocalDate.of(9999, 12, 31));
           assertFalse(resultSet.next());
         });
   }
@@ -139,19 +140,19 @@ public class DateTests extends SnowflakeIntegrationTestBase {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Query "SELECT DATEADD(day, seq4(), '1970-01-01'::DATE) as d FROM
-    // TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY d" is executed
+    // When Query "SELECT DATEADD(day, ROW_NUMBER() OVER (ORDER BY seq4()) - 1, '1970-01-01'::DATE)
+    // as d FROM TABLE(GENERATOR(ROWCOUNT => 100000)) ORDER BY d" is executed
     String sql =
-        "SELECT DATEADD(day, seq4(), '1970-01-01'::DATE) as d"
+        "SELECT DATEADD(day, ROW_NUMBER() OVER (ORDER BY seq4()) - 1, '1970-01-01'::DATE) as d"
             + " FROM TABLE(GENERATOR(ROWCOUNT => "
             + LARGE_RESULT_SET_SIZE
-            + ")) v ORDER BY d";
+            + ")) ORDER BY d";
     withQueryResult(
         connection,
         sql,
         resultSet -> {
 
-          // Then Result should contain 50000 rows with sequential dates starting from 1970-01-01
+          // Then Result should contain 100000 rows with sequential dates starting from 1970-01-01
           int rowCount = 0;
           LocalDate expected = LocalDate.of(1970, 1, 1);
           while (resultSet.next()) {
@@ -224,15 +225,18 @@ public class DateTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void shouldSelectHistoricalDatesFromTable() throws Exception {
+  public void shouldSelectHistoricalAndBoundaryDatesFromTable() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // And Table with DATE column exists with values ['0001-01-01', '0100-03-01', '1582-10-15']
+    // And Table with DATE column exists with values ['0001-01-01', '0100-03-01', '1582-10-15',
+    // '9999-12-31']
     String tableName = createTempTable(connection, "ud_date_hist_", "col DATE");
     execute(
         connection,
-        "INSERT INTO " + tableName + " VALUES ('0001-01-01'), ('0100-03-01'), ('1582-10-15')");
+        "INSERT INTO "
+            + tableName
+            + " VALUES ('0001-01-01'), ('0100-03-01'), ('1582-10-15'), ('9999-12-31')");
 
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     String sql = "SELECT * FROM " + tableName + " ORDER BY col";
@@ -241,14 +245,53 @@ public class DateTests extends SnowflakeIntegrationTestBase {
         sql,
         resultSet -> {
 
-          // Then Result should contain dates [0001-01-01, 0100-03-01, 1582-10-15]
+          // Then Result should contain dates [0001-01-01, 0100-03-01, 1582-10-15, 9999-12-31]
           assertTrue(resultSet.next());
           assertDateGetters(resultSet, 1, LocalDate.of(1, 1, 1));
           assertTrue(resultSet.next());
           assertDateGetters(resultSet, 1, LocalDate.of(100, 3, 1));
           assertTrue(resultSet.next());
           assertDateGetters(resultSet, 1, LocalDate.of(1582, 10, 15));
+          assertTrue(resultSet.next());
+          assertDateGetters(resultSet, 1, LocalDate.of(9999, 12, 31));
           assertFalse(resultSet.next());
+        });
+  }
+
+  @Test
+  public void shouldDownloadLargeResultSetForDateFromTable() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And Table with DATE column exists with 100000 sequential dates starting from 1970-01-01
+    String tableName = createTempTable(connection, "ud_date_large_", "col DATE");
+    execute(
+        connection,
+        "INSERT INTO "
+            + tableName
+            + " SELECT DATEADD(day, ROW_NUMBER() OVER (ORDER BY seq4()) - 1, '1970-01-01'::DATE)"
+            + " FROM TABLE(GENERATOR(ROWCOUNT => "
+            + LARGE_RESULT_SET_SIZE
+            + "))");
+
+    // When Query "SELECT * FROM <table> ORDER BY col" is executed
+    String sql = "SELECT * FROM " + tableName + " ORDER BY col";
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain 100000 rows with sequential dates starting from 1970-01-01
+          int rowCount = 0;
+          LocalDate expected = LocalDate.of(1970, 1, 1);
+          while (resultSet.next()) {
+            assertEquals(
+                Date.valueOf(expected), resultSet.getDate(1), "Date mismatch at row " + rowCount);
+            assertFalse(resultSet.wasNull());
+            expected = expected.plusDays(1);
+            rowCount++;
+          }
+          assertEquals(LARGE_RESULT_SET_SIZE, rowCount);
         });
   }
 
@@ -275,6 +318,12 @@ public class DateTests extends SnowflakeIntegrationTestBase {
           assertDateGetters(resultSet, 3, LocalDate.of(1999, 12, 31));
           assertFalse(resultSet.next());
         });
+  }
+
+  @Test
+  public void shouldSelectNullDateUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query "SELECT ?::DATE" is executed with bound NULL value
     withPreparedQueryResult(
@@ -298,7 +347,7 @@ public class DateTests extends SnowflakeIntegrationTestBase {
     // And Table with DATE column exists
     String tableName = createTempTable(connection, "ud_date_bind_", "col DATE");
 
-    // When Date values [2024-01-15, 1970-01-01, 1999-12-31] are inserted using setDate binding
+    // When Date values [2024-01-15, 1970-01-01, 1999-12-31] are inserted using parameter binding
     try (PreparedStatement ps =
         connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
       ps.setDate(1, Date.valueOf("2024-01-15"));

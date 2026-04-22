@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub enum RowType {
     Fixed {
         name: String,
@@ -27,6 +28,43 @@ pub enum RowType {
         name: String,
         nullable: bool,
         scale: u64,
+    },
+    TimestampLtz {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
+    TimestampTz {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
+    Time {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
+    Binary {
+        name: String,
+        nullable: bool,
+        length: u64,
+        byte_length: u64,
+    },
+    Decfloat {
+        name: String,
+        nullable: bool,
+    },
+    Variant {
+        name: String,
+        nullable: bool,
+    },
+    Object {
+        name: String,
+        nullable: bool,
+    },
+    Array {
+        name: String,
+        nullable: bool,
     },
 }
 
@@ -84,6 +122,67 @@ impl RowType {
             name: name.to_string(),
             nullable,
             scale,
+        }
+    }
+
+    pub fn timestamp_ltz(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::TimestampLtz {
+            name: name.to_string(),
+            nullable,
+            scale,
+        }
+    }
+
+    pub fn timestamp_tz(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::TimestampTz {
+            name: name.to_string(),
+            nullable,
+            scale,
+        }
+    }
+
+    pub fn time(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::Time {
+            name: name.to_string(),
+            nullable,
+            scale,
+        }
+    }
+
+    pub fn binary(name: &str, nullable: bool, length: u64, byte_length: u64) -> Self {
+        RowType::Binary {
+            name: name.to_string(),
+            nullable,
+            length,
+            byte_length,
+        }
+    }
+
+    pub fn decfloat(name: &str, nullable: bool) -> Self {
+        RowType::Decfloat {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn variant(name: &str, nullable: bool) -> Self {
+        RowType::Variant {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn object(name: &str, nullable: bool) -> Self {
+        RowType::Object {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn array(name: &str, nullable: bool) -> Self {
+        RowType::Array {
+            name: name.to_string(),
+            nullable,
         }
     }
 }

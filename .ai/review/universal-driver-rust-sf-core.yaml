@@ -1,0 +1,367 @@
+id: universal-driver-rust-sf-core
+friendly_name: "Universal Driver Rust & sf_core Guidelines"
+status: shadow
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  - "sf_core/src"
+  - "odbc/src"
+  - "jdbc_bridge/src"
+  - "error_trace/src"
+  - "error_trace_derive/src"
+  - "proto_utils/src"
+  - "proto_generator/src"
+excluded_folders:
+  - "sf_core/src/bin"
+llm_model: "claude-sonnet-4-5"
+allowed_file_extensions:
+  - ".rs"
+rules:
+  - id: ud-snafu-error-enum-location
+    rule: |
+      **OBJECTIVE**: Ensure all Snafu error enums follow the project's error-trace pattern so every error captures its call-site location and integrates into the `ErrorTrace` chain.
+
+      **REQUIREMENT**: Every `#[derive(Snafu)]` error enum MUST also derive `error_trace::ErrorTrace` and every variant MUST include `#[snafu(implicit)] location: Location` (using `snafu::Location`). Omitting the `ErrorTrace` derive breaks the project's structured error-chain diagnostics. Omitting `location` on any variant creates a gap in the trace.
+
+      ❌ **BAD:**
+      ```rust
+      #[derive(Debug, Snafu)]
+      pub enum MyError {
+          #[snafu(display("connection failed: {source}"))]
+          ConnectionFailed {
+              source: std::io::Error,
+          },
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[derive(Debug, Snafu, error_trace::ErrorTrace)]
+      pub enum MyError {
+          #[snafu(display("connection failed: {source}"))]
+          ConnectionFailed {
+              source: std::io::Error,
+              #[snafu(implicit)]
+              location: Location,
+          },
+      }
+      ```
+
+  - id: ud-snafu-context-over-map-err
+    rule: |
+      **OBJECTIVE**: Use Snafu's `.context()` method instead of `.map_err()` for error conversion, preserving idiomatic error chains with automatic location capture.
+
+      **REQUIREMENT**: When converting a `Result` from one error type to another, always use `.context(MySnafu { ... })?` (from `snafu::ResultExt`) instead of `.map_err(|e| ...)`. The `.context()` method automatically captures source location via `#[snafu(implicit)]` and produces cleaner, more consistent error chains. Import `snafu::ResultExt` to access `.context()`.
+
+      For cases where the source error type does not match the Snafu variant's `source` field directly (e.g., boxing heterogeneous error types), use `.boxed().context(MySnafu)` to first erase the type via `Box<dyn Error + Send + Sync>`.
+
+      ❌ **BAD:**
+      ```rust
+      let data = serde_json::from_str(&body)
+          .map_err(|e| MyError::DeserializationFailed {
+              message: e.to_string(),
+          })?;
+
+      let file = std::fs::read_to_string(&path)
+          .map_err(|e| MyError::FileReadFailed { source: e })?;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      use snafu::ResultExt;
+
+      let data = serde_json::from_str(&body)
+          .context(DeserializationSnafu)?;
+
+      let file = std::fs::read_to_string(&path)
+          .context(FileReadSnafu { path: path.display().to_string() })?;
+
+      // For heterogeneous source types:
+      let entry = keyring::Entry::new(service, &key)
+          .boxed()
+          .context(KeystoreAccessSnafu)?;
+      ```
+
+  - id: ud-no-unwrap-in-production
+    rule: |
+      **OBJECTIVE**: Prevent panics in production code by prohibiting `.unwrap()` and `.expect()` on fallible operations.
+
+      **REQUIREMENT**: Never use `.unwrap()` or `.expect()` on `Result` or `Option` in non-test code. Always propagate errors with `?`, use `.context(MySnafu)?` for `Result`, or use `ensure!()` / `XxxSnafu.fail()` for explicit error construction. The only exception is when the invariant is mathematically provable from the surrounding code (e.g., a regex literal), and even then a comment explaining why it cannot fail is required.
+
+      Mutex lock poisoning must also be handled with `.map_err()` or `.context()` instead of `.unwrap()` on `.lock()` calls.
+
+      ❌ **BAD:**
+      ```rust
+      let config = load_config(&path).unwrap();
+      let value = map.get("key").expect("key must exist");
+      let guard = self.cache.lock().unwrap();
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let config = load_config(&path).context(ConfigLoadSnafu { path })?;
+      let value = map.get("key").context(MissingKeySnafu { key: "key" })?;
+      let guard = self.cache.lock().map_err(|e| {
+          MutexPoisonedSnafu { message: format!("cache lock poisoned: {e}") }.build()
+      })?;
+      ```
+
+  - id: ud-domain-specific-error-types
+    rule: |
+      **OBJECTIVE**: Ensure error types are scoped to their domain rather than reusing error types from unrelated layers.
+
+      **REQUIREMENT**: Each module/domain MUST define its own error enum rather than propagating or reusing error types from unrelated layers. Do not use `RestError` for encryption failures, `ConfigError` for TLS issues, or `ApiError` for internal parsing logic. Create a focused error type for the domain (e.g., `EncryptionError`, `CrlError`) and wrap it via a Snafu variant in the parent error type.
+
+      Error variant naming MUST use past-tense failure descriptions: `Base64DecodeFailed`, `ConfigFileRead`, `CrlDownload` -- NOT gerunds or generic suffixes like `Base64Error`, `ConfigReadError`, `DownloadError`.
+
+      ❌ **BAD:**
+      ```rust
+      // Reusing RestError for file encryption failures
+      pub fn encrypt_file(data: &[u8]) -> Result<Vec<u8>, RestError> { /* ... */ }
+
+      // Generic variant naming
+      #[snafu(display("Decoding error"))]
+      DecodingError { source: base64::DecodeError, /* ... */ },
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[derive(Debug, Snafu, error_trace::ErrorTrace)]
+      pub enum EncryptionError {
+          #[snafu(display("Base64 decode failed: {source}"))]
+          Base64DecodeFailed {
+              source: base64::DecodeError,
+              #[snafu(implicit)]
+              location: Location,
+          },
+      }
+
+      pub fn encrypt_file(data: &[u8]) -> Result<Vec<u8>, EncryptionError> { /* ... */ }
+      ```
+
+  - id: ud-ffi-catch-unwind-and-null-checks
+    rule: |
+      **OBJECTIVE**: Ensure all FFI entry points are safe against panics escaping across the C boundary and against null pointer dereferences.
+
+      **REQUIREMENT**: Every `pub unsafe extern "C" fn` MUST:
+      1. Wrap the entire function body in `std::panic::catch_unwind(|| { ... })` to prevent Rust panics from unwinding into C callers (undefined behavior).
+      2. Check all incoming raw pointers for null before dereferencing.
+      3. Use `#[unsafe(no_mangle)]` (not the deprecated `#[no_mangle]`) for symbol export.
+      4. Return numeric status codes (not `Result`) with `0` for success, non-zero for errors.
+      5. For memory allocated by Rust and returned to C, always provide a corresponding `free` function that reconstructs and drops the allocation.
+
+      ❌ **BAD:**
+      ```rust
+      #[no_mangle]
+      pub unsafe extern "C" fn my_api_call(
+          input: *const c_char,
+          output: *mut *const u8,
+      ) -> i32 {
+          let s = CStr::from_ptr(input).to_str().unwrap();
+          let result = do_work(s);
+          *output = Box::into_raw(result.into_boxed_slice()) as *const u8;
+          0
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[unsafe(no_mangle)]
+      pub unsafe extern "C" fn my_api_call(
+          input: *const c_char,
+          output: *mut *const u8,
+          output_len: *mut usize,
+      ) -> usize {
+          let result = std::panic::catch_unwind(|| unsafe {
+              let s = CStr::from_ptr(input).to_string_lossy();
+              do_work(&s)
+          });
+          match result {
+              Ok(Ok(data)) => { write_buffer(data, output, output_len); 0 }
+              Ok(Err(e)) => { write_buffer(e.as_bytes().to_vec(), output, output_len); 1 }
+              Err(_) => { write_buffer(b"panic".to_vec(), output, output_len); 2 }
+          }
+      }
+      ```
+
+  - id: ud-no-blocking-in-async
+    rule: |
+      **OBJECTIVE**: Prevent blocking the tokio async executor thread, which causes deadlocks and performance degradation.
+
+      **REQUIREMENT**: Never call blocking operations inside async functions or futures without proper wrapping:
+
+      1. Never use `std::thread::sleep` in async code. Use `tokio::time::sleep` instead.
+      2. Never call synchronous I/O (file reads, keyring access, DNS lookups) directly inside an async context. Wrap them in `tokio::task::block_in_place` or `tokio::task::spawn_blocking`.
+      3. Never hold a `std::sync::Mutex` or `std::sync::RwLock` guard across `.await` points. Use `tokio::sync::Mutex` or `tokio::sync::RwLock` for data accessed across await boundaries.
+
+      ❌ **BAD:**
+      ```rust
+      async fn refresh_token(&self) -> Result<(), Error> {
+          std::thread::sleep(Duration::from_secs(1));
+          let token = keyring::Entry::new("svc", "user")?.get_password()?;
+          let guard = self.cache.lock().unwrap();
+          do_something(&guard).await;
+          Ok(())
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      async fn refresh_token(&self) -> Result<(), Error> {
+          tokio::time::sleep(Duration::from_secs(1)).await;
+          let token = tokio::task::block_in_place(|| {
+              keyring::Entry::new("svc", "user")?.get_password()
+          })?;
+          let guard = self.async_cache.write().await;
+          do_something(&guard).await;
+          Ok(())
+      }
+      ```
+
+  - id: ud-mutex-guard-lifetime
+    rule: |
+      **OBJECTIVE**: Prevent race conditions from premature mutex guard drops and redundant lock acquisitions.
+
+      **REQUIREMENT**:
+      1. Never drop a mutex guard before the critical section is complete. If multiple fields from the locked struct are needed, read them all under a single lock acquisition.
+      2. Never lock/unlock/re-lock the same mutex in sequence to read different fields. Acquire the lock once and access all needed data.
+      3. When using `HandleManager`, acquire the handle's `Mutex<T>` lock once and perform all operations within that single guard scope.
+
+      ❌ **BAD:**
+      ```rust
+      // TOCTOU race: status could change between lock releases
+      let status = {
+          let guard = self.state.lock().unwrap();
+          guard.status.clone()
+      };
+      if status == Status::Ready {
+          let mut guard = self.state.lock().unwrap();
+          guard.status = Status::Running;
+      }
+
+      // Redundant locking
+      let a = self.data.lock().unwrap().field_a.clone();
+      let b = self.data.lock().unwrap().field_b.clone();
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      let mut guard = self.state.lock().map_err(|e| {
+          MutexPoisonedSnafu { message: e.to_string() }.build()
+      })?;
+      if guard.status == Status::Ready {
+          guard.status = Status::Running;
+      }
+
+      let guard = self.data.lock().map_err(|e| {
+          MutexPoisonedSnafu { message: e.to_string() }.build()
+      })?;
+      let a = guard.field_a.clone();
+      let b = guard.field_b.clone();
+      ```
+
+  - id: ud-illegal-states-unrepresentable
+    rule: |
+      **OBJECTIVE**: Use the type system to make invalid states impossible to construct, rather than relying on runtime validation.
+
+      **REQUIREMENT**: Prefer enums with associated data over structs with `Option` fields or boolean flags that must be validated at runtime. Prefer typed wrappers (newtypes) over raw primitives when the value has domain constraints. Use non-optional fields when the data is always present after construction.
+
+      Specifically:
+      - Use enums to represent mutually exclusive states instead of pairs of `Option<A>` + `Option<B>` where exactly one should be `Some`.
+      - Prefer state-machine enums over boolean flags for tracking object lifecycle.
+      - Use `Path`/`PathBuf` instead of `String` for filesystem paths.
+      - Encode units in constant names (e.g., `TIMEOUT_IN_SECONDS`, `AES_256_KEY_SIZE_IN_BYTES`).
+
+      ❌ **BAD:**
+      ```rust
+      pub struct Connection {
+          is_connected: bool,
+          session_token: Option<String>,
+          master_token: Option<String>,
+      }
+
+      const KEY_SIZE: usize = 32;
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      pub enum ConnectionState {
+          Disconnected,
+          Connected { tokens: SessionTokens },
+      }
+
+      pub struct SessionTokens {
+          pub session_token: SensitiveString,
+          pub master_token: SensitiveString,
+      }
+
+      const AES_256_KEY_SIZE_IN_BYTES: usize = 32;
+      ```
+
+  - id: ud-ffi-boundary-separation
+    rule: |
+      **OBJECTIVE**: Keep FFI conversion logic at the boundary layer, not embedded in core business logic.
+
+      **REQUIREMENT**: Protobuf-to-native and native-to-protobuf type conversions MUST remain in the `protobuf/apis/` module (or equivalent FFI boundary layer), not in the core `apis/`, `rest/`, `config/`, or `tls/` modules. Core business logic must operate on native Rust types only, with no awareness of protobuf message types, C FFI types, or JNI types.
+
+      Similarly, JNI conversions must stay in `jdbc_bridge/`, ODBC C-type conversions must stay in `odbc/`, and Python ctypes bridging must stay in the Python layer.
+
+      ❌ **BAD:**
+      ```rust
+      // Inside sf_core/src/rest/snowflake/mod.rs
+      use crate::protobuf::generated::LoginRequest;
+
+      pub async fn login(req: LoginRequest) -> Result<LoginResponse, RestError> {
+          let host = req.host;
+          // business logic mixed with protobuf types
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      // sf_core/src/protobuf/apis/database_driver_v1.rs (boundary)
+      fn login(request: proto::LoginRequest) -> proto::LoginResponse {
+          let params = LoginParameters::from_proto(&request);
+          let result = crate::rest::snowflake::login(&params);
+          result.into_proto()
+      }
+
+      // sf_core/src/rest/snowflake/mod.rs (core, no protobuf imports)
+      pub async fn login(params: &LoginParameters) -> Result<SessionTokens, RestError> {
+          // pure business logic with native types
+      }
+      ```
+
+  - id: ud-box-large-error-sources
+    rule: |
+      **OBJECTIVE**: Keep Snafu error enum sizes small by boxing large source error types.
+
+      **REQUIREMENT**: When a Snafu error variant wraps a source error type that is large (complex enums with many variants, types containing `String` + nested enums), use `#[snafu(source(from(LargeError, Box::new)))]` to box the source. This prevents the entire error enum from being inflated to the size of its largest variant, which matters because `Result<T, E>` is as large as `max(T, E)` and errors flow through every `?` call.
+
+      Apply this when the source type is a complex error enum from this crate (like `QueryResponseProcessingError`) or any third-party type known to be large. Standard library errors (`std::io::Error`, `serde_json::Error`) are typically already pointer-sized and do not need boxing.
+
+      ❌ **BAD:**
+      ```rust
+      #[derive(Debug, Snafu, ErrorTrace)]
+      pub enum ApiError {
+          #[snafu(display("query processing failed: {source}"))]
+          QueryResponseProcessing {
+              #[snafu(implicit)]
+              location: Location,
+              source: QueryResponseProcessingError,
+          },
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[derive(Debug, Snafu, ErrorTrace)]
+      pub enum ApiError {
+          #[snafu(display("query processing failed: {source}"))]
+          QueryResponseProcessing {
+              #[snafu(implicit)]
+              location: Location,
+              #[snafu(source(from(QueryResponseProcessingError, Box::new)))]
+              source: Box<QueryResponseProcessingError>,
+          },
+      }
+      ```

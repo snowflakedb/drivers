@@ -13,8 +13,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class IntTests extends SnowflakeIntegrationTestBase {
   private static final String INT_TYPE = "INT";
@@ -46,67 +50,42 @@ public class IntTests extends SnowflakeIntegrationTestBase {
         });
   }
 
-  @Test
-  public void shouldSelectIntegerValuesForIntAndSynonyms() throws Exception {
+  private static Stream<Arguments> integerLiteralValues() {
+    return Stream.of(
+        Arguments.of("zero", String.format("SELECT 0::%s", INT_TYPE), Arrays.asList(0L)),
+        Arguments.of(
+            "tinyint",
+            String.format("SELECT -128::%1$s, 127::%1$s, 255::%1$s", INT_TYPE),
+            Arrays.asList(-128L, 127L, 255L)),
+        Arguments.of(
+            "smallint",
+            String.format("SELECT -32768::%1$s, 32767::%1$s, 65535::%1$s", INT_TYPE),
+            Arrays.asList((long) Short.MIN_VALUE, (long) Short.MAX_VALUE, 65535L)),
+        Arguments.of(
+            "int",
+            String.format("SELECT -2147483648::%1$s, 2147483647::%1$s, 4294967295::%1$s", INT_TYPE),
+            Arrays.asList((long) Integer.MIN_VALUE, (long) Integer.MAX_VALUE, 4294967295L)),
+        Arguments.of(
+            "bigint",
+            String.format("SELECT -9223372036854775808::%1$s, 9223372036854775807::%1$s", INT_TYPE),
+            Arrays.asList(Long.MIN_VALUE, Long.MAX_VALUE)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("integerLiteralValues")
+  public void shouldSelectIntegerValuesForIntAndSynonyms(
+      String values, String queryValues, List<Long> expectedValues) throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
     // When Query "SELECT <query_values>" is executed
-    String sql = String.format("SELECT 0::%1$s", INT_TYPE);
     withQueryResult(
         connection,
-        sql,
+        queryValues,
         resultSet -> {
 
           // Then Result should contain integers <expected_values>
-          assertSingleRow(resultSet, Arrays.asList(0L));
-        });
-
-    // When Query "SELECT -128::<type>, 127::<type>, 255::<type>" is executed
-    sql = String.format("SELECT -128::%1$s, 127::%1$s, 255::%1$s", INT_TYPE);
-    withQueryResult(
-        connection,
-        sql,
-        resultSet -> {
-
-          // Then Result should contain integers [-128, 127, 255]
-          assertSingleRow(resultSet, Arrays.asList(-128L, 127L, 255L));
-        });
-
-    // When Query "SELECT -32768::<type>, 32767::<type>, 65535::<type>" is executed
-    sql = String.format("SELECT -32768::%1$s, 32767::%1$s, 65535::%1$s", INT_TYPE);
-    withQueryResult(
-        connection,
-        sql,
-        resultSet -> {
-
-          // Then Result should contain integers [-32768, 32767, 65535]
-          assertSingleRow(
-              resultSet, Arrays.asList((long) Short.MIN_VALUE, (long) Short.MAX_VALUE, 65535L));
-        });
-
-    // When Query "SELECT -2147483648::<type>, 2147483647::<type>, 4294967295::<type>" is executed
-    sql = String.format("SELECT -2147483648::%1$s, 2147483647::%1$s, 4294967295::%1$s", INT_TYPE);
-    withQueryResult(
-        connection,
-        sql,
-        resultSet -> {
-
-          // Then Result should contain integers [-2147483648, 2147483647, 4294967295]
-          assertSingleRow(
-              resultSet,
-              Arrays.asList((long) Integer.MIN_VALUE, (long) Integer.MAX_VALUE, 4294967295L));
-        });
-
-    // When Query "SELECT -9223372036854775808::<type>, 9223372036854775807::<type>" is executed
-    sql = String.format("SELECT -9223372036854775808::%1$s, 9223372036854775807::%1$s", INT_TYPE);
-    withQueryResult(
-        connection,
-        sql,
-        resultSet -> {
-
-          // Then Result should contain integers [-9223372036854775808, 9223372036854775807]
-          assertSingleRow(resultSet, Arrays.asList(Long.MIN_VALUE, Long.MAX_VALUE));
+          assertSingleRow(resultSet, expectedValues);
         });
   }
 
@@ -188,72 +167,49 @@ public class IntTests extends SnowflakeIntegrationTestBase {
         });
   }
 
-  @Test
-  public void shouldSelectValuesFromTableForIntAndSynonyms() throws Exception {
+  private static Stream<Arguments> tableInsertValues() {
+    return Stream.of(
+        Arguments.of(
+            "positive",
+            "(0), (1), (127), (255), (32767), (65535), (2147483647), (4294967295),"
+                + " (9223372036854775807)",
+            Arrays.asList(
+                0L,
+                1L,
+                127L,
+                255L,
+                (long) Short.MAX_VALUE,
+                65535L,
+                (long) Integer.MAX_VALUE,
+                4294967295L,
+                Long.MAX_VALUE)),
+        Arguments.of(
+            "negative",
+            "(-1), (-128), (-32768), (-2147483648), (-9223372036854775808)",
+            Arrays.asList(
+                Long.MIN_VALUE, (long) Integer.MIN_VALUE, (long) Short.MIN_VALUE, -128L, -1L)),
+        Arguments.of("null", "(0), (NULL), (42)", Arrays.asList(0L, 42L, null)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("tableInsertValues")
+  public void shouldSelectValuesFromTableForIntAndSynonyms(
+      String values, String insertValues, List<Long> expectedValues) throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
     // And Table with <type> column exists with values <insert_values>
     String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
+    execute(connection, "INSERT INTO " + tableName + " VALUES " + insertValues);
 
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
-    execute(
-        connection,
-        "INSERT INTO "
-            + tableName
-            + " VALUES (0), (1), (127), (255), (32767), (65535), (2147483647), (4294967295), (9223372036854775807)");
     withQueryResult(
         connection,
         "SELECT * FROM " + tableName + " ORDER BY col",
         resultSet -> {
 
           // Then Result should contain integers <expected_values>
-          assertSingleColumnRows(
-              resultSet,
-              Arrays.asList(
-                  0L,
-                  1L,
-                  127L,
-                  255L,
-                  (long) Short.MAX_VALUE,
-                  65535L,
-                  (long) Integer.MAX_VALUE,
-                  4294967295L,
-                  Long.MAX_VALUE));
-        });
-
-    execute(connection, "TRUNCATE TABLE " + tableName);
-    execute(
-        connection,
-        "INSERT INTO "
-            + tableName
-            + " VALUES (-1), (-128), (-32768), (-2147483648), (-9223372036854775808)");
-
-    // When Query "SELECT * FROM <table> ORDER BY col" is executed
-    withQueryResult(
-        connection,
-        "SELECT * FROM " + tableName + " ORDER BY col",
-        resultSet -> {
-
-          // Then Result should contain integers [-9223372036854775808, -2147483648, -32768, -128,
-          // -1]
-          assertSingleColumnRows(
-              resultSet,
-              Arrays.asList(
-                  Long.MIN_VALUE, (long) Integer.MIN_VALUE, (long) Short.MIN_VALUE, -128L, -1L));
-        });
-
-    execute(connection, "TRUNCATE TABLE " + tableName);
-    execute(connection, "INSERT INTO " + tableName + " VALUES (0), (NULL), (42)");
-
-    // When Query "SELECT * FROM <table> ORDER BY col" is executed
-    withQueryResult(
-        connection,
-        "SELECT * FROM " + tableName + " ORDER BY col",
-        resultSet -> {
-
-          // Then Result should contain integers [0, 42, NULL]
-          assertSingleColumnRows(resultSet, Arrays.asList(0L, 42L, null));
+          assertSingleColumnRows(resultSet, expectedValues);
         });
   }
 

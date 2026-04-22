@@ -1,5 +1,5 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::file_utils::create_test_file;
+use crate::common::file_utils::{create_test_file, path_to_sql_uri};
 use crate::common::put_get_common::{assert_file_exists, upload_to_stage};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
@@ -25,7 +25,7 @@ fn should_upload_files_that_match_wildcard_question_mark_pattern() {
     // When Files are uploaded using command with question mark wildcard
     let files_wildcard = format!(
         "{}/{base_file_name}_?.csv",
-        temp_dir.path().to_str().unwrap().replace("\\", "/"),
+        path_to_sql_uri(temp_dir.path()),
     );
     upload_to_stage(&client, stage_name, &files_wildcard);
 
@@ -56,7 +56,7 @@ fn should_upload_files_that_match_wildcard_star_pattern() {
     // When Files are uploaded using command with star wildcard
     let files_wildcard = format!(
         "{}/{base_file_name}_*.csv",
-        temp_dir.path().to_str().unwrap().replace("\\", "/"),
+        path_to_sql_uri(temp_dir.path()),
     );
     upload_to_stage(&client, stage_name, &files_wildcard);
 
@@ -202,7 +202,7 @@ fn get_from_stage_with_pattern(
 ) -> ExecuteResult {
     let get_sql = format!(
         "GET @{stage_name} file://{}/ PATTERN='{}'",
-        download_dir.to_str().unwrap().replace("\\", "/"),
+        path_to_sql_uri(download_dir),
         pattern
     );
     client.execute_query(&get_sql)

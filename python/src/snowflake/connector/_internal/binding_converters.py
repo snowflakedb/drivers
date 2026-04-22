@@ -25,6 +25,8 @@ from enum import Enum
 from typing import Any
 
 from ..errors import ProgrammingError
+from .extras import MissingOptionalDependency
+from .extras import numpy as np
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
 
 
@@ -71,33 +73,46 @@ class ParamStyle(Enum):
         """Check if this style uses server-side binding."""
         return self in (ParamStyle.QMARK, ParamStyle.NUMERIC)
 
+    def placeholders(self, n: int) -> str:
+        """Build a comma-separated placeholder string for *n* parameters.
+
+        Examples:
+            >>> ParamStyle.QMARK.placeholders(3)
+            '?, ?, ?'
+            >>> ParamStyle.NUMERIC.placeholders(3)
+            ':1, :2, :3'
+            >>> ParamStyle.FORMAT.placeholders(2)
+            '%s, %s'
+        """
+        if self.is_client_side():
+            return ", ".join("%s" for _ in range(n))
+        if self is ParamStyle.NUMERIC:
+            return ", ".join(f":{i}" for i in range(1, n + 1))
+        return ", ".join("?" for _ in range(n))
+
 
 # Numeric types for IS_NUMERIC check (mirrors reference connector's compat.py)
 _NUM_DATA_TYPES: tuple[type, ...] = (int, float, Decimal)
 _NUMPY_BOOL_TYPES: tuple[type, ...] = ()
 _NUMPY_FLOAT_TYPES: tuple[type, ...] = ()
 
-try:
-    import numpy  # type: ignore[import-not-found]
-
+if not isinstance(np, MissingOptionalDependency):
     _NUM_DATA_TYPES = _NUM_DATA_TYPES + (
-        numpy.int8,
-        numpy.int16,
-        numpy.int32,
-        numpy.int64,
-        numpy.float16,
-        numpy.float32,
-        numpy.float64,
-        numpy.uint8,
-        numpy.uint16,
-        numpy.uint32,
-        numpy.uint64,
-        numpy.bool_,
+        np.int8,
+        np.int16,
+        np.int32,
+        np.int64,
+        np.float16,
+        np.float32,
+        np.float64,
+        np.uint8,
+        np.uint16,
+        np.uint32,
+        np.uint64,
+        np.bool_,
     )
-    _NUMPY_BOOL_TYPES = (numpy.bool_,)
-    _NUMPY_FLOAT_TYPES = (numpy.float16, numpy.float32, numpy.float64)
-except (ImportError, AttributeError):
-    pass
+    _NUMPY_BOOL_TYPES = (np.bool_,)
+    _NUMPY_FLOAT_TYPES = (np.float16, np.float32, np.float64)
 
 
 def _is_numeric(value: Any) -> bool:

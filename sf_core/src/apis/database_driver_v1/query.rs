@@ -1,9 +1,10 @@
 use super::ColumnMetadata;
 use crate::arrow_utils::ArrowUtilsError;
-use crate::arrow_utils::{
-    boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
+use crate::arrow_utils::{boxed_arrow_reader, create_schema};
+use crate::chunks::{
+    ChunkError, DEFAULT_PREFETCH_THREADS, arrow_prefetch_reader, empty_reader,
+    json_prefetch_reader, schema_only_reader, single_chunk_reader,
 };
-use crate::chunks::{ChunkError, ChunkReader};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::query_types::RowType;
@@ -13,7 +14,7 @@ use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::sync::Arc;
 
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
@@ -34,7 +35,7 @@ pub async fn process_query_response(
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
         None => {
-            let reader = read_batches(data.to_rowset_data(), http_client)
+            let reader = read_batches(data.to_rowset_data(), http_client.clone())
                 .await
                 .context(BatchReadingSnafu)?;
             Ok(QueryResult {
@@ -65,9 +66,13 @@ async fn perform_put_get(
             })
         }
         "DOWNLOAD" => {
-            let file_download_data = data
-                .to_file_download_data()
-                .context(FileTransferPreparationSnafu)?;
+            let file_download_data = data.to_file_download_data().map_err(|e| {
+                if e.to_string().contains("source locations") {
+                    RemoteFileNotFoundSnafu.build()
+                } else {
+                    FileTransferPreparationSnafu.into_error(e)
+                }
+            })?;
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
@@ -87,68 +92,90 @@ async fn perform_put_get(
 
 async fn read_batches<'a>(
     data: query_response::RowsetData<'a>,
-    http_client: &Client,
+    http_client: Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
         query_response::RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            let reader_result =
-                ChunkReader::single_chunk(chunk_base64).context(ChunkReadingSnafu)?;
-
-            Ok(Box::new(reader_result))
+            single_chunk_reader(chunk_base64).context(ChunkReadingSnafu)
         }
         query_response::RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
         } => {
             // Handle chunk download case without base64 data
-            let reader_result = ChunkReader::multi_chunk(
+            arrow_prefetch_reader(
                 initial_base64_opt,
                 chunk_download_data.into(),
                 http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
             )
             .await
-            .context(ChunkReadingSnafu)?;
-
-            Ok(Box::new(reader_result))
+            .context(ChunkReadingSnafu)
         }
         query_response::RowsetData::SchemaOnly { rowtype } => {
-            let row_types = rowtype
-                .iter()
-                .map(|rt| rt.try_into())
-                .collect::<Result<Vec<_>, _>>()
-                .context(RowTypeParsingSnafu)?;
-            let rowset = vec![];
-            convert_string_rowset_to_arrow_reader(&rowset, &row_types)
-                .context(RowsetConversionSnafu)
+            let row_types = parse_row_types(rowtype)?;
+            schema_only_reader(&row_types).context(ChunkReadingSnafu)
         }
         query_response::RowsetData::JsonRowset { rowset, rowtype } => {
-            let row_types = rowtype
-                .iter()
-                .map(|rt| rt.try_into())
-                .collect::<Result<Vec<_>, _>>()
-                .context(RowTypeParsingSnafu)?;
-
-            // Validate column counts before converting
-            if !rowset.is_empty() {
-                let num_columns_rowset = rowset.first().unwrap().len();
-                let num_columns_rowtype = row_types.len();
-                if num_columns_rowset != num_columns_rowtype {
-                    return ColumnCountMismatchSnafu {
-                        rowtype_count: num_columns_rowtype,
-                        rowset_count: num_columns_rowset,
-                    }
-                    .fail();
-                }
-            }
-            convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
+            let row_types = parse_row_types(rowtype)?;
+            validate_column_count(rowset, &row_types)?;
+            json_prefetch_reader(
+                rowset,
+                row_types,
+                Vec::new(),
+                http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
+            )
+            .await
+            .context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::NoData => {
-            // No rowset or rowtype found, return empty reader
-            let reader = ChunkReader::empty();
-            Ok(Box::new(reader))
+        query_response::RowsetData::JsonMultiChunk {
+            rowset,
+            rowtype,
+            chunk_download_data,
+        } => {
+            let row_types = parse_row_types(rowtype)?;
+            validate_column_count(rowset, &row_types)?;
+
+            json_prefetch_reader(
+                rowset,
+                row_types,
+                chunk_download_data,
+                http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
+            )
+            .await
+            .context(ChunkReadingSnafu)
+        }
+        query_response::RowsetData::NoData => Ok(empty_reader()),
+    }
+}
+
+fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, ReadBatchesError> {
+    rowtype
+        .iter()
+        .map(|rt| rt.try_into())
+        .collect::<Result<Vec<_>, _>>()
+        .context(RowTypeParsingSnafu)
+}
+
+fn validate_column_count(
+    rowset: &[Vec<Option<String>>],
+    row_types: &[RowType],
+) -> Result<(), ReadBatchesError> {
+    if !rowset.is_empty() {
+        let num_columns_rowset = rowset.first().unwrap().len();
+        let num_columns_rowtype = row_types.len();
+        if num_columns_rowset != num_columns_rowtype {
+            return ColumnCountMismatchSnafu {
+                rowtype_count: num_columns_rowtype,
+                rowset_count: num_columns_rowset,
+            }
+            .fail();
         }
     }
+    Ok(())
 }
 
 /// Helper macro to create string arrays from field accessors
@@ -339,6 +366,11 @@ pub enum QueryResponseProcessingError {
     #[snafu(display("Failed to prepare file transfer data"))]
     FileTransferPreparation {
         source: QueryResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("While getting file(s) there was an error: the file does not exist"))]
+    RemoteFileNotFound {
         #[snafu(implicit)]
         location: Location,
     },

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import threading
 
 from ctypes import c_char_p
 from typing import TYPE_CHECKING, Any
@@ -128,7 +129,9 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     # Prefer the server-provided sql_state; fall back to a type-derived value.
     sqlstate = _get_optional_str(driver_exc, "sql_state") or _derive_sqlstate(driver_exc)
 
-    return exc_class(message, errno=errno, sqlstate=sqlstate)
+    sfqid = _get_optional_str(driver_exc, "query_id")
+
+    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid)
 
 
 def _get_optional_int(msg: Any, field: str) -> int | None:
@@ -199,10 +202,13 @@ class ProtoTransport:
 
 
 _DATABASE_DRIVER_CLIENT: DatabaseDriverClient | None = None
+_DATABASE_DRIVER_CLIENT_LOCK = threading.Lock()
 
 
 def database_driver_client() -> DatabaseDriverClient:
     global _DATABASE_DRIVER_CLIENT
     if _DATABASE_DRIVER_CLIENT is None:
-        _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
+        with _DATABASE_DRIVER_CLIENT_LOCK:
+            if _DATABASE_DRIVER_CLIENT is None:
+                _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
     return _DATABASE_DRIVER_CLIENT

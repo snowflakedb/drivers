@@ -1,10 +1,99 @@
-use super::{connection::Connection, database::Database, statement::Statement};
-use crate::handle_manager::HandleManager;
-use std::sync::{LazyLock, Mutex};
+use std::sync::Arc;
 
-pub static DB_HANDLE_MANAGER: LazyLock<HandleManager<Mutex<Database>>> =
-    LazyLock::new(HandleManager::new);
-pub static CONN_HANDLE_MANAGER: LazyLock<HandleManager<Mutex<Connection>>> =
-    LazyLock::new(HandleManager::new);
-pub static STMT_HANDLE_MANAGER: LazyLock<HandleManager<Mutex<Statement>>> =
-    LazyLock::new(HandleManager::new);
+use tokio::sync::Mutex;
+
+use super::connection::Connection;
+use super::database::Database;
+use super::statement::Statement;
+use crate::fs_adapter::{FsAdapter, RealFs};
+use crate::handle_manager::HandleManager;
+use crate::telemetry::platform_detection::detect_platforms;
+use crate::token_cache::{KeyringTokenCache, TokenCacheError};
+
+/// Injection points for `DatabaseDriverV1`.
+///
+/// Each field is optional; `None` means "use the production default".
+/// Add a new field (plus a default in `DatabaseDriverV1::new`) whenever
+/// a new provider becomes injectable — call sites that use
+/// `..Default::default()` won't need to change.
+#[derive(Default)]
+pub struct DriverProviders {
+    pub fs: Option<Arc<dyn FsAdapter>>,
+}
+
+pub struct DatabaseDriverV1 {
+    pub(super) databases: HandleManager<Mutex<Database>>,
+    pub(super) connections: HandleManager<Mutex<Connection>>,
+    pub(super) statements: HandleManager<Mutex<Statement>>,
+    token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
+    fs: Arc<dyn FsAdapter>,
+    platforms: tokio::sync::OnceCell<Vec<String>>,
+}
+
+impl Default for DatabaseDriverV1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DatabaseDriverV1 {
+    pub fn new() -> Self {
+        Self::with_providers(DriverProviders::default())
+    }
+
+    pub fn with_providers(providers: DriverProviders) -> Self {
+        Self {
+            databases: HandleManager::new(),
+            connections: HandleManager::new(),
+            statements: HandleManager::new(),
+            token_cache: once_cell::sync::OnceCell::new(),
+            fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
+            platforms: tokio::sync::OnceCell::const_new(),
+        }
+    }
+
+    pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {
+        self.token_cache.get_or_try_init(KeyringTokenCache::new)
+    }
+
+    pub fn fs_adapter(&self) -> Arc<dyn FsAdapter> {
+        self.fs.clone()
+    }
+
+    pub async fn platforms(&self) -> &Vec<String> {
+        self.platforms.get_or_init(detect_platforms).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_cache_lazy_init_succeeds() {
+        let driver = DatabaseDriverV1::new();
+        let result = driver.token_cache();
+        assert!(
+            result.is_ok(),
+            "token_cache() should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn token_cache_returns_same_instance() {
+        let driver = DatabaseDriverV1::new();
+        let first = driver.token_cache().expect("first call failed");
+        let second = driver.token_cache().expect("second call failed");
+        assert!(
+            std::ptr::eq(first, second),
+            "token_cache() should return the same instance on repeated calls"
+        );
+    }
+
+    #[test]
+    fn driver_state_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<DatabaseDriverV1>();
+    }
+}

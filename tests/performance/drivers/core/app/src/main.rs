@@ -5,6 +5,7 @@ mod config;
 mod connection;
 mod put_execution;
 mod query_execution;
+mod resource_monitor;
 mod results;
 mod test_types;
 mod types;
@@ -12,11 +13,12 @@ mod types;
 use test_types::TestType;
 
 type Result<T> = std::result::Result<T, String>;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClientBlockingExt;
 use sf_core::protobuf::generated::database_driver_v1::*;
 
 use config::TestConfig;
 use connection::{
-    DatabaseDriver, create_connection, create_database, create_statement, execute_setup_queries,
+    DriverRuntime, create_connection, create_database, create_statement, execute_setup_queries,
 };
 use put_execution::execute_put_get_test;
 use query_execution::execute_fetch_test;
@@ -29,19 +31,27 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::from_default_env()))
+        .with(sf_core::perf_timing::create_perf_layer())
+        .init();
 
     let config = TestConfig::from_env()?;
 
-    let db_handle = create_database().map_err(|e| format!("Failed to create database: {:?}", e))?;
-    let conn_handle = create_connection(db_handle, &config.params.testconnection)
+    let rt = DriverRuntime::new();
+
+    let db_handle =
+        create_database(&rt).map_err(|e| format!("Failed to create database: {:?}", e))?;
+    let conn_handle = create_connection(&rt, db_handle, &config.params.testconnection)
         .map_err(|e| format!("Failed to connect to Snowflake: {:?}", e))?;
 
-    execute_setup_queries(conn_handle, &config.setup_queries)
+    execute_setup_queries(&rt, conn_handle, &config.setup_queries)
         .map_err(|e| format!("Failed to execute setup queries: {:?}", e))?;
 
     let stmt_handle = create_statement(
+        &rt,
         conn_handle,
         &config.sql_command,
         config.statement_async_override,
@@ -50,6 +60,7 @@ fn run() -> Result<()> {
 
     match config.test_type {
         TestType::Select => execute_fetch_test(
+            &rt,
             conn_handle,
             stmt_handle,
             &config.sql_command,
@@ -58,6 +69,7 @@ fn run() -> Result<()> {
             &config.test_name,
         )?,
         TestType::PutGet => execute_put_get_test(
+            &rt,
             conn_handle,
             stmt_handle,
             &config.sql_command,
@@ -68,15 +80,17 @@ fn run() -> Result<()> {
     }
 
     // Cleanup
-    DatabaseDriver::statement_release(StatementReleaseRequest {
-        stmt_handle: Some(stmt_handle),
-    })
-    .ok();
+    rt.client()
+        .statement_release_blocking(StatementReleaseRequest {
+            stmt_handle: Some(stmt_handle),
+        })
+        .ok();
 
-    DatabaseDriver::connection_release(ConnectionReleaseRequest {
-        conn_handle: Some(conn_handle),
-    })
-    .ok();
+    rt.client()
+        .connection_release_blocking(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .ok();
 
     Ok(())
 }

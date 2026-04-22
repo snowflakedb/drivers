@@ -1,16 +1,54 @@
+use std::sync::LazyLock;
+
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jobject};
-use proto_utils::ProtoError;
-use sf_core::protobuf::apis::call_proto;
+use proto_utils::{ProtoError, Transport};
+use sf_core::protobuf::apis::RustTransport;
 
-mod slf4j_layer;
+struct JdbcBridge {
+    runtime: tokio::runtime::Runtime,
+    transport: RustTransport,
+}
+
+impl JdbcBridge {
+    pub fn new() -> Self {
+        Self {
+            // Single worker thread is intentional: keeps contention minimal and
+            // makes deadlocks easier to detect. Will be increased during
+            // performance optimization.
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime"),
+            transport: RustTransport::new(),
+        }
+    }
+
+    pub fn handle_message_sync(
+        &self,
+        service_name: &str,
+        method_name: &str,
+        request_bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+        self.runtime.block_on(self.transport.handle_message(
+            service_name,
+            method_name,
+            request_bytes,
+        ))
+    }
+}
+
+static JDBC_BRIDGE: LazyLock<JdbcBridge> = LazyLock::new(JdbcBridge::new);
+
+mod sflogger_layer;
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
     let config = sf_core::logging::LoggingConfig::new(None, false, false);
-    let layer = slf4j_layer::SLF4JLayer::new(jvm);
+    let layer = sflogger_layer::SFLoggerLayer::new(jvm);
     match sf_core::logging::init_logging(config, Some(layer)) {
         Ok(_) => jni::sys::JNI_VERSION_1_2,
         Err(e) => {
@@ -62,11 +100,10 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
         Err(_) => return std::ptr::null_mut(),
     };
 
-    // Call the protobuf API
-    let result = call_proto(
+    let result = JDBC_BRIDGE.handle_message_sync(
         &service_name_str.to_string_lossy(),
         &method_name_str.to_string_lossy(),
-        request_bytes_vec.as_slice(),
+        request_bytes_vec,
     );
 
     // Find the TransportResponse class

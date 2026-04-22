@@ -100,3 +100,27 @@ def get_type_code(snowflake_type: str) -> int:
     # Normalize type name: uppercase and strip leading/trailing whitespace (preserve internal spaces)
     normalized_type = snowflake_type.upper().strip()
     return SNOWFLAKE_TYPE_TO_CODE.get(normalized_type, TEXT)  # Default to TEXT if unknown
+
+
+# Reverse mapping: type code → canonical Snowflake type name.
+# Re-exported by snowflake.connector.constants for backward compatibility with
+# code written against the old snowflake-connector-python driver (e.g. dbt-snowflake).
+FIELD_ID_TO_NAME: dict[int, str] = {
+    FIXED: "FIXED",
+    REAL: "REAL",
+    TEXT: "TEXT",
+    DATE: "DATE",
+    TIMESTAMP: "TIMESTAMP",
+    VARIANT: "VARIANT",
+    TIMESTAMP_LTZ: "TIMESTAMP_LTZ",
+    TIMESTAMP_TZ: "TIMESTAMP_TZ",
+    TIMESTAMP_NTZ: "TIMESTAMP_NTZ",
+    OBJECT: "OBJECT",
+    ARRAY: "ARRAY",
+    BINARY: "BINARY",
+    TIME: "TIME",
+    BOOLEAN: "BOOLEAN",
+    GEOGRAPHY: "GEOGRAPHY",
+    GEOMETRY: "GEOMETRY",
+    VECTOR: "VECTOR",
+}

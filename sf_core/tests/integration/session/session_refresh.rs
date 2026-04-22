@@ -1,30 +1,16 @@
 //! Integration tests for session refresh with concurrent requests.
 
 use sf_core::apis::database_driver_v1::{Connection, with_valid_session};
-use sf_core::config::rest_parameters::ClientInfo;
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
-use sf_core::tls::config::TlsConfig;
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
-
-fn test_client_info() -> ClientInfo {
-    ClientInfo {
-        application: "test".to_string(),
-        version: "1.0".to_string(),
-        os: "test-os".to_string(),
-        os_version: "1.0".to_string(),
-        ocsp_mode: None,
-        crl_config: CrlConfig::default(),
-        tls_config: TlsConfig::insecure(),
-    }
-}
 
 #[tokio::test]
 async fn should_only_refresh_once_with_concurrent_401_errors() {
@@ -94,16 +80,13 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         master_expires_at: None,
     };
 
-    let conn = Arc::new(Mutex::new(Connection {
-        settings: HashMap::new(),
-        tokens: Arc::new(AsyncRwLock::new(Some(tokens))),
-        http_client: Some(reqwest::Client::new()),
-        retry_policy: RetryPolicy::default(),
-        server_url: Some(format!("http://{}", addr)),
-        client_info: Some(test_client_info()),
-        init_session_parameters: None,
-        session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
-    }));
+    let mut connection = Connection::new();
+    connection.tokens = Arc::new(AsyncRwLock::new(Some(tokens)));
+    connection.http_client = Some(reqwest::Client::new());
+    connection.retry_policy = RetryPolicy::default();
+    connection.server_url = Some(format!("http://{}", addr));
+    connection.client_info = Some(test_client_info());
+    let conn = Arc::new(Mutex::new(connection));
 
     // When multiple concurrent requests receive 401 errors
     let mut handles = vec![];
@@ -160,7 +143,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
     );
 
     // Verify the token was updated
-    let tokens_lock = conn.lock().unwrap().tokens.clone();
+    let tokens_lock = conn.lock().await.tokens.clone();
     let final_token = tokens_lock
         .read()
         .await

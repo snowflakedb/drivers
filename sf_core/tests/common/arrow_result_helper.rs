@@ -4,13 +4,19 @@ extern crate tracing_subscriber;
 
 use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
-use arrow::datatypes::{DataType, Schema};
+use arrow::array::{
+    Array, ArrayRef, AsArray, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array,
+};
+use arrow::buffer::NullBuffer;
+use arrow::compute::kernels::cmp::not_distinct;
+use arrow::datatypes::{DataType, FieldRef, Schema};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::mem::discriminant;
 use std::sync::Arc;
 
 /// Helper for processing Arrow stream results
@@ -117,17 +123,56 @@ impl ArrowResultHelper {
 }
 
 /// Returns metadata keys to exclude from comparison for a given Arrow DataType.
-fn metadata_keys_to_exclude(data_type: &DataType) -> &'static [&'static str] {
-    match data_type {
-        DataType::Utf8 => &["finalType", "precision", "scale"],
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-            &["finalType", "charLength", "byteLength"]
-        }
-        DataType::Decimal128(_, _) => &["finalType", "charLength", "byteLength"],
-        DataType::Boolean => &[],
-        DataType::Float64 => &[],
-        DataType::Date32 => &[],
-        DataType::Struct(_) => &[],
+fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
+    match logical_type {
+        "TEXT" => &["finalType", "precision", "scale"],
+        "FIXED" => &["finalType", "charLength", "byteLength"],
+        "BOOLEAN" => &[
+            "byteLength",
+            "charLength",
+            "finalType",
+            "precision",
+            "scale",
+        ],
+        "REAL" => &[
+            "byteLength",
+            "charLength",
+            "finalType",
+            "precision",
+            "scale",
+        ],
+        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "TIME" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "precision",
+            "physicalType",
+        ],
+        "DATE" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "precision",
+            "scale",
+            "physicalType",
+        ],
+        "BINARY" => &["finalType", "precision", "scale", "physicalType"],
+        "DECFLOAT" => &[
+            "finalType",
+            "precision",
+            "scale",
+            "physicalType",
+            "byteLength",
+            "charLength",
+        ],
+        "ARRAY" | "OBJECT" | "VARIANT" => &[
+            "finalType",
+            "byteLength",
+            "charLength",
+            "precision",
+            "scale",
+            "physicalType",
+        ],
         _ => &[],
     }
 }
@@ -135,94 +180,295 @@ fn metadata_keys_to_exclude(data_type: &DataType) -> &'static [&'static str] {
 /// Asserts that two Arrow schemas match in field name, data type, nullability,
 /// and relevant metadata keys (excluding keys that are known to differ between
 /// Arrow-native and JSON-converted-to-Arrow results).
-pub fn assert_schemas_match(arrow_schema: &Schema, json_schema: &Schema) {
+pub fn assert_schemas_match(left: &Schema, right: &Schema) {
     assert_eq!(
-        arrow_schema.fields().len(),
-        json_schema.fields().len(),
-        "Schema field count mismatch: arrow has {}, json has {}",
-        arrow_schema.fields().len(),
-        json_schema.fields().len()
+        left.fields().len(),
+        right.fields().len(),
+        "Schema field count mismatch: left has {}, right has {}",
+        left.fields().len(),
+        right.fields().len()
     );
 
-    for (arrow_field, json_field) in arrow_schema
-        .fields()
+    for (arrow_field, json_field) in left.fields().iter().zip(right.fields().iter()) {
+        assert_fields_match(arrow_field, json_field);
+    }
+}
+
+fn is_integer_or_decimal(dt: &DataType) -> bool {
+    matches!(
+        dt,
+        DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::Decimal128(_, _)
+    )
+}
+
+fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
+    assert_eq!(left.name(), right.name(), "Field name mismatch");
+    assert_eq!(
+        left.is_nullable(),
+        right.is_nullable(),
+        "Nullability mismatch for field '{}'",
+        left.name()
+    );
+
+    let logical_type = left
+        .metadata()
+        .get("logicalType")
+        .unwrap_or_else(|| panic!("logicalType metadata key missing for field {}", left.name()));
+
+    // FIXED columns may use different integer widths (e.g. Arrow-native Int8
+    // vs JSON-converted Int64). Accept any integer/decimal pair.
+    let is_fixed = logical_type == "FIXED";
+    if !is_fixed {
+        assert_eq!(
+            discriminant(left.data_type()),
+            discriminant(right.data_type()),
+            "Data type variant mismatch for field '{}', left type: {:?}, right type: {:?}",
+            left.name(),
+            left.data_type(),
+            right.data_type()
+        );
+    }
+
+    let excluded = metadata_keys_to_exclude(logical_type);
+
+    let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
+        metadata
+            .iter()
+            .filter(|(k, _)| !excluded.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+
+    let left_meta: BTreeMap<String, String> = left
+        .metadata()
         .iter()
-        .zip(json_schema.fields().iter())
-    {
-        assert_eq!(arrow_field.name(), json_field.name(), "Field name mismatch");
-        assert_eq!(
-            arrow_field.data_type(),
-            json_field.data_type(),
-            "Data type mismatch for field '{}'",
-            arrow_field.name()
-        );
-        assert_eq!(
-            arrow_field.is_nullable(),
-            json_field.is_nullable(),
-            "Nullability mismatch for field '{}'",
-            arrow_field.name()
-        );
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let right_meta: BTreeMap<String, String> = right
+        .metadata()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
-        let excluded = metadata_keys_to_exclude(arrow_field.data_type());
+    let filtered_left_meta = filter_metadata(&left_meta);
+    let filtered_right_meta = filter_metadata(&right_meta);
 
-        let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
-            metadata
+    assert_eq!(
+        filtered_left_meta,
+        filtered_right_meta,
+        "Metadata mismatch for field '{}'\n  left: {:?}\n  right:  {:?}",
+        left.name(),
+        filtered_left_meta,
+        filtered_right_meta
+    );
+    match (left.data_type(), right.data_type()) {
+        (DataType::Struct(left_fields), DataType::Struct(right_fields)) => {
+            left_fields
                 .iter()
-                .filter(|(k, _)| !excluded.contains(&k.as_str()))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        };
-
-        let arrow_meta: BTreeMap<String, String> = arrow_field
-            .metadata()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        let json_meta: BTreeMap<String, String> = json_field
-            .metadata()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-
-        let filtered_arrow = filter_metadata(&arrow_meta);
-        let filtered_json = filter_metadata(&json_meta);
-
-        assert_eq!(
-            filtered_arrow,
-            filtered_json,
-            "Metadata mismatch for field '{}'\n  arrow: {:?}\n  json:  {:?}",
-            arrow_field.name(),
-            filtered_arrow,
-            filtered_json
-        );
+                .zip(right_fields.iter())
+                .for_each(|(a, j)| assert_fields_match(a, j));
+        }
+        (left_dt, right_dt) if is_fixed => {
+            assert!(
+                is_integer_or_decimal(left_dt) && is_integer_or_decimal(right_dt),
+                "FIXED field '{}' has non-numeric types: left={:?}, right={:?}",
+                left.name(),
+                left_dt,
+                right_dt
+            );
+        }
+        (left_data_type, right_data_type) => {
+            assert_eq!(
+                left_data_type,
+                right_data_type,
+                "Data type mismatch for field '{}'",
+                left.name()
+            );
+        }
     }
 }
 
 /// Asserts that two RecordBatches match in schema (using relaxed metadata comparison)
 /// and column data.
-pub fn assert_record_batches_match(arrow_batch: &RecordBatch, json_batch: &RecordBatch) {
-    assert_schemas_match(arrow_batch.schema().as_ref(), json_batch.schema().as_ref());
+pub fn assert_record_batches_match(left: &RecordBatch, right: &RecordBatch) {
+    assert_schemas_match(left.schema().as_ref(), right.schema().as_ref());
 
     assert_eq!(
-        arrow_batch.num_columns(),
-        json_batch.num_columns(),
+        left.num_columns(),
+        right.num_columns(),
         "Column count mismatch"
     );
-    assert_eq!(
-        arrow_batch.num_rows(),
-        json_batch.num_rows(),
-        "Row count mismatch"
-    );
+    assert_eq!(left.num_rows(), right.num_rows(), "Row count mismatch");
 
-    for col_idx in 0..arrow_batch.num_columns() {
-        let arrow_col = arrow_batch.column(col_idx);
-        let json_col = json_batch.column(col_idx);
-        assert_eq!(
-            arrow_col,
-            json_col,
-            "Column data mismatch at index {} ('{}')",
-            col_idx,
-            arrow_batch.schema().field(col_idx).name()
-        );
+    for col_idx in 0..left.num_columns() {
+        let left_col = left.column(col_idx);
+        let right_col = right.column(col_idx);
+        let schema = left.schema();
+        let field_name = schema.field(col_idx).name();
+        assert_arrays_match(left_col, right_col, field_name);
     }
+}
+
+fn integer_value(array: &ArrayRef, idx: usize) -> Option<i128> {
+    if array.is_null(idx) {
+        return None;
+    }
+    match array.data_type() {
+        DataType::Int8 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int8Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Int16 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int16Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Int32 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Int64 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Decimal128(_, _) => Some(
+            array
+                .as_any()
+                .downcast_ref::<Decimal128Array>()
+                .unwrap()
+                .value(idx),
+        ),
+        _ => panic!(
+            "Expected integer or decimal array, got {:?}",
+            array.data_type()
+        ),
+    }
+}
+
+fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    if is_integer_or_decimal(left.data_type()) && is_integer_or_decimal(right.data_type()) {
+        assert_integer_or_decimal_arrays_match(left, right, field_path)
+    } else {
+        assert_other_arrays_match(left, right, field_path)
+    }
+}
+
+// For fixed fields we do not care about exact type, just the value
+// This is because backend uses specific types depending on the column values
+// In JSON parser we convert all integers to Int64 or Decimal128 (if some value is too large for Int64)
+// Downstream converters don't(or should not) differentiate between different fixed representations
+fn assert_integer_or_decimal_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    let mismatches: Vec<(usize, String)> = (0..left.len())
+        .filter_map(|idx| {
+            let left_value = integer_value(left, idx);
+            let right_value = integer_value(right, idx);
+            if left_value != right_value {
+                Some((
+                    idx,
+                    format!(
+                        "At {idx} | {}: {:?} != {}: {:?}",
+                        left.data_type(),
+                        left_value,
+                        right.data_type(),
+                        right_value
+                    ),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (_, mismatch) in mismatches.iter().take(5) {
+        println!("Mismatch in {field_path}: {mismatch}");
+    }
+
+    let indices: Vec<usize> = mismatches.iter().map(|(idx, _)| *idx).collect();
+
+    assert!(
+        mismatches.is_empty(),
+        "'{field_path}' has mismatched values at rows: {indices:?}",
+    );
+}
+
+fn assert_other_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    match (left.data_type(), right.data_type()) {
+        (DataType::Struct(_), DataType::Struct(_)) => {
+            let left_struct = left.as_struct();
+            let right_struct = right.as_struct();
+            assert_eq!(
+                left_struct.num_columns(),
+                right_struct.num_columns(),
+                "Struct '{field_path}' child count mismatch"
+            );
+            for (i, name) in left_struct.column_names().iter().enumerate() {
+                let child_name = format!("{field_path}.{name}");
+                // Propagate parent null bitmap into children so we don't compare
+                // filler values at positions where the parent struct is null
+                let left_child = nullify_child(left_struct.nulls(), left_struct.column(i));
+                let right_child = nullify_child(right_struct.nulls(), right_struct.column(i));
+                assert_other_arrays_match(&left_child, &right_child, &child_name);
+            }
+        }
+        _ => {
+            let result = not_distinct(left, right)
+                .unwrap_or_else(|e| panic!("Failed to compare '{field_path}': {e}"));
+
+            let mismatches: Vec<usize> = result
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v != &Some(true))
+                .map(|(i, _)| i)
+                .collect();
+
+            for idx in mismatches.iter().take(5) {
+                println!(
+                    "Mismatch in {:?} at idx {:?}, left: {:?}, right: {:?}",
+                    field_path,
+                    idx,
+                    extract_arrow_value::<String>(left, *idx),
+                    extract_arrow_value::<String>(right, *idx)
+                );
+            }
+
+            assert!(
+                mismatches.is_empty(),
+                "'{field_path}' has mismatched values at rows: {mismatches:?}",
+            );
+        }
+    }
+}
+
+/// Returns a new array with the parent's null bitmap merged into the child array,
+/// so that positions where the parent struct is null also appear null in the child.
+fn nullify_child(parent_nulls: Option<&NullBuffer>, child: &ArrayRef) -> ArrayRef {
+    let Some(parent_nulls) = parent_nulls else {
+        return Arc::clone(child);
+    };
+    let child_data = child.to_data();
+    let merged_nulls = match child_data.nulls() {
+        Some(child_nulls) => NullBuffer::new(parent_nulls.inner() & child_nulls.inner()),
+        None => parent_nulls.clone(),
+    };
+    let new_data = child_data
+        .into_builder()
+        .null_bit_buffer(Some(merged_nulls.into_inner().into_inner()))
+        .build()
+        .unwrap();
+    arrow::array::make_array(new_data)
 }

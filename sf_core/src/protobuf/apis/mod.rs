@@ -1,24 +1,41 @@
-use crate::protobuf::apis::database_driver_v1::DatabaseDriverImpl;
+use crate::protobuf::apis::database_driver_v1::{DatabaseDriverImpl, DriverProviders};
 use crate::protobuf::generated::database_driver_v1::DatabaseDriverServer;
 use proto_utils::*;
 
 pub mod database_driver_v1;
 
-pub fn call_proto(api: &str, method: &str, message: &[u8]) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
-    match api {
-        "DatabaseDriver" => DatabaseDriverImpl::handle_message(method, message.to_vec()),
-        _ => Err(ProtoError::Transport(format!("Unknown API: {}", api))),
+pub struct RustTransport {
+    driver: DatabaseDriverImpl,
+}
+
+impl Default for RustTransport {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-pub struct RustTransport {}
+impl RustTransport {
+    pub fn new() -> Self {
+        Self::new_with(DriverProviders::default())
+    }
+
+    pub fn new_with(providers: DriverProviders) -> Self {
+        Self {
+            driver: DatabaseDriverImpl::new_with(providers),
+        }
+    }
+}
 
 impl Transport for RustTransport {
-    fn handle_message(
+    async fn handle_message(
+        &self,
         service: &str,
         method: &str,
         message: Vec<u8>,
     ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
-        call_proto(service, method, &message)
+        match service {
+            "DatabaseDriver" => self.driver.handle_message(method, message).await,
+            _ => Err(ProtoError::Transport(format!("Unknown API: {}", service))),
+        }
     }
 }

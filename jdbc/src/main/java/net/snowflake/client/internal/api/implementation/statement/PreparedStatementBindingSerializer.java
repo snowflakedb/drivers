@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.Map;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
@@ -35,11 +36,12 @@ final class PreparedStatementBindingSerializer {
     }
   }
 
-  static final class SerializedBindings implements AutoCloseable {
+  /** Holds bindings plus the native buffer backing the pointer stored in the RPC payload. */
+  static final class NativeBindings implements AutoCloseable {
     private final QueryBindings bindings;
     private final NativeBuffer buffer;
 
-    SerializedBindings(QueryBindings bindings, NativeBuffer buffer) {
+    NativeBindings(QueryBindings bindings, NativeBuffer buffer) {
       this.bindings = bindings;
       this.buffer = buffer;
     }
@@ -50,6 +52,8 @@ final class PreparedStatementBindingSerializer {
 
     @Override
     public void close() {
+      // The bindings payload includes a pointer into this native buffer, so the owner must release
+      // it after the RPC has been constructed and sent.
       if (buffer != null) {
         buffer.close();
       }
@@ -58,18 +62,27 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
-  static SerializedBindings serialize(ParameterValue[] parameterValues) throws SQLException {
-    if (parameterValues.length == 0) {
+  static NativeBindings serialize(
+      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
+      throws SQLException {
+    if (!placeholderMetadata.hasBindings()) {
       logger.debug("No parameter placeholders found, skipping bindings serialization.");
-      return new SerializedBindings(null, null);
+      return new NativeBindings(null, null);
     }
-    logger.debug("Serializing prepared bindings: placeholders={}", parameterValues.length);
+    logger.debug(
+        "Serializing prepared bindings: placeholders={}", placeholderMetadata.placeholderCount());
 
+    byte[] jsonBytes = buildBindingsJson(placeholderMetadata, parameterValues);
+    return allocateNativeBindings(jsonBytes);
+  }
+
+  private static byte[] buildBindingsJson(
+      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
+      throws SQLException {
     JSONStringer jsonStringer = new JSONStringer();
     jsonStringer.object();
-    for (int i = 0; i < parameterValues.length; i++) {
-      ParameterValue parameterValue = parameterValues[i];
-      int parameterIndex = i + 1;
+    for (int parameterIndex : placeholderMetadata.referencedParameterIndexes()) {
+      ParameterValue parameterValue = parameterValues.get(parameterIndex);
       if (parameterValue == null) {
         logger.warn(
             "Bindings serialization failed: missing parameter value for index {}", parameterIndex);
@@ -86,8 +99,10 @@ final class PreparedStatementBindingSerializer {
       jsonStringer.endObject();
     }
     jsonStringer.endObject();
+    return jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  }
 
-    byte[] jsonBytes = jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  private static NativeBindings allocateNativeBindings(byte[] jsonBytes) throws SQLException {
     NativeBuffer nativeBuffer = NativeBuffer.fromBytes(jsonBytes);
     boolean success = false;
     try {
@@ -102,9 +117,9 @@ final class PreparedStatementBindingSerializer {
           "Prepared bindings serialized: payloadBytes={}, pointerBytes={}",
           jsonBytes.length,
           ptrBytes.length);
-      SerializedBindings serializedBindings = new SerializedBindings(queryBindings, nativeBuffer);
+      NativeBindings nativeBindings = new NativeBindings(queryBindings, nativeBuffer);
       success = true;
-      return serializedBindings;
+      return nativeBindings;
     } finally {
       if (!success) {
         nativeBuffer.close();

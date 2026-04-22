@@ -32,6 +32,9 @@ pipeline {
                 // Benchstore upload settings
                 BUILD_NUMBER = "${env.BUILD_NUMBER}"
                 BRANCH_NAME = "${params.BRANCH ?: 'main'}"
+                
+                // Trigger metadata for Benchstore (scheduled vs manual)
+                TRIGGER_TYPE = "${getTriggerType()}"
             }
             
             stages {
@@ -159,11 +162,10 @@ pipeline {
                                     // Build test command with optional TEST_ARGS
                                     def testArgs = params.TEST_ARGS?.trim() ?: ""
                                     
-                                    // ODBC has known fetch performance issues causing timeouts.
-                                    // Run a reduced set of E2E tests to stay within the 6hr limit:
-                                    if (!testArgs && params.DRIVER == 'odbc') {
-                                        testArgs = "tests/ -k '(test_select_number_50M_arrow or test_select_date_50M_arrow or test_put_files_12mx100 or test_get_files_12mx100 or 1M) and not (12mx1000 or 50M_arrow_recorded)'"
-                                        echo "ODBC: using reduced test set to avoid timeout"
+                                    // Disable long PUT tests (12mx1000, 1.2Gx10) for ODBC and Python
+                                    if (!testArgs && (params.DRIVER == 'odbc' || params.DRIVER == 'python')) {
+                                        testArgs = "tests/ -k 'not (test_put_files_12mx1000 or test_put_files_1_2Gx10)'"
+                                        echo "${params.DRIVER}: excluding long PUT tests to avoid timeout"
                                     }
                                     
                                     echo "Hatch environment: ${hatchEnv}"
@@ -226,9 +228,9 @@ pipeline {
 def getAgentLabel(architecture) {
     switch (architecture) {
         case 'x86_64':
-            return 'regular-memory-node-snowos'
+            return 'drivers-perf-regular-memory-node-snowos'
         case 'arm64':
-            return 'regular-memory-node-snowosarm'
+            return 'drivers-perf-regular-memory-node-snowosarm'
         default:
             error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
     }
@@ -243,6 +245,16 @@ def getDockerPlatform(architecture) {
         default:
             error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
     }
+}
+
+def getTriggerType() {
+    def causes = currentBuild.getBuildCauses()
+    for (cause in causes) {
+        if (cause._class?.contains('TimerTrigger')) {
+            return 'scheduled'
+        }
+    }
+    return 'manual'
 }
 
 def parseBenchDashUrls() {

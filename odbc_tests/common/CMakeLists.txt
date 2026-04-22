@@ -14,7 +14,6 @@ add_library(common STATIC
     src/WindowsConfigInstallation.cpp
     src/UnixConfigInstallation.cpp
     include/test_setup.hpp
-    include/macros.hpp
     include/Connection.hpp
     include/require.hpp
     include/get_data.hpp
@@ -43,4 +42,9 @@ endif()
 
 if (DRIVER_TYPE STREQUAL "OLD")
     target_compile_definitions(common PUBLIC SNOWFLAKE_OLD_DRIVER)
+endif()
+
+option(ENABLE_PROGRESS_REPORT "Disable SKIP_NEW_DRIVER_NOT_IMPLEMENTED to force-run all tests" OFF)
+if (ENABLE_PROGRESS_REPORT)
+    target_compile_definitions(common PUBLIC ENABLE_PROGRESS_REPORT)
 endif()
