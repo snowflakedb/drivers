@@ -725,7 +725,7 @@ fn response_to_descriptor(data: &Data) -> ResultSetDescriptor {
                 .iter()
                 .map(|rt| ColumnMetadata {
                     name: rt.name.clone(),
-                    r#type: rt.type_.clone(),
+                    r#type: rt.ext_type_name.clone().unwrap_or_else(|| rt.type_.clone()),
                     precision: rt.precision.map(|v| v as i64),
                     scale: rt.scale.map(|v| v as i64),
                     length: rt.length.map(|v| v as i64),

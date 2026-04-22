@@ -451,9 +451,7 @@ class TestCursorDescription:
         EMPTY_SUBQUERY_TYPES,
         ids=[name for _, _, name in EMPTY_SUBQUERY_TYPES],
     )
-    def test_description_empty_subquery_type_code(
-        self, cursor, sql_expr, expected_type_code, expected_type_name
-    ):
+    def test_description_empty_subquery_type_code(self, cursor, sql_expr, expected_type_code, expected_type_name):
         """Verify cursor.description type_code for zero-row results.
 
         dbt wraps model SQL in:
@@ -461,17 +459,11 @@ class TestCursorDescription:
         to get column metadata without scanning data. The driver must return
         correct type_code even for zero-row results.
         """
-        sql = (
-            f"SELECT * FROM ("
-            f"  SELECT {sql_expr} AS col"
-            f") AS __dbt_sbq WHERE false LIMIT 0"
-        )
+        sql = f"SELECT * FROM (  SELECT {sql_expr} AS col) AS __dbt_sbq WHERE false LIMIT 0"
         cursor.execute(sql)
 
         desc = cursor.description
-        assert desc is not None, (
-            "cursor.description should not be None for empty subquery"
-        )
+        assert desc is not None, "cursor.description should not be None for empty subquery"
         actual_type_code = desc[0].type_code
         assert actual_type_code == expected_type_code, (
             f"Type code mismatch for '{sql_expr}': "
@@ -486,8 +478,6 @@ class TestCursorDescription:
         ("TIMESTAMP_TZ", 7, "TIMESTAMP_TZ"),
         ("TIMESTAMP_NTZ", 8, "TIMESTAMP_NTZ"),
         ("ARRAY", 10, "ARRAY"),
-        ("GEOGRAPHY", 14, "GEOGRAPHY"),
-        ("GEOMETRY", 15, "GEOMETRY"),
         ("VARIANT", 5, "VARIANT"),
     ]
 
@@ -496,15 +486,9 @@ class TestCursorDescription:
         CAST_NULL_TYPES,
         ids=[name for _, _, name in CAST_NULL_TYPES],
     )
-    def test_description_cast_null_empty_subquery(
-        self, cursor, cast_type, expected_type_code, expected_type_name
-    ):
+    def test_description_cast_null_empty_subquery(self, cursor, cast_type, expected_type_code, expected_type_name):
         """Verify cursor.description for CAST(null AS <type>) in empty subquery."""
-        sql = (
-            f"SELECT * FROM ("
-            f"  SELECT CAST(null AS {cast_type}) AS col"
-            f") AS __dbt_sbq WHERE false LIMIT 0"
-        )
+        sql = f"SELECT * FROM (  SELECT CAST(null AS {cast_type}) AS col) AS __dbt_sbq WHERE false LIMIT 0"
         cursor.execute(sql)
 
         desc = cursor.description

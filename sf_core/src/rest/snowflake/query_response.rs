@@ -210,6 +210,9 @@ pub struct RowType {
     #[serde(rename = "precision")]
     pub precision: Option<u64>,
 
+    #[serde(rename = "extTypeName")]
+    pub ext_type_name: Option<String>,
+
     // unused fields
     #[serde(rename = "fields")]
     pub _fields: Option<Vec<FieldMetadata>>,
@@ -567,8 +570,9 @@ impl TryFrom<&RowType> for query_types::RowType {
     fn try_from(value: &RowType) -> Result<Self, Self::Error> {
         let name = value.name.clone();
         let nullable = value.nullable;
+        let effective_type = value.ext_type_name.as_deref().unwrap_or(&value.type_);
 
-        match value.type_.to_uppercase().as_str() {
+        match effective_type.to_uppercase().as_str() {
             "TEXT" => {
                 // Use Snowflake's default VARCHAR max length when the server omits
                 // length metadata. This happens when the server returns DECFLOAT
@@ -1031,6 +1035,7 @@ mod tests {
             precision: None,
             length: Some(1024),
             byte_length: Some(4096),
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1054,6 +1059,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1077,6 +1083,7 @@ mod tests {
             precision: None,
             length: Some(512),
             byte_length: Some(2048),
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1184,6 +1191,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1208,6 +1216,7 @@ mod tests {
                 precision: None,
                 length: None,
                 byte_length: None,
+                ext_type_name: None,
                 _fields: None,
             };
 
@@ -1230,6 +1239,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1253,6 +1263,7 @@ mod tests {
             precision: Some(38),
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1276,6 +1287,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: Some(100),
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1299,6 +1311,7 @@ mod tests {
             precision: None,
             length: Some(100),
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1310,6 +1323,31 @@ mod tests {
             ),
             Ok(_) => panic!("Expected error for BINARY column without byte_length"),
         }
+    }
+
+    #[test]
+    fn test_ext_type_name_takes_precedence_over_type() {
+        // Server sends type="object" but extTypeName="GEOGRAPHY" for geography columns
+        let row_type = RowType {
+            name: "geo_col".to_string(),
+            type_: "object".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: Some("GEOGRAPHY".to_string()),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Geography {
+                ref name,
+                nullable: true,
+            } if name == "geo_col"
+        ));
     }
 
     #[test]
@@ -1377,6 +1415,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
