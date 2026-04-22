@@ -194,10 +194,12 @@ class Connection:
             for warning in response.warnings:
                 py_warnings.warn(warning.message, stacklevel=2)
 
-        # Set session parameters if provided (before connection_init)
+        # Set session parameters if provided (before connection_init).
+        # Protobuf requires string values; callers (e.g. Snowpark) may pass bools/ints.
         if session_params:
+            str_params = {k: str(v) for k, v in session_params.items()}
             self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=str_params)
             )
 
         self.db_api.connection_init(
