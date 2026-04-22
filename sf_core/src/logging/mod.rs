@@ -21,7 +21,7 @@ static TELEMETRY_PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider>
 /// a session is deregistered. No-op if the provider has not been initialized.
 ///
 /// Uses `block_in_place` when on a multi-threaded Tokio runtime to avoid
-/// stalling the executor. Bounded to 2 seconds so release can't hang.
+/// stalling the executor.
 pub fn flush_telemetry() {
     let Some(provider) = TELEMETRY_PROVIDER.get() else {
         return;

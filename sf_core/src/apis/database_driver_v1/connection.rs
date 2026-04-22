@@ -346,9 +346,9 @@ impl DatabaseDriverV1 {
 
     /// Return the per-connection telemetry span if available.
     ///
-    /// Callers enter this span and emit `tracing::info!` events for
-    /// api_usage / wrapper_error. The span already carries
-    /// `snowflake.session.id` for routing by the shared exporter.
+    /// Callers enter this span and record OTel events (via
+    /// `telemetry::record_api_call` / `record_exception`). The span
+    /// carries `snowflake.session.id` for routing by the shared exporter.
     pub async fn telemetry_span(&self, handle: Handle) -> Option<tracing::Span> {
         let conn_ptr = self.connections.get_obj(handle)?;
         let conn = conn_ptr.lock().await;
@@ -366,12 +366,11 @@ impl DatabaseDriverV1 {
             // Mutex dropped before reading the tokens RwLock to avoid deadlock.
             let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
 
-            // Drop the tracing span — this ends the underlying OTel span
-            // so the BatchSpanProcessor can export it.
+            // Drop the tracing span — this ends the underlying OTel span,
+            // triggering synchronous export via SimpleSpanProcessor.
             drop(span);
-            // Force-flush the batch processor so all queued spans (including
-            // the just-ended connection span) are exported before we remove
-            // the session from the registry.
+            // Flush the provider to ensure export completed before we
+            // remove the session from the registry.
             crate::logging::flush_telemetry();
             if let Some(id) = session_id {
                 self.telemetry_sessions()
@@ -614,9 +613,9 @@ pub struct Connection {
     pub final_session_names: RwLock<FinalSessionNames>,
     /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
-    /// Long-lived connection span carrying `snowflake.session.id`. Events
-    /// (api_usage, wrapper_error) are created as child spans; the connection
-    /// span is ended on release.
+    /// Long-lived connection span carrying `snowflake.session.id`.
+    /// Telemetry events (session_init, api_usage, wrapper_error) are
+    /// recorded as OTel events on this span; it is ended on release.
     pub(crate) telemetry_span: Option<tracing::Span>,
 }
 
