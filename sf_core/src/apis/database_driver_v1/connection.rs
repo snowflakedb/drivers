@@ -323,42 +323,11 @@ impl DatabaseDriverV1 {
                         tracing::info_span!("connection", "snowflake.session.id" = session_id,);
 
                     // Record session_init as an event on the connection span.
+                    // We enter the span so the OpenTelemetryLayer captures the
+                    // tracing event as an OTel span event.
                     {
-                        use opentelemetry::trace::TraceContextExt;
-                        use tracing_opentelemetry::OpenTelemetrySpanExt;
-                        let otel_ctx = conn_span.context();
-                        let otel_span = otel_ctx.span();
-                        let mut attrs = vec![
-                            opentelemetry::KeyValue::new(
-                                "service.name",
-                                env_info.driver_name.clone(),
-                            ),
-                            opentelemetry::KeyValue::new(
-                                "service.version",
-                                env_info.driver_version.clone(),
-                            ),
-                            opentelemetry::KeyValue::new(
-                                "process.runtime.name",
-                                env_info.language_runtime.clone(),
-                            ),
-                            opentelemetry::KeyValue::new(
-                                "process.runtime.version",
-                                env_info.language_version.clone(),
-                            ),
-                            opentelemetry::KeyValue::new("os.type", env_info.os_name.clone()),
-                            opentelemetry::KeyValue::new("os.version", env_info.os_version.clone()),
-                            opentelemetry::KeyValue::new(
-                                "host.arch",
-                                env_info.os_architecture.clone(),
-                            ),
-                        ];
-                        if let Some(ref compiler) = env_info.language_compiler {
-                            attrs.push(opentelemetry::KeyValue::new(
-                                "process.runtime.compiler",
-                                compiler.clone(),
-                            ));
-                        }
-                        otel_span.add_event("session_init", attrs);
+                        let _guard = conn_span.enter();
+                        crate::telemetry::record_session_init(&env_info);
                     }
 
                     conn.telemetry_span = Some(conn_span);

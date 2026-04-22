@@ -1511,14 +1511,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let handle = Handle::from(conn_handle);
 
         if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            use opentelemetry::trace::TraceContextExt;
-            use tracing_opentelemetry::OpenTelemetrySpanExt;
-            let otel_ctx = conn_span.context();
-            let otel_span = otel_ctx.span();
-            otel_span.add_event(
-                "api_call",
-                vec![opentelemetry::KeyValue::new("api_method", input.api_method)],
-            );
+            let _guard = conn_span.enter();
+            crate::telemetry::record_api_call(&input.api_method);
         }
 
         Ok(TelemetrySendResponse {})
@@ -1536,17 +1530,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let handle = Handle::from(conn_handle);
 
         if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            use opentelemetry::trace::TraceContextExt;
-            use tracing_opentelemetry::OpenTelemetrySpanExt;
-            let otel_ctx = conn_span.context();
-            let otel_span = otel_ctx.span();
-            otel_span.add_event(
-                "exception",
-                vec![
-                    opentelemetry::KeyValue::new("exception.type", input.exception_type),
-                    opentelemetry::KeyValue::new("exception.source", input.error_source),
-                ],
-            );
+            let _guard = conn_span.enter();
+            crate::telemetry::record_exception(&input.exception_type, &input.error_source);
         }
 
         Ok(TelemetrySendResponse {})
