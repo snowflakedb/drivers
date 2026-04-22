@@ -2167,11 +2167,7 @@ mod tests {
                 client_info: test_client_info(),
                 log_max_query_length: 1024,
             };
-            let query_input = QueryInput {
-                sql: "SELECT 1".to_string(),
-                bindings: None,
-                describe_only: None,
-            };
+            let query_input = QueryInput::new("SELECT 1");
 
             let retry_policy = RetryPolicy::default();
             let result = execute_sync_query(
