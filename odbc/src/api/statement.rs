@@ -521,17 +521,29 @@ fn create_execute_state_from_result_set(
 ) -> OdbcResult<StatementState> {
     let stream = rs.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
+    let schema = reader.schema();
+
+    // Detect Snowflake's status-response pattern: a single "status" column of
+    // text type, used for TCL (COMMIT/ROLLBACK/BEGIN), session commands, and
+    // other non-query statements that return "Statement executed successfully.".
+    // Treat these as DML so SQLNumResultCols returns 0 and no cursor is opened,
+    // matching the old snowflake-odbc (Simba SDK) behavior.  This check covers
+    // statement_type_ids we haven't explicitly catalogued (including None).
+    let is_status_response = schema.fields().len() == 1
+        && schema.field(0).name().eq_ignore_ascii_case("status")
+        && matches!(
+            schema.field(0).data_type(),
+            arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8
+        );
+
     if let Some(id) = statement_type_id {
         if is_ddl_statement(id) {
-            return Ok(StatementState::DdlExecuted {
-                schema: reader.schema(),
-                origin,
-            });
+            return Ok(StatementState::DdlExecuted { schema, origin });
         }
         if is_dml_statement_type(Some(id)) {
             return Ok(StatementState::DmlExecuted {
                 rows_affected: rows_affected.unwrap_or(0),
-                schema: reader.schema(),
+                schema,
                 origin,
             });
         }
@@ -547,11 +559,29 @@ fn create_execute_state_from_result_set(
             );
             return Ok(StatementState::DmlExecuted {
                 rows_affected: rows_affected.unwrap_or(0),
-                schema: reader.schema(),
+                schema,
                 origin,
             });
         }
     }
+
+    // Fallback: even if statement_type_id is None or in a "query" range, a
+    // single-"status"-text-column response is Snowflake's meta-acknowledgement
+    // pattern (COMMIT WORK, ALTER SESSION, etc.), not a real query result.
+    // Client upstreams (pgv3, DTM/HyperQ) expect CommandComplete/update-style
+    // handling for these; opening a cursor crashes them.
+    if is_status_response {
+        tracing::debug!(
+            "create_execute_state: treating status-column response as DML (type_id={:?})",
+            statement_type_id
+        );
+        return Ok(StatementState::DmlExecuted {
+            rows_affected: rows_affected.unwrap_or(0),
+            schema,
+            origin,
+        });
+    }
+
     Ok(StatementState::QueryExecuted {
         reader,
         rows_affected,
