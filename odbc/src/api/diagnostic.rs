@@ -5,7 +5,7 @@
 
 use crate::{
     api::{
-        Dbc, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
+        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
         encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
         env_from_handle,
         error::{
@@ -169,8 +169,6 @@ pub trait WithDiagnosticInfo {
     fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo;
 }
 
-// TODO: With changes to the environment locking mechanism we need to
-// rework this solution so that we do not acquire the environment 3 times during one call
 impl WithDiagnosticInfo for Environment {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
@@ -180,12 +178,12 @@ impl WithDiagnosticInfo for Environment {
     }
 }
 
-impl WithDiagnosticInfo for Dbc {
+impl WithDiagnosticInfo for Connection {
     fn get_diag_info(&self) -> &DiagnosticInfo {
-        &self.connection.diagnostic_info
+        &self.diagnostic_info
     }
     fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
-        &mut self.connection.diagnostic_info
+        &mut self.diagnostic_info
     }
 }
 
@@ -251,15 +249,8 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
     if handle.is_null() {
         return;
     }
-    if handle_type == sql::HandleType::Env {
-        let Ok(env) = env_from_handle(handle) else {
-            return;
-        };
-        let mut guard = env.environment.lock();
-        guard.get_diag_info_mut().clear();
-        return;
-    }
     let t: &mut dyn WithDiagnosticInfo = match handle_type {
+        sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
         sql::HandleType::Desc => desc_diag_from_handle(handle),
@@ -268,11 +259,12 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
     t.get_diag_info_mut().clear();
 }
 
-fn from_handle_type_non_env<'a>(
+pub fn from_handle_type<'a>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> Option<&'a mut dyn WithDiagnosticInfo> {
     match handle_type {
+        sql::HandleType::Env => Some(env_from_handle(handle)),
         sql::HandleType::Dbc => Some(conn_from_handle(handle)),
         sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
         sql::HandleType::Desc => Some(desc_diag_from_handle(handle)),
@@ -315,18 +307,7 @@ pub fn set_diag_info_from_warnings(
     if handle.is_null() {
         return;
     }
-    if handle_type == sql::HandleType::Env {
-        let Ok(env) = env_from_handle(handle) else {
-            return;
-        };
-        let mut guard = env.environment.lock();
-        let diagnostic_info = guard.get_diag_info_mut();
-        for warning in warnings {
-            diagnostic_info.add_record(from_warning(warning));
-        }
-        return;
-    }
-    if let Some(t) = from_handle_type_non_env(handle_type, handle) {
+    if let Some(t) = from_handle_type(handle_type, handle) {
         let diagnostic_info = t.get_diag_info_mut();
         for warning in warnings {
             diagnostic_info.add_record(from_warning(warning));
@@ -342,23 +323,18 @@ pub fn set_diag_info_from_result(
     if handle.is_null() {
         return;
     }
-    let add_from_result = |diagnostic_info: &mut DiagnosticInfo| match result {
-        Ok(_) => {}
-        Err(OdbcError::DaeRequired { .. }) => {}
-        Err(error) => {
-            diagnostic_info.add_record(error.to_diagnostic_record());
+    if let Some(t) = from_handle_type(handle_type, handle) {
+        let diagnostic_info = t.get_diag_info_mut();
+        match result {
+            Ok(_) => {}
+            // SQL_NEED_DATA is a success-class return code, not an error.
+            // Don't post a diagnostic record — the Driver Manager uses the
+            // return code alone to drive the DAE protocol.
+            Err(OdbcError::DaeRequired { .. }) => {}
+            Err(error) => {
+                diagnostic_info.add_record(error.to_diagnostic_record());
+            }
         }
-    };
-    if handle_type == sql::HandleType::Env {
-        let Ok(env) = env_from_handle(handle) else {
-            return;
-        };
-        let mut guard = env.environment.lock();
-        add_from_result(guard.get_diag_info_mut());
-        return;
-    }
-    if let Some(t) = from_handle_type_non_env(handle_type, handle) {
-        add_from_result(t.get_diag_info_mut());
     }
 }
 
@@ -366,12 +342,8 @@ pub fn get_diag_info(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> OdbcResult<DiagnosticInfo> {
-    if handle_type == sql::HandleType::Env {
-        let env = env_from_handle(handle)?;
-        let guard = env.environment.lock();
-        return Ok(guard.get_diag_info().clone());
-    }
     let t: &dyn WithDiagnosticInfo = match handle_type {
+        sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
         sql::HandleType::Desc => desc_diag_from_handle(handle),
@@ -675,10 +647,10 @@ mod tests {
     }
 
     #[test]
-    fn from_handle_type_non_env_returns_some_for_desc() {
+    fn from_handle_type_returns_some_for_desc() {
         let mut apd = ApdDescriptor::new();
         let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
-        assert!(from_handle_type_non_env(sql::HandleType::Desc, handle).is_some());
+        assert!(from_handle_type(sql::HandleType::Desc, handle).is_some());
     }
 
     #[test]
