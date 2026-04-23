@@ -83,7 +83,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
         StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
         StatementState::DmlExecuted { rows_affected, .. } => *rows_affected as sql::Len,
-        StatementState::DdlExecuted { .. } => 0,
+        StatementState::DdlExecuted { .. } => -1,
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
