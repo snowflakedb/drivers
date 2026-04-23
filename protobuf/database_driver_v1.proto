@@ -289,6 +289,15 @@ message ConnectionReleaseResponse {
 
 message ConnectionCloseRequest {
   ConnectionHandle conn_handle = 1;
+
+  // Optional close-time overrides.
+  // Hierarchy: override here > connection-wide (set at init) > Core defaults
+  optional bool server_session_keep_alive = 2;
+  optional bool enable_server_session_keep_alive_auto_detection = 3;
+  optional string error_strategy = 4;                 // "best_effort" or "strict"
+  optional int32 logout_total_timeout_seconds = 5;
+  optional int32 max_attempts = 6;                    // total attempts (1 = no retry)
+  optional int32 logout_request_timeout_seconds = 7;
 }
 
 message ConnectionCloseResponse {
