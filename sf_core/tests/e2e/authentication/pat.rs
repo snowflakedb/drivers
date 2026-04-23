@@ -88,7 +88,7 @@ impl Drop for Pat {
     fn drop(&mut self) {
         let client = SnowflakeTestClient::connect_with_default_auth();
         let user = client.parameters.user.clone().unwrap();
-        client.execute_query(&format!(
+        client.execute_sql(&format!(
             "ALTER USER IF EXISTS {user} REMOVE PROGRAMMATIC ACCESS TOKEN {}",
             self.token_name
         ));

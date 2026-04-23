@@ -117,14 +117,14 @@ class ResultBatch:
 
     @property
     def compressed_size(self) -> int | None:
-        if self._chunk.HasField("compressed_size"):
-            return self._chunk.compressed_size
+        if self._chunk.HasField("remote"):
+            return self._chunk.remote.compressed_size
         return None
 
     @property
     def uncompressed_size(self) -> int | None:
-        if self._chunk.HasField("uncompressed_size"):
-            return self._chunk.uncompressed_size
+        if self._chunk.HasField("remote"):
+            return self._chunk.remote.uncompressed_size
         return None
 
     @property

@@ -37,11 +37,7 @@ async fn should_include_request_id_in_query_parameters() {
         &client,
         query_params,
         "test-token",
-        QueryInput {
-            sql: "SELECT 1".to_string(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
     )
@@ -113,11 +109,7 @@ async fn should_retry_sync_query_on_connection_reset() {
         &client,
         query_params,
         "test-token",
-        QueryInput {
-            sql: "SELECT 1".to_string(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
     )
@@ -172,11 +164,7 @@ async fn should_use_sync_mode_by_default() {
         &client,
         query_params,
         "test-token",
-        QueryInput {
-            sql: "SELECT 1".to_string(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new("SELECT 1"),
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
     )

@@ -154,6 +154,18 @@ pub struct QueryInput<'a> {
     pub sql: String,
     pub bindings: Option<&'a RawValue>,
     pub describe_only: Option<bool>,
+    pub query_parameters: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl<'a> QueryInput<'a> {
+    pub fn new(sql: impl Into<String>) -> Self {
+        QueryInput {
+            sql: sql.into(),
+            bindings: None,
+            describe_only: None,
+            query_parameters: None,
+        }
+    }
 }
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
@@ -1048,7 +1060,7 @@ async fn execute_sync_query<'a>(
             .as_millis() as i64,
         is_internal: false,
         describe_only: query_input.describe_only,
-        parameters: None,
+        parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
@@ -2155,11 +2167,7 @@ mod tests {
                 client_info: test_client_info(),
                 log_max_query_length: 1024,
             };
-            let query_input = QueryInput {
-                sql: "SELECT 1".to_string(),
-                bindings: None,
-                describe_only: None,
-            };
+            let query_input = QueryInput::new("SELECT 1");
 
             let retry_policy = RetryPolicy::default();
             let result = execute_sync_query(

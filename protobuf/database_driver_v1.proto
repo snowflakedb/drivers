@@ -149,16 +149,25 @@ message QueryStats {
   optional int64 num_dml_duplicates = 4;
 }
 
-// Execute result
-message ExecuteResult {
-  ArrowArrayStreamPtr stream = 1;
-  optional int64 rows_affected = 2;
-  string query_id = 3;
-  repeated ColumnMetadata columns = 4;
-  optional int64 statement_type_id = 5;
-  string query = 6;
-  optional string sql_state = 7;
-  optional QueryStats stats = 8;
+// Describes one result set from a (possibly multi-statement) execution.
+// For single statements, returned inline in the execute response.
+// For multi-statement children, fetched lazily via StatementGetResultSet.
+message ResultSetDescriptor {
+  string query_id = 1;
+  repeated ColumnMetadata columns = 2;
+  optional int64 rows_affected = 3;
+  optional int64 statement_type_id = 4;
+  optional string sql_state = 5;
+  optional QueryStats stats = 6;
+}
+
+// Multi-statement execution: child query IDs and their statement types.
+message MultiStatementResult {
+  ResultSetDescriptor parent = 1;
+  repeated string query_ids = 2;
+  // Statement type IDs for each child, parallel to query_ids.
+  // Used by wrappers to classify results (ResultSet vs update count) without lazy fetch.
+  repeated int64 statement_type_ids = 3;
 }
 
 // Partitioned result
@@ -429,8 +438,14 @@ message ConnectionGetQueryResultRequest {
   string query_id = 2;
 }
 
-message ConnectionGetQueryResultResponse {
-  ExecuteResult result = 1;
+message ResultSetResponse {
+  ResultSetDescriptor result_descriptor = 1;
+  ArrowArrayStreamPtr stream = 2;
+}
+
+message ConnectionGetResultSetRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
 }
 
 // Abort a running query by its Snowflake Query ID.
@@ -507,8 +522,20 @@ message StatementExecuteQueryRequest {
   optional QueryBindings bindings = 2;  // None = no bindings
 }
 
-message StatementExecuteQueryResponse {
-  ExecuteResult result = 1;
+message ExecuteQueryResponse {
+  oneof result {
+    // Single statement — metadata available immediately.
+    ResultSetDescriptor single = 1;
+    // Multi-statement — child query IDs only, fetch metadata lazily.
+    MultiStatementResult multi = 2;
+  }
+}
+
+// Fetch a result set by query_id: returns metadata + Arrow stream.
+// For multi-statement children, this triggers a lazy fetch in sf_core.
+message StatementGetResultSetRequest {
+  StatementHandle stmt_handle = 1;
+  string query_id = 2;
 }
 
 // Async query execution: submit and return immediately with query_id
@@ -549,6 +576,8 @@ enum ChunkFormat {
 message RemoteChunk {
   string url = 1;
   map<string, string> headers = 2;
+  int64 compressed_size = 3;
+  int64 uncompressed_size = 4;
 }
 
 message ResultChunk {
@@ -562,16 +591,19 @@ message ResultChunk {
     RemoteChunk remote = 3;
   }
   int32 row_count = 4;
-  optional int64 compressed_size = 5;
-  optional int64 uncompressed_size = 6;
 }
 
 message ResultChunksResult {
   repeated ResultChunk chunks = 1;
 }
 
+// Fetch raw result chunks for a query executed on this statement.
+// query_id identifies which query's chunks to return; for single-statement
+// executions this is the query_id from ExecuteQueryResponse, for
+// multi-statement children it is one of the query_ids from MultiStatementResult.
 message StatementResultChunksRequest {
   StatementHandle stmt_handle = 1;
+  string query_id = 2;
 }
 
 message StatementResultChunksResponse {
@@ -718,7 +750,8 @@ service DatabaseDriver {
   // pre-flight validation of connection options - reports all issues at once
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
   // Fetch the result of a previously executed query by Snowflake Query ID
-  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
+  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ExecuteQueryResponse);
+  rpc ConnectionGetResultSet(ConnectionGetResultSetRequest) returns (ResultSetResponse);
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
   // Abort a running query by Snowflake Query ID
   rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
@@ -734,7 +767,8 @@ service DatabaseDriver {
   rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
-  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
+  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (ExecuteQueryResponse);
+  rpc StatementGetResultSet(StatementGetResultSetRequest) returns (ResultSetResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
