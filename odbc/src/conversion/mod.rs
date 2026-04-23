@@ -43,7 +43,9 @@ use arrow::datatypes::{
     Int64Type,
 };
 use snafu::ResultExt;
-pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType};
+pub use traits::{
+    Binding, BindingStrides, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType,
+};
 
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
@@ -78,20 +80,23 @@ pub trait ColumnConverter {
 
     /// Convert each row in `arrow_row_range` into `outputs[i]`, skipping
     /// rows that already hold `Err` (preserving row-major "first error
-    /// aborts the row" semantics). Default impl is per-cell;
+    /// aborts the row" semantics). The per-row `Binding` is materialised
+    /// inline via `BindingStrides::for_row`. Default impl is per-cell;
     /// `Converter<A, T>` overrides it to downcast once per segment.
     fn convert_arrow_range(
         &self,
         array: &dyn Array,
         arrow_row_range: std::ops::Range<usize>,
-        binding_fn: &mut dyn FnMut(usize) -> Binding,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
         outputs: &mut [Result<Warnings, ConversionError>],
     ) {
         for (i, batch_idx) in arrow_row_range.enumerate() {
             if outputs[i].is_err() {
                 continue;
             }
-            let binding = binding_fn(i);
+            let binding = strides.for_row(base_binding, out_row_start + i);
             match self.convert_arrow_value(array, batch_idx, &binding, &mut None) {
                 Ok(w) => {
                     if let Ok(existing) = &mut outputs[i] {
@@ -143,25 +148,18 @@ impl<
             .context(WriteOdbcValueSnafu)
     }
 
-    /// Column-major hot path.
-    ///
-    /// Performs the `Any` downcast exactly once for the whole segment and
-    /// then iterates over rows with statically-dispatched
-    /// [`ReadArrowType`]/[`WriteODBCType`] calls — the compiler inlines
-    /// both through `self.snowflake_type: T`. The only dynamic dispatch
-    /// remaining per fetch is one vtable call per `(column, segment)`
-    /// pair, versus one per cell under the per-row scheme.
-    ///
-    /// If the downcast fails (a schema/converter mismatch that the driver
-    /// would consider a bug) we fall back to the trait's default
-    /// implementation so that each row reports the real downcast error
-    /// through its own `outputs` slot, matching the old per-cell
-    /// behaviour.
+    /// Downcasts `array` once for the whole segment, then iterates rows
+    /// through statically-dispatched `read_arrow_type`/`write_odbc_type`
+    /// — no per-cell vtable, closure, or `Any` cost. Falls back to the
+    /// per-cell default impl on downcast failure so each row reports the
+    /// original error.
     fn convert_arrow_range(
         &self,
         array: &dyn Array,
         arrow_row_range: std::ops::Range<usize>,
-        binding_fn: &mut dyn FnMut(usize) -> Binding,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
         outputs: &mut [Result<Warnings, ConversionError>],
     ) {
         let Some(arrow_array) = array.as_any().downcast_ref::<ArrowArrayType>() else {
@@ -169,7 +167,7 @@ impl<
                 if outputs[i].is_err() {
                     continue;
                 }
-                let binding = binding_fn(i);
+                let binding = strides.for_row(base_binding, out_row_start + i);
                 match self.convert_arrow_value(array, batch_idx, &binding, &mut None) {
                     Ok(w) => {
                         if let Ok(existing) = &mut outputs[i] {
@@ -188,7 +186,7 @@ impl<
             if outputs[i].is_err() {
                 continue;
             }
-            let binding = binding_fn(i);
+            let binding = strides.for_row(base_binding, out_row_start + i);
             let result = self
                 .snowflake_type
                 .read_arrow_type(arrow_array, batch_idx)

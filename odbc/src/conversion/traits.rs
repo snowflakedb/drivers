@@ -76,6 +76,82 @@ pub enum LengthOrNull {
     Length(sql::Len),
 }
 
+/// ARD stride parameters that decide how a base [`Binding`] is laid out
+/// across the rows of a block-cursor fetch. `bind_type` is
+/// `SQL_ATTR_ROW_BIND_TYPE` (0 ⇒ column-wise; non-zero ⇒ row-wise byte
+/// stride); `bind_offset` is the value of `*SQL_ATTR_ROW_BIND_OFFSET_PTR`
+/// at fetch entry. `Copy` so it can be passed by value into the per-row
+/// hot path with no indirection.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BindingStrides {
+    pub bind_type: usize,
+    pub bind_offset: isize,
+}
+
+impl BindingStrides {
+    /// Materialise the [`Binding`] that targets row `row_idx` within the
+    /// application's bound buffers, given the column's `base` binding.
+    /// `#[inline]` so callers in `convert_arrow_range` monomorphise and
+    /// LLVM can hoist the stride math.
+    #[inline]
+    pub fn for_row(self, base: &Binding, row_idx: usize) -> Binding {
+        let value_stride = if self.bind_type == 0 {
+            base.target_type
+                .fixed_size()
+                .unwrap_or(base.buffer_length as usize)
+        } else {
+            self.bind_type
+        };
+        let indicator_stride = if self.bind_type == 0 {
+            size_of::<sql::Len>()
+        } else {
+            self.bind_type
+        };
+        Binding {
+            target_type: base.target_type,
+            target_value_ptr: advance_ptr(
+                base.target_value_ptr,
+                row_idx,
+                value_stride,
+                self.bind_offset,
+            ),
+            buffer_length: base.buffer_length,
+            octet_length_ptr: advance_ptr(
+                base.octet_length_ptr,
+                row_idx,
+                indicator_stride,
+                self.bind_offset,
+            ),
+            indicator_ptr: advance_ptr(
+                base.indicator_ptr,
+                row_idx,
+                indicator_stride,
+                self.bind_offset,
+            ),
+            precision: base.precision,
+            scale: base.scale,
+            datetime_interval_precision: base.datetime_interval_precision,
+        }
+    }
+}
+
+#[inline]
+fn advance_ptr<T>(
+    ptr: *mut T,
+    row_idx: usize,
+    element_stride: usize,
+    bind_offset: isize,
+) -> *mut T {
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let stride = row_idx
+        .checked_mul(element_stride)
+        .expect("row index and element stride multiplication overflowed");
+    let byte_ptr = ptr as *mut u8;
+    unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Binding {
     pub target_type: CDataType,
@@ -445,4 +521,118 @@ pub(crate) trait ReadODBC: SnowflakeType {
 pub(crate) trait WriteJson: SnowflakeType {
     fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError>;
     fn sf_type(&self) -> SnowflakeLogicalType;
+}
+
+#[cfg(test)]
+mod binding_strides_tests {
+    use super::*;
+
+    /// Pointer fields are non-null sentinels but never dereferenced — only
+    /// the address arithmetic produced by `for_row` is checked.
+    fn base_binding(target_type: CDataType, buffer_length: sql::Len) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: 1024usize as sql::Pointer,
+            buffer_length,
+            octet_length_ptr: 2048usize as *mut sql::Len,
+            indicator_ptr: 4096usize as *mut sql::Len,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn column_wise_uses_fixed_size_for_value_stride() {
+        let base = base_binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let row3 = strides.for_row(&base, 3);
+        assert_eq!(row3.target_value_ptr as usize, 1024 + 3 * 8);
+        let len_size = size_of::<sql::Len>();
+        assert_eq!(row3.octet_length_ptr as usize, 2048 + 3 * len_size);
+        assert_eq!(row3.indicator_ptr as usize, 4096 + 3 * len_size);
+    }
+
+    #[test]
+    fn column_wise_falls_back_to_buffer_length_for_variable_size_type() {
+        let base = base_binding(CDataType::Char, 64);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let row5 = strides.for_row(&base, 5);
+        assert_eq!(row5.target_value_ptr as usize, 1024 + 5 * 64);
+    }
+
+    #[test]
+    fn row_wise_uses_bind_type_for_every_pointer_stride() {
+        let base = base_binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 64,
+            bind_offset: 0,
+        };
+        let row2 = strides.for_row(&base, 2);
+        assert_eq!(row2.target_value_ptr as usize, 1024 + 2 * 64);
+        assert_eq!(row2.octet_length_ptr as usize, 2048 + 2 * 64);
+        assert_eq!(row2.indicator_ptr as usize, 4096 + 2 * 64);
+    }
+
+    #[test]
+    fn bind_offset_is_applied_before_striding() {
+        let base = base_binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 32,
+        };
+        let row1 = strides.for_row(&base, 1);
+        assert_eq!(row1.target_value_ptr as usize, 1024 + 32 + 8);
+        let len_size = size_of::<sql::Len>();
+        assert_eq!(row1.octet_length_ptr as usize, 2048 + 32 + len_size);
+        assert_eq!(row1.indicator_ptr as usize, 4096 + 32 + len_size);
+    }
+
+    #[test]
+    fn negative_bind_offset_walks_pointer_back() {
+        let base = base_binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: -16,
+        };
+        let row0 = strides.for_row(&base, 0);
+        assert_eq!(row0.target_value_ptr as usize, 1024 - 16);
+    }
+
+    #[test]
+    fn null_pointers_remain_null_after_adjustment() {
+        let mut base = base_binding(CDataType::SBigInt, 0);
+        base.octet_length_ptr = std::ptr::null_mut();
+        base.indicator_ptr = std::ptr::null_mut();
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 64,
+        };
+        let row7 = strides.for_row(&base, 7);
+        assert!(row7.octet_length_ptr.is_null());
+        assert!(row7.indicator_ptr.is_null());
+        assert_eq!(row7.target_value_ptr as usize, 1024 + 64 + 7 * 8);
+    }
+
+    #[test]
+    fn metadata_fields_are_propagated_unchanged() {
+        let mut base = base_binding(CDataType::Numeric, size_of::<sql::Numeric>() as sql::Len);
+        base.precision = Some(10);
+        base.scale = Some(2);
+        base.datetime_interval_precision = Some(6);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let row4 = strides.for_row(&base, 4);
+        assert_eq!(row4.precision, Some(10));
+        assert_eq!(row4.scale, Some(2));
+        assert_eq!(row4.datetime_interval_precision, Some(6));
+        assert_eq!(row4.target_type, CDataType::Numeric);
+        assert_eq!(row4.buffer_length, base.buffer_length);
+    }
 }

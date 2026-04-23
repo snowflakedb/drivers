@@ -11,7 +11,7 @@ use crate::api::{
 };
 use crate::conversion::warning::Warnings;
 use crate::conversion::{
-    Binding, ColumnConverter, ConversionError, NumericSettings, make_converter,
+    Binding, BindingStrides, ColumnConverter, ConversionError, NumericSettings, make_converter,
 };
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
@@ -37,7 +37,7 @@ fn read_arrow_value(
 
 /// Per-batch cache of converters and `Binding` snapshots for the bound
 /// columns. Built once per `RecordBatch` and reused across the column-major
-/// segments processed by `Converter::convert_arrow_range`, keeping both the
+/// segments processed by `ColumnConverter::convert_arrow_range`, keeping both the
 /// ARD `HashMap` and the per-cell Arrow downcast out of the inner loop.
 struct FetchConverterCache {
     /// `Arc::as_ptr(record_batch.column(0))` when the batch has columns,
@@ -296,10 +296,8 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let mut cache = FetchConverterCache::new();
     let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
 
-    // Single-row fast path: old behaviour propagated the first conversion
-    // error to the caller (rather than marking the row as Error and
-    // returning Ok). We preserve that by funnelling the single row through
-    // the same segment helper but inspecting its outcome here.
+    // Fast path: a single-row fetch propagates the conversion error to
+    // the caller instead of just marking the row as Error.
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut stmt.state)?;
         cache.refresh_if_needed(stmt, &numeric_settings)?;
@@ -329,13 +327,9 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let mut rows_fetched: usize = 0;
     let mut has_error = false;
 
-    // Column-major block-cursor loop. Each iteration advances into the next
-    // available row, then processes as many rows as fit in the current
-    // record batch in a single column-major segment. `advance_cursor`
-    // handles both "move one row inside the current batch" and "load the
-    // next batch" exactly as before; `bump_batch_idx` then skips over the
-    // rest of the segment we just consumed so the next `advance_cursor`
-    // call lands on the following row (or on the next batch).
+    // Column-major block-cursor loop. Each iteration advances into the
+    // next row and then processes as many rows as fit in the current
+    // record batch in a single column-major segment.
     while rows_fetched < array_size {
         match advance_cursor(&mut stmt.state) {
             Ok(()) => {}
@@ -419,10 +413,8 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
         }
         rows_fetched += segment_len;
 
-        // advance_cursor already put us on the first row of this segment; if
-        // we processed more than one row we need to bump batch_idx so the
-        // next advance_cursor call lands on the row after the segment (or
-        // on the next batch when the segment ends exactly at a boundary).
+        // `advance_cursor` already landed on the first row of the segment;
+        // skip the rest so the next call lands on the row after it.
         if segment_len > 1 {
             bump_batch_idx(&mut stmt.state, segment_len - 1);
         }
@@ -451,13 +443,7 @@ fn current_batch_idx(stmt: &Statement) -> usize {
 }
 
 /// Advance `batch_idx` by `delta` rows within the current `RecordBatch`
-/// without crossing a batch boundary.
-///
-/// The caller is responsible for calling this only when the state is
-/// `Fetching` and the current batch has at least `delta` additional rows
-/// remaining. This is the post-condition we guarantee by deriving
-/// `segment_len` from `record_batch.num_rows() - batch_idx` in
-/// [`fetch_impl`].
+/// (caller must ensure the batch has at least `delta` more rows left).
 fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) {
     if delta == 0 {
         return;
@@ -560,80 +546,9 @@ fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus)
     }
 }
 
-fn value_stride(binding: &Binding, bind_type: usize) -> usize {
-    if bind_type == 0 {
-        binding
-            .target_type
-            .fixed_size()
-            .unwrap_or(binding.buffer_length as usize)
-    } else {
-        bind_type
-    }
-}
-
-fn indicator_or_length_stride(bind_type: usize) -> usize {
-    if bind_type == 0 {
-        size_of::<sql::Len>()
-    } else {
-        bind_type
-    }
-}
-
-fn advance_by_element_stride<T>(
-    ptr: *mut T,
-    row_idx: usize,
-    element_stride: usize,
-    bind_offset: isize,
-) -> *mut T {
-    if ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-    let stride = row_idx
-        .checked_mul(element_stride)
-        .expect("row index and element stride multiplication overflowed");
-    let byte_ptr = ptr as *mut u8;
-    unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T }
-}
-
-/// Create an adjusted `Binding` whose pointers target `row_idx` within the
-/// bound arrays, taking into account column-wise vs row-wise binding and an
-/// optional bind offset.
-fn adjust_binding_for_row(
-    binding: &Binding,
-    row_idx: usize,
-    bind_type: usize,
-    bind_offset: isize,
-) -> Binding {
-    Binding {
-        target_type: binding.target_type,
-        target_value_ptr: advance_by_element_stride(
-            binding.target_value_ptr,
-            row_idx,
-            value_stride(binding, bind_type),
-            bind_offset,
-        ),
-        buffer_length: binding.buffer_length,
-        octet_length_ptr: advance_by_element_stride(
-            binding.octet_length_ptr,
-            row_idx,
-            indicator_or_length_stride(bind_type),
-            bind_offset,
-        ),
-        indicator_ptr: advance_by_element_stride(
-            binding.indicator_ptr,
-            row_idx,
-            indicator_or_length_stride(bind_type),
-            bind_offset,
-        ),
-        precision: binding.precision,
-        scale: binding.scale,
-        datetime_interval_precision: binding.datetime_interval_precision,
-    }
-}
-
 /// Column-major hot path for `SQLFetch`/`SQLExtendedFetch`. Iterates over
 /// the cached columns and dispatches each one to
-/// [`Converter::convert_arrow_range`] once for the whole segment, so the
+/// [`ColumnConverter::convert_arrow_range`] once for the whole segment, so the
 /// Arrow downcast and vtable call are paid per `(column, segment)` rather
 /// than per cell. Returns one `Result` per row, preserving the row-major
 /// "first error aborts the row" semantics.
@@ -654,6 +569,10 @@ fn execute_bindings_for_segment(
     };
 
     let arrow_row_range = arrow_start..(arrow_start + segment_len);
+    let strides = BindingStrides {
+        bind_type,
+        bind_offset,
+    };
 
     for cached in &cache.entries {
         // Out-of-range columns were reported once in `refresh_if_needed`.
@@ -661,16 +580,12 @@ fn execute_bindings_for_segment(
             continue;
         };
         let array_ref = record_batch.column(cached.arrow_col);
-        // `cached.binding` is a plain `Copy`; the closure can capture it by
-        // value and compute each output row's adjusted binding on the fly.
-        let base_binding = cached.binding;
-        let mut binding_fn = |i: usize| {
-            adjust_binding_for_row(&base_binding, out_row_start + i, bind_type, bind_offset)
-        };
         converter.convert_arrow_range(
             array_ref.as_ref(),
             arrow_row_range.clone(),
-            &mut binding_fn,
+            &cached.binding,
+            out_row_start,
+            strides,
             &mut outputs,
         );
     }
