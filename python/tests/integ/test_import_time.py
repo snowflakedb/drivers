@@ -48,7 +48,17 @@ class TestImportTime:
                 timeout=30,
             )
             assert result.returncode == 0, f"Import script failed.\nstdout: {result.stdout}\nstderr: {result.stderr}"
-            times.append(float(result.stdout.strip()))
+            elapsed_output = result.stdout.strip()
+            try:
+                elapsed = float(elapsed_output)
+            except ValueError:
+                raise AssertionError(
+                    "Import script produced non-numeric timing output.\n"
+                    f"parsed stdout: {elapsed_output!r}\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                ) from None
+            times.append(elapsed)
 
         mean_elapsed = sum(times) / len(times)
         assert mean_elapsed < _MAX_IMPORT_TIME_SECONDS, (
