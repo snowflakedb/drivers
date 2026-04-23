@@ -56,6 +56,7 @@ Feature: DECFLOAT type support
   #                         JSON result format                                 #
   # =========================================================================== #
 
+  # TODO: Remove once all e2e tests run on both Arrow and JSON result formats.
   @python_e2e
   Scenario: should select decfloat literal with JSON result format
     Given Snowflake client is logged in

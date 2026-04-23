@@ -8,10 +8,15 @@ use std::collections::HashMap;
 
 /// Snowflake's default maximum VARCHAR length (16 MB in characters).
 /// Used as fallback when the server omits length metadata for TEXT columns.
+/// See: https://docs.snowflake.com/en/sql-reference/data-types-text
+///   "If no length is specified, the default is 16777216."
 const DEFAULT_TEXT_LENGTH: u64 = 16_777_216;
 
-/// Multiplier to derive byte_length from character length (UTF-8 max 4 bytes/char).
-const DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER: u64 = 4;
+/// Multiplier to derive byte_length from character length.
+/// The SQL API returns byteLength equal to length for default TEXT columns, e.g.:
+///   {"type":"text", "length":16777216, "byteLength":16777216}
+/// See: https://docs.snowflake.com/en/developer-guide/sql-api/reference
+const DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER: u64 = 1;
 
 /// Response from the `POST /queries/{qid}/abort-request` endpoint.
 #[derive(Debug, Deserialize)]

@@ -173,6 +173,7 @@ class TestDecfloatJsonResultFormat:
     length/byteLength metadata. The driver must handle this gracefully.
     """
 
+    # TODO: Remove this test once all e2e tests run on both Arrow and JSON result formats.
     def test_should_select_decfloat_literal_with_json_result_format(self, connection_factory):
         # Given Snowflake client is logged in
         pass
