@@ -6,7 +6,7 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
-/// Snowflake's default maximum VARCHAR length (16 MB in characters).
+/// Snowflake's default VARCHAR length (16 MB in characters).
 /// Used as fallback when the server omits length metadata for TEXT columns.
 /// See: https://docs.snowflake.com/en/sql-reference/data-types-text
 ///   "If no length is specified, the default is 16777216."
