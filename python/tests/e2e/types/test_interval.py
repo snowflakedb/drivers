@@ -53,7 +53,6 @@ LARGE_RESULT_SET_SIZE = 50_000
 class TestIntervalTypeCasting:
     """Tests for INTERVAL type casting to appropriate Python types."""
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_cast_interval_values_to_appropriate_type_for_year_to_month_and_day_to_second(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -89,7 +88,6 @@ class TestIntervalLiteral:
 
     # ---- YEAR TO MONTH family ----
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_to_month_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -108,7 +106,6 @@ class TestIntervalLiteral:
         assert_type(result, str)
         assert result == ("+0-00", "+1-02", "-1-03", "+999999999-11", "-999999999-11")
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -125,7 +122,6 @@ class TestIntervalLiteral:
         assert_type(result, str)
         assert result == ("+0", "+1", "-1", "+999999999", "-999999999")
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_month_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -458,7 +454,6 @@ class TestIntervalLiteral:
 class TestIntervalTable:
     """Tests for INTERVAL types using table operations."""
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_to_month_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         pass
@@ -514,7 +509,6 @@ class TestIntervalTable:
             None,
         ]
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_2_to_month_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         pass
@@ -538,7 +532,6 @@ class TestIntervalTable:
         # Then the result should contain the inserted INTERVAL YEAR(2) TO MONTH values in order
         assert result == ["-99-11", "-1-03", "+0-00", "+1-02", "+99-11", None]
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_7_to_month_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         pass
@@ -605,7 +598,6 @@ class TestIntervalBinding:
 
     # ---- INSERT + SELECT back ----
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_insert_and_select_back_interval_year_to_month_values_using_parameter_binding(
         self, execute_query, executemany_insert, tmp_schema
     ):
@@ -667,7 +659,6 @@ class TestIntervalBinding:
 
     # ---- SELECT with cast ----
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_to_month_values_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -711,7 +702,6 @@ class TestIntervalBinding:
 
     # ---- Sub-type SELECT bindings (YEAR TO MONTH family) ----
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_year_values_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -724,7 +714,6 @@ class TestIntervalBinding:
         # Then the result should contain expected INTERVAL YEAR bound values in order
         assert result == ("+0", "+2", "-999999999")
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_select_interval_month_values_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -915,7 +904,6 @@ class TestIntervalBinding:
 class TestIntervalMultipleChunks:
     """Tests for downloading INTERVAL data across multiple result chunks."""
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_download_interval_year_to_month_data_in_multiple_chunks(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -1004,7 +992,6 @@ class TestIntervalArithmetic:
         expected = datetime(2027, 3, 30, 7, 31, 32, 841505)
         assert result[0] == expected
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_add_two_interval_year_to_month_values(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -1028,7 +1015,6 @@ class TestIntervalArithmetic:
         # Then the result should contain expected INTERVAL DAY TO SECOND value '1 4:15:30.500000'
         assert result[0] == timedelta(days=1, hours=4, minutes=15, seconds=30, microseconds=500000)
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_negate_an_interval_value(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -1042,7 +1028,6 @@ class TestIntervalArithmetic:
         assert result[0] == "-1-06"
         assert result[1] == -timedelta(days=3, hours=12)
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_subtract_two_interval_values(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -1059,7 +1044,6 @@ class TestIntervalArithmetic:
         assert result[0] == "+1-02"
         assert result[1] == timedelta(days=1, hours=2, minutes=30)
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_multiply_interval_by_a_scalar(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -1073,7 +1057,6 @@ class TestIntervalArithmetic:
         assert result[0] == "+1-06"
         assert result[1] == timedelta(days=2)
 
-    @pytest.mark.skip_universal(reason="TODO: scale-aware year-month interval formatting")
     def test_should_divide_interval_by_a_scalar(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -1086,8 +1069,3 @@ class TestIntervalArithmetic:
         # Then the result should contain expected INTERVAL values '0-6' and '1 0:0:0.000000'
         assert result[0] == "+0-06"
         assert result[1] == timedelta(days=1)
-
-
-# =============================================================================
-# HELPERS
-# =============================================================================
