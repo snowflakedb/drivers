@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
+
 from collections.abc import Iterable
 from datetime import datetime
 from math import isinf, isnan
+
+
+def parse_geojson(value):
+    """Parse a GeoJSON string value returned by Snowflake, returning None for SQL NULLs."""
+    if value is None:
+        return None
+    return json.loads(value)
 
 
 # Minimum normalized positive value (smallest normal number)
