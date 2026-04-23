@@ -21,7 +21,7 @@ jobs:
     outputs:
       sf-core-matrix: ${{ steps.expand.outputs.sf-core-matrix }}
       cibw-matrix: ${{ steps.expand.outputs.cibw-matrix }}
-      wheel-matrix: ${{ steps.expand.outputs.wheel-matrix }}
+      win-arm-matrix: ${{ steps.expand.outputs.win-arm-matrix }}
     steps:
       - name: Expand targets into build matrices
         id: expand
@@ -106,12 +106,12 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"sf-core-matrix={json.dumps(sf_core)}\n")
               f.write(f"cibw-matrix={json.dumps(cibw)}\n")
-              f.write(f"wheel-matrix={json.dumps(wheel)}\n")
+              f.write(f"win-arm-matrix={json.dumps(wheel)}\n")
 
           # Log for debugging
           print("sf-core-matrix:", json.dumps(sf_core, indent=2))
           print("cibw-matrix:", json.dumps(cibw, indent=2))
-          print("wheel-matrix:", json.dumps(wheel, indent=2))
+          print("win-arm-matrix:", json.dumps(wheel, indent=2))
 
   # ── Build sf_core (Rust shared library) ────────────────────────────
   # One build per target platform. Python-version-independent.
@@ -260,11 +260,11 @@ jobs:
   # ── Build wheels manually per (os, py) pair (Windows ARM64) ────────
   build_wheel:
     needs: [configure, build_sf_core]
-    if: fromJSON(needs.configure.outputs.wheel-matrix)[0] != null
+    if: fromJSON(needs.configure.outputs.win-arm-matrix)[0] != null
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.configure.outputs.wheel-matrix) }}
+        include: ${{ fromJSON(needs.configure.outputs.win-arm-matrix) }}
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
