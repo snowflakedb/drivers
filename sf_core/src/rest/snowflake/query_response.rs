@@ -572,7 +572,7 @@ impl TryFrom<&RowType> for query_types::RowType {
                 let length = value.length.unwrap_or(DEFAULT_TEXT_LENGTH);
                 let byte_length = value
                     .byte_length
-                    .unwrap_or(length * DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER);
+                    .unwrap_or(length.saturating_mul(DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER));
 
                 Ok(query_types::RowType::text(
                     &name,
@@ -1229,10 +1229,22 @@ mod tests {
             _fields: None,
         };
 
-        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
-        assert!(
-            result.is_ok(),
-            "TEXT column without length should use defaults, not fail"
-        );
+        let result: crate::query_types::RowType = (&row_type)
+            .try_into()
+            .expect("TEXT column without length should use defaults, not fail");
+        match result {
+            crate::query_types::RowType::Text {
+                length,
+                byte_length,
+                ..
+            } => {
+                assert_eq!(length, DEFAULT_TEXT_LENGTH);
+                assert_eq!(
+                    byte_length,
+                    DEFAULT_TEXT_LENGTH.saturating_mul(DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER)
+                );
+            }
+            _ => panic!("Expected RowType::Text"),
+        }
     }
 }

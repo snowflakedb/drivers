@@ -179,17 +179,16 @@ class TestDecfloatJsonResultFormat:
 
         # And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
         with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
-            cursor = conn.cursor()
+            with conn.cursor() as cursor:
+                # When Query "SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value" is executed
+                cursor.execute("SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value")
+                row = cursor.fetchone()
 
-            # When Query "SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value" is executed
-            cursor.execute("SELECT CAST('1234.56789012345678901234567890' AS DECFLOAT) AS test_value")
-            row = cursor.fetchone()
-
-            # Then Result should be returned as appropriate type with value 1234.56789012345678901234567890
-            assert row is not None
-            value = row[0]
-            assert isinstance(value, (Decimal, str)), f"Expected Decimal or str, got {type(value)}"
-            assert Decimal(str(value)) == Decimal("1234.56789012345678901234567890")
+                # Then Result should be returned as appropriate type with value 1234.56789012345678901234567890
+                assert row is not None
+                value = row[0]
+                assert isinstance(value, (Decimal, str)), f"Expected Decimal or str, got {type(value)}"
+                assert Decimal(str(value)) == Decimal("1234.56789012345678901234567890")
 
 
 class TestDecfloatTable:
