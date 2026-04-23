@@ -144,14 +144,16 @@ jobs:
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+          # --timeout 120: Gherkin-required logout tests sleep 50s; tarpaulin's
+          # ptrace default (60s) kills idle processes too early on Linux.
+          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --timeout 120 --out lcov --output-dir .
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
       - name: Rerun tests with coverage
         if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --timeout 120 --out lcov --output-dir .
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
       - name: Save Rust cache
