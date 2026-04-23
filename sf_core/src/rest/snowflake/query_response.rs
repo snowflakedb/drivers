@@ -1167,6 +1167,98 @@ mod tests {
     }
 
     #[test]
+    fn test_fixed_missing_precision_returns_error() {
+        let row_type = RowType {
+            name: "num_col".to_string(),
+            type_: "FIXED".to_string(),
+            nullable: false,
+            scale: Some(2),
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("precision"),
+                "Error should mention missing precision: {err}"
+            ),
+            Ok(_) => panic!("Expected error for FIXED column without precision"),
+        }
+    }
+
+    #[test]
+    fn test_fixed_missing_scale_returns_error() {
+        let row_type = RowType {
+            name: "num_col".to_string(),
+            type_: "FIXED".to_string(),
+            nullable: false,
+            scale: None,
+            precision: Some(38),
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("scale"),
+                "Error should mention missing scale: {err}"
+            ),
+            Ok(_) => panic!("Expected error for FIXED column without scale"),
+        }
+    }
+
+    #[test]
+    fn test_binary_missing_length_returns_error() {
+        let row_type = RowType {
+            name: "bin_col".to_string(),
+            type_: "BINARY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: Some(100),
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("length"),
+                "Error should mention missing length: {err}"
+            ),
+            Ok(_) => panic!("Expected error for BINARY column without length"),
+        }
+    }
+
+    #[test]
+    fn test_binary_missing_byte_length_returns_error() {
+        let row_type = RowType {
+            name: "bin_col".to_string(),
+            type_: "BINARY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: Some(100),
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("byte length"),
+                "Error should mention missing byte length: {err}"
+            ),
+            Ok(_) => panic!("Expected error for BINARY column without byte_length"),
+        }
+    }
+
+    #[test]
     fn test_query_context_entry_id_exceeding_i32_max() {
         let json = r#"{
             "data": {
