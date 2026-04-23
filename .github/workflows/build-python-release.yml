@@ -54,10 +54,10 @@ jobs:
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
 
-      - name: Download wheels
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: python-wheels-linux-x86_64
+          name: manylinux_x86_64_py${{ matrix.py }}
           path: python/dist
 
       - name: Decode secrets
