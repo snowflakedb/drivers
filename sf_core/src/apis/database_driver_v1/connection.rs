@@ -19,7 +19,7 @@ use super::validation::{
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
-use crate::config::logout::LogoutConfig;
+use crate::config::logout::{ErrorStrategy, LogoutConfig};
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
@@ -1522,23 +1522,22 @@ impl DatabaseDriverV1 {
 
     /// Close a connection and optionally send logout request.
     ///
-    /// Behavior depends on `config.error_strategy`:
+    /// Logout config is the init-time `LogoutConfig` merged with the optional
+    /// close-time overrides supplied here (any `None` override leaves the init-time
+    /// value unchanged). Error handling follows `config.error_strategy`:
     /// - `Strict`: surface errors to the caller (close() may fail)
     /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
-    ///
-    /// Close the connection using logout configuration set during initialization.
-    ///
-    /// Logout behavior is determined by connection fields set via ConnectionSetOption*:
-    /// - `server_session_keep_alive`: Control server session lifecycle
-    /// - `enable_server_session_keep_alive_auto_detection`: Enable async query detection
-    /// - `logout_error_strategy`: Error handling (Strict or BestEffort)
-    /// - `logout_total_timeout`: Total timeout budget
-    /// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)
-    /// - `logout_request_timeout`: Per-request timeout
-    ///
-    /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
-    /// which configure logout behavior at connection initialization, not at close time.
-    pub async fn connection_close(&self, conn_handle: Handle) -> Result<(), ApiError> {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn connection_close(
+        &self,
+        conn_handle: Handle,
+        server_session_keep_alive: Option<bool>,
+        enable_server_session_keep_alive_auto_detection: Option<bool>,
+        error_strategy: Option<ErrorStrategy>,
+        logout_total_timeout_seconds: Option<i32>,
+        max_attempts: Option<i32>,
+        logout_request_timeout_seconds: Option<i32>,
+    ) -> Result<(), ApiError> {
         let conn_ptr = self
             .connections
             .get_obj(conn_handle)
@@ -1560,14 +1559,19 @@ impl DatabaseDriverV1 {
                 // Return None to signal early exit after the block
                 None
             } else {
-                // Re-derive logout config from connection_seed at close()-time so
-                // post-init overrides (e.g. retry=False sets logout_max_attempts=1)
-                // take effect. Falls back to init-time defaults for unset keys.
-                let config = LogoutConfig::from_settings(&conn.connection_seed)
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
-                        conn.logout_config.clone()
-                    });
+                // Merge close-time overrides into the frozen init-time config.
+                // Any None override leaves the init-time value unchanged.
+                let config = conn
+                    .logout_config
+                    .merge_with_request(
+                        server_session_keep_alive,
+                        enable_server_session_keep_alive_auto_detection,
+                        error_strategy,
+                        logout_total_timeout_seconds,
+                        max_attempts,
+                        logout_request_timeout_seconds,
+                    )
+                    .context(ConfigurationSnafu)?;
                 let error_strategy = config.error_strategy;
 
                 // TODO: SNOW-2912513 - Record telemetry for logout decision

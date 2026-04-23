@@ -52,7 +52,6 @@ from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
-    LogoutOptionKeys,
     remap_keep_alive_phase2,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
@@ -375,9 +374,8 @@ class Connection:
         """
         Close the connection, send logout, and release handles.
 
-        Args:
-            retry: If False, overrides max_attempts to 1 (no retries) before closing.
-                   If True (default), uses init-time configuration.
+            retry: If False, passes max_attempts=1 (no retries) atomically in the close
+                   request. If True (default), uses init-time configuration.
 
         Thread-safety: the lock guards only the handle swap (nanoseconds, no I/O).
         All FFI calls use local handle copies outside the lock, so concurrent
@@ -401,16 +399,15 @@ class Connection:
         # failure, or set_options failure.
         try:
             if conn_handle:
-                if not retry:
-                    self.db_api.connection_set_options(
-                        ConnectionSetOptionsRequest(
-                            conn_handle=conn_handle,
-                            options=_build_config_settings({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
-                        )
+                # Logout + mark closed in Core (network I/O, bounded by Core's timeout).
+                # Close-time overrides are passed atomically in the request — no
+                # separate connection_set_options RPC needed.
+                self.db_api.connection_close(
+                    ConnectionCloseRequest(
+                        conn_handle=conn_handle,
+                        max_attempts=1 if not retry else None,
                     )
-
-                # Logout + mark closed in Core (network I/O, bounded by Core's timeout)
-                self.db_api.connection_close(ConnectionCloseRequest(conn_handle=conn_handle))
+                )
         finally:
             # Release handles in Core's object store.
             # Separated from connection_close for future connection pooling.
