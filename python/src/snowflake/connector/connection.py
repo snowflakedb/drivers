@@ -10,6 +10,7 @@ import atexit
 import logging
 import platform
 import re
+import threading
 import warnings
 
 from collections.abc import Generator, Iterable
@@ -289,6 +290,7 @@ class Connection:
         )
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
+        self._close_lock = threading.Lock()
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
@@ -359,31 +361,46 @@ class Connection:
         Args:
             retry: If False, overrides max_attempts to 1 (no retries) before closing.
                    If True (default), uses init-time configuration.
+
+        Thread-safety: the lock guards only the handle swap (nanoseconds, no I/O).
+        All FFI calls use local handle copies outside the lock, so concurrent
+        close() calls are safe — the second caller gets None handles and skips.
         """
         atexit.unregister(self._close_at_process_exit)
 
+        # Fast path — Core query, no lock. Core marks is_closed=true via AtomicBool
+        # at the START of connection_close (before HTTP logout), so this returns True
+        # even while another thread's logout is still in-flight.
         if self.is_closed():
             return
 
-        if not retry:
-            single_attempt_no_retry = 1  # 1 total attempt = no retries
-            self.db_api.connection_set_options(
-                ConnectionSetOptionsRequest(
-                    conn_handle=self.conn_handle,
-                    options=_build_config_settings({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: single_attempt_no_retry}),
-                )
-            )
+        # Lock guards ONLY the handle swap — prevents concurrent double-release.
+        with self._close_lock:
+            conn_handle, self.conn_handle = self.conn_handle, None
+            db_handle, self.db_handle = self.db_handle, None
 
-        # Logout + mark closed atomically in Core
-        self.db_api.connection_close(
-            ConnectionCloseRequest(
-                conn_handle=self.conn_handle,
-            )
-        )
+        # All I/O outside the lock, using local handle copies.
+        # try/finally ensures handles are always released — on success, Strict
+        # failure, or set_options failure.
+        try:
+            if conn_handle:
+                if not retry:
+                    self.db_api.connection_set_options(
+                        ConnectionSetOptionsRequest(
+                            conn_handle=conn_handle,
+                            options=_build_config_settings({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
+                        )
+                    )
 
-        # Release handles (frees memory in Core's object store)
-        self._release_connection_handle()
-        self._release_database_handle()
+                # Logout + mark closed in Core (network I/O, bounded by Core's timeout)
+                self.db_api.connection_close(ConnectionCloseRequest(conn_handle=conn_handle))
+        finally:
+            # Release handles in Core's object store.
+            # Separated from connection_close for future connection pooling.
+            if conn_handle:
+                self._release_connection_handle(conn_handle)
+            if db_handle:
+                self._release_database_handle(db_handle)
 
     def _try_close(self) -> None:
         """Best-effort close for __del__ and atexit — never raises."""
@@ -410,17 +427,17 @@ class Connection:
         if self._should_auto_cleanup():
             self._try_close()
 
-    def _release_connection_handle(self) -> None:
+    def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
         """Release the Rust-side connection handle."""
         try:
-            self.db_api.connection_release(ConnectionReleaseRequest(conn_handle=self.conn_handle))
+            self.db_api.connection_release(ConnectionReleaseRequest(conn_handle=conn_handle))
         except Exception:
             logger.warning("Failed to release connection handle", exc_info=True)
 
-    def _release_database_handle(self) -> None:
+    def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
         """Release the Rust-side database handle."""
         try:
-            self.db_api.database_release(DatabaseReleaseRequest(db_handle=self.db_handle))
+            self.db_api.database_release(DatabaseReleaseRequest(db_handle=db_handle))
         except Exception:
             logger.warning("Failed to release database handle", exc_info=True)
 
