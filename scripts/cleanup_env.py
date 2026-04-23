@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Remove orphaned PATs created by this CI build.
+"""Snowflake test resource cleanup using parameters.json.
 
-Safety net for when in-process teardown (Rust Drop, Python finally,
-C++ destructors) doesn't execute — e.g. when a build is aborted or
-killed by a timeout.
+**PAT cleanup** — remove orphaned programmatic access tokens for one CI build
+(when in-process teardown does not run, e.g. aborted job):
 
-Connects to Snowflake using parameters.json and removes any
-PROGRAMMATIC ACCESS TOKENs whose name matches the UD_* prefix
-for the given build tag (e.g. UD_RUST_JNK_988_a3f2b1c0).
+    python3 scripts/cleanup_env.py \\
+        --parameter-path ./parameters.json --build-tag JNK_988
 
-Usage:
-    python3 scripts/cleanup_test_pats.py \
-        --parameter-path ./parameters.json \
-        --build-tag JNK_988
+**Stale schema cleanup** — drop non-system schemas in the session database that
+are older than ``--age-days`` and owned by the test login or ``SNOWFLAKE_TEST_ROLE``
+(excludes ``INFORMATION_SCHEMA``, ``PUBLIC``, and ``SNOWFLAKE_TEST_SCHEMA`` when set):
+
+    python3 scripts/cleanup_env.py \\
+        --cleanup-stale-schemas --parameter-path ./parameters.json --age-days 2
 """
 
 import argparse
@@ -24,6 +24,10 @@ import sys
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("pat-cleanup")
+
+
+def _snowflake_quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
 
 
 def ensure_snowflake_connector():
@@ -155,9 +159,80 @@ def _matches_build_tag(pat_name, build_tag):
     return remainder.startswith(tag_upper + "_")
 
 
+def cleanup_stale_owned_schemas(conn_kwargs, params, age_days, dry_run):
+    """Drop schemas in the session database that are old and owned by test user or role."""
+    import snowflake.connector
+
+    user = conn_kwargs.get("user")
+    role = conn_kwargs.get("role")
+    owner_parts = ["UPPER(TRIM(SCHEMA_OWNER)) = UPPER(TRIM(%s))"]
+    owner_binds: list = [user]
+    if role:
+        owner_parts.append("UPPER(TRIM(SCHEMA_OWNER)) = UPPER(TRIM(%s))")
+        owner_binds.append(role)
+    owner_sql = "(" + " OR ".join(owner_parts) + ")"
+
+    preserve = params.get("SNOWFLAKE_TEST_SCHEMA")
+    preserve_sql = ""
+    preserve_bind: tuple = ()
+    if preserve and str(preserve).strip():
+        preserve_sql = " AND UPPER(TRIM(SCHEMA_NAME)) <> UPPER(TRIM(%s))"
+        preserve_bind = (str(preserve).strip(),)
+
+    list_sql = (
+        "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE "
+        + owner_sql
+        + " AND CREATED < DATEADD(day, -%s, CURRENT_TIMESTAMP())"
+        + " AND UPPER(TRIM(SCHEMA_NAME)) <> 'INFORMATION_SCHEMA'"
+        + " AND UPPER(TRIM(SCHEMA_NAME)) <> 'PUBLIC'"
+        + preserve_sql
+        + " ORDER BY CREATED"
+    )
+    list_binds = tuple(owner_binds) + (age_days,) + preserve_bind
+
+    log.info(
+        "Listing schemas older than %s day(s) owned by user=%r role=%r "
+        "(excluding INFORMATION_SCHEMA, PUBLIC%s)",
+        age_days,
+        user,
+        role,
+        f", default schema {preserve!r}" if preserve_bind else "",
+    )
+
+    with snowflake.connector.connect(**conn_kwargs) as conn:
+        with conn.cursor() as cur:
+            cur.execute(list_sql, list_binds)
+            rows = [r[0] for r in cur.fetchall()]
+
+        if not rows:
+            log.info("No stale owned schemas found")
+            return
+
+        log.info("Found %d candidate schema(s)", len(rows))
+
+        dropped = 0
+        for name in rows:
+            if dry_run:
+                log.info("Would drop: %s", name)
+                continue
+            with conn.cursor() as cur:
+                try:
+                    qn = _snowflake_quote_ident(name)
+                    cur.execute(f"DROP SCHEMA IF EXISTS {qn} CASCADE")
+                    dropped += 1
+                    log.info("Dropped %s", name)
+                except Exception as e:
+                    log.warning("Failed to drop %s: %s", name, e)
+
+    if dry_run:
+        log.info("Dry run complete (%d schema(s) in list)", len(rows))
+    else:
+        log.info("Schema cleanup done: dropped %d schema(s)", dropped)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Remove orphaned PATs created by a CI build"
+        description="Clean up Snowflake test PATs and/or stale owned schemas (parameters.json)"
     )
     parser.add_argument(
         "--parameter-path",
@@ -165,13 +240,56 @@ def main():
         help="Path to decoded parameters.json (default: $PARAMETER_PATH or parameters.json)",
     )
     parser.add_argument(
+        "--cleanup-stale-schemas",
+        action="store_true",
+        help=(
+            "Drop schemas in the session database older than --age-days that are "
+            "owned by the test user or role (not PAT cleanup)"
+        ),
+    )
+    parser.add_argument(
+        "--age-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="With --cleanup-stale-schemas: drop schemas older than N days (default: 2)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --cleanup-stale-schemas: list schemas only, do not drop",
+    )
+    parser.add_argument(
         "--build-tag",
         help=(
-            "CI build tag to match, e.g. JNK_988 or BK_1234. "
+            "For PAT cleanup: CI build tag, e.g. JNK_988 or BK_1234. "
             "Auto-detected from environment if not provided."
         ),
     )
     args = parser.parse_args()
+
+    if args.dry_run and not args.cleanup_stale_schemas:
+        parser.error("--dry-run is only valid with --cleanup-stale-schemas")
+
+    if args.age_days is not None and not args.cleanup_stale_schemas:
+        parser.error("--age-days requires --cleanup-stale-schemas")
+
+    if not os.path.exists(args.parameter_path):
+        log.error("Parameters file not found: %s", args.parameter_path)
+        sys.exit(1)
+
+    ensure_snowflake_connector()
+
+    params = load_parameters(args.parameter_path)
+    conn_kwargs = build_connection_kwargs(params)
+
+    if args.cleanup_stale_schemas:
+        age_days = 2 if args.age_days is None else args.age_days
+        if age_days < 0:
+            log.error("--age-days must be non-negative")
+            sys.exit(1)
+        cleanup_stale_owned_schemas(conn_kwargs, params, age_days, args.dry_run)
+        return
 
     build_tag = args.build_tag
     if not build_tag:
@@ -192,15 +310,6 @@ def main():
             sys.exit(1)
 
     log.info("Build tag: %s", build_tag)
-
-    if not os.path.exists(args.parameter_path):
-        log.error("Parameters file not found: %s", args.parameter_path)
-        sys.exit(1)
-
-    ensure_snowflake_connector()
-
-    params = load_parameters(args.parameter_path)
-    conn_kwargs = build_connection_kwargs(params)
     cleanup_pats(conn_kwargs, build_tag)
 
 

@@ -637,7 +637,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_test_pats.py \
+          python scripts/cleanup_env.py \
             --parameter-path "${{ github.workspace }}/parameters.json"
 
       - name: Cleanup orphaned test schemas
