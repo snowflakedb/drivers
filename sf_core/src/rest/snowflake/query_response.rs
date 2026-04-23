@@ -228,11 +228,11 @@ pub struct FieldMetadata {
     #[serde(rename = "nullable")]
     _nullable: bool,
     #[serde(rename = "length")]
-    _length: i32,
+    _length: Option<i32>,
     #[serde(rename = "scale")]
-    _scale: i32,
+    _scale: Option<i32>,
     #[serde(rename = "precision")]
-    _precision: i32,
+    _precision: Option<i32>,
     #[serde(rename = "fields")]
     _fields: Option<Vec<FieldMetadata>>,
 }
