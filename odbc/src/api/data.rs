@@ -47,7 +47,6 @@ struct FetchConverterCache {
 }
 
 struct CachedColumn {
-    column_number: u16,
     /// `usize::MAX` sentinels an out-of-range column (logged + skipped).
     arrow_col: usize,
     /// Snapshot of the ARD `Binding` so the inner loop never touches the
@@ -81,7 +80,11 @@ impl FetchConverterCache {
             std::sync::Arc::as_ptr(&record_batch.schema()) as *const ()
         };
 
-        if identity == self.batch_identity && !self.entries.is_empty() {
+        // `batch_identity` is null after `new()` and only set to a real
+        // `Arc::as_ptr` after a successful rebuild, so it doubles as the
+        // "have we ever populated this cache?" sentinel — no extra check
+        // needed for the empty-bindings case.
+        if identity == self.batch_identity {
             return Ok(());
         }
 
@@ -90,20 +93,29 @@ impl FetchConverterCache {
         self.entries.reserve(stmt.ard.bindings.len());
 
         for (&column_number, binding) in &stmt.ard.bindings {
-            let arrow_col = column_number as usize - 1;
-            if arrow_col >= schema.fields().len() {
-                self.entries.push(CachedColumn {
+            // ODBC reserves column 0 for bookmarks; `checked_sub` also guards
+            // debug-mode panics if `SQLBindCol` accepted a 0.
+            let arrow_col = (column_number as usize).checked_sub(1);
+            let in_range = arrow_col.is_some_and(|idx| idx < schema.fields().len());
+            if !in_range {
+                // Log once per batch rebuild, not once per fetched row.
+                tracing::error!(
+                    "fetch converter cache: column_number {} is out of range \
+                     (schema has {} columns)",
                     column_number,
+                    schema.fields().len(),
+                );
+                self.entries.push(CachedColumn {
                     arrow_col: usize::MAX,
                     binding: *binding,
                     converter: None,
                 });
                 continue;
             }
+            let arrow_col = arrow_col.unwrap();
             let field = schema.field(arrow_col);
             let converter = make_converter(field, numeric_settings).context(ConversionSnafu)?;
             self.entries.push(CachedColumn {
-                column_number,
                 arrow_col,
                 binding: *binding,
                 converter: Some(converter),
@@ -322,6 +334,10 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                     }
                     write_row_status(row_status_ptr, row_idx, RowStatus::Error);
                     has_error = true;
+                    // Errored rows count toward `SQL_ATTR_ROWS_FETCHED_PTR`
+                    // per the ODBC spec, so the row-status array and the
+                    // reported count stay consistent.
+                    rows_fetched += 1;
                     for remaining in (row_idx + 1)..array_size {
                         write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                     }
@@ -356,6 +372,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 }
                 write_row_status(row_status_ptr, row_idx, RowStatus::Error);
                 has_error = true;
+                rows_fetched += 1;
                 for remaining in (row_idx + 1)..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
@@ -534,13 +551,7 @@ fn execute_bindings_for_row(
         let batch_idx = *batch_idx;
 
         for cached in &cache.entries {
-            if cached.arrow_col == usize::MAX {
-                tracing::error!(
-                    "execute_bindings_for_row: column_number {} is out of range",
-                    cached.column_number
-                );
-                continue;
-            }
+            // Out-of-range columns were reported once in `refresh_if_needed`.
             let Some(converter) = cached.converter.as_deref() else {
                 continue;
             };
