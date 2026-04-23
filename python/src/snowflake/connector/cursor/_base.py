@@ -96,6 +96,26 @@ def _requires_open(func: F) -> F:
     return cast(F, wrapper)
 
 
+def _requires_open_cursor_not_connection(func: F) -> F:
+    """Guard that only checks ``self._closed``, ignoring the connection state.
+
+    Unlike ``_requires_open`` (which delegates to ``is_closed()`` and therefore
+    also rejects cursors whose *connection* has been closed), this decorator
+    deliberately skips the connection check.  This preserves backward
+    compatibility with the old driver, where fetch methods on a cursor with
+    already-buffered results still worked after ``connection.close()``.
+    """
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self._closed:
+            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
+
+
 def _with_prefetch_hook(func: F) -> F:
     """Invoke the cursor's prefetch hook (if set) before entering the wrapped method."""
 
@@ -769,7 +789,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Fetch – shared implementation
     # ------------------------------------------------------------------
 
-    @_requires_open
+    @_requires_open_cursor_not_connection
     @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
@@ -793,7 +813,7 @@ class SnowflakeCursorBase(abc.ABC):
         """Fetch the next row of a query result set."""
 
     @pep249
-    @_requires_open
+    @_requires_open_cursor_not_connection
     @_requires_fetch_mode(FetchMode.ROW)
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
@@ -824,7 +844,7 @@ class SnowflakeCursorBase(abc.ABC):
         return rows
 
     @pep249
-    @_requires_open
+    @_requires_open_cursor_not_connection
     @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
     def fetchall(self) -> list[Any]:
@@ -993,6 +1013,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         return self._closed or self._connection.is_closed()
 
+    @_requires_open_cursor_not_connection
     def reset(self, closing: bool = False) -> None:
         """Reset the result set.
 

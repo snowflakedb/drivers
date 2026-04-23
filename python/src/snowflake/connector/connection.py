@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import atexit
+import functools
 import logging
 import platform
 import re
@@ -16,7 +17,7 @@ import warnings
 from collections.abc import Generator, Iterable
 from functools import cached_property
 from io import StringIO
-from typing import Any, Callable, Union
+from typing import Any, Callable, TypeVar, Union, cast
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -58,7 +59,7 @@ from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
-from .errors import Error, InterfaceError, ProgrammingError
+from .errors import DatabaseError, Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
 from .version import __version__
 
@@ -155,6 +156,22 @@ def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
         elif isinstance(value, bytes):
             options[key] = ConfigSetting(bytes_value=value)
     return options
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _requires_open(func: F) -> F:
+    """Raise ``DatabaseError`` if the connection is closed (mirrors old driver behavior)."""
+    # TODO: it should rather raise InterfaceError, consider to align with the cursor
+
+    @functools.wraps(func)
+    def wrapper(self: Connection, *args: Any, **kwargs: Any) -> Any:
+        if self.is_closed():
+            raise DatabaseError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
 
 
 class Connection:
@@ -491,6 +508,7 @@ class Connection:
         self._messages = value
 
     @pep249
+    @_requires_open
     def commit(self) -> None:
         """Commit any pending transaction to the database."""
         cur = self.cursor()
@@ -500,6 +518,7 @@ class Connection:
             cur.close()
 
     @pep249
+    @_requires_open
     def rollback(self) -> None:
         """Roll back to the start of any pending transaction."""
         cur = self.cursor()
@@ -509,6 +528,7 @@ class Connection:
             cur.close()
 
     @pep249
+    @_requires_open
     def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
         """
         Return a new Cursor object using the connection.
@@ -520,12 +540,7 @@ class Connection:
         Returns:
             SnowflakeCursorBase: A new cursor object
         """
-        self._check_not_closed()
         return cursor_class(self)
-
-    def _check_not_closed(self) -> None:
-        if self.is_closed():
-            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
 
     # Context manager support
     def __enter__(self) -> Connection:
@@ -956,6 +971,8 @@ class Connection:
 
     def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
         """Fetch query status from the server and map the status name to a QueryStatus enum value."""
+        if self.is_closed():
+            return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
         response = self.db_api.connection_get_query_status(
             ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sf_qid)
         )

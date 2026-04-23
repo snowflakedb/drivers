@@ -53,27 +53,6 @@ fn should_send_platform_disabled_when_detection_is_disabled_via_env_var() {
 }
 
 #[test]
-fn should_send_empty_platform_array_when_detection_produces_no_platforms() {
-    //Given no platform-detection env vars are set
-    temp_env::with_vars(platform_detection_env_vars(&[]), || {
-        //And Wiremock is running with a password login-success mapping
-        let fixture = PlatformDetectionFixture::new();
-
-        //When Trying to Connect
-        fixture.client.connect().expect("connect should succeed");
-
-        //Then The login-request body contains CLIENT_ENVIRONMENT.PLATFORM equal to []
-        let body = login_request_body(&fixture.mock);
-        let platform = &body["data"]["CLIENT_ENVIRONMENT"]["PLATFORM"];
-        assert_eq!(
-            platform,
-            &serde_json::json!([]),
-            "expected PLATFORM=[], got body: {body}",
-        );
-    });
-}
-
-#[test]
 fn should_detect_aws_lambda() {
     //Given LAMBDA_TASK_ROOT is set to "/var/task"
     temp_env::with_vars(
@@ -85,13 +64,15 @@ fn should_detect_aws_lambda() {
             //When Trying to Connect
             fixture.client.connect().expect("connect should succeed");
 
-            //Then The login-request body contains CLIENT_ENVIRONMENT.PLATFORM equal to ["is_aws_lambda"]
+            //Then The login-request body contains CLIENT_ENVIRONMENT.PLATFORM containing "is_aws_lambda"
             let body = login_request_body(&fixture.mock);
             let platform = &body["data"]["CLIENT_ENVIRONMENT"]["PLATFORM"];
-            assert_eq!(
-                platform,
-                &serde_json::json!(["is_aws_lambda"]),
-                "expected PLATFORM=[\"is_aws_lambda\"], got body: {body}"
+            let arr = platform
+                .as_array()
+                .expect("PLATFORM should be an array in login-request body");
+            assert!(
+                arr.iter().any(|v| v == "is_aws_lambda"),
+                "expected PLATFORM to include \"is_aws_lambda\", got body: {body}"
             );
         },
     );

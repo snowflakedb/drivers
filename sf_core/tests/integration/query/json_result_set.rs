@@ -160,6 +160,76 @@ fn should_return_array_as_arrow_even_if_json_result_set_is_returned() {
 }
 
 #[test]
+fn should_return_interval_year_to_month_family_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_ytm (\
+            year_col INTERVAL YEAR, \
+            month_col INTERVAL MONTH, \
+            ytm_col INTERVAL YEAR TO MONTH)",
+        "INSERT INTO json_result_set_interval_ytm VALUES \
+            ('0', '0', '0-0'), \
+            ('1', '1', '1-2'), \
+            ('-5', '-14', '-1-3'), \
+            ('9999', '9999', '9999-11'), \
+            ('-9999', '-9999', '-9999-11'), \
+            (NULL, NULL, NULL)",
+        "SELECT * FROM json_result_set_interval_ytm",
+    )
+}
+
+#[test]
+fn should_return_interval_simple_day_to_second_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_simple (\
+            day_col INTERVAL DAY, \
+            hour_col INTERVAL HOUR, \
+            minute_col INTERVAL MINUTE, \
+            second_col INTERVAL SECOND)",
+        "INSERT INTO json_result_set_interval_simple VALUES \
+            ('0', '0', '0', '0'), \
+            ('1', '1', '1', '1.5'), \
+            ('-1', '-1', '-1', '-1.5'), \
+            ('99999', '99999', '99999', '99999.999999'), \
+            ('-99999', '-99999', '-99999', '-99999.999999'), \
+            (NULL, NULL, NULL, NULL)",
+        "SELECT * FROM json_result_set_interval_simple",
+    )
+}
+
+#[test]
+fn should_return_interval_compound_day_to_second_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_compound (\
+            d2h_col INTERVAL DAY TO HOUR, \
+            d2m_col INTERVAL DAY TO MINUTE, \
+            d2s_col INTERVAL DAY TO SECOND, \
+            h2m_col INTERVAL HOUR TO MINUTE, \
+            h2s_col INTERVAL HOUR TO SECOND, \
+            m2s_col INTERVAL MINUTE TO SECOND)",
+        "INSERT INTO json_result_set_interval_compound VALUES \
+            ('0 0', '0 0:0', '0 0:0:0.0', '0:0', '0:0:0.0', '0:0.0'), \
+            ('1 2', '1 2:30', '12 3:4:5.678', '1:30', '1:30:45.123', '30:45.123'), \
+            ('-1 2', '-1 2:30', '-1 2:3:4.567', '-1:30', '-1:30:45.123', '-30:45.123'), \
+            ('99999 23', '99999 23:59', '99999 23:59:59.999999', '99999:59', '99999:59:59.999999', '99999:59.999999'), \
+            (NULL, NULL, '-99999 23:59:59.999999', '-99999:59', '-99999:59:59.999999', '-99999:59.999999'), \
+            (NULL, NULL, NULL, NULL, NULL, NULL)",
+        "SELECT * FROM json_result_set_interval_compound",
+    )
+}
+
+#[test]
+fn should_return_large_interval_day_to_second_as_decimal128_for_arrow_and_json() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_large_interval (\
+            large_day INTERVAL DAY, \
+            large_hour INTERVAL HOUR)",
+        "INSERT INTO json_result_set_large_interval VALUES \
+            ('120000', '3000000')",
+        "SELECT * FROM json_result_set_large_interval",
+    )
+}
+
+#[test]
 fn should_handle_empty_result_set_for_arrow_and_json() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();

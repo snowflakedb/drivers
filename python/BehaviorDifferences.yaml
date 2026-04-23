@@ -85,3 +85,28 @@ behavior_differences:
         properties used to control HTTP behavior for chunk downloads when the connection is no
         longer active. A cloned `SessionManager` is serialized with the batch, allowing chunk
         downloads without an active connection.
+
+  21:
+    name: "Closed cursor raises InterfaceError on all operations"
+    description: |
+      NEW driver: Every cursor method now validates that the cursor is open and raises `InterfaceError("Cursor is closed.", errno=252006)` if it isn't. 
+      Two guards are used:
+          - `@_requires_open` (checks both cursor and connection) on: 
+            `execute`, `execute_async`, `executemany`, `describe`, `callproc`, `abort_query`, `get_results_from_sfqid`,
+            `query_result`, `get_result_batches`, `fetch_arrow_batches`, `fetch_arrow_all`, `fetch_pandas_batches`, `fetch_pandas_all`.
+          - `@_requires_open_cursor_not_connection` (checks only the cursor's own `_closed` flag, NOT the connection) on: 
+            `fetchone`, `fetchmany`, `fetchall`, and `reset`.
+            This is a deliberate carve-out so that already-buffered result rows remain readable after `connection.close()`, 
+            matching the old driver's behavior for that scenario.
+      OLD driver: Only `execute()` has a closed-cursor guard (`InterfaceError`, errno=252006).
+        Other methods fail incidentally based on internal state:
+          - `fetchone`/`fetchmany`/`fetchall` raise `TypeError` because internal state is `None`.
+          - `executemany`, `callproc`, `reset`, `abort_query`, `query_result`, etc. raise `AttributeError` for the same reason.
+          - `get_results_from_sfqid` has no guard at all.
+
+  22:
+    name: "Fetching before execute raises ProgrammingError"
+    description: |
+      NEW driver: Calling `fetchone`, `fetchmany`, `fetchall`, or iterating a cursor before any query has been executed raises
+        `ProgrammingError("No results available (already consumed or not produced by this query)", errno=252009)` (`ER_NO_DATA_FOUND`).
+      OLD driver: The same calls have no guard, so they raise `TypeError` because the cursor's internal result state is `None`.

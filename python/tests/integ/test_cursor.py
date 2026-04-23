@@ -8,6 +8,7 @@ import pytest
 
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
+from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
 from tests.conftest import with_paramstyle
 from tests.e2e.types.utils import assert_sequential_values
 
@@ -1055,6 +1056,349 @@ class TestCursorStatementLifecycle:
         assert cursor.fetchone() == (2,)
 
 
+class TestFetchBeforeExecute:
+    """Test that fetching before execute raises TypeError."""
+
+    @staticmethod
+    def _assert_programming_error(excinfo):
+        if is_new_driver():
+            error = excinfo.value
+            assert isinstance(error, ProgrammingError)
+            assert error.errno == 252009
+            assert "no results available" in error.msg.lower()
+
+    def test_fetchone_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            cursor.fetchone()
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchall_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            cursor.fetchall()
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchmany_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            cursor.fetchmany(1)
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_iter_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            next(iter(cursor))
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+
+class TestClosedCursorErrors:
+    """Test that operations on a closed cursor raise proper errors."""
+
+    @staticmethod
+    def _assert_interface_error(excinfo):
+        error = excinfo.value
+        assert isinstance(error, InterfaceError)
+        assert "cursor is closed" in error.msg.lower()
+        assert error.errno == 252006
+
+    def test_execute_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_execute_async_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute_async("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_describe_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.describe("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_executemany_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.executemany("SELECT %s", [(1,)])
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_fetchone_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchone()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchall_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchall()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchmany_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchmany(1)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_iter_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            next(iter(cur))
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_callproc_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.callproc("any_proc")
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_reset_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.reset()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_abort_query_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.abort_query(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_query_result_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.query_result(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_get_results_from_sfqid_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.get_results_from_sfqid(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+
+class TestClosedConnectionCursorErrors:
+    """Test cursor operations when the underlying connection has been closed."""
+
+    @staticmethod
+    def _assert_interface_error(excinfo):
+        error = excinfo.value
+        assert isinstance(error, InterfaceError)
+        assert error.errno == 252006
+        assert "cursor is closed" in error.msg.lower()
+
+    @staticmethod
+    def _assert_programming_error(excinfo):
+        error = excinfo.value
+        assert isinstance(error, ProgrammingError)
+        assert error.errno == 252009
+        assert "no results available" in error.msg.lower()
+
+    def test_execute_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_execute_async_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute_async("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_describe_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.describe("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_executemany_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.executemany("SELECT %s", [(1,)])
+        self._assert_interface_error(excinfo)
+
+    def test_callproc_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.callproc("any_proc")
+        self._assert_interface_error(excinfo)
+
+    def test_fetchone_on_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        conn.close()
+        result = cur.fetchone()
+        assert result == (1,)
+
+    def test_fetchall_on_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        conn.close()
+        results = cur.fetchall()
+        assert results == [(1,)]
+
+    def test_abort_query_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.abort_query(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_query_result_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.query_result(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_reset_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        assert cur.is_closed
+
+        cur.reset()
+        assert cur.is_closed
+
+    def test_fetchone_on_never_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchone()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchall_on_never_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchall()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchmany_on_never_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchmany(1)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 
@@ -1119,15 +1463,6 @@ class TestCursorMethods:
         ret = cursor.callproc(proc_name, None)
         assert ret == ()
         assert cursor.fetchall() == [(True,)]
-
-    @pytest.mark.skip_reference(
-        reason="Reference driver raises AttributeError instead of InterfaceError on closed cursor"
-    )
-    def test_callproc_on_closed_cursor_raises(self, cursor):
-        """Test that callproc raises InterfaceError on a closed cursor."""
-        cursor.close()
-        with pytest.raises(InterfaceError):
-            cursor.callproc("any_proc")
 
     @pytest.mark.skip_reference(reason="Reference driver does not validate args type")
     def test_callproc_rejects_string_args(self, cursor):

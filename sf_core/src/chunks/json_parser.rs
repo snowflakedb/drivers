@@ -162,6 +162,19 @@ pub(super) enum FixedStorage {
     },
 }
 
+/// i64 fast-path storage for INTERVAL DAY TO SECOND columns. Falls back to Decimal128
+/// when a nanosecond value exceeds i64 range (>106,751 days).
+pub(super) enum IntervalDaySecondStorage {
+    /// All values so far fit in i64 nanoseconds.
+    I64 {
+        builder: arrow::array::PrimitiveBuilder<Int64Type>,
+    },
+    /// At least one value exceeded i64 range.
+    I128 {
+        builder: arrow::array::PrimitiveBuilder<Decimal128Type>,
+    },
+}
+
 pub(super) fn convert_i64_to_decimal128(
     builder: &mut arrow::array::PrimitiveBuilder<Int64Type>,
 ) -> arrow::array::PrimitiveBuilder<Decimal128Type> {
@@ -238,6 +251,12 @@ pub(super) enum ColumnBuilder {
         exp_builder: arrow::array::PrimitiveBuilder<arrow::datatypes::Int16Type>,
         mant_builder: arrow::array::BinaryBuilder,
         nulls: arrow::array::BooleanBufferBuilder,
+    },
+    IntervalYearMonth {
+        builder: arrow::array::PrimitiveBuilder<Int64Type>,
+    },
+    IntervalDaySecond {
+        storage: IntervalDaySecondStorage,
     },
 }
 
@@ -322,6 +341,14 @@ impl ColumnBuilder {
                 mant_builder: arrow::array::BinaryBuilder::with_capacity(capacity, capacity * 8),
                 nulls: arrow::array::BooleanBufferBuilder::new(capacity),
             },
+            RowType::IntervalYearMonth { .. } => ColumnBuilder::IntervalYearMonth {
+                builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
+            },
+            RowType::IntervalDaySecond { .. } => ColumnBuilder::IntervalDaySecond {
+                storage: IntervalDaySecondStorage::I64 {
+                    builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
+                },
+            },
         }
     }
 
@@ -380,6 +407,11 @@ impl ColumnBuilder {
                 mant_builder.append_value(&[] as &[u8]);
                 nulls.append(false);
             }
+            ColumnBuilder::IntervalYearMonth { builder } => builder.append_null(),
+            ColumnBuilder::IntervalDaySecond { storage } => match storage {
+                IntervalDaySecondStorage::I64 { builder } => builder.append_null(),
+                IntervalDaySecondStorage::I128 { builder } => builder.append_null(),
+            },
         }
     }
 
@@ -514,6 +546,35 @@ impl ColumnBuilder {
                 mant_builder.append_value(mantissa);
                 nulls.append(true);
             }
+            ColumnBuilder::IntervalYearMonth { builder } => {
+                let months = parse_int_bytes::<i64>(cell)?;
+                builder.append_value(months);
+            }
+            ColumnBuilder::IntervalDaySecond { storage } => match storage {
+                // Start with i64 for compactness. On the first value that overflows i64,
+                // promote the entire column to Decimal128 and stay there for all
+                // subsequent values in this chunk.
+                IntervalDaySecondStorage::I64 { builder } => {
+                    // Interval day-time values are stored as nanoseconds in JSON.
+                    // Max i64: 9,223,372,036,854,775,807 nanoseconds = ~106,751 days
+                    // Snowflake supports up to 999,999,999 days, so large values need i128.
+                    let nanoseconds_i128 = parse_int_bytes::<i128>(cell)?;
+                    if let Ok(nanoseconds_i64) = i64::try_from(nanoseconds_i128) {
+                        builder.append_value(nanoseconds_i64);
+                    } else {
+                        // Value exceeds i64, promote to Decimal128
+                        let mut decimal_builder = convert_i64_to_decimal128(builder);
+                        decimal_builder.append_value(nanoseconds_i128);
+                        *storage = IntervalDaySecondStorage::I128 {
+                            builder: decimal_builder,
+                        };
+                    }
+                }
+                IntervalDaySecondStorage::I128 { builder } => {
+                    let nanoseconds = parse_int_bytes::<i128>(cell)?;
+                    builder.append_value(nanoseconds);
+                }
+            },
         }
         Ok(())
     }
@@ -684,6 +745,31 @@ impl ColumnBuilder {
                 );
                 Ok((field, Arc::new(struct_arr)))
             }
+            ColumnBuilder::IntervalYearMonth { mut builder } => Ok((
+                create_field(row_type).map_err(err)?,
+                Arc::new(builder.finish()),
+            )),
+            ColumnBuilder::IntervalDaySecond { storage } => match storage {
+                IntervalDaySecondStorage::I64 { mut builder } => {
+                    let arr = builder.finish();
+                    Ok((
+                        create_field_with_type(row_type, Some(DataType::Int64)).map_err(err)?,
+                        Arc::new(arr),
+                    ))
+                }
+                IntervalDaySecondStorage::I128 { mut builder } => {
+                    // Use Decimal128(38, 0) for large interval nanosecond values
+                    let arr = builder
+                        .finish()
+                        .with_precision_and_scale(38, 0)
+                        .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+                    Ok((
+                        create_field_with_type(row_type, Some(DataType::Decimal128(38, 0)))
+                            .map_err(err)?,
+                        Arc::new(arr),
+                    ))
+                }
+            },
         }
     }
 }
