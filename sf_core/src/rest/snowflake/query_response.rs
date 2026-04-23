@@ -633,6 +633,34 @@ impl TryFrom<&RowType> for query_types::RowType {
             "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
             "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
             "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
+            "INTERVAL_YEAR_MONTH" => {
+                let precision = value.precision.context(MissingParameterSnafu {
+                    parameter: format!(
+                        "row type -> precision for INTERVAL_YEAR_MONTH column '{name}'"
+                    ),
+                })?;
+                let scale = value.scale.context(MissingParameterSnafu {
+                    parameter: format!("row type -> scale for INTERVAL_YEAR_MONTH column '{name}'"),
+                })?;
+                Ok(query_types::RowType::interval_year_month(
+                    &name, nullable, precision, scale,
+                ))
+            }
+            "INTERVAL_DAY_SECOND" | "INTERVAL_DAY_TIME" => {
+                let precision = value.precision.context(MissingParameterSnafu {
+                    parameter: format!(
+                        "row type -> precision for INTERVAL_DAY_TIME/DAY_SECOND column '{name}'"
+                    ),
+                })?;
+                let scale = value.scale.context(MissingParameterSnafu {
+                    parameter: format!(
+                        "row type -> scale for INTERVAL_DAY_TIME/DAY_SECOND column '{name}'"
+                    ),
+                })?;
+                Ok(query_types::RowType::interval_day_second(
+                    &name, nullable, precision, scale,
+                ))
+            }
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
