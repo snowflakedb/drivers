@@ -521,6 +521,14 @@ class ClientSideBindingConverter:
         This is the main entry point for client-side binding, mirroring
         the reference connector's _preprocess_pyformat_query method.
 
+        Whenever a ``params`` object is supplied (even an empty dict or
+        sequence) the Python ``%`` formatter is applied to the query.
+        This is also the mechanism that decodes SQLAlchemy-escaped
+        literal ``%``: compilation against a pyformat dialect rewrites
+        ``%`` as ``%%`` (for example table stages, ``PUT ... @%users``
+        becomes ``PUT ... @%%users``), and ``query % params`` reverses
+        the escape before the SQL reaches Snowflake.
+
         Args:
             query: SQL query with %s or %(name)s placeholders
             params: Parameters to interpolate
@@ -528,11 +536,8 @@ class ClientSideBindingConverter:
         Returns:
             Query string with parameters interpolated
         """
-        if params is None or (not isinstance(params, Mapping) and len(params) == 0):
+        if params is None:
             return query
 
         processed_params = cls.process_params_pyformat(params)
-
-        if processed_params:
-            return query % processed_params
-        return query
+        return query % processed_params

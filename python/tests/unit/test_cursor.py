@@ -1771,6 +1771,66 @@ class TestResetIntegration:
         assert cursor._query_result.rowcount == 42
 
 
+class TestPrepareQuery:
+    """Unit tests for Cursor._prepare_query method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_pyformat_none_params_decodes_percent_escape(self, cursor, mock_connection):
+        # SQLAlchemy passes `parameters=None` through some code paths for
+        # textual statements with no binds; literal '%' is still escaped to
+        # '%%' during compilation and must be reversed before reaching the
+        # server (e.g. PUT ... @%users -> @%%users -> @%users).
+        mock_connection.paramstyle = ParamStyle.PYFORMAT
+
+        query, bindings = cursor._prepare_query("PUT 'file:///tmp/x' @%%users", None)
+
+        assert query == "PUT 'file:///tmp/x' @%users"
+        assert bindings is None
+
+    def test_format_none_params_decodes_percent_escape(self, cursor, mock_connection):
+        mock_connection.paramstyle = ParamStyle.FORMAT
+
+        query, bindings = cursor._prepare_query("PUT 'file:///tmp/x' @%%users", None)
+
+        assert query == "PUT 'file:///tmp/x' @%users"
+        assert bindings is None
+
+    def test_qmark_none_params_leaves_percent_signs_intact(self, cursor, mock_connection):
+        # Server-side binding paramstyles don't use Python's % formatter, so
+        # '%%' is not an escape sequence for them.
+        mock_connection.paramstyle = ParamStyle.QMARK
+
+        query, bindings = cursor._prepare_query("PUT 'file:///tmp/x' @%%users", None)
+
+        assert query == "PUT 'file:///tmp/x' @%%users"
+        assert bindings is None
+
+    def test_pyformat_empty_dict_decodes_percent_escape(self, cursor, mock_connection):
+        mock_connection.paramstyle = ParamStyle.PYFORMAT
+
+        query, bindings = cursor._prepare_query("PUT 'file:///tmp/x' @%%users", {})
+
+        assert query == "PUT 'file:///tmp/x' @%users"
+        assert bindings is None
+
+    def test_pyformat_empty_list_decodes_percent_escape(self, cursor, mock_connection):
+        mock_connection.paramstyle = ParamStyle.PYFORMAT
+
+        query, bindings = cursor._prepare_query("PUT 'file:///tmp/x' @%%users", [])
+
+        assert query == "PUT 'file:///tmp/x' @%users"
+        assert bindings is None
+
+
 class TestDescribe:
     """Unit tests for Cursor.describe method."""
 

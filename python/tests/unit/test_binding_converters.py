@@ -1135,6 +1135,18 @@ class TestInterpolateQuery:
         query = "SELECT * FROM t"
         assert ClientSideBindingConverter.interpolate_query(query, []) == query
 
+    def test_empty_mapping_decodes_percent_escape(self):
+        # SQLAlchemy escapes literal '%' to '%%' when compiling statements
+        # against a pyformat dialect. The stock connector decodes the escape
+        # through Python's `%` formatter, so an empty dict must still trigger
+        # the formatter to reverse '%%' -> '%' (e.g. table stage identifiers).
+        result = ClientSideBindingConverter.interpolate_query("PUT 'file:///tmp/x' @%%users", {})
+        assert result == "PUT 'file:///tmp/x' @%users"
+
+    def test_empty_sequence_decodes_percent_escape(self):
+        result = ClientSideBindingConverter.interpolate_query("PUT 'file:///tmp/x' @%%users", [])
+        assert result == "PUT 'file:///tmp/x' @%users"
+
     def test_positional_int(self):
         result = ClientSideBindingConverter.interpolate_query("SELECT %s", [42])
         assert result == "SELECT 42"

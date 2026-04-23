@@ -465,10 +465,18 @@ class SnowflakeCursorBase(abc.ABC):
         Raises:
             ProgrammingError: If dict parameters used with server-side binding
         """
-        if parameters is None:
-            return operation, None
-
         paramstyle = self._connection.paramstyle
+
+        if parameters is None:
+            # SQLAlchemy escapes literal '%' to '%%' when compiling against a
+            # pyformat dialect; the stock connector decodes the escape through
+            # Python's `%` formatter as part of parameter binding. When no
+            # params object is supplied we still need to reverse the escape so
+            # statements referencing table stages (e.g. PUT ... @%users, which
+            # SQLAlchemy rewrites to @%%users) reach Snowflake unchanged.
+            if paramstyle.is_client_side():
+                operation = operation.replace("%%", "%")
+            return operation, None
 
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
