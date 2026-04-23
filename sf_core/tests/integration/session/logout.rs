@@ -4,6 +4,7 @@
 //! logout behavior without connecting to real Snowflake.
 
 use crate::common::mocks::auth::mount_jwt_login_success;
+use crate::common::mocks::session::is_logout_request;
 use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::test_server::{
@@ -1831,14 +1832,6 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
 }
 
 // Helper functions
-
-fn is_logout_request(r: &wiremock::Request) -> bool {
-    r.url.path() == "/session"
-        && r.url
-            .query()
-            .map(|q| q.contains("delete=true"))
-            .unwrap_or(false)
-}
 
 fn test_client_info() -> ClientInfo {
     ClientInfo {

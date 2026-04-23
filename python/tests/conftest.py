@@ -191,19 +191,5 @@ def pytest_runtest_setup(item):
         pytest.skip(reason)
 
 
-@pytest.fixture
-def core_proxy(monkeypatch):
-    """Wrap real Core client with MagicMock recording. Universal driver only.
-
-    Lazy imports avoid module-level _internal dependency — safe for reference
-    connector collection. Tests using this fixture must be marked @skip_reference.
-    """
-    from unittest.mock import MagicMock
-
-    from snowflake.connector._internal.api_client.client_api import database_driver_client
-    from tests.helpers.core_introspection import CoreIntrospector
-
-    real_client = database_driver_client()
-    spy = MagicMock(wraps=real_client)
-    monkeypatch.setattr("snowflake.connector.connection.database_driver_client", lambda: spy)
-    return CoreIntrospector(spy)
+from tests.helpers.fixtures import core_proxy as core_proxy  # noqa: E402
+from tests.helpers.fixtures import mock_db_api as mock_db_api  # noqa: E402

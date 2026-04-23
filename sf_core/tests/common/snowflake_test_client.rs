@@ -488,28 +488,23 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
-        // catch_unwind prevents double-panic abort when Drop runs during stack
-        // unwinding (e.g. test panic) or inside a tokio async context where
-        // block_on panics with "Cannot start a runtime from within a runtime".
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Release the connection when the client is dropped
-            if let Err(e) = self
-                .client
-                .connection_release_blocking(ConnectionReleaseRequest {
-                    conn_handle: Some(self.conn_handle),
-                })
-            {
-                tracing::warn!("Failed to release connection in Drop: {e:?}");
-            }
-            // Release the database handle
-            if let Err(e) = self
-                .client
-                .database_release_blocking(DatabaseReleaseRequest {
-                    db_handle: Some(self.db_handle),
-                })
-            {
-                tracing::warn!("Failed to release database handle in Drop: {e:?}");
-            }
-        }));
+        // Release the connection when the client is dropped
+        if let Err(e) = self
+            .client
+            .connection_release_blocking(ConnectionReleaseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+        {
+            tracing::warn!("Failed to release connection in Drop: {e:?}");
+        }
+        // Release the database handle
+        if let Err(e) = self
+            .client
+            .database_release_blocking(DatabaseReleaseRequest {
+                db_handle: Some(self.db_handle),
+            })
+        {
+            tracing::warn!("Failed to release database handle in Drop: {e:?}");
+        }
     }
 }

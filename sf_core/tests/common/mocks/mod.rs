@@ -8,3 +8,4 @@ pub mod mfa;
 pub mod okta;
 pub mod password;
 pub mod put_get;
+pub mod session;

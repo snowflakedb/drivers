@@ -5,9 +5,8 @@
 //! use WireMock so "Only one logout request is sent" can be honestly verified
 //! via HTTP request counting.
 
-use std::sync::Arc;
-
 use crate::common::mocks::auth::mount_jwt_login_success;
+use crate::common::mocks::session::is_logout_request;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
@@ -71,49 +70,37 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     }
 }
 
-#[tokio::test]
-async fn should_be_idempotent_when_close_called_multiple_times() {
-    //Given Snowflake client is logged in
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-    mount_logout_success(&server).await;
+#[test]
+fn should_be_idempotent_when_close_called_multiple_times() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
 
-    let server_uri = server.uri();
-    let client = Arc::new(
-        tokio::task::spawn_blocking(move || {
-            SnowflakeTestClient::connect_integration_test(Some(&server_uri))
-        })
-        .await
-        .unwrap(),
-    );
+    //Given Snowflake client is logged in
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
+        mount_logout_success(&server).await;
+        server
+    });
+
+    let client = SnowflakeTestClient::connect_integration_test(Some(&server.uri()));
 
     //When Connection is closed
-    let result1 = tokio::task::spawn_blocking({
-        let c = Arc::clone(&client);
-        move || c.connection_close_blocking()
-    })
-    .await
-    .unwrap();
+    let result1 = client.connection_close_blocking();
 
     //And Connection is closed again
-    let result2 = tokio::task::spawn_blocking({
-        let c = Arc::clone(&client);
-        move || c.connection_close_blocking()
-    })
-    .await
-    .unwrap();
+    let result2 = client.connection_close_blocking();
 
     //And Connection is closed a third time
-    let result3 = tokio::task::spawn_blocking({
-        let c = Arc::clone(&client);
-        move || c.connection_close_blocking()
-    })
-    .await
-    .unwrap();
+    let result3 = client.connection_close_blocking();
 
     //Then Only one logout request is sent
-    let requests = server.received_requests().await.unwrap();
-    let logout_count = requests.iter().filter(|r| is_logout_request(r)).count();
+    let logout_count = rt.block_on(async {
+        let requests = server.received_requests().await.unwrap();
+        requests.iter().filter(|r| is_logout_request(r)).count()
+    });
     assert_eq!(
         logout_count, 1,
         "Exactly one logout HTTP request should be sent"
@@ -129,37 +116,41 @@ async fn should_be_idempotent_when_close_called_multiple_times() {
 //                        Concurrency
 // ===========================================================================
 
-#[tokio::test]
-async fn should_handle_concurrent_close_calls_safely() {
+#[test]
+fn should_handle_concurrent_close_calls_safely() {
     use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
 
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
     //Given Snowflake client is logged in
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
+    let server = rt.block_on(async {
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
 
-    // Logout response with delay: thread 1 blocks on I/O while threads 2-5 race
-    Mock::given(method("POST"))
-        .and(path("/session"))
-        .and(query_param("delete", "true"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({ "success": true }))
-                .insert_header("Content-Type", "application/json")
-                .set_delay(Duration::from_millis(500)),
-        )
-        .mount(&server)
-        .await;
+        // Logout response with delay: thread 1 blocks on I/O while threads 2-5 race
+        Mock::given(method("POST"))
+            .and(path("/session"))
+            .and(query_param("delete", "true"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "success": true }))
+                    .insert_header("Content-Type", "application/json")
+                    .set_delay(Duration::from_millis(500)),
+            )
+            .mount(&server)
+            .await;
 
-    let server_uri = server.uri();
-    let client = Arc::new(
-        tokio::task::spawn_blocking(move || {
-            SnowflakeTestClient::connect_integration_test(Some(&server_uri))
-        })
-        .await
-        .unwrap(),
-    );
+        server
+    });
+
+    let client = Arc::new(SnowflakeTestClient::connect_integration_test(Some(
+        &server.uri(),
+    )));
     let barrier = Arc::new(Barrier::new(5));
 
     //When Connection is closed from multiple threads concurrently
@@ -180,8 +171,10 @@ async fn should_handle_concurrent_close_calls_safely() {
         .collect();
 
     //Then Only one logout request is sent
-    let requests = server.received_requests().await.unwrap();
-    let logout_count = requests.iter().filter(|r| is_logout_request(r)).count();
+    let logout_count = rt.block_on(async {
+        let requests = server.received_requests().await.unwrap();
+        requests.iter().filter(|r| is_logout_request(r)).count()
+    });
     assert_eq!(
         logout_count, 1,
         "Exactly one logout HTTP request despite 5 concurrent close() calls"
@@ -244,12 +237,4 @@ async fn mount_logout_success(server: &MockServer) {
         )
         .mount(server)
         .await;
-}
-
-fn is_logout_request(r: &wiremock::Request) -> bool {
-    r.url.path() == "/session"
-        && r.url
-            .query()
-            .map(|q| q.contains("delete=true"))
-            .unwrap_or(false)
 }
