@@ -16,18 +16,45 @@ mod callback_layer;
 mod error;
 mod opentelemetry;
 
+const DEFAULT_LOG_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_LOG_FILE_COUNT: usize = 5;
+
 pub struct LoggingConfig {
-    pub log_file: Option<PathBuf>,
+    /// Directory or file path for log output. `None` disables file logging.
+    pub log_path: Option<PathBuf>,
+    /// Maximum size in bytes per log file before rotation.
+    pub log_file_size: u64,
+    /// Maximum number of rotated log files to retain.
+    pub log_file_count: usize,
+    /// Minimum severity level for log output.
+    pub log_level: LevelFilter,
+    /// Master switch for the core logging subsystem.
+    pub enabled: bool,
     pub stderr: bool,
     pub opentelemetry: bool,
 }
 
-impl LoggingConfig {
-    pub fn new(log_file: Option<PathBuf>, stderr: bool, opentelemetry: bool) -> Self {
+impl Default for LoggingConfig {
+    fn default() -> Self {
         Self {
-            log_file,
+            log_path: None,
+            log_file_size: DEFAULT_LOG_FILE_SIZE,
+            log_file_count: DEFAULT_LOG_FILE_COUNT,
+            log_level: LevelFilter::INFO,
+            enabled: true,
+            stderr: false,
+            opentelemetry: false,
+        }
+    }
+}
+
+impl LoggingConfig {
+    pub fn new(log_path: Option<PathBuf>, stderr: bool, opentelemetry: bool) -> Self {
+        Self {
+            log_path,
             stderr,
             opentelemetry,
+            ..Default::default()
         }
     }
 }
@@ -44,17 +71,21 @@ pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<
 where
     L: Layer<Registry> + Send + Sync,
 {
+    if !config.enabled {
+        return Ok(());
+    }
+
     let subscriber = Registry::default();
     let subscriber = subscriber.with(extra_layer);
 
-    let file_layer = if let Some(log_file) = config.log_file {
+    let file_layer = if let Some(log_path) = config.log_path {
         let log_file =
-            std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
+            std::fs::File::create(log_path).map_err(|e| LogError::InitError(e.to_string()))?;
         Some(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(log_file)
-                .with_filter(LevelFilter::INFO),
+                .with_filter(config.log_level),
         )
     } else {
         None
