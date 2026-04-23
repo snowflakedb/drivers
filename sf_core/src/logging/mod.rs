@@ -15,6 +15,7 @@ pub mod c_api;
 mod callback_layer;
 mod error;
 mod opentelemetry;
+pub mod panic_hook;
 
 pub struct LoggingConfig {
     pub log_file: Option<PathBuf>,
@@ -44,6 +45,11 @@ pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<
 where
     L: Layer<Registry> + Send + Sync,
 {
+    // Always install the panic hook, independent of which sinks are configured
+    // below. This ensures we still capture panic details even if sink setup
+    // later fails or the caller passes an empty config.
+    panic_hook::install();
+
     let subscriber = Registry::default();
     let subscriber = subscriber.with(extra_layer);
 
