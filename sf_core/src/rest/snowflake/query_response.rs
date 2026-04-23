@@ -570,7 +570,11 @@ impl TryFrom<&RowType> for query_types::RowType {
     fn try_from(value: &RowType) -> Result<Self, Self::Error> {
         let name = value.name.clone();
         let nullable = value.nullable;
-        let effective_type = value.ext_type_name.as_deref().unwrap_or(&value.type_);
+        let effective_type = value
+            .ext_type_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&value.type_);
 
         match effective_type.to_uppercase().as_str() {
             "TEXT" => {
@@ -1347,6 +1351,32 @@ mod tests {
                 ref name,
                 nullable: true,
             } if name == "geo_col"
+        ));
+    }
+
+    #[test]
+    fn test_empty_ext_type_name_falls_back_to_type() {
+        // Stored procedures may return ext_type_name="" with type="text"
+        let row_type = RowType {
+            name: "RESULT_COL".to_string(),
+            type_: "text".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: Some(100),
+            byte_length: Some(400),
+            ext_type_name: Some("".to_string()),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Text {
+                ref name,
+                nullable: false,
+                ..
+            } if name == "RESULT_COL"
         ));
     }
 
