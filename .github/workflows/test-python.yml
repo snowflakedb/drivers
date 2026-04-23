@@ -264,8 +264,11 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: python
         run: |
-          PY_TAG="cp$(echo '${{ matrix.py }}' | tr -d '.')"
-          export WHEEL_PATH="$(ls dist/*-${PY_TAG}-*.whl | head -1)"
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
@@ -274,10 +277,11 @@ jobs:
         working-directory: python
         shell: pwsh
         run: |
-          # On Windows, the dist/*.whl glob isn't expanded by the shell.
-          # Resolve the wheel path explicitly and pass via WHEEL_PATH env var.
-          $wheel = (Get-ChildItem dist/*.whl).FullName
-          $env:WHEEL_PATH = $wheel
+          $wheels = @(Get-ChildItem dist/*.whl)
+          if ($wheels.Count -ne 1) {
+            Write-Error "Expected exactly 1 wheel, found $($wheels.Count)"; Get-ChildItem dist/; exit 1
+          }
+          $env:WHEEL_PATH = $wheels[0].FullName
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Run tests with coverage (Linux)

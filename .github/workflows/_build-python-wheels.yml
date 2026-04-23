@@ -35,7 +35,7 @@ jobs:
                   "os": "ubuntu-latest",
                   "container": "quay.io/pypa/manylinux_2_28_x86_64",
                   "lib_name": "libsf_core.so",
-                  "cargo_extra_args": "--features vendored-openssl",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_x86_64",
                   "artifact_id": "manylinux_x86_64",
@@ -45,7 +45,7 @@ jobs:
                   "os": "ubuntu-latest",
                   "container": "quay.io/pypa/manylinux_2_28_aarch64",
                   "lib_name": "libsf_core.so",
-                  "cargo_extra_args": "--features vendored-openssl",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_aarch64",
                   "artifact_id": "manylinux_aarch64",
@@ -55,7 +55,7 @@ jobs:
                   "os": "windows-11-arm",
                   "container": "",
                   "lib_name": "sf_core.dll",
-                  "cargo_extra_args": "",
+                  "cargo_extra_args": "--config profile.release.opt-level=2 --config profile.release.strip=false",
                   "wheel_method": "manual",
                   "artifact_id": "win_arm64",
               },
@@ -168,23 +168,12 @@ jobs:
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
       # ── Cargo cache & build ──
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ matrix.target }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ matrix.target }}-cargo-registry-
-
-      - name: Cache Rust target
-        uses: actions/cache@v5
-        with:
-          path: target
-          key: ${{ matrix.target }}-rust-sf-core-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ matrix.target }}-rust-sf-core-release-
+          mode: restore
+          shared-key: sf-core-release
 
       - name: Build sf_core (Linux)
         if: runner.os == 'Linux'
@@ -202,6 +191,15 @@ jobs:
         with:
           name: sf-core-${{ matrix.target }}
           path: target/release/${{ matrix.lib_name }}
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sf-core-release
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
   build_wheels:
