@@ -8,9 +8,19 @@ from snowflake.connector._internal.decorators import _TRACKING
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
-    ExecuteResult,
     StatementHandle,
 )
+from snowflake.connector.errors import ProgrammingError
+
+
+@pytest.fixture(autouse=True)
+def _no_native_stream_ops():
+    """Prevent _QueryResult from touching real native memory in unit tests."""
+    with (
+        patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
+        patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -22,7 +32,11 @@ def mock_db_api():
     db_api.connection_get_parameter.return_value = MagicMock(value="")
     # Provide a real StatementHandle so protobuf field validation passes
     db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
-    db_api.statement_execute_query.return_value = MagicMock(result=ExecuteResult())
+    # Use a MagicMock for execute result with proper HasField support
+    execute_result = MagicMock()
+    execute_result.columns = []
+    execute_result.HasField = MagicMock(return_value=False)
+    db_api.statement_execute_query.return_value.result = execute_result
     db_api.statement_result_chunks.return_value = MagicMock(HasField=MagicMock(return_value=False))
     return db_api
 
@@ -147,16 +161,17 @@ class TestCursorApiTelemetry:
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.fetchone" in methods
 
-    def test_fetchmany_suppresses_fetchone(self, cursor, mock_db_api):
-        """fetchmany() calls fetchone() internally — only fetchmany should be tracked."""
+    def test_fetchmany_sends_telemetry(self, cursor, mock_db_api):
+        """fetchmany() should be tracked as a single api_usage event."""
+        mock_iterator = MagicMock()
+        mock_iterator.fetch_many.return_value = [(1,), (2,)]
         cursor._execute_result = MagicMock()
-        cursor._iterator = iter([(1,), (2,)])
+        cursor._iterator = mock_iterator
         cursor._fetch_mode = None
         cursor.fetchmany(2)
 
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.fetchmany" in methods
-        assert "SnowflakeCursor.fetchone" not in methods
 
     def test_dict_cursor_fetchone_uses_correct_class_name(self, connection, mock_db_api):
         from snowflake.connector.cursor import DictCursor
@@ -197,12 +212,76 @@ class TestApiTelemetryResetBehavior:
 
         # Tracking should be re-enabled
         mock_db_api.statement_execute_query.side_effect = None
-        mock_db_api.statement_execute_query.return_value = MagicMock(result=ExecuteResult())
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        mock_db_api.statement_execute_query.return_value.result = execute_result
         mock_db_api.telemetry_send_api_usage.reset_mock()
         cursor.execute("SELECT 2")
 
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.execute" in methods
+
+
+class TestWrapperErrorTelemetry:
+    """Tests that api_telemetry sends wrapper_error on exceptions."""
+
+    def _get_wrapper_errors(self, mock_db_api):
+        """Extract (exception_type, error_source) from all send_wrapper_error calls."""
+        return [
+            (call[0][0].exception_type, call[0][0].error_source)
+            for call in mock_db_api.telemetry_send_wrapper_error.call_args_list
+        ]
+
+    def test_cursor_execute_error_sends_wrapper_error(self, cursor, mock_db_api):
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("syntax error")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("BAD SQL")
+
+        errors = self._get_wrapper_errors(mock_db_api)
+        assert ("ProgrammingError", "SnowflakeCursor.execute") in errors
+
+    def test_connection_commit_error_reports_inner_source(self, connection, mock_db_api):
+        """When commit() -> execute() raises, error_source is the inner method."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            connection.commit()
+
+        errors = self._get_wrapper_errors(mock_db_api)
+        assert ("ProgrammingError", "SnowflakeCursor.execute") in errors
+
+    def test_nested_error_reported_once(self, connection, mock_db_api):
+        """When commit() -> execute() raises, only the innermost decorated method reports."""
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("fail")
+
+        with pytest.raises(ProgrammingError):
+            connection.commit()
+
+        errors = self._get_wrapper_errors(mock_db_api)
+        assert len(errors) == 1
+        assert errors[0] == ("ProgrammingError", "SnowflakeCursor.execute")
+
+    def test_non_connector_exception_reported(self, cursor, mock_db_api):
+        """Non-Error exceptions (e.g. RuntimeError) are also reported."""
+        mock_db_api.statement_execute_query.side_effect = RuntimeError("unexpected")
+
+        with pytest.raises(RuntimeError):
+            cursor.execute("SELECT 1")
+
+        errors = self._get_wrapper_errors(mock_db_api)
+        assert ("RuntimeError", "SnowflakeCursor.execute") in errors
+
+    def test_wrapper_error_telemetry_failure_does_not_suppress_exception(self, cursor, mock_db_api):
+        """If send_wrapper_error itself fails, the original exception still propagates."""
+        mock_db_api.statement_execute_query.side_effect = ProgrammingError("original")
+        mock_db_api.telemetry_send_wrapper_error.side_effect = RuntimeError("telemetry down")
+
+        with pytest.raises(ProgrammingError, match="original"):
+            cursor.execute("SELECT 1")
 
 
 class TestApiTelemetryFailureIsolation:

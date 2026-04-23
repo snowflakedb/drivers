@@ -33,39 +33,58 @@ def pep249(func: F) -> F:
 
 
 _TRACKING = ContextVar("_api_tracking", default=True)
+_REPORTED_ERROR = ContextVar("_reported_error", default=0)
+
+
+def _resolve_telemetry_client(self: Any) -> Any:
+    """Resolve the TelemetryClient from a Connection or Cursor instance."""
+    from snowflake.connector.connection import Connection
+    from snowflake.connector.cursor._base import SnowflakeCursorBase
+
+    if isinstance(self, Connection):
+        return self._telemetry_client
+    elif isinstance(self, SnowflakeCursorBase):
+        return self._connection._telemetry_client
+    return None
 
 
 def api_telemetry(func: F) -> F:
-    """Send api_usage telemetry on the first public-method entry.
+    """Record api_usage and wrapper_error telemetry for public methods.
 
-    When the decorated method is called and tracking is enabled (the default),
-    record the call via :pymeth:`TelemetryClient.send_api_usage` and then
-    *disable* tracking for the duration of the method body.  Any nested
-    decorated calls (e.g. ``commit`` -> ``cursor`` -> ``execute``) are
-    therefore suppressed automatically, ensuring only the outermost
-    user-initiated call is recorded.
+    **api_usage**: recorded once for the outermost user-initiated call.
+    Nested decorated calls (e.g. ``commit`` -> ``cursor`` -> ``execute``)
+    are suppressed via a ``ContextVar`` flag.
 
-    The ``api_method`` string is derived at runtime as
+    **wrapper_error**: recorded once for the innermost decorated method
+    where the exception originates.  A second ``ContextVar`` stores the
+    ``id()`` of the already-reported exception so outer methods skip it.
+
+    The ``api_method`` / ``error_source`` string is derived at runtime as
     ``"{ClassName}.{method_name}"``.
     """
 
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if _TRACKING.get():
-            from snowflake.connector.connection import Connection
-            from snowflake.connector.cursor._base import SnowflakeCursorBase
+        track = _TRACKING.get()
+        api_name = f"{type(self).__name__}.{func.__name__}"
 
-            api_name = f"{type(self).__name__}.{func.__name__}"
-            if isinstance(self, Connection):
-                self._telemetry_client.send_api_usage(api_name)
-            elif isinstance(self, SnowflakeCursorBase):
-                self._connection._telemetry_client.send_api_usage(api_name)
-
+        if track:
+            client = _resolve_telemetry_client(self)
+            if client is not None:
+                client.send_api_usage(api_name)
             token = _TRACKING.set(False)
-            try:
-                return func(self, *args, **kwargs)
-            finally:
+
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as exc:
+            if id(exc) != _REPORTED_ERROR.get():
+                client = _resolve_telemetry_client(self)
+                if client is not None:
+                    client.send_wrapper_error(type(exc).__name__, api_name)
+                _REPORTED_ERROR.set(id(exc))
+            raise
+        finally:
+            if track:
                 _TRACKING.reset(token)
-        return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
