@@ -1,5 +1,24 @@
 #!/usr/bin/env groovy
 
+import groovy.transform.Field
+
+// Regression check configuration
+@Field def REGRESSION_THRESHOLD = 10.0
+@Field def REGRESSION_SCREEN_ITERATIONS = 10
+@Field def REGRESSION_SCREEN_ITERATIONS_SLOW = 3
+@Field def REGRESSION_RERUN_ITERATIONS = 10
+@Field def REGRESSION_BASELINE_ITERATIONS = 10
+@Field def REGRESSION_WARMUP_ITERATIONS = 2
+@Field def REGRESSION_FAST_TEST_FILTER = "test_select_string_1M_arrow_recorded_http or test_select_float_1M_arrow_recorded_http or test_select_timestamp_tz_1M_arrow_recorded_http"
+@Field def REGRESSION_SLOW_TEST_FILTER = "test_select_15columns_1M_arrow_recorded_http"
+@Field def REGRESSION_TEST_FILTER = "${REGRESSION_FAST_TEST_FILTER} or ${REGRESSION_SLOW_TEST_FILTER}"
+@Field def ACCEPT_PERF_LABEL = 'ACCEPT_PERFORMANCE_CHANGES'
+@Field def REGRESSION_STATUS_CONTEXT = 'performance/regression'
+@Field def REGRESSION_EXIT_CODE = 77
+
+// Track whether the Python+ODBC lane detected a confirmed regression
+@Field def regressionDetected = false
+
 def setupVenv() {
     dir('tests/performance') {
         sh '''
@@ -12,6 +31,185 @@ def setupVenv() {
     }
 }
 
+def hasPrLabel(String labelName) {
+    if (!env.CHANGE_ID) {
+        return false
+    }
+    try {
+        def labels = ''
+        withCredentials([usernamePassword(
+            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            usernameVariable: 'GITHUB_APP',
+            passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+            labels = sh(
+                returnStdout: true,
+                script: """
+                    curl -sf \
+                        -H "Authorization: token \${GITHUB_TOKEN}" \
+                        -H "Accept: application/vnd.github.v3+json" \
+                        "https://api.github.com/repos/snowflakedb/universal-driver/issues/${env.CHANGE_ID}/labels" \
+                    | python3 -c "import sys,json; print('\\n'.join(l['name'] for l in json.load(sys.stdin)))"
+                """
+            ).trim()
+        }
+        return labels.split('\n').any { it.trim() == labelName }
+    } catch (Exception e) {
+        echo "Warning: Could not check PR labels via GitHub API: ${e.message}"
+        return false
+    }
+}
+
+def postRegressionStatus(String conclusion, String description) {
+    // Use the commit Status API (not the Checks API) so that the
+    // accept-performance-changes GitHub Actions workflow can override the
+    // status with a simple createCommitStatus call.  The Checks API scopes
+    // check runs to the creating app, making cross-app overrides impossible.
+    if (!env.CHANGE_ID) {
+        return
+    }
+    try {
+        def state = (conclusion == 'SUCCESS') ? 'success' : 'failure'
+        // Jenkins merges the PR into main before building, so GIT_COMMIT is a
+        // local merge SHA unknown to GitHub. The PR head is fetched by the
+        // Jenkins refspec to refs/remotes/origin/PR-<number>, so resolve it
+        // directly from git — no API call, no shell fallback, no newline risk.
+        def prHeadSha = sh(
+            returnStdout: true,
+            script: "git rev-parse refs/remotes/origin/PR-${env.CHANGE_ID}"
+        ).trim()
+        withCredentials([usernamePassword(
+            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            usernameVariable: 'GITHUB_APP',
+            passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+            sh """
+                curl -sf --retry 3 --retry-delay 5 \
+                    -X POST \
+                    -H "Authorization: token \${GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    "https://api.github.com/repos/snowflakedb/universal-driver/statuses/${prHeadSha}" \
+                    -d '{"state":"${state}","context":"${REGRESSION_STATUS_CONTEXT}","description":"${description}"}'
+            """
+        }
+    } catch (Exception e) {
+        echo "Warning: failed to post regression status: ${e.message}"
+    }
+}
+
+def combineExitCodes(int exitFast, int exitSlow) {
+    if (exitFast != 0 && exitFast != REGRESSION_EXIT_CODE) {
+        return exitFast
+    } else if (exitSlow != 0 && exitSlow != REGRESSION_EXIT_CODE) {
+        return exitSlow
+    } else if (exitFast == REGRESSION_EXIT_CODE || exitSlow == REGRESSION_EXIT_CODE) {
+        return REGRESSION_EXIT_CODE
+    }
+    return 0
+}
+
+def runRegressionTests(String driver) {
+    def exitFast = sh(
+        returnStatus: true,
+        script: """
+            source .venv/bin/activate
+            export CLOUD=aws
+            python -m hatch run -- python -m pytest \
+                tests/test_select_1M_recorded_http.py \
+                -k "${REGRESSION_FAST_TEST_FILTER}" \
+                --driver=${driver} --driver-type=universal \
+                --iterations=${REGRESSION_SCREEN_ITERATIONS} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
+                --preserve-mappings \
+                --regression-check --regression-threshold=${REGRESSION_THRESHOLD} \
+                --regression-rerun-iterations=${REGRESSION_RERUN_ITERATIONS} \
+                -s -v
+        """
+    )
+    def exitSlow = sh(
+        returnStatus: true,
+        script: """
+            source .venv/bin/activate
+            export CLOUD=aws
+            python -m hatch run -- python -m pytest \
+                tests/test_select_1M_recorded_http.py \
+                -k "${REGRESSION_SLOW_TEST_FILTER}" \
+                --driver=${driver} --driver-type=universal \
+                --iterations=${REGRESSION_SCREEN_ITERATIONS_SLOW} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
+                --preserve-mappings \
+                --regression-check --regression-threshold=${REGRESSION_THRESHOLD} \
+                --regression-rerun-iterations=${REGRESSION_RERUN_ITERATIONS} \
+                -s -v
+        """
+    )
+    return [exitFast: exitFast, exitSlow: exitSlow, combined: combineExitCodes(exitFast, exitSlow)]
+}
+
+def exitCodeLabel(int code) {
+    if (code == 0)                  return '✅ PASSED'
+    if (code == REGRESSION_EXIT_CODE) return '⚠️  REGRESSION'
+    return '❌ FAILED'
+}
+
+def printRegressionSummary(Map python, Map odbc) {
+    def sep = '=' * 72
+    echo """
+${sep}
+PERFORMANCE REGRESSION CHECK SUMMARY
+${sep}
+  Driver   Test group   Result
+  ------   ----------   ------
+  Python   Fast         ${exitCodeLabel(python.exitFast)}
+  Python   Slow         ${exitCodeLabel(python.exitSlow)}
+  ODBC     Fast         ${exitCodeLabel(odbc.exitFast)}
+  ODBC     Slow         ${exitCodeLabel(odbc.exitSlow)}
+${sep}
+  Fast tests : ${REGRESSION_FAST_TEST_FILTER}
+  Slow tests : ${REGRESSION_SLOW_TEST_FILTER}
+  Threshold  : ${REGRESSION_THRESHOLD}%  |  Rerun iters: ${REGRESSION_RERUN_ITERATIONS}
+${sep}"""
+
+    for (driver in ['python', 'odbc']) {
+        def summaryFile = "results/regression_summary_${driver}.json"
+        if (!fileExists(summaryFile)) {
+            echo "  [${driver.toUpperCase()}] No regression summary file found (${summaryFile})"
+            continue
+        }
+        def data = readJSON file: summaryFile
+        def header = String.format("  %-52s  %8s  %8s  %7s  %s",
+            "Test", "main(s)", "PR(s)", "diff%", "Status")
+        def line = '  ' + '-' * 70
+        def lines = [
+            "",
+            "  ${driver.toUpperCase()} driver — baseline run_key: ${data.baseline_run_key ?: 'N/A'}",
+            header,
+            line,
+        ]
+        for (t in data.tests) {
+            def icon = t.status == 'REGRESSED' ? '❌' : (t.status == 'noise' ? '⚠️ ' : '✅')
+            def reruns = t.confirmation_runs ? " reruns:[${t.confirmation_runs.join(', ')}s]" : ''
+            lines << String.format("  %-52s  %8.3f  %8.3f  %+6.1f%%  %s %s%s",
+                t.name, t.main_s, t.pr_s, t.diff_pct, icon, t.status, reruns)
+        }
+        lines << line
+        echo lines.join('\n')
+    }
+    echo sep
+}
+
+def runBaselineTests(String driver) {
+    sh """
+        source .venv/bin/activate
+        export CLOUD=aws
+        python -m hatch run -- python -m pytest \
+            tests/test_select_1M_recorded_http.py \
+            -k "${REGRESSION_TEST_FILTER}" \
+            --driver=${driver} --driver-type=universal \
+            --iterations=${REGRESSION_BASELINE_ITERATIONS} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
+            --upload-to-benchstore \
+            -s -v
+    """
+}
+
 pipeline {
     agent none
 
@@ -19,7 +217,7 @@ pipeline {
         timestamps()
         disableResume()
         buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     environment {
@@ -34,7 +232,7 @@ pipeline {
             failFast true
             parallel {
                 stage('Core') {
-                    agent { label 'regular-memory-node-snowos' }
+                    agent { label 'drivers-perf-regular-memory-node-snowos' }
                     stages {
                         stage('Setup - Core') {
                             steps {
@@ -79,14 +277,17 @@ pipeline {
                 }
 
                 stage('Python + ODBC') {
-                    agent { label 'regular-memory-node-snowos' }
+                    agent { label 'drivers-perf-regular-memory-node-snowos' }
+                    environment {
+                        JENKINS_NODE_LABEL = 'drivers-perf-regular-memory-node-snowos'
+                    }
                     stages {
                         stage('Setup - Python/ODBC') {
                             steps {
                                 setupVenv()
                             }
                         }
-                        stage('Build - Python + ODBC') {
+                        stage('Build - Python + ODBC + WireMock') {
                             steps {
                                 withCredentials([
                                     usernamePassword(
@@ -101,7 +302,7 @@ pipeline {
                                 }
                             }
                         }
-                        stage('Smoke Test - Python + ODBC') {
+                        stage('Test - Python + ODBC') {
                             steps {
                                 withCredentials([
                                     string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
@@ -112,12 +313,54 @@ pipeline {
                                     withCredentials([
                                         file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
                                     ]) {
-                                        sh '''
-                                            source .venv/bin/activate
-                                            export CLOUD=aws
-                                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_string_1M_arrow --driver=python --driver-type=both --iterations=1 --warmup-iterations=0 -s -v
-                                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_string_1M_arrow --driver=odbc --driver-type=both --iterations=1 --warmup-iterations=0 -s -v
-                                        '''
+                                        script {
+                                            def isMainBranch = (env.CHANGE_ID == null)
+
+                                            if (isMainBranch) {
+                                                runBaselineTests('python')
+                                                runBaselineTests('odbc')
+                                            } else {
+                                                def python = runRegressionTests('python')
+                                                def odbc   = runRegressionTests('odbc')
+
+                                                printRegressionSummary(python, odbc)
+
+                                                def exitCode = combineExitCodes(python.combined, odbc.combined)
+
+                                                if (exitCode == REGRESSION_EXIT_CODE) {
+                                                    regressionDetected = true
+                                                    postRegressionStatus('FAILURE', 'Performance regression detected')
+                                                    echo "Performance regression detected (exit code ${REGRESSION_EXIT_CODE})"
+                                                } else if (exitCode != 0) {
+                                                    postRegressionStatus('FAILURE', 'Tests failed before regression check could complete')
+                                                    error("Tests failed with exit code ${exitCode}")
+                                                } else {
+                                                    postRegressionStatus('SUCCESS', 'No performance regression detected')
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        stage('Regression Gate') {
+                            when {
+                                expression { env.CHANGE_ID != null }
+                            }
+                            steps {
+                                script {
+                                    if (!regressionDetected) {
+                                        echo "No regression detected — gate passed"
+                                        return
+                                    }
+
+                                    def accepted = hasPrLabel(ACCEPT_PERF_LABEL)
+                                    if (accepted) {
+                                        echo "Regression detected but '${ACCEPT_PERF_LABEL}' label is present — accepting performance changes"
+                                        postRegressionStatus('SUCCESS', "Regression accepted via ${ACCEPT_PERF_LABEL} label".toString())
+                                    } else {
+                                        echo "Regression detected and '${ACCEPT_PERF_LABEL}' label is NOT present — add the label and re-run to accept"
+                                        postRegressionStatus('FAILURE', "Regression confirmed — add ${ACCEPT_PERF_LABEL} label to accept".toString())
                                     }
                                 }
                             }
@@ -130,7 +373,7 @@ pipeline {
 
     post {
         success {
-            echo 'PR check passed: all driver images built and 1M tests passed'
+            echo 'PR check passed: all driver images built and tests passed'
         }
         failure {
             echo 'PR check failed'
