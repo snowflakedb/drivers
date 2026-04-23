@@ -19,7 +19,7 @@ use super::validation::{
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
-use crate::config::logout::{ErrorStrategy, LogoutConfig};
+use crate::config::logout::{CloseParamsOverrides, LogoutConfig};
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
@@ -1527,16 +1527,10 @@ impl DatabaseDriverV1 {
     /// value unchanged). Error handling follows `config.error_strategy`:
     /// - `Strict`: surface errors to the caller (close() may fail)
     /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
-    #[allow(clippy::too_many_arguments)]
     pub async fn connection_close(
         &self,
         conn_handle: Handle,
-        server_session_keep_alive: Option<bool>,
-        enable_server_session_keep_alive_auto_detection: Option<bool>,
-        error_strategy: Option<ErrorStrategy>,
-        logout_total_timeout_seconds: Option<i32>,
-        max_attempts: Option<i32>,
-        logout_request_timeout_seconds: Option<i32>,
+        overrides: CloseParamsOverrides,
     ) -> Result<(), ApiError> {
         let conn_ptr = self
             .connections
@@ -1563,14 +1557,7 @@ impl DatabaseDriverV1 {
                 // Any None override leaves the init-time value unchanged.
                 let config = conn
                     .logout_config
-                    .merge_with_request(
-                        server_session_keep_alive,
-                        enable_server_session_keep_alive_auto_detection,
-                        error_strategy,
-                        logout_total_timeout_seconds,
-                        max_attempts,
-                        logout_request_timeout_seconds,
-                    )
+                    .merge_with_request(&overrides)
                     .context(ConfigurationSnafu)?;
                 let error_strategy = config.error_strategy;
 
