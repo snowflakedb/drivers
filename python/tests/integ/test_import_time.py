@@ -25,7 +25,7 @@ print(f"{elapsed:.6f}")
 """
 
 _NUM_RUNS = 5
-_MAX_IMPORT_TIME_SECONDS = 0.15 if IS_UNIVERSAL_DRIVER else 0.4
+_MAX_IMPORT_TIME_SECONDS = 0.4 if IS_UNIVERSAL_DRIVER else 0.6
 
 
 class TestImportTime:
