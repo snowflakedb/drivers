@@ -56,13 +56,11 @@ use crate::conversion::error::{
 };
 use crate::conversion::warning::Warnings;
 
-/// Per-column converter that dispatches Arrow values to ODBC buffers.
+/// Per-column converter from Arrow values to ODBC buffers.
 ///
-/// Built once per column per `RecordBatch` and reused for every cell in that
-/// column. The array reference is passed in at `convert_arrow_value` time
-/// rather than stored inside the converter, so the trait object is `'static`
-/// and trivial to cache. The per-cell cost collapses to a single vtable call
-/// plus one cheap `Any` downcast.
+/// `'static` so it can be cached and reused across every cell of a column
+/// within a `RecordBatch`. The array is passed in per call rather than held
+/// by the converter.
 pub trait Converter {
     fn convert_arrow_value(
         &self,
@@ -75,8 +73,7 @@ pub trait Converter {
 
 struct GenericConverter<ArrowArrayType, T> {
     snowflake_type: T,
-    // `fn() -> ArrowArrayType` keeps the converter covariant over the array
-    // type while not requiring `ArrowArrayType` itself to impl any auto traits.
+    // `fn() -> ArrowArrayType` so the marker imposes no auto-trait bounds.
     _phantom: std::marker::PhantomData<fn() -> ArrowArrayType>,
 }
 
@@ -338,16 +335,11 @@ impl SnowflakeFieldType {
     }
 }
 
-/// Build a converter for a column based on its Arrow `Field`.
+/// Build a converter for a column from its Arrow `Field`.
 ///
-/// The returned `Box<dyn Converter>` is `'static` and can be cached and
-/// reused across every cell of the column within a `RecordBatch`. The
-/// caller supplies the Arrow array at `convert_arrow_value` time.
-///
-/// Note: the expensive work here is `SnowflakeFieldType::from_field`, which
-/// performs HashMap lookups and `u32` parses on the field's metadata. Call
-/// sites in the fetch hot path build converters once per column per batch
-/// rather than once per cell.
+/// The returned `Box<dyn Converter>` is `'static` and meant to be built once
+/// per column per `RecordBatch` (the `SnowflakeFieldType::from_field` work
+/// here parses field metadata and is too expensive to do per cell).
 pub fn make_converter(
     field: &Field,
     numeric_settings: &NumericSettings,

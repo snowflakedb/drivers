@@ -18,8 +18,8 @@ use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
 
-/// One-shot conversion used on the `SQLGetData` code path where only a
-/// single cell is read per call; caching on this path is not worthwhile.
+/// One-shot conversion used on the `SQLGetData` path; caching is not
+/// worthwhile because only a single cell is read per call.
 fn read_arrow_value(
     binding: &Binding,
     array_ref: &dyn Array,
@@ -33,40 +33,23 @@ fn read_arrow_value(
     Ok(warnings)
 }
 
-/// Per-batch cache of converters + binding snapshots for the currently-bound
-/// columns.
-///
-/// The fetch hot path (`SQLFetch` with `SQL_ATTR_ROW_ARRAY_SIZE > 1`) used to
-/// rebuild a `Box<dyn Converter>` for every cell — millions of heap
-/// allocations and HashMap/`parse::<u32>()` calls on a 1M-row × 15-col
-/// select. Caching both the converter and a copy of the `Binding` per bound
-/// column lets the per-cell work collapse to a vtable call + `Any` downcast +
-/// pointer-stride math; the ARD `HashMap` is not touched at all during the
-/// inner row loop.
-///
-/// The cache lives for the duration of a single fetch call. It is rebuilt
-/// whenever we cross into a new `RecordBatch` (detected via the data pointer
-/// of the batch's first column, or the schema `Arc` pointer for the rare
-/// zero-column case) and also whenever it has no entries yet.
+/// Per-batch cache of converters and `Binding` snapshots for the bound
+/// columns. Lets the `SQLFetch` inner loop avoid rebuilding a converter and
+/// re-reading the ARD `HashMap` for every cell. Lives for one fetch call and
+/// is rebuilt whenever the cursor crosses into a new `RecordBatch`.
 struct FetchConverterCache {
-    /// Batch identity: `Arc::as_ptr(record_batch.column(0))` when the batch
-    /// has columns, otherwise the schema `Arc` pointer. `std::ptr::null()`
-    /// means "no cache yet".
+    /// `Arc::as_ptr(record_batch.column(0))` when the batch has columns,
+    /// otherwise the schema `Arc` pointer. Null means "no cache yet".
     batch_identity: *const (),
-    /// One entry per bound column, in a stable iteration order captured at
-    /// cache-build time. Entries with `arrow_col == usize::MAX` represent
-    /// out-of-range columns and are logged + skipped on the hot path, matching
-    /// the previous per-cell behaviour.
     entries: Vec<CachedColumn>,
 }
 
 struct CachedColumn {
     column_number: u16,
+    /// `usize::MAX` sentinels an out-of-range column (logged + skipped).
     arrow_col: usize,
-    /// Snapshot of the ARD `Binding` at cache-build time. Copied (not
-    /// referenced) so the fetch loop never touches the ARD `HashMap`. Safe
-    /// because the application cannot legally mutate bindings between
-    /// `SQLFetch` entry and return.
+    /// Snapshot of the ARD `Binding` so the inner loop never touches the
+    /// `HashMap`. Safe because bindings cannot mutate during `SQLFetch`.
     binding: Binding,
     converter: Option<Box<dyn Converter>>,
 }
@@ -79,11 +62,8 @@ impl FetchConverterCache {
         }
     }
 
-    /// Rebuild the cache if `record_batch` differs from the cached batch, or
-    /// if the cache is empty. The batch identity used is the data pointer of
-    /// the first column (stable for the life of the batch, different across
-    /// batches); the schema `Arc` pointer is the fallback for zero-column
-    /// batches.
+    /// Rebuild the cache if the current `RecordBatch` differs from the
+    /// cached one (or if the cache is empty).
     fn refresh_if_needed(
         &mut self,
         stmt: &Statement,
@@ -294,9 +274,6 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let row_status_ptr = stmt.ird.array_status_ptr;
     let rows_fetched_ptr = stmt.ird.rows_processed_ptr;
 
-    // One converter cache per fetch call. It survives batch transitions
-    // within this call and is rebuilt only when the cursor walks into a new
-    // `RecordBatch`.
     let mut cache = FetchConverterCache::new();
 
     if array_size == 1 && bind_offset_ptr.is_null() {
@@ -536,17 +513,8 @@ fn adjust_binding_for_row(
     }
 }
 
-/// Execute column bindings for a single row within a block-cursor fetch.
-///
-/// Uses the pre-built `FetchConverterCache`, which holds both a ready-to-use
-/// `Box<dyn Converter>` and a snapshot of each column's `Binding`. Per-cell
-/// work is therefore:
-///   * pointer-stride math in `adjust_binding_for_row` (plain arithmetic),
-///   * one `Arc` deref on the cached `ArrayRef`,
-///   * one vtable call into the converter,
-///   * one cheap `Any` downcast inside the converter.
-///
-/// The ARD `HashMap` is not consulted at all in this inner loop.
+/// Execute column bindings for a single row within a block-cursor fetch
+/// using the pre-built `FetchConverterCache`.
 fn execute_bindings_for_row(
     stmt: &Statement,
     cache: &FetchConverterCache,
