@@ -1,9 +1,11 @@
 #[cfg(test)]
 mod integration_tests {
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
     use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
     use crate::config::settings::{Setting, Settings};
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
     use crate::rest::snowflake;
+    use crate::tls::config::TlsConfig;
     use std::collections::HashMap;
 
     /// Mock settings implementation for testing
@@ -81,8 +83,19 @@ mod integration_tests {
 
     #[test]
     fn test_client_info_with_crl_config() {
-        let settings = MockSettings::new().with_crl_enabled();
-        let client_info = ClientInfo::from_settings(&settings).unwrap();
+        let crl_config = CrlConfig {
+            check_mode: CertRevocationCheckMode::Enabled,
+            ..Default::default()
+        };
+        let client_info = ClientInfo {
+            application: "PythonConnector".to_string(),
+            crl_config: crl_config.clone(),
+            tls_config: TlsConfig {
+                crl_config,
+                ..Default::default()
+            },
+            ..test_client_info()
+        };
 
         assert_eq!(
             client_info.crl_config.check_mode,
@@ -153,8 +166,12 @@ mod integration_tests {
 
     #[test]
     fn test_user_agent_generation() {
-        let settings = MockSettings::new();
-        let client_info = ClientInfo::from_settings(&settings).unwrap();
+        let client_info = ClientInfo {
+            application: "PythonConnector".to_string(),
+            version: "3.15.0".to_string(),
+            os: "Darwin".to_string(),
+            ..test_client_info()
+        };
         let user_agent = snowflake::build_user_agent(&client_info);
 
         assert!(user_agent.contains("PythonConnector"));

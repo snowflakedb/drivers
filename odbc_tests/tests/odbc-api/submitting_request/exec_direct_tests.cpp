@@ -327,14 +327,28 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Executes with bound para
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_NEED_DATA with data-at-execution parameter",
                  "[odbc-api][execdirect][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLLEN dae_ind = SQL_DATA_AT_EXEC;
   SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
                                    reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLCancel(stmt_handle());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_NEED_DATA even when SQL has no parameter markers",
+                 "[odbc-api][execdirect][submitting_request]") {
+  // DAE detection for exec-direct is based solely on APD bindings, not on
+  // parsing the SQL for '?' markers.  A spurious DAE binding on a query with
+  // no markers still triggers SQL_NEED_DATA (matches reference driver).
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                                   reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_NEED_DATA);
 
   SQLCancel(stmt_handle());
@@ -376,8 +390,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for TextLength zer
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY010 during SQL_NEED_DATA",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

@@ -1819,16 +1819,11 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
             .unwrap();
 
     //Then Query fails with connection closed error
-    match *result_after.expect_err("Query should fail after connection is closed") {
-        proto_utils::ProtoError::Application(exc) => {
-            assert!(
-                exc.message.contains("closed"),
-                "Error must mention connection is closed, got: {}",
-                exc.message,
-            );
-        }
-        other => panic!("Expected application error, got: {other:?}"),
-    }
+    let error_msg = result_after.expect_err("Query should fail after connection is closed");
+    assert!(
+        error_msg.contains("closed"),
+        "Error must mention connection is closed, got: {error_msg}",
+    );
 }
 
 // Helper functions
@@ -1842,5 +1837,7 @@ fn test_client_info() -> ClientInfo {
         ocsp_mode: Some("FAIL_OPEN".to_string()),
         crl_config: Default::default(),
         tls_config: Default::default(),
+        platforms: vec![],
+        os_details: None,
     }
 }

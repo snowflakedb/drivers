@@ -20,12 +20,17 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.MultiStatementResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementGetResultSetRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetOptionsRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryRequest;
 
 public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
@@ -41,6 +46,9 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   protected long currentUpdateCount = NO_UPDATE_COUNT;
   protected String queryId;
   protected final Set<ResultSet> openResultSets = ConcurrentHashMap.newKeySet();
+  private List<String> childQueryIds;
+  private List<Long> childStatementTypeIds;
+  private int childResultIndex;
 
   public SnowflakeStatementImpl(SnowflakeConnectionImpl connection) {
     this.connection = connection;
@@ -63,8 +71,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   protected ResultSet executeQueryWithBindings(String sql, QueryBindings bindings)
       throws SQLException {
     checkClosed();
-    ExecuteResult executeResult = executeStatement(sql, bindings);
-    applyExecuteQueryResult(executeResult);
+    ExecuteQueryResponse response = executeStatement(sql, bindings);
+    applyExecuteQueryResult(response);
     return currentResultSet;
   }
 
@@ -79,11 +87,12 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   protected boolean executeWithBindings(String sql, QueryBindings bindings) throws SQLException {
     checkClosed();
-    ExecuteResult executeResult = executeStatement(sql, bindings);
-    return updateExecutionStateAndReturnHasResultSet(executeResult);
+    ExecuteQueryResponse response = executeStatement(sql, bindings);
+    return updateExecutionStateAndReturnHasResultSet(response);
   }
 
-  private ExecuteResult executeStatement(String sql, QueryBindings bindings) throws SQLException {
+  private ExecuteQueryResponse executeStatement(String sql, QueryBindings bindings)
+      throws SQLException {
     boolean hasBindings = bindings != null;
     logger.debug("Statement executeWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
     prepareForExecution();
@@ -110,58 +119,128 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
         hasBindings,
         executeQueryRequest.getSerializedSize());
     try {
-      StatementExecuteQueryResponse result =
+      ExecuteQueryResponse response =
           ProtobufApis.databaseDriverV1.statementExecuteQuery(executeQueryRequest);
-      ExecuteResult executeResult = result.getResult();
-      logger.debug(
-          "statementExecuteQuery succeeded: hasBindings={}, queryId={}",
-          hasBindings,
-          executeResult.getQueryId());
-      return executeResult;
+      logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
+      return response;
     } catch (DatabaseDriverService.ServiceException e) {
       logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
       throw SnowflakeSQLException.fromServiceException("Failed to execute statement query", e);
     }
   }
 
-  private void applyExecuteQueryResult(ExecuteResult executeResult) throws SQLException {
-    queryId = executeResult.getQueryId();
-    // Match the old JDBC driver: executeQuery() historically accepted single-statement
-    // DML/DDL and surfaced a ResultSet wrapper when the server returned a stream
-    if (StatementTypeClassifier.producesResultSet(executeResult) || executeResult.hasStream()) {
-      applyResultSetExecutionResult(executeResult);
+  private ResultSetResponse fetchResultSet(String queryId) throws SQLException {
+    StatementGetResultSetRequest request =
+        StatementGetResultSetRequest.newBuilder()
+            .setStmtHandle(statementHandle)
+            .setQueryId(queryId)
+            .build();
+    try {
+      return ProtobufApis.databaseDriverV1.statementGetResultSet(request);
+    } catch (DatabaseDriverService.ServiceException e) {
+      throw SnowflakeSQLException.fromServiceException(
+          "Failed to fetch result set for query ID: " + queryId, e);
+    }
+  }
+
+  private void applyExecuteQueryResult(ExecuteQueryResponse response) throws SQLException {
+    if (response.hasMulti()) {
+      applyMultiStatementResult(response.getMulti());
       return;
     }
-
+    ResultSetDescriptor descriptor = response.getSingle();
+    queryId = descriptor.getQueryId();
+    if (StatementTypeClassifier.producesResultSet(descriptor)) {
+      applyResultSetFromDescriptor(descriptor);
+      return;
+    }
+    // DML/DDL that returned via executeQuery() — still surface a ResultSet if the server
+    // provides a stream (matches old JDBC driver behavior)
+    ResultSetResponse resultSetResponse = fetchResultSet(descriptor.getQueryId());
+    if (resultSetResponse.hasStream() && !resultSetResponse.getStream().getValue().isEmpty()) {
+      currentResultSet = new SnowflakeResultSetImpl(this, resultSetResponse);
+      currentUpdateCount = NO_UPDATE_COUNT;
+      return;
+    }
     currentResultSet = null;
     currentUpdateCount = NO_UPDATE_COUNT;
   }
 
-  private boolean updateExecutionStateAndReturnHasResultSet(ExecuteResult executeResult)
+  private boolean updateExecutionStateAndReturnHasResultSet(ExecuteQueryResponse response)
       throws SQLException {
-    queryId = executeResult.getQueryId();
-    if (StatementTypeClassifier.producesResultSet(executeResult)) {
-      applyResultSetExecutionResult(executeResult);
+    if (response.hasMulti()) {
+      applyMultiStatementResult(response.getMulti());
+      return currentResultSet != null;
+    }
+    ResultSetDescriptor descriptor = response.getSingle();
+    queryId = descriptor.getQueryId();
+    if (StatementTypeClassifier.producesResultSet(descriptor)) {
+      applyResultSetFromDescriptor(descriptor);
       return true;
     }
 
     currentResultSet = null;
-    currentUpdateCount = StatementTypeClassifier.getUpdateCount(executeResult);
+    currentUpdateCount = StatementTypeClassifier.getUpdateCount(descriptor);
     return false;
   }
 
-  private void applyResultSetExecutionResult(ExecuteResult executeResult) throws SQLException {
-    currentResultSet = new SnowflakeResultSetImpl(this, executeResult);
+  private void applyMultiStatementResult(MultiStatementResult multi) throws SQLException {
+    childQueryIds = multi.getQueryIdsList();
+    childStatementTypeIds = multi.getStatementTypeIdsList();
+    childResultIndex = 0;
+    queryId = multi.getParent().getQueryId();
+    if (childQueryIds.isEmpty()) {
+      currentResultSet = null;
+      currentUpdateCount = NO_UPDATE_COUNT;
+      return;
+    }
+    applyChildResult(0);
+  }
+
+  private void applyChildResult(int index) throws SQLException {
+    String childQueryId = childQueryIds.get(index);
+    ResultSetResponse resultSetResponse = fetchResultSet(childQueryId);
+    ResultSetDescriptor descriptor = resultSetResponse.getResultDescriptor();
+
+    // Use statement type from the initial multi-statement response if available,
+    // otherwise fall back to the descriptor from the fetched result set.
+    boolean producesResultSet;
+    if (index < childStatementTypeIds.size()) {
+      producesResultSet =
+          StatementTypeClassifier.producesResultSet(childStatementTypeIds.get(index));
+    } else {
+      producesResultSet = StatementTypeClassifier.producesResultSet(descriptor);
+    }
+
+    if (producesResultSet) {
+      currentResultSet = new SnowflakeResultSetImpl(this, resultSetResponse);
+      currentUpdateCount = NO_UPDATE_COUNT;
+    } else {
+      currentResultSet = null;
+      currentUpdateCount = StatementTypeClassifier.getUpdateCount(descriptor);
+    }
+  }
+
+  private void applyResultSetFromDescriptor(ResultSetDescriptor descriptor) throws SQLException {
+    ResultSetResponse resultSetResponse = fetchResultSet(descriptor.getQueryId());
+    currentResultSet = new SnowflakeResultSetImpl(this, resultSetResponse);
     currentUpdateCount = NO_UPDATE_COUNT;
+  }
+
+  private void resetExecutionState() {
+    currentResultSet = null;
+    currentUpdateCount = NO_UPDATE_COUNT;
+    queryId = null;
+    childQueryIds = null;
+    childStatementTypeIds = null;
+    childResultIndex = -1;
   }
 
   private void prepareForExecution() throws SQLException {
     if (currentResultSet != null && !currentResultSet.isClosed()) {
       openResultSets.add(currentResultSet);
     }
-    currentResultSet = null;
-    currentUpdateCount = NO_UPDATE_COUNT;
-    queryId = null;
+    resetExecutionState();
   }
 
   private void clearExecutionState() throws SQLException {
@@ -170,9 +249,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       closeResultSet(resultSet);
     }
     openResultSets.clear();
-    currentResultSet = null;
-    currentUpdateCount = NO_UPDATE_COUNT;
-    queryId = null;
+    resetExecutionState();
   }
 
   protected void closeCurrentResultSet() throws SQLException {
@@ -382,11 +459,28 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       }
       openResultSets.clear();
     }
-    // TODO: Implement multi-statement result traversal once JDBC can iterate child results beyond
-    // the first ExecuteResult returned for a statement execution.
-    currentResultSet = null;
-    currentUpdateCount = NO_UPDATE_COUNT;
-    return false;
+    if (current == Statement.KEEP_CURRENT_RESULT && currentResultSet != null) {
+      openResultSets.add(currentResultSet);
+    }
+
+    if (childQueryIds == null || childResultIndex + 1 >= childQueryIds.size()) {
+      currentResultSet = null;
+      currentUpdateCount = NO_UPDATE_COUNT;
+      return false;
+    }
+
+    childResultIndex++;
+    applyChildResult(childResultIndex);
+
+    // Multi-statement queries return true if the current result is a ResultSet.
+    // For update counts (DML/DDL), return true only if there are more results after this one.
+    // This matches the behavior of the legacy Snowflake JDBC driver.
+    if (currentResultSet != null) {
+      return true;
+    }
+
+    // For update counts, return true if there are more children after this one
+    return childResultIndex + 1 < childQueryIds.size();
   }
 
   @Override
@@ -494,7 +588,25 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public void setParameter(String name, Object value) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setParameter not supported");
+    checkClosed();
+    try {
+      ConfigSetting.Builder settingBuilder = ConfigSetting.newBuilder();
+      if (value instanceof Number) {
+        settingBuilder.setIntValue(((Number) value).longValue());
+      } else {
+        settingBuilder.setStringValue(String.valueOf(value));
+      }
+
+      StatementSetOptionsRequest request =
+          StatementSetOptionsRequest.newBuilder()
+              .setStmtHandle(statementHandle)
+              .putOptions(name, settingBuilder.build())
+              .build();
+      ProtobufApis.databaseDriverV1.statementSetOptions(request);
+    } catch (DatabaseDriverService.ServiceException e) {
+      throw SnowflakeSQLException.fromServiceException(
+          "Failed to set statement parameter: " + name, e);
+    }
   }
 
   @Override

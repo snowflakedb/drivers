@@ -1,6 +1,6 @@
 use crate::api::encoding::{OdbcEncoding, write_string_bytes, write_string_chars};
 use crate::api::error::{
-    ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
+    ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu, NullPointerSnafu,
     StatementNotExecutedSnafu,
 };
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
@@ -11,6 +11,31 @@ use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
 
+/// Process a catalog function string argument according to SQL_ATTR_METADATA_ID rules.
+///
+/// When `metadata_id` is `true`, the argument is treated as a case-insensitive identifier:
+/// - `None` (NULL pointer) → `HY009` (`InvalidUseOfNullPointer`): identifier is required.
+/// - Trailing spaces are stripped.
+/// - The string is folded to uppercase.
+///
+/// When `metadata_id` is `false` (default), the argument is treated as an ordinary search
+/// pattern and returned unchanged; `None` means "match all" (no filter applied).
+///
+/// Catalog functions must call this for every string argument except `TableType` in
+/// `SQLTables` (which is always treated as an ordinary argument per the ODBC spec).
+#[allow(dead_code)] // Used by catalog functions (SQLTables, SQLColumns, …) not yet implemented
+pub(crate) fn process_catalog_arg(
+    arg: Option<&str>,
+    metadata_id: bool,
+) -> OdbcResult<Option<String>> {
+    match (arg, metadata_id) {
+        (None, true) => NullPointerSnafu.fail(),
+        (None, false) => Ok(None),
+        (Some(s), true) => Ok(Some(s.trim_end().to_uppercase())),
+        (Some(s), false) => Ok(Some(s.to_string())),
+    }
+}
+
 /// Get the number of result columns
 pub fn num_result_cols(
     statement_handle: sql::Handle,
@@ -18,6 +43,10 @@ pub fn num_result_cols(
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
 
     let num_cols = match stmt.state.as_ref() {
         StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
@@ -45,6 +74,11 @@ pub fn num_result_cols(
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
     let row_count = match stmt.state.as_ref() {
         StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
@@ -82,6 +116,10 @@ pub fn col_attribute<E: OdbcEncoding>(
     );
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
     let schema = match stmt.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
@@ -110,8 +148,9 @@ pub fn col_attribute<E: OdbcEncoding>(
         DescField::Type | DescField::ConciseType => {
             // SAFETY: conn pointer is valid for the statement's lifetime;
             // no mutable reference to the Connection exists in this scope.
-            let sql_type = sql_type_from_field(field, &unsafe { stmt.conn() }.numeric_settings)
-                .context(ConversionSnafu)?;
+            let sql_type =
+                sql_type_from_field(field, &unsafe { stmt.conn() }.connection.numeric_settings)
+                    .context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
                     std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
@@ -184,6 +223,10 @@ pub fn describe_col<E: OdbcEncoding>(
     tracing::debug!("describe_col: column_number={column_number}");
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
     let schema = match stmt.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
@@ -209,7 +252,8 @@ pub fn describe_col<E: OdbcEncoding>(
     let field = schema.field(col_idx);
     // SAFETY: conn pointer is valid for the statement's lifetime;
     // no mutable reference to the Connection exists in this scope.
-    let conn = unsafe { stmt.conn() };
+    let dbc = unsafe { stmt.conn() };
+    let numeric_settings = &dbc.connection.numeric_settings;
 
     let name = field.name();
     write_string_chars::<E>(
@@ -221,20 +265,17 @@ pub fn describe_col<E: OdbcEncoding>(
     );
 
     if !data_type_ptr.is_null() {
-        let sql_type =
-            sql_type_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
+        let sql_type = sql_type_from_field(field, numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
     if !column_size_ptr.is_null() {
-        let col_size =
-            column_size_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
+        let col_size = column_size_from_field(field, numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
     if !decimal_digits_ptr.is_null() {
-        let digits =
-            decimal_digits_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
+        let digits = decimal_digits_from_field(field, numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }
 
@@ -248,4 +289,146 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::error::OdbcError;
+
+    // ---- process_catalog_arg: SQL_FALSE (pattern mode) ----
+
+    #[test]
+    fn catalog_arg_none_pattern_mode_returns_none() {
+        assert_eq!(process_catalog_arg(None, false).unwrap(), None);
+    }
+
+    #[test]
+    fn catalog_arg_some_pattern_mode_returns_unchanged() {
+        assert_eq!(
+            process_catalog_arg(Some("Hello World"), false).unwrap(),
+            Some("Hello World".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_pattern_mode_preserves_trailing_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("hello  "), false).unwrap(),
+            Some("hello  ".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_pattern_mode_preserves_leading_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("  hello"), false).unwrap(),
+            Some("  hello".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_empty_string_pattern_mode() {
+        assert_eq!(
+            process_catalog_arg(Some(""), false).unwrap(),
+            Some("".to_string())
+        );
+    }
+
+    // ---- process_catalog_arg: SQL_TRUE (identifier mode) ----
+
+    #[test]
+    fn catalog_arg_none_identifier_mode_returns_hy009() {
+        let result = process_catalog_arg(None, true);
+        assert!(matches!(result, Err(OdbcError::NullPointer { .. })));
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases() {
+        assert_eq!(
+            process_catalog_arg(Some("hello"), true).unwrap(),
+            Some("HELLO".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_strips_trailing_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("  foo  "), true).unwrap(),
+            Some("  FOO".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_preserves_leading_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("  hello"), true).unwrap(),
+            Some("  HELLO".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_empty_string_identifier_mode() {
+        assert_eq!(
+            process_catalog_arg(Some(""), true).unwrap(),
+            Some("".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_only_spaces_identifier_mode_strips_all() {
+        assert_eq!(
+            process_catalog_arg(Some("   "), true).unwrap(),
+            Some("".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_mixed_case_identifier_mode() {
+        assert_eq!(
+            process_catalog_arg(Some("MyTable"), true).unwrap(),
+            Some("MYTABLE".to_string())
+        );
+    }
+
+    // ---- process_catalog_arg: Unicode uppercasing ----
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases_accented_latin() {
+        // Basic Latin accented characters: é → É, ñ → Ñ
+        assert_eq!(
+            process_catalog_arg(Some("résumé"), true).unwrap(),
+            Some("RÉSUMÉ".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases_german_sharp_s() {
+        // ß has no single-char uppercase in Unicode — it maps to the two-char sequence "SS"
+        assert_eq!(
+            process_catalog_arg(Some("straße"), true).unwrap(),
+            Some("STRASSE".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases_greek() {
+        assert_eq!(
+            process_catalog_arg(Some("ελληνικά"), true).unwrap(),
+            Some("ΕΛΛΗΝΙΚΆ".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_pattern_mode_preserves_unicode_unchanged() {
+        // In pattern mode nothing should be transformed regardless of script
+        assert_eq!(
+            process_catalog_arg(Some("straße"), false).unwrap(),
+            Some("straße".to_string())
+        );
+    }
 }

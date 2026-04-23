@@ -14,18 +14,15 @@ use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::sync::Arc;
 
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
-/// Result of processing a query response, containing the Arrow reader and
-/// optional column metadata for cases where the server does not provide rowtype
-/// (e.g. PUT/GET file transfer commands).
+/// Result of processing a query response, containing the Arrow reader.
 pub struct QueryResult {
     pub reader: Box<dyn RecordBatchReader + Send>,
-    pub columns: Option<Vec<ColumnMetadata>>,
 }
 
 pub async fn process_query_response(
@@ -38,10 +35,7 @@ pub async fn process_query_response(
             let reader = read_batches(data.to_rowset_data(), http_client.clone())
                 .await
                 .context(BatchReadingSnafu)?;
-            Ok(QueryResult {
-                reader,
-                columns: None,
-            })
+            Ok(QueryResult { reader })
         }
     }
 }
@@ -60,24 +54,22 @@ async fn perform_put_get(
                 .context(FileUploadSnafu)?;
             let reader =
                 upload_results_reader(upload_results).context(UploadResultsConversionSnafu)?;
-            Ok(QueryResult {
-                reader,
-                columns: Some(upload_column_metadata()),
-            })
+            Ok(QueryResult { reader })
         }
         "DOWNLOAD" => {
-            let file_download_data = data
-                .to_file_download_data()
-                .context(FileTransferPreparationSnafu)?;
+            let file_download_data = data.to_file_download_data().map_err(|e| {
+                if e.to_string().contains("source locations") {
+                    RemoteFileNotFoundSnafu.build()
+                } else {
+                    FileTransferPreparationSnafu.into_error(e)
+                }
+            })?;
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
             let reader = download_results_reader(download_results)
                 .context(DownloadResultsConversionSnafu)?;
-            Ok(QueryResult {
-                reader,
-                columns: Some(download_column_metadata()),
-            })
+            Ok(QueryResult { reader })
         }
         _ => UnsupportedCommandSnafu {
             command: command.to_string(),
@@ -362,6 +354,11 @@ pub enum QueryResponseProcessingError {
     #[snafu(display("Failed to prepare file transfer data"))]
     FileTransferPreparation {
         source: QueryResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("While getting file(s) there was an error: the file does not exist"))]
+    RemoteFileNotFound {
         #[snafu(implicit)]
         location: Location,
     },

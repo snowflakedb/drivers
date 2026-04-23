@@ -13,10 +13,12 @@ fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
 perf_timing = []
+test-utils = []
+cli = ["clap"]
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
-opentelemetry = { version = "0.30.0", default-features = false, features = ["trace"] }
+opentelemetry = { version = "0.30.0", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.30.0" }
 opentelemetry-semantic-conventions = { version = "0.30.0" }
@@ -27,7 +29,7 @@ reqwest = { version = "0.12.23", features = ["json", "rustls-tls", "gzip"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = { version = "0.7", features = ["time"] }
 tokio-stream = "0.1"
 toml = "0.8"
@@ -79,11 +81,11 @@ hex = "0.4"
 memchr = "2"
 sonic-rs = "0.5"
 sha2 = "0.10"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
 der = "0.7"
-pkcs1 = "0.7"
 num-traits = "0.2.19"
+os_info = "3"
 
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }
@@ -92,6 +94,9 @@ proto_generator = { path = "../proto_generator" }
 libc = "0.2"
 
 [dev-dependencies]
+sf_core = { path = ".", features = ["test-utils"] }
+tokio = { version = "1.47.1", features = ["fs"] }
+opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"
@@ -104,6 +109,7 @@ rcgen = "0.13"
 tokio-rustls = "0.26"
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
+temp-env = { version = "0.3.6", features = ["async_closure"] }
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
@@ -119,10 +125,12 @@ path = "tests/e2e/mod.rs"
 [[bin]]
 name = "tls_client"
 path = "src/bin/tls_client.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "collect_chunk_data"
 path = "src/bin/collect_chunk_data.rs"
+required-features = ["cli"]
 
 [[bench]]
 name = "prefetch_bench"

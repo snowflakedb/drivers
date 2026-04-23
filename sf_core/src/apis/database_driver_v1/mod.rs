@@ -5,8 +5,11 @@ pub mod connection;
 mod database;
 pub(crate) mod error;
 mod global_state;
+pub(crate) mod heartbeat;
 mod logout;
+pub(crate) mod multistatement;
 mod query;
+pub mod spcs_token;
 pub(crate) mod statement;
 pub(crate) mod validation;
 
@@ -16,6 +19,9 @@ pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
 pub use error::ApiError;
-pub use global_state::DatabaseDriverV1;
-pub use statement::{BindingType, ColumnMetadata, DataPtr, ExecuteResult, StoredChunkInfo};
+pub use global_state::{DatabaseDriverV1, DriverProviders};
+pub use statement::{
+    BindingType, ColumnMetadata, DataPtr, ExecuteQueryResult, ResolvedResultSet,
+    ResultSetDescriptor, StoredChunkInfo,
+};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

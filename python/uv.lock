@@ -645,6 +645,20 @@ wheels = [
 ]
 
 [[package]]
+name = "mypy-protobuf"
+version = "5.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+    { name = "types-protobuf", version = "6.32.1.20251210", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "types-protobuf", version = "6.32.1.20260221", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/48/658827446368bca30a94e545598065587ece9cd09b678d7d2895c37a59d2/mypy_protobuf-5.0.0.tar.gz", hash = "sha256:6fdd1cfdbb4419c713291d800a332d4bba6510dbd1341ed95e0bcc82fcadb6b5", size = 37309, upload-time = "2026-01-13T17:10:12.616Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/b1/ab1e7a49930a8c1d1f7a570bbd4ec7d552ef035acc7aa4b97906e17a34a9/mypy_protobuf-5.0.0-py3-none-any.whl", hash = "sha256:3a7dd753ef3e3b8783a824eb51f07983f62812f9ec066e4fbb1b22d6c5dc36d0", size = 26008, upload-time = "2026-01-13T17:10:11.053Z" },
+]
+
+[[package]]
 name = "numpy"
 version = "2.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1395,6 +1409,7 @@ dev = [
     { name = "hatchling", version = "1.27.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "hatchling", version = "1.28.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "mypy" },
+    { name = "mypy-protobuf" },
     { name = "ruff" },
     { name = "types-protobuf", version = "6.32.1.20251210", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "types-protobuf", version = "6.32.1.20260221", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -1436,6 +1451,7 @@ requires-dist = [
     { name = "hatchling", marker = "extra == 'dev'" },
     { name = "hypothesis", marker = "extra == 'test'" },
     { name = "mypy", marker = "extra == 'dev'" },
+    { name = "mypy-protobuf", marker = "extra == 'dev'" },
     { name = "numpy", marker = "python_full_version == '3.12.*' and extra == 'test'", specifier = ">=1.26.0" },
     { name = "numpy", marker = "python_full_version < '3.12' and extra == 'test'", specifier = ">=1.23.0" },
     { name = "numpy", marker = "python_full_version >= '3.13' and extra == 'test'", specifier = ">=2.1.0" },

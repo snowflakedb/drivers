@@ -27,12 +27,16 @@ pub struct AuthRequestClientEnvironment {
     pub os_version: String,
     #[serde(rename = "OCSP_MODE", skip_serializing_if = "Option::is_none")]
     pub ocsp_mode: Option<String>,
+    #[serde(rename = "PLATFORM")]
+    pub platforms: Vec<String>,
     #[serde(rename = "PYTHON_VERSION", skip_serializing_if = "Option::is_none")]
     pub python_version: Option<String>,
     #[serde(rename = "PYTHON_RUNTIME", skip_serializing_if = "Option::is_none")]
     pub python_runtime: Option<String>,
     #[serde(rename = "PYTHON_COMPILER", skip_serializing_if = "Option::is_none")]
     pub python_compiler: Option<String>,
+    #[serde(rename = "OS_DETAILS", skip_serializing_if = "Option::is_none")]
+    pub os_details: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -82,6 +86,8 @@ pub struct AuthRequestData {
     pub oauth_type: Option<String>,
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    #[serde(rename = "SPCS_TOKEN", skip_serializing_if = "Option::is_none")]
+    pub spcs_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

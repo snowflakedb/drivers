@@ -1724,4 +1724,52 @@ mod tests {
             "-0.0 should produce positive interval"
         );
     }
+
+    // ======================================================================
+    // write_json: non-finite f64 serialization for Snowflake JSON bind parser
+    //
+    // The server's JSON bind parser is stricter than its TO_DOUBLE() text
+    // parser. It accepts "NaN" (matching Rust's Display) but rejects Rust's
+    // short-form "inf" / "-inf" — it requires the full word "Infinity" /
+    // "-Infinity" with the leading 'I' capitalized.
+    // ======================================================================
+
+    use crate::conversion::traits::WriteJson;
+    use serde_json::Value;
+
+    fn write_json(value: f64) -> Value {
+        SnowflakeReal.write_json(value).unwrap()
+    }
+
+    #[test]
+    fn write_json_finite_values_use_default_display() {
+        assert_eq!(write_json(0.0), Value::String("0".to_string()));
+        assert_eq!(write_json(1.5), Value::String("1.5".to_string()));
+        assert_eq!(
+            write_json(-12345.6789),
+            Value::String("-12345.6789".to_string())
+        );
+    }
+
+    #[test]
+    fn write_json_nan_serializes_as_capital_n_a_n() {
+        assert_eq!(write_json(f64::NAN), Value::String("NaN".to_string()));
+    }
+
+    #[test]
+    fn write_json_positive_infinity_serializes_as_full_word_infinity() {
+        // Server rejects Rust's default "inf" — must be the full word.
+        assert_eq!(
+            write_json(f64::INFINITY),
+            Value::String("Infinity".to_string())
+        );
+    }
+
+    #[test]
+    fn write_json_negative_infinity_serializes_as_full_word_with_sign() {
+        assert_eq!(
+            write_json(f64::NEG_INFINITY),
+            Value::String("-Infinity".to_string())
+        );
+    }
 }

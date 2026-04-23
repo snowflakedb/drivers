@@ -43,31 +43,43 @@ class TestHelperFunctions:
         assert offset == expected_offset
 
     @pytest.mark.parametrize(
-        "months,expected",
+        "months,scale,expected",
         [
-            (14, "1-2"),  # 1 year, 2 months
-            (-14, "-1-2"),  # negative
-            (0, "0-0"),  # zero
-            (24, "2-0"),  # exact years
-            (7, "0-7"),  # only months
-            (12, "1-0"),  # exactly 1 year
-            (100, "8-4"),  # large value
-            (-1, "-0-1"),  # single negative month
+            (14, 0, "+1-02"),
+            (-14, 0, "-1-02"),
+            (0, 0, "+0-00"),
+            (24, 0, "+2-00"),
+            (7, 0, "+0-07"),
+            (12, 0, "+1-00"),
+            (100, 0, "+8-04"),
+            (-1, 0, "-0-01"),
+            (12, 1, "+1"),
+            (0, 1, "+0"),
+            (-24, 1, "-2"),
+            (5, 2, "+5"),
+            (-14, 2, "-14"),
+            (0, 2, "+0"),
         ],
         ids=[
-            "1y2m",
-            "neg_1y2m",
-            "zero",
-            "2y",
-            "7m",
-            "1y",
-            "8y4m",
-            "neg_1m",
+            "ytm_1y2m",
+            "ytm_neg_1y2m",
+            "ytm_zero",
+            "ytm_2y",
+            "ytm_7m",
+            "ytm_1y",
+            "ytm_8y4m",
+            "ytm_neg_1m",
+            "year_1y",
+            "year_zero",
+            "year_neg_2y",
+            "month_5m",
+            "month_neg_14m",
+            "month_zero",
         ],
     )
-    def test_interval_year_month_to_string(self, months, expected):
-        """Test interval conversion with various month values."""
-        result = interval_year_month_to_string(months)
+    def test_interval_year_month_to_string(self, months, scale, expected):
+        """Test interval conversion with various month values and scales."""
+        result = interval_year_month_to_string(months, scale)
         assert result == expected
 
 
@@ -459,14 +471,23 @@ class TestIntervalConversions:
     """Test interval conversion methods."""
 
     @pytest.mark.parametrize(
-        "months,expected",
-        [(25, "2-1"), (0, "0-0"), (12, "1-0"), (7, "0-7")],
-        ids=["2y1m", "zero", "1y", "7m"],
+        "months,scale,expected",
+        [
+            (25, 0, "+2-01"),
+            (0, 0, "+0-00"),
+            (12, 0, "+1-00"),
+            (7, 0, "+0-07"),
+            (12, 1, "+1"),
+            (-24, 1, "-2"),
+            (5, 2, "+5"),
+            (-14, 2, "-14"),
+        ],
+        ids=["ytm_2y1m", "ytm_zero", "ytm_1y", "ytm_7m", "year_1y", "year_neg_2y", "month_5m", "month_neg_14m"],
     )
-    def test_interval_year_month_to_str(self, months, expected):
-        """Test INTERVAL_YEAR_MONTH to string conversion."""
+    def test_interval_year_month_to_str(self, months, scale, expected):
+        """Test INTERVAL_YEAR_MONTH to string conversion with scale."""
         context = ArrowConverterContext()
-        result = context.INTERVAL_YEAR_MONTH_to_str(months)
+        result = context.INTERVAL_YEAR_MONTH_to_str(months, scale)
         assert result == expected
 
     @pytest.mark.parametrize(
@@ -530,10 +551,19 @@ class TestIntervalNumpyConversions:
 
     @pytest.mark.parametrize("months", [12, 0, 24, 1, 100], ids=["1y", "0", "2y", "1m", "8y4m"])
     def test_interval_year_month_to_numpy_timedelta(self, months):
-        """Test INTERVAL_YEAR_MONTH to numpy timedelta."""
+        """Test INTERVAL_YEAR_MONTH to numpy timedelta (default scale=9, months unit)."""
         context = ArrowConverterContext()
-        result = context.INTERVAL_YEAR_MONTH_to_numpy_timedelta(months)
+        result = context.INTERVAL_YEAR_MONTH_to_numpy_timedelta(months, scale=9)
         assert isinstance(result, np.timedelta64)
+        assert result == np.timedelta64(months, "M")
+
+    @pytest.mark.parametrize("months", [12, 0, 24, 120], ids=["1y", "0", "2y", "10y"])
+    def test_interval_year_to_numpy_timedelta(self, months):
+        """Test INTERVAL_YEAR (scale=0) to numpy timedelta in year units."""
+        context = ArrowConverterContext()
+        result = context.INTERVAL_YEAR_MONTH_to_numpy_timedelta(months, scale=0)
+        assert isinstance(result, np.timedelta64)
+        assert result == np.timedelta64(months // 12, "Y")
 
     @pytest.mark.parametrize(
         "nanos",

@@ -564,16 +564,51 @@ class TestSqlstate:
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
+    def _stub_execute_result(self, mock_connection, **overrides):
+        """Set up the mock to return an execute result with the given overrides."""
+        # Mock ResultSetDescriptor
+        descriptor = MagicMock()
+        descriptor.query_id = overrides.get("query_id", "test-query-id")
+        descriptor.columns = overrides.get("columns", [])
+        descriptor.rows_affected = overrides.get("rows_affected", 0)
+        descriptor.sql_state = overrides.get("sql_state", "")
+        descriptor.statement_type_id = overrides.get("statement_type_id", 0x0000)
+
+        def has_field_impl(field_name):
+            if field_name == "rows_affected":
+                return overrides.get("has_rows_affected", False)
+            elif field_name == "sql_state":
+                return bool(overrides.get("sql_state", ""))
+            elif field_name == "stats":
+                return overrides.get("has_stats", False)
+            elif field_name == "statement_type_id":
+                return "statement_type_id" in overrides
+            return False
+
+        descriptor.HasField = MagicMock(side_effect=has_field_impl)
+
+        # Mock ExecuteQueryResponse with single statement
+        execute_response = MagicMock()
+        execute_response.single = descriptor
+        execute_response.HasField = MagicMock(side_effect=lambda f: f == "single")
+        mock_connection.db_api.statement_execute_query.return_value = execute_response
+
+        # Mock StatementGetResultSetResponse
+        result_set_response = MagicMock()
+        result_set_response.result_descriptor = descriptor
+        result_set_response.stream = MagicMock()
+        result_set_response.stream.value = (0).to_bytes(8, byteorder="little")
+        mock_connection.db_api.statement_get_result_set.return_value = result_set_response
+
+        return descriptor
+
     def test_sqlstate_none_before_execute(self, cursor):
         """sqlstate is None on a fresh cursor."""
         assert cursor.sqlstate is None
 
     def test_sqlstate_none_after_successful_execute(self, cursor, mock_connection):
         """sqlstate is None when server returns '00000' (successful completion)."""
-        result = MagicMock()
-        result.columns = []
-        result.sql_state = "00000"
-        mock_connection.db_api.statement_execute_query.return_value.result = result
+        self._stub_execute_result(mock_connection, sql_state="00000")
 
         cursor.execute("SELECT 1")
 
@@ -581,10 +616,7 @@ class TestSqlstate:
 
     def test_sqlstate_populated_with_error_code(self, cursor, mock_connection):
         """sqlstate reflects non-success sql_state from execute result."""
-        result = MagicMock()
-        result.columns = []
-        result.sql_state = "42601"
-        mock_connection.db_api.statement_execute_query.return_value.result = result
+        self._stub_execute_result(mock_connection, sql_state="42601")
 
         cursor.execute("SELECT 1")
 
@@ -592,10 +624,7 @@ class TestSqlstate:
 
     def test_sqlstate_none_when_field_absent(self, cursor, mock_connection):
         """sqlstate is None when the server does not return sql_state."""
-        result = MagicMock()
-        result.columns = []
-        result.sql_state = ""
-        mock_connection.db_api.statement_execute_query.return_value.result = result
+        self._stub_execute_result(mock_connection, sql_state="")
 
         cursor.execute("SELECT 1")
 
@@ -603,19 +632,14 @@ class TestSqlstate:
 
     def test_sqlstate_updates_on_subsequent_execute(self, cursor, mock_connection):
         """sqlstate is refreshed on every execute call."""
-        first_result = MagicMock()
-        first_result.columns = []
-        first_result.sql_state = "42601"
+        # First execute with error
+        self._stub_execute_result(mock_connection, sql_state="42601")
 
-        second_result = MagicMock()
-        second_result.columns = []
-        second_result.sql_state = "00000"
-
-        mock_connection.db_api.statement_execute_query.return_value.result = first_result
         cursor.execute("SELECT 1")
         assert cursor.sqlstate == "42601"
 
-        mock_connection.db_api.statement_execute_query.return_value.result = second_result
+        # Second execute with success
+        self._stub_execute_result(mock_connection, sql_state="00000")
         cursor.execute("SELECT 2")
         assert cursor.sqlstate is None
 
@@ -1891,13 +1915,43 @@ class TestQueryResult:
 
     def _stub_result(self, mock_connection, **overrides):
         """Set up the mock RPC to return a result with the given overrides."""
-        result = MagicMock()
-        result.columns = overrides.get("columns", [])
-        result.rows_affected = overrides.get("rows_affected", 0)
-        result.HasField = MagicMock(return_value=overrides.get("has_rows_affected", False))
-        result.sql_state = overrides.get("sql_state", "")
-        mock_connection.db_api.connection_get_query_result.return_value.result = result
-        return result
+        # Mock ResultSetDescriptor
+        descriptor = MagicMock()
+        descriptor.query_id = overrides.get("query_id", "test-query-id")
+        descriptor.columns = overrides.get("columns", [])
+        descriptor.rows_affected = overrides.get("rows_affected", 0)
+        descriptor.statement_type_id = overrides.get("statement_type_id", 0x0000)  # Default to UNKNOWN
+
+        # Mock HasField to handle different field types
+        def has_field_impl(field_name):
+            if field_name == "rows_affected":
+                return overrides.get("has_rows_affected", False)
+            elif field_name == "sql_state":
+                return bool(overrides.get("sql_state", ""))
+            elif field_name == "stats":
+                return overrides.get("has_stats", False)
+            elif field_name == "statement_type_id":
+                return "statement_type_id" in overrides
+            return False
+
+        descriptor.HasField = MagicMock(side_effect=has_field_impl)
+        descriptor.sql_state = overrides.get("sql_state", "")
+        descriptor.stats = overrides.get("stats", None)
+
+        # Mock ConnectionGetQueryResultResponse with single statement
+        query_result_response = MagicMock()
+        query_result_response.single = descriptor
+        query_result_response.HasField = MagicMock(side_effect=lambda f: f == "single")
+        mock_connection.db_api.connection_get_query_result.return_value = query_result_response
+
+        # Mock ConnectionGetResultSetResponse
+        result_set_response = MagicMock()
+        result_set_response.result_descriptor = descriptor
+        result_set_response.stream = MagicMock()
+        result_set_response.stream.value = (0).to_bytes(8, byteorder="little")  # Null pointer
+        mock_connection.db_api.connection_get_result_set.return_value = result_set_response
+
+        return descriptor
 
     def test_query_result_populates_cursor_state(self, cursor, mock_connection):
         """query_result returns self, sends correct RPC args, and populates all cursor fields."""
@@ -2168,3 +2222,89 @@ class TestCursorFormatQueryForLog:
         result = cursor._format_query_for_log("SELECT * FROM big_table")
         mock_connection._format_query_for_log.assert_called_once_with("SELECT * FROM big_table")
         assert result == "formatted"
+
+
+class TestExecuteAsync:
+    """Unit tests for Cursor.execute_async method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.PYFORMAT
+
+        handle_resp = MagicMock()
+        handle_resp.stmt_handle = StatementHandle(id=42)
+        conn.db_api.statement_new.return_value = handle_resp
+
+        async_resp = MagicMock()
+        async_resp.query_id = "01abc-fake-query-id"
+        conn.db_api.statement_execute_async.return_value = async_resp
+
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_returns_dict_with_query_id(self, cursor):
+        """execute_async returns a dict containing the queryId."""
+        result = cursor.execute_async("SELECT 1")
+
+        assert isinstance(result, dict)
+        assert "queryId" in result
+        assert result["queryId"] == "01abc-fake-query-id"
+
+    def test_sets_sfqid_on_cursor(self, cursor):
+        """execute_async sets sfqid so downstream callers can reference it."""
+        cursor.execute_async("SELECT 1")
+
+        assert cursor.sfqid == "01abc-fake-query-id"
+
+    def test_calls_statement_execute_async_rpc(self, cursor, mock_connection):
+        """execute_async creates a statement and invokes the async RPC."""
+        cursor.execute_async("SELECT 42")
+
+        mock_connection.db_api.statement_new.assert_called_once()
+        mock_connection.db_api.statement_set_sql_query.assert_called_once()
+        mock_connection.db_api.statement_execute_async.assert_called_once()
+        mock_connection.db_api.statement_release.assert_called_once()
+
+    def test_resets_cursor_state(self, cursor, mock_connection):
+        """execute_async resets cursor state before submission."""
+        cursor._fetch_mode = FetchMode.ROW
+        cursor.execute_async("SELECT 1")
+
+        assert cursor._fetch_mode is None
+
+    def test_with_parameters_passes_bindings(self, cursor, mock_connection):
+        """execute_async forwards parameter bindings to the RPC request."""
+        mock_connection.paramstyle = ParamStyle.QMARK
+
+        cursor.execute_async("SELECT ?", [42])
+
+        request = mock_connection.db_api.statement_execute_async.call_args.args[0]
+        assert request.bindings is not None
+
+    def test_raises_on_closed_cursor(self, cursor):
+        """execute_async raises InterfaceError when cursor is closed."""
+        cursor.close()
+
+        with pytest.raises(InterfaceError):
+            cursor.execute_async("SELECT 1")
+
+    def test_propagates_rpc_error(self, cursor, mock_connection):
+        """execute_async propagates errors from the RPC layer."""
+        mock_connection.db_api.statement_execute_async.side_effect = ProgrammingError("Async submission failed")
+
+        with pytest.raises(ProgrammingError, match="Async submission failed"):
+            cursor.execute_async("SELECT 1")
+
+    def test_handles_empty_query_id(self, cursor, mock_connection):
+        """execute_async returns None queryId when server returns empty string."""
+        mock_connection.db_api.statement_execute_async.return_value.query_id = ""
+
+        result = cursor.execute_async("SELECT 1")
+
+        assert result["queryId"] is None

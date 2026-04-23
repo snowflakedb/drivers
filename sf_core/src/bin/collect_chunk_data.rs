@@ -124,6 +124,8 @@ fn default_client_info() -> ClientInfo {
         ocsp_mode: Some("FAIL_OPEN".to_string()),
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
+        platforms: Vec::new(),
+        os_details: None,
     }
 }
 
@@ -327,6 +329,7 @@ fn build_login_params(
         role: params.role.clone(),
         client_info,
         session_parameters: None,
+        spcs_token: None,
     })
 }
 
@@ -366,11 +369,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let alter_response = snowflake_query(
         query_params.clone(),
         &session_token,
-        QueryInput {
-            sql: alter_sql.to_string(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new(alter_sql),
         QueryExecutionMode::Blocking,
     )
     .await?;
@@ -384,11 +383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = snowflake_query(
         query_params,
         &session_token,
-        QueryInput {
-            sql: cli.sql.clone(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new(cli.sql.clone()),
         QueryExecutionMode::Blocking,
     )
     .await?;

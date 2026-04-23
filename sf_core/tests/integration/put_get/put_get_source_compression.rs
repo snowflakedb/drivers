@@ -40,24 +40,11 @@ fn should_return_error_for_unsupported_compression_type() {
     );
 
     // Then Unsupported compression error is thrown
-    match *client
+    let error_msg = client
         .execute_query_no_unwrap(&put_sql)
-        .expect_err("Expected unsupported compression error")
-    {
-        proto_utils::ProtoError::Application(exc) => {
-            // Error may be wrapped: check both message and root_cause
-            let full_error = format!(
-                "{} {}",
-                exc.message,
-                exc.root_cause.as_deref().unwrap_or("")
-            );
-            assert!(
-                full_error.contains("Unsupported compression type"),
-                "Expected 'Unsupported compression type' in error chain, got: message={}, root_cause={:?}",
-                exc.message,
-                exc.root_cause,
-            );
-        }
-        other => panic!("Expected application error, got: {other:?}"),
-    }
+        .expect_err("Expected unsupported compression error");
+    assert!(
+        error_msg.contains("Unsupported compression type"),
+        "Expected 'Unsupported compression type' in error, got: {error_msg}",
+    );
 }

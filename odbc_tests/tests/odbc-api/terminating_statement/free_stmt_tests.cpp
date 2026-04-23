@@ -7,7 +7,9 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "SessionParameterOverride.hpp"
+#include "compatibility.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -903,11 +905,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeStmt: SQL_DROP frees statement ha
   ret = SQLFreeStmt(stmt, SQL_DROP);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Using a freed handle is undefined behavior per ODBC spec. The reference
-  // driver returns SQL_INVALID_HANDLE for statement handles but crashes for
-  // connection handles.
-  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
 
   SQLDisconnect(dbc_handle());
 }
@@ -971,4 +969,29 @@ TEST_CASE("SQLFreeStmt: SQL_INVALID_HANDLE for null statement handle",
           "[odbc-api][freestmt][terminating_statement][error]") {
   const SQLRETURN ret = SQLFreeStmt(SQL_NULL_HSTMT, SQL_CLOSE);
   REQUIRE(ret == SQL_INVALID_HANDLE);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: HY010 during SQL_NEED_DATA",
+                 "[odbc-api][freestmt][terminating_statement][error]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_UNBIND);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  SQLCancel(stmt_handle());
 }

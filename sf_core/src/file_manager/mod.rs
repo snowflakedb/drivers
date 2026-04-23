@@ -26,6 +26,14 @@ use std::path::Path;
 pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
         expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
+
+    if file_locations.is_empty() {
+        return NoFilesMatchedSnafu {
+            pattern: data.src_location_pattern.clone(),
+        }
+        .fail();
+    }
+
     let mut results = Vec::new();
 
     for file_location in file_locations {
@@ -336,6 +344,12 @@ pub enum FileManagerError {
     #[snafu(display("Missing decryption metadata: {detail}"))]
     MissingDecryptionMetadata {
         detail: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("File does not exist: {pattern}"))]
+    NoFilesMatched {
+        pattern: String,
         #[snafu(implicit)]
         location: Location,
     },

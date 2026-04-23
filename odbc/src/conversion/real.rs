@@ -1,3 +1,5 @@
+use std::io::{Cursor, Write as _};
+
 use arrow::array::{Array, Float64Array};
 use odbc_sys as sql;
 use serde_json::Value;
@@ -46,6 +48,37 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
         }
         Ok(array.value(row_idx))
     }
+}
+
+/// Format an `f64` using its `Display` representation into `buf`, returning
+/// the filled slice as `&str` without any heap allocation.
+///
+/// Output is byte-identical to `f64::to_string()` — same branch cuts, same
+/// handling of `NaN`, `inf`, `-inf`, negative zero, and the "shortest
+/// roundtrippable" representation.
+///
+/// The buffer must be at least ~330 bytes to hold the widest possible
+/// `Display` output (`1e308` prints as 309 digits; `1e-300` as ~325). 384
+/// bytes covers every current case with headroom. If `<f64 as Display>` ever
+/// widens enough to overflow the buffer, the caller receives a typed
+/// `NumericValueOutOfRange` error rather than a silent truncation through
+/// the unsafe `from_utf8_unchecked` below.
+fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> Result<&str, WriteOdbcError> {
+    let len = {
+        let mut cur = Cursor::new(&mut buf[..]);
+        if write!(cur, "{value}").is_err() {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "f64 value {value} does not fit in the {}-byte Display format buffer",
+                    buf.len()
+                ),
+            }
+            .fail();
+        }
+        cur.position() as usize
+    };
+    // SAFETY: `<f64 as Display>::fmt` only emits ASCII characters.
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
 }
 
 fn check_float_range(value: f64, min: f64, max: f64) -> Result<(), WriteOdbcError> {
@@ -242,13 +275,14 @@ impl WriteODBCType for SnowflakeReal {
                 }
             }
             CDataType::Char => {
-                let num_str = snowflake_value.to_string();
-                let warnings = binding.write_char_string(&num_str, get_data_offset);
+                let mut num_buf = [0u8; 384];
+                let num_str = format_f64_display_into(snowflake_value, &mut num_buf)?;
+                let warnings = binding.write_char_string(num_str, get_data_offset);
                 if warnings
                     .iter()
                     .any(|w| matches!(w, Warning::StringDataTruncated))
                 {
-                    let whole_len = whole_digits_len(&num_str);
+                    let whole_len = whole_digits_len(num_str);
                     if whole_len >= binding.buffer_length as usize {
                         *get_data_offset = None;
                         return NumericValueOutOfRangeSnafu {
@@ -263,13 +297,14 @@ impl WriteODBCType for SnowflakeReal {
                 Ok(warnings)
             }
             CDataType::WChar => {
-                let num_str = snowflake_value.to_string();
-                let warnings = binding.write_wchar_string(&num_str, get_data_offset);
+                let mut num_buf = [0u8; 384];
+                let num_str = format_f64_display_into(snowflake_value, &mut num_buf)?;
+                let warnings = binding.write_wchar_string(num_str, get_data_offset);
                 if warnings
                     .iter()
                     .any(|w| matches!(w, Warning::StringDataTruncated))
                 {
-                    let whole_len = whole_digits_len(&num_str);
+                    let whole_len = whole_digits_len(num_str);
                     let wchar_capacity = (binding.buffer_length / 2) as usize;
                     if whole_len >= wchar_capacity {
                         *get_data_offset = None;
@@ -467,10 +502,78 @@ impl ReadODBC for SnowflakeReal {
 
 impl WriteJson for SnowflakeReal {
     fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        Ok(Value::String(value.to_string()))
+        // Snowflake's JSON parameter-binding parser is stricter than its
+        // SQL `TO_DOUBLE()` text parser. The SQL parser accepts any of
+        // `nan`, `inf`, `infinity` (case-insensitive), but the JSON bind
+        // parser requires the full word `"Infinity"` / `"-Infinity"` with
+        // the leading `I` capitalized. Rust's `<f64 as Display>::fmt`
+        // emits the short form `"inf"` / `"-inf"`, which the server
+        // rejects with `SQL compilation error: Invalid bind value (inf)`.
+        //
+        // `NaN` happens to match what Rust already produces, and finite
+        // values flow through unchanged.
+        let s = if value.is_nan() {
+            "NaN".to_string()
+        } else if value == f64::INFINITY {
+            "Infinity".to_string()
+        } else if value == f64::NEG_INFINITY {
+            "-Infinity".to_string()
+        } else {
+            value.to_string()
+        };
+        Ok(Value::String(s))
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Real
+    }
+}
+
+#[cfg(test)]
+mod format_f64_display_into_tests {
+    use super::format_f64_display_into;
+
+    fn assert_matches(value: f64) {
+        let mut buf = [0u8; 384];
+        let actual = format_f64_display_into(value, &mut buf).expect("format_f64_display_into");
+        let expected = value.to_string();
+        assert_eq!(actual, expected, "mismatch for {value}");
+    }
+
+    #[test]
+    fn integer_valued_floats_keep_no_trailing_decimal() {
+        // Rust's Display for f64 strips ".0"; the stack-buffer path preserves
+        // this because it goes through the same Display impl.
+        assert_matches(0.0);
+        assert_matches(-0.0);
+        assert_matches(1.0);
+        assert_matches(-1.0);
+        assert_matches(42.0);
+        assert_matches(123_456_789.0);
+    }
+
+    #[test]
+    fn typical_fractional_values() {
+        assert_matches(0.1);
+        assert_matches(-0.1);
+        assert_matches(12345.6789);
+        assert_matches(-12345.6789);
+    }
+
+    #[test]
+    fn very_large_and_very_small_magnitudes() {
+        assert_matches(1e20);
+        assert_matches(1e-10);
+        assert_matches(1e308);
+        assert_matches(-1e308);
+        assert_matches(1e-300);
+        assert_matches(f64::MIN_POSITIVE);
+    }
+
+    #[test]
+    fn special_values() {
+        assert_matches(f64::INFINITY);
+        assert_matches(f64::NEG_INFINITY);
+        assert_matches(f64::NAN);
     }
 }

@@ -25,6 +25,30 @@ use snafu::{Location, Snafu, location};
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum OdbcError {
+    #[snafu(display("Freeing environment failed: environment has connections"))]
+    EnvironmentHasConnections {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Freeing connection failed: connection is still connected"))]
+    ConnectionStillConnected {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Connection has no environment"))]
+    ConnectionHasNoEnvironment {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to lock environment"))]
+    EnvironmentLockPoisoned {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Connection is disconnected"))]
     Disconnected {
         #[snafu(implicit)]
@@ -395,6 +419,20 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Data-at-execution required"))]
+    DaeRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "Function sequence error: cannot call this function during data-at-execution"
+    ))]
+    InvalidDuringDae {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -485,6 +523,10 @@ impl OdbcError {
 
     pub fn to_sql_state(&self) -> SqlState {
         match self {
+            OdbcError::EnvironmentHasConnections { .. } => SqlState::FunctionSequenceError,
+            OdbcError::ConnectionStillConnected { .. } => SqlState::FunctionSequenceError,
+            OdbcError::ConnectionHasNoEnvironment { .. } => SqlState::GeneralError,
+            OdbcError::EnvironmentLockPoisoned { .. } => SqlState::GeneralError,
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
             OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
@@ -637,6 +679,8 @@ impl OdbcError {
             }
             OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
             OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::DaeRequired { .. } => SqlState::GeneralError,
+            OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
         }
     }
 

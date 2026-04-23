@@ -117,4 +117,11 @@ impl MockServerWithTls {
     pub fn mount(&self, mock: wiremock::Mock) {
         self.runtime.block_on(mock.mount(&self.server));
     }
+
+    /// Returns all requests the mock server recorded, in order.
+    pub fn received_requests(&self) -> Vec<wiremock::Request> {
+        self.runtime
+            .block_on(self.server.received_requests())
+            .unwrap_or_default()
+    }
 }

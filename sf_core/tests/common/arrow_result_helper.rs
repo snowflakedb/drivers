@@ -13,7 +13,7 @@ use arrow::datatypes::{DataType, FieldRef, Schema};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
-use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ResultSetResponse;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::mem::discriminant;
@@ -25,8 +25,8 @@ pub struct ArrowResultHelper {
 }
 
 impl ArrowResultHelper {
-    /// Creates a new Arrow result helper from an ExecuteResult
-    pub fn from_result(result: ExecuteResult) -> Self {
+    /// Creates a new Arrow result helper from a ResultSetResponse
+    pub fn from_result(result: ResultSetResponse) -> Self {
         let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.unwrap().into();
         let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
         let reader = ArrowArrayStreamReader::try_new(stream).unwrap();

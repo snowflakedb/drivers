@@ -1,5 +1,5 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 
 #[test]
 fn should_process_async_query_result() {
@@ -14,9 +14,11 @@ fn should_process_async_query_result() {
         "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id",
     );
     let result = client.execute_statement_query(&stmt);
+    let query_id = unwrap_single_query_id(&result);
+    let rs = client.get_result_set(&stmt, &query_id);
 
     // Then there are 10000 numbered sequentially rows returned
-    let mut arrow_helper = ArrowResultHelper::from_result(result);
+    let mut arrow_helper = ArrowResultHelper::from_result(rs);
     let rows = arrow_helper.transform_into_array::<i64>().unwrap();
     assert_eq!(rows.len(), 10000);
     for (i, row) in rows.iter().enumerate() {
@@ -47,10 +49,15 @@ fn should_match_blocking_results_when_async_execution_enabled() {
     let blocking_result = client.execute_statement_query(&blocking_stmt);
     let async_result = client.execute_statement_query(&async_stmt);
 
+    let blocking_query_id = unwrap_single_query_id(&blocking_result);
+    let async_query_id = unwrap_single_query_id(&async_result);
+    let blocking_rs = client.get_result_set(&blocking_stmt, &blocking_query_id);
+    let async_rs = client.get_result_set(&async_stmt, &async_query_id);
+
     // Then both result sets have identical sequential ids
-    let mut blocking_helper = ArrowResultHelper::from_result(blocking_result);
+    let mut blocking_helper = ArrowResultHelper::from_result(blocking_rs);
     let blocking_rows = blocking_helper.transform_into_array::<i64>().unwrap();
-    let mut async_helper = ArrowResultHelper::from_result(async_result);
+    let mut async_helper = ArrowResultHelper::from_result(async_rs);
     let async_rows = async_helper.transform_into_array::<i64>().unwrap();
     assert_eq!(
         blocking_rows, async_rows,
@@ -80,9 +87,11 @@ fn should_use_async_by_default_when_no_execution_mode_specified() {
         "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 100)) v ORDER BY id",
     );
     let result = client.execute_statement_query(&stmt);
+    let query_id = unwrap_single_query_id(&result);
+    let rs = client.get_result_set(&stmt, &query_id);
 
     // Then there are 100 numbered sequentially rows returned
-    let mut arrow_helper = ArrowResultHelper::from_result(result);
+    let mut arrow_helper = ArrowResultHelper::from_result(rs);
     let rows = arrow_helper.transform_into_array::<i64>().unwrap();
     assert_eq!(rows.len(), 100);
     for (i, row) in rows.iter().enumerate() {

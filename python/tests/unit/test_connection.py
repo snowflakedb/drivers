@@ -356,6 +356,16 @@ class TestClose:
         mock_db_api.connection_release.assert_called_once()
         mock_db_api.database_release.assert_called_once()
 
+    def test_close_nullifies_handles(self, connection, mock_db_api):
+        """close() should set conn_handle and db_handle to None to prevent use-after-release."""
+        assert connection.conn_handle is not None
+        assert connection.db_handle is not None
+
+        connection.close()
+
+        assert connection.conn_handle is None
+        assert connection.db_handle is None
+
     def test_close_is_idempotent(self, connection, mock_db_api):
         """Calling close() multiple times should only close and release once."""
         # First is_closed() returns False (close proceeds), subsequent return True (idempotent)

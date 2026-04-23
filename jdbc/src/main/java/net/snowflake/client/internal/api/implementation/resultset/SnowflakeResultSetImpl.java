@@ -36,7 +36,7 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.apache.arrow.c.ArrowArrayStream;
 import org.apache.arrow.c.Data;
@@ -54,7 +54,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
-  public SnowflakeResultSetImpl(SnowflakeStatementImpl statement, ExecuteResult result)
+  public SnowflakeResultSetImpl(SnowflakeStatementImpl statement, ResultSetResponse result)
       throws SQLException {
     this.statement = statement;
     ByteString streamPointerBytes = result.getStream().getValue();

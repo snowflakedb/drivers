@@ -1,6 +1,6 @@
 /*
 Jenkinsfile template for use in a multibranch pipeline
- */
+*/
 
 @Library('pipeline-utils') _
 import com.snowflake.DevEnvUtils
@@ -21,9 +21,9 @@ def getAgentLabel(platform) {
     case 'linux-aarch64-glibc':
       return 'small-node-aarch64'
     case 'macos-x86_64':
-      return 'mac_x86'
+      return 'mac_x86_v2'
     case 'macos-aarch64':
-      return 'mac_m1'
+      return 'mac_m1_v2'
     case 'windows-x86_64':
       return 'windows-build-vs2022'
     case 'windows-i686':
@@ -252,6 +252,7 @@ pipeline {
     cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
   }
   stages {
+
         stage('Build Matrix') {
           matrix {
             axes {
@@ -267,56 +268,94 @@ pipeline {
             }
             stages {
               stage('Docker Build') {
-                when {
-                  beforeAgent true
-                  expression { needsDocker(PLATFORM) }
-                }
-                agent {
-                  dockerfile {
-                    filename getDockerfile(PLATFORM)
-                    dir 'ci'
-                    args '-u root --privileged'
-                    label getAgentLabel(PLATFORM)
-                    reuseNode true
-                  }
-                }
-                stages {
-                  stage('checkout (docker)') {
-                    steps {
-                      checkout scm
+                    when {
+                      beforeAgent true
+                      expression { needsDocker(PLATFORM) }
                     }
-                  }
-                  stage('setup rust (docker)') {
-                    steps {
-                      setupRust(PLATFORM)
+                    agent {
+                      dockerfile {
+                        filename getDockerfile(PLATFORM)
+                        dir 'ci'
+                        args '-u root --privileged'
+                        label getAgentLabel(PLATFORM)
+                        reuseNode true
+                      }
                     }
-                  }
-                  stage('build (docker)') {
-                    steps {
-                      run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
-                    }
-                  }
-                  stage('test (docker)') {
-                    steps {
-                      run_cargo_command(PLATFORM, 'test --package sf_mini_core')
-                    }
-                  }
-                  stage('upload minicore package (docker)') {
-                    steps {
-                      withCredentials([
-                        usernamePassword(
-                          usernameVariable: 'AWS_ACCESS_KEY_ID',
-                          passwordVariable: 'AWS_SECRET_ACCESS_KEY',
-                          credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
-                        )
-                      ]) {
-                        uploadMinicorePackage(PLATFORM)
+                    stages {
+                      stage('checkout (docker)') {
+                        steps {
+                          checkout scm
+                        }
+                      }
+                      stage('setup rust (docker)') {
+                        steps {
+                          setupRust(PLATFORM)
+                        }
+                      }
+                      // catchError below demotes build/test/upload failures to UNSTABLE
+                      // instead of FAILURE. A FAILED stage would halt the pipeline and
+                      // skip downstream Tests; UNSTABLE marks the build yellow but lets
+                      // VPN E2E Tests and Revocation Validation continue to run.
+                      // Each platform still reports individual pass/fail on the UI.
+                      stage('build (docker)') {
+                        steps {
+                          // Jenkins workspaces are reused between builds. If a prior run
+                          // produced libsf_mini_core.* and this run's build fails, the
+                          // upload's findFiles guard would still see the stale artifact
+                          // and upload it. Removing the artifact BEFORE the build ensures
+                          // the guard only matches when this build actually produced one.
+                          // Cargo's incremental compilation will simply re-link the
+                          // deleted output; upstream deps stay cached.
+                          sh "rm -f target/${platform_target(PLATFORM)}/debug/*sf_mini_core* 2>/dev/null || true"
+                          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                          }
+                        }
+                      }
+                      stage('test (docker)') {
+                        steps {
+                          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                          }
+                        }
+                      }
+                      // Skip upload when this platform's build didn't produce an artifact —
+                      // catchError on the build/test stages demotes failures to UNSTABLE and
+                      // keeps the matrix running, but without this guard the upload would
+                      // then attempt to package/upload nothing and produce a confusing
+                      // "artifact not found" error. The check is per-matrix-cell (looks at
+                      // this cell's own workspace), so a failure on platform A does not
+                      // skip platform B's upload. AIX builds on a remote host via SSH, so
+                      // local artifact checks don't apply — let AIX always attempt and rely
+                      // on catchError for graceful handling.
+                      stage('upload minicore package (docker)') {
+                        when {
+                          expression {
+                            if (platform_os(PLATFORM) == 'aix') { return true }
+                            def matches = findFiles(glob: "target/${platform_target(PLATFORM)}/debug/*sf_mini_core*")
+                            if (matches.length == 0) {
+                              echo "Skipping upload for ${PLATFORM}: build artifact not found (build or test likely failed earlier in this matrix cell)"
+                            }
+                            return matches.length > 0
+                          }
+                        }
+                        steps {
+                          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            withCredentials([
+                              usernamePassword(
+                                usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                                credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                              )
+                            ]) {
+                              uploadMinicorePackage(PLATFORM)
+                            }
+                          }
+                        }
                       }
                     }
                   }
-                }
-              }
-              
+
               stage('Node Build') {
                 when {
                   beforeAgent true
@@ -336,26 +375,59 @@ pipeline {
                       setupRust(PLATFORM)
                     }
                   }
+                  // See comment above on Docker Build: catchError demotes failures to
+                  // UNSTABLE so a broken platform build here doesn't block Tests.
                   stage('build (node)') {
                     steps {
-                      run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                      // Clear prior-run artifact so the upload guard keys off a fresh
+                      // build output (see same comment on Docker Build). Use sh on
+                      // unix-like agents and bat on Windows; AIX's artifact lives on
+                      // the remote host and is not cleaned here (uploadMinicorePackage
+                      // handles AIX via its own ssh-based logic).
+                      script {
+                        if (platform_os(PLATFORM) == 'windows' && PLATFORM != 'windows-aarch64') {
+                          bat "if exist target\\${platform_target(PLATFORM)}\\debug (del /f /q target\\${platform_target(PLATFORM)}\\debug\\*sf_mini_core* 2>nul) || ver > nul"
+                        } else if (platform_os(PLATFORM) != 'aix') {
+                          sh "rm -f target/${platform_target(PLATFORM)}/debug/*sf_mini_core* 2>/dev/null || true"
+                        }
+                      }
+                      catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                      }
                     }
                   }
                   stage('test (node)') {
                     steps {
-                      run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                      catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                      }
                     }
                   }
+                  // See comment on Docker Build's upload stage: skip when this cell's
+                  // build didn't produce an artifact. AIX builds remotely via SSH, so
+                  // a local findFiles check doesn't apply — always attempt for AIX.
                   stage('upload minicore package (node)') {
+                    when {
+                      expression {
+                        if (platform_os(PLATFORM) == 'aix') { return true }
+                        def matches = findFiles(glob: "target/${platform_target(PLATFORM)}/debug/*sf_mini_core*")
+                        if (matches.length == 0) {
+                          echo "Skipping upload for ${PLATFORM}: build artifact not found (build or test likely failed earlier in this matrix cell)"
+                        }
+                        return matches.length > 0
+                      }
+                    }
                     steps {
-                      withCredentials([
-                        usernamePassword(
-                          usernameVariable: 'AWS_ACCESS_KEY_ID',
-                          passwordVariable: 'AWS_SECRET_ACCESS_KEY',
-                          credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
-                        )
-                      ]) {
-                        uploadMinicorePackage(PLATFORM)
+                      catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                        withCredentials([
+                          usernamePassword(
+                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                            passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                            credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                          )
+                        ]) {
+                          uploadMinicorePackage(PLATFORM)
+                        }
                       }
                     }
                   }
@@ -369,49 +441,100 @@ pipeline {
             }
           }
         }
+        stage('Tests') {
+          parallel {
+            stage('VPN E2E Tests') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    }
+                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
 
-        stage('VPN E2E Tests') {
-          agent { label 'build-node-extra-large' }
-          environment {
-            E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
-            PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
-          }
-          steps {
-            script {
-              e2eDockerSetup(E2E_DOCKER_IMAGE)
-              docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
-                withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
-                  sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    try {
+                      sh label: 'Rust Core VPN E2E tests', script: '''
+                        set +x
+                        export PARAMETER_PATH=$(pwd)/parameters.json
+                        cargo test --package sf_core -- --ignored
+                      '''
+
+                      sh label: 'ODBC VPN E2E tests', script: '''
+                        set +x
+                        cargo build
+                        source /opt/rh/gcc-toolset-11/enable
+                        cd odbc_tests
+                        mkdir -p cmake-build
+                        cmake -B cmake-build \
+                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                            -D ODBC_INCLUDE_DIR="/usr/include" \
+                            -D DRIVER_TYPE=NEW \
+                            .
+                        cmake --build cmake-build -- -j $(nproc)
+
+                        WORKSPACE_ROOT=$(pwd)/..
+                        export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                        export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                        ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
+                      '''
+                    } finally {
+                      sh label: 'Cleanup test PATs', script: '''
+                        set +x
+                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                        python3 scripts/cleanup_test_pats.py \
+                          --parameter-path $(pwd)/parameters.json \
+                          --build-tag "JNK_${BUILD_NUMBER}" || true
+                      '''
+                    }
+                  }
                 }
-                sh label: 'Install system dependencies', script: 'yum install -y unzip'
+              }
+            }
 
-                sh label: 'Rust Core VPN E2E tests', script: '''
-                  set +x
-                  export PARAMETER_PATH=$(pwd)/parameters.json
-                  cargo test --package sf_core -- --ignored
-                '''
-
-                sh label: 'ODBC VPN E2E tests', script: '''
-                  set +x
-                  cargo build
-                  source /opt/rh/gcc-toolset-11/enable
-                  cd odbc_tests
-                  mkdir -p cmake-build
-                  cmake -B cmake-build \
-                      -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                      -D ODBC_INCLUDE_DIR="/usr/include" \
-                      -D DRIVER_TYPE=NEW \
-                      .
-                  cmake --build cmake-build -- -j $(nproc)
-
-                  WORKSPACE_ROOT=$(pwd)/..
-                  export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-                  export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
-                  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
-                '''
+            stage('Revocation Validation') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([
+                      usernamePassword(credentialsId: 'jenkins-snowflakedb-github-app',
+                        usernameVariable: 'GITHUB_USER',
+                        passwordVariable: 'GITHUB_TOKEN')
+                    ]) {
+                      sh '''\
+                        |#!/bin/bash -e
+                        |chmod +x "$WORKSPACE/ci/test_revocation.sh"
+                        |"$WORKSPACE/ci/test_revocation.sh"
+                      '''.stripMargin()
+                    }
+                  }
+                }
+              }
+              post {
+                always {
+                  archiveArtifacts artifacts: 'revocation-results.json,revocation-report.html', allowEmptyArchive: true
+                  publishHTML(target: [
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: '.',
+                    reportFiles: 'revocation-report.html',
+                    reportName: 'Revocation Validation Report'
+                  ])
+                }
               }
             }
           }
         }
-  } 
+  }
 }

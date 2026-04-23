@@ -17,7 +17,7 @@ pub fn clean_method_name(name: &str) -> &str {
 }
 
 /// Normalize a string for matching: lowercase, strip whitespace, underscores,
-/// hyphens, and angle brackets.
+/// hyphens, angle brackets, and parentheses.
 ///
 /// Angle-bracket stripping lets Scenario Outline names like
 /// `"should throw <error_code> in strict"` match a test method named
@@ -29,10 +29,12 @@ fn normalize_for_matching(s: &str) -> String {
         .replace('-', "")
         .replace('<', "")
         .replace('>', "")
+        .replace('(', "")
+        .replace(')', "")
 }
 
 /// Check if two strings match when normalized (ignoring case, spaces,
-/// underscores, hyphens, and angle brackets).
+/// underscores, hyphens, angle brackets, and parentheses).
 pub fn strings_match_normalized(s1: &str, s2: &str) -> bool {
     normalize_for_matching(s1) == normalize_for_matching(s2)
 }
@@ -93,13 +95,6 @@ mod tests {
 
     #[test]
     fn test_strings_match_normalized_with_placeholders() {
-        // Note: This normalization removes angle brackets from both sides,
-        // which means "should_throw_<error_code>_in_strict" becomes
-        // "shouldthrowerrorcodeinstrict" and matching requires the test name
-        // to also normalize to a similar pattern. This is intended for matching
-        // when the placeholder variable name is spelled out in the test method.
-
-        // Test where the test method spells out the placeholder name
         assert!(strings_match_normalized(
             "should_throw_<error_code>_in_strict",
             "should_throw_error_code_in_strict"

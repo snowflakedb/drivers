@@ -13,6 +13,7 @@ pub mod config;
 pub mod crl;
 // Public for integration tests; only `types` and specific transfer functions are re-exported.
 pub mod file_manager;
+pub mod fs_adapter;
 pub mod handle_manager;
 pub mod http;
 pub mod logging;
@@ -20,6 +21,7 @@ pub mod perf_timing;
 pub mod query_types;
 pub mod rest;
 pub mod sensitive;
+pub mod telemetry;
 pub mod tls;
 pub mod token_cache;
 

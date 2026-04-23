@@ -8,9 +8,8 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
-#include "test_macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================
@@ -75,8 +74,7 @@ TEST_CASE("SQLFreeHandle: Double free environment handle", "[odbc-api][freehandl
   ret = SQLFreeHandle(SQL_HANDLE_ENV, env);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFreeHandle(SQL_HANDLE_ENV, env);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_ENV, env);
 }
 
 // ============================================================================
@@ -142,16 +140,45 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected con
   release_dbc();
 }
 
-// SQLFreeHandle: Frees dependent statement handles when connection handle is freed
-// Note: Reference driver should free the statement handle and it shouldn't be
-// reusable after. Attempeting to use this handle is undefined behavior and SEGFAULTs
-// on some platforms.
-// Skipping test case to prevent SEGFAULT
+TEST_CASE_METHOD(DbcDefaultDSNFixture,
+                 "SQLFreeHandle: Frees dependent statement handles when connection handle is freed",
+                 "[odbc-api][freehandle][terminating_connection]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-// SQLFreeHandle: Double free connection handle
-// Note: Reference driver crashes on double-free of connection handle
-// This is undefined behavior that must be avoided.
-// Skipping test case to prevent crash
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  release_dbc();
+
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+}
+
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free connection handle",
+                 "[odbc-api][freehandle][terminating_connection][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLDisconnect(dbc_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLHDBC dbc = dbc_handle();
+  ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+  REQUIRE(ret == SQL_SUCCESS);
+  release_dbc();
+
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_DBC, dbc);
+}
 
 // ============================================================================
 // SQLFreeHandle - Statement Handle
@@ -292,11 +319,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement han
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Using a freed handle is undefined behavior per ODBC spec. The reference
-  // driver returns SQL_INVALID_HANDLE for statement handles but crashes for
-  // connection handles.
-  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
 
   SQLDisconnect(dbc_handle());
 }
@@ -520,4 +543,23 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLFreeHandle: Freeing handle clears att
 
   ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc2);
   REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeHandle: HY010 during SQL_NEED_DATA",
+                 "[odbc-api][freehandle][terminating_connection][error]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt_handle());
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  SQLCancel(stmt_handle());
 }

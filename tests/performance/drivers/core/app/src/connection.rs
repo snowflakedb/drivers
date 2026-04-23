@@ -96,6 +96,7 @@ pub fn create_connection(
         .connection_init_blocking(ConnectionInitRequest {
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
+            ..Default::default()
         })
         .map_err(|e| format!("Connection initialization failed: {:?}", e))?;
 
@@ -166,10 +167,18 @@ pub fn get_server_version(rt: &DriverRuntime, conn_handle: ConnectionHandle) -> 
         })
         .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
-    let result = response
-        .result
-        .ok_or_else(|| "No result in execute response".to_string())?;
-    let mut reader = create_arrow_reader(result)?;
+    let query_id = match response.result {
+        Some(execute_query_response::Result::Single(descriptor)) => descriptor.query_id,
+        _ => return Err("Unexpected result type from server version query".to_string()),
+    };
+    let result_set = rt
+        .client
+        .statement_get_result_set_blocking(StatementGetResultSetRequest {
+            stmt_handle: Some(version_stmt),
+            query_id,
+        })
+        .map_err(|e| format!("Failed to get result set: {:?}", e))?;
+    let mut reader = create_arrow_reader(result_set)?;
 
     if let Some(batch_result) = reader.next() {
         let batch = batch_result.map_err(|e| format!("Failed to read batch: {:?}", e))?;

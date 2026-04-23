@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 5405f197-36b4-478b-8bee-59f7397dcaf6
+    -- DTM_QRY:
+    show schemas like 'public'
+  mapped: show schemas like 'public'

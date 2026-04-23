@@ -78,6 +78,8 @@ pub struct ClientInfo {
     pub ocsp_mode: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
+    pub platforms: Vec<String>,
+    pub os_details: Option<HashMap<String, String>>,
 }
 
 impl ClientInfo {
@@ -97,8 +99,34 @@ impl ClientInfo {
             ocsp_mode: Some("FAIL_OPEN".to_string()),
             crl_config,
             tls_config,
+            platforms: Vec::new(),
+            os_details: None,
         };
         Ok(client_info)
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_fixtures {
+    use super::ClientInfo;
+    use crate::crl::config::CrlConfig;
+    use crate::tls::config::TlsConfig;
+
+    /// Minimal [`ClientInfo`] for tests. Uses [`TlsConfig::insecure`] so it works
+    /// with plain-HTTP mock servers. Override specific fields with struct-update
+    /// syntax: `ClientInfo { application: "foo".into(), ..test_client_info() }`.
+    pub fn test_client_info() -> ClientInfo {
+        ClientInfo {
+            application: "sf_core_test".to_string(),
+            version: "1.0.0".to_string(),
+            os: std::env::consts::OS.to_string(),
+            os_version: "1.0".to_string(),
+            ocsp_mode: None,
+            crl_config: CrlConfig::default(),
+            tls_config: TlsConfig::insecure(),
+            platforms: Vec::new(),
+            os_details: None,
+        }
     }
 }
 
@@ -112,6 +140,7 @@ pub struct LoginParameters {
     pub role: Option<String>,
     pub client_info: ClientInfo,
     pub session_parameters: Option<HashMap<String, String>>,
+    pub spcs_token: Option<String>,
 }
 
 impl LoginParameters {
@@ -139,6 +168,7 @@ impl LoginParameters {
             role: settings.get_string("role"),
             client_info: ClientInfo::from_settings(settings)?,
             session_parameters: None,
+            spcs_token: None,
         })
     }
 }

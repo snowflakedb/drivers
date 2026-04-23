@@ -7,6 +7,7 @@ pub mod logout;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
+pub mod telemetry;
 
 use std::collections::HashMap;
 
@@ -26,7 +27,7 @@ use crate::token_cache::{TokenCache, TokenType};
 use reqwest::{self, Method, header};
 use serde_json;
 use serde_json::value::RawValue;
-use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
@@ -162,6 +163,18 @@ pub struct QueryInput<'a> {
     pub sql: String,
     pub bindings: Option<&'a RawValue>,
     pub describe_only: Option<bool>,
+    pub query_parameters: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl<'a> QueryInput<'a> {
+    pub fn new(sql: impl Into<String>) -> Self {
+        QueryInput {
+            sql: sql.into(),
+            bindings: None,
+            describe_only: None,
+            query_parameters: None,
+        }
+    }
 }
 
 // TODO(SNOW-2872349): DD §3 target format is:
@@ -188,9 +201,11 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
+            platforms: login_parameters.client_info.platforms.clone(),
             python_version: Some("3.11.6".to_string()),
             python_runtime: Some("CPython".to_string()),
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+            os_details: login_parameters.client_info.os_details.clone(),
         },
         ..Default::default()
     }
@@ -279,6 +294,7 @@ pub async fn auth_request_data(
     token_cache: Option<&dyn TokenCache>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
+    data.spcs_token = login_parameters.spcs_token.clone();
 
     if let Some(params) = session_parameters {
         let json_params = params
@@ -969,11 +985,15 @@ async fn execute_async_with_fallback<'a>(
     Ok(response)
 }
 
-/// Execute query synchronously with requestId-based retry on transport failures.
+/// Execute a sync query with HTTP-level retries for transient transport / 5xx
+/// failures.
 ///
-/// On connection errors (network timeout, connection reset), the query is retried
-/// with the same `requestId` and `retry=true`. Snowflake uses requestId for
-/// idempotency - if the original query completed, the retry returns the existing result.
+/// Retry handling lives in [`execute_sync_query`], which wraps the actual
+/// `POST /queries/v1/query-request` call with [`execute_with_retry`]. The
+/// `requestId` is generated here once and threaded through so that every
+/// HTTP-level replay reuses the same id; the second and subsequent attempts
+/// also carry `retry=true`, giving the server the hint it needs to dedupe
+/// against an already-running/completed query.
 async fn execute_sync_with_retry<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
@@ -981,108 +1001,23 @@ async fn execute_sync_with_retry<'a>(
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
-    // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = query_input
-        .sql
-        .chars()
-        .take(query_parameters.log_max_query_length)
-        .collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
-        sql_prefix,
+        sql_prefix = query_input.sql.chars().take(query_parameters.log_max_query_length).collect::<String>(),
         "Executing sync query"
     );
 
-    // First attempt
-    match execute_sync_query(
+    execute_sync_query(
         client,
         query_parameters,
         session_token,
         query_input,
         request_id,
-        false, // not a retry
+        retry_policy,
     )
     .await
-    {
-        Ok(response) => return Ok(response),
-        Err(RestError::Communication {
-            context, source, ..
-        }) => {
-            // Transport error - retry with same requestId
-            tracing::warn!(
-                request_id = %request_id,
-                error = %source,
-                context,
-                "Transport error on sync query; retrying with same requestId"
-            );
-        }
-        Err(e) => return Err(e),
-    }
-
-    // Retry with retry=true - Snowflake will return existing result if query completed
-    let max_retries = retry_policy.max_attempts.saturating_sub(1).max(1);
-    let mut last_error = None;
-
-    for attempt in 1..=max_retries {
-        let backoff = std::time::Duration::from_millis(
-            (retry_policy.backoff.base.as_millis() as f64
-                * retry_policy.backoff.factor.powi(attempt as i32)) as u64,
-        )
-        .min(retry_policy.backoff.cap);
-
-        tokio::time::sleep(backoff).await;
-
-        tracing::info!(
-            request_id = %request_id,
-            attempt,
-            max_retries,
-            backoff_ms = backoff.as_millis(),
-            "Retrying sync query with retry=true"
-        );
-
-        match execute_sync_query(
-            client,
-            query_parameters,
-            session_token,
-            query_input,
-            request_id,
-            true, // is retry
-        )
-        .await
-        {
-            Ok(response) => {
-                tracing::info!(
-                    request_id = %request_id,
-                    attempt,
-                    query_id = response.data.query_id.as_deref().unwrap_or_default(),
-                    "Sync query retry succeeded"
-                );
-                return Ok(response);
-            }
-            Err(RestError::Communication {
-                context, source, ..
-            }) => {
-                tracing::warn!(
-                    request_id = %request_id,
-                    attempt,
-                    error = %source,
-                    context,
-                    "Transport error on retry; will try again"
-                );
-                last_error = Some(CommunicationSnafu { context }.into_error(source));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    // Exhausted retries - return the last transport error
-    tracing::error!(
-        request_id = %request_id,
-        "Exhausted all retry attempts for sync query"
-    );
-    Err(last_error.expect("last_error must be set after retry loop"))
 }
 
 /// Map a Snowflake query response into a `Result`, converting
@@ -1110,15 +1045,25 @@ fn into_query_result(
     Ok(response)
 }
 
-/// Execute a single sync query request.
+/// Execute a single sync query request with HTTP-level retries.
+///
+/// The `requestId` is stable across every HTTP attempt inside
+/// `execute_with_retry` so that Snowflake can dedupe replays via its usual
+/// request-id machinery. The first attempt is sent as a fresh request; every
+/// replay (attempt ≥ 2) additionally carries `retry=true`, which is the
+/// Snowflake-documented hint for "look up this requestId in the dedup
+/// table". If the retry budget is exhausted the error surfaces as
+/// [`RestError::HttpRetry`].
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
-    is_retry: bool,
+    retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
         async_exec: false,
@@ -1129,7 +1074,7 @@ async fn execute_sync_query<'a>(
             .as_millis() as i64,
         is_internal: false,
         describe_only: query_input.describe_only,
-        parameters: None,
+        parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
@@ -1141,29 +1086,39 @@ async fn execute_sync_query<'a>(
             path: QUERY_REQUEST_PATH,
         })?;
 
-    // Build query parameters - include retry=true if this is a retry
-    let mut query_params = vec![
+    // Base query parameters. `retry=true` is added for every HTTP replay
+    // inside `execute_with_retry` below (attempt ≥ 2) — it is always safe
+    // per Snowflake docs, and when the server has already seen this
+    // `requestId` it improves dedupe accuracy.
+    let base_query_params = vec![
         ("requestId", request_id.to_string()),
         ("request_guid", uuid::Uuid::new_v4().to_string()),
     ];
-    if is_retry {
-        query_params.push(("retry", "true".to_string()));
-    }
-
-    let request = apply_json_content_type(apply_query_headers(
-        client.post(query_url),
-        &query_parameters.client_info,
-        session_token,
-    ))
-    .query(&query_params)
-    .json(&query_request)
-    .build()
-    .context(RequestConstructionSnafu { request: "query" })?;
 
     let send_start = Instant::now();
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute query request",
-    })?;
+    let attempt_counter = std::sync::atomic::AtomicU32::new(0);
+    let build_request = || {
+        let n = attempt_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut params = base_query_params.clone();
+        if n >= 1 {
+            params.push(("retry", "true".to_string()));
+        }
+        apply_json_content_type(apply_query_headers(
+            client.post(query_url.clone()),
+            &query_parameters.client_info,
+            session_token,
+        ))
+        .query(&params)
+        .json(&query_request)
+    };
+
+    let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+
+    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "query request",
+        })?;
 
     let query_response = read_response_json::<query_response::Response>(response)
         .await
@@ -1173,10 +1128,24 @@ async fn execute_sync_query<'a>(
     tracing::debug!(
         elapsed_ms,
         request_id = %request_id,
-        is_retry,
         query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
-        "Sync query completed"
+        "Sync query response received"
     );
+
+    let query_response = if async_exec::should_poll_for_completion(&query_response) {
+        tracing::debug!(request_id = %request_id, "detached query - polling for completion");
+        async_exec::poll_detached_query(
+            client,
+            query_parameters,
+            session_token,
+            &query_response,
+            retry_policy,
+        )
+        .await
+        .context(AsyncQuerySnafu)?
+    } else {
+        query_response
+    };
 
     into_query_result(query_response)
 }
@@ -1629,6 +1598,12 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to encode telemetry payload: {reason}"))]
+    PayloadEncoding {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
@@ -1661,6 +1636,7 @@ pub enum SnowflakeResponseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
     use crate::token_cache::{TokenCache, TokenCacheError, TokenType};
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -1729,6 +1705,24 @@ mod tests {
                 .expect("test: lock poisoned")
                 .get(&Self::key(host, username, token_type))
                 .cloned())
+        }
+    }
+
+    fn test_login_params() -> LoginParameters {
+        LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Password {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+            spcs_token: None,
         }
     }
 
@@ -2052,34 +2046,9 @@ mod tests {
         assert_eq!(response.message.as_deref(), Some("Unauthorized"));
     }
 
-    fn test_client_info() -> ClientInfo {
-        ClientInfo {
-            application: "TestApp".to_string(),
-            version: "1.0.0".to_string(),
-            os: "Linux".to_string(),
-            os_version: "5.15".to_string(),
-            ocsp_mode: None,
-            crl_config: Default::default(),
-            tls_config: Default::default(),
-        }
-    }
-
     #[test]
     fn password_auth_payload_does_not_include_authenticator() {
-        let login_params = LoginParameters {
-            account_name: "testaccount".to_string(),
-            login_method: LoginMethod::Password {
-                username: "testuser".to_string(),
-                password: "testpass".into(),
-            },
-            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
-            database: None,
-            schema: None,
-            warehouse: None,
-            role: None,
-            client_info: test_client_info(),
-            session_parameters: None,
-        };
+        let login_params = test_login_params();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
@@ -2097,18 +2066,11 @@ mod tests {
     #[test]
     fn pat_auth_payload_includes_authenticator() {
         let login_params = LoginParameters {
-            account_name: "testaccount".to_string(),
             login_method: LoginMethod::Pat {
                 username: "testuser".to_string(),
                 token: "pat_secret".into(),
             },
-            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
-            database: None,
-            schema: None,
-            warehouse: None,
-            role: None,
-            client_info: test_client_info(),
-            session_parameters: None,
+            ..test_login_params()
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
@@ -2160,18 +2122,8 @@ mod tests {
 
             let client = reqwest::Client::new();
             let params = LoginParameters {
-                account_name: "testaccount".to_string(),
-                login_method: LoginMethod::Password {
-                    username: "testuser".to_string(),
-                    password: "testpass".into(),
-                },
                 server_url: server.uri(),
-                database: None,
-                schema: None,
-                warehouse: None,
-                role: None,
-                client_info: test_client_info(),
-                session_parameters: None,
+                ..test_login_params()
             };
             let auth_req = AuthRequest {
                 data: AuthRequestData {
@@ -2190,6 +2142,104 @@ mod tests {
                 3,
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
+            );
+        }
+    }
+
+    mod execute_sync_query_retry_tests {
+        use super::*;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        #[tokio::test]
+        async fn retries_on_503_then_succeeds_and_sets_retry_flag_on_replays() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+            let captured_urls: Arc<std::sync::Mutex<Vec<String>>> =
+                Arc::new(std::sync::Mutex::new(Vec::new()));
+
+            let attempt_clone = attempt.clone();
+            let captured_clone = captured_urls.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/queries/v1/query-request"))
+                .respond_with(move |req: &Request| {
+                    captured_clone.lock().unwrap().push(req.url.to_string());
+                    let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    if n < 2 {
+                        ResponseTemplate::new(503).set_body_string("Service Unavailable")
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "queryId": "01abcdef-0000-0000-0000-000000000000",
+                            }
+                        }))
+                    }
+                })
+                .expect(3)
+                .mount(&server)
+                .await;
+
+            let client = reqwest::Client::new();
+            let query_parameters = QueryParameters {
+                server_url: server.uri(),
+                client_info: test_client_info(),
+                log_max_query_length: 1024,
+            };
+            let query_input = QueryInput::new("SELECT 1");
+
+            let retry_policy = RetryPolicy::default();
+            let result = execute_sync_query(
+                &client,
+                &query_parameters,
+                "mock_session_token",
+                &query_input,
+                uuid::Uuid::new_v4(),
+                &retry_policy,
+            )
+            .await;
+
+            if let Err(e) = &result {
+                panic!("Expected retry to succeed, got error: {e:?}");
+            }
+            assert_eq!(
+                attempt.load(Ordering::SeqCst),
+                3,
+                "Expected exactly 3 attempts (2 failures + 1 success)",
+            );
+
+            let urls = captured_urls.lock().unwrap();
+            assert_eq!(urls.len(), 3, "Should have captured 3 request URLs");
+            assert!(
+                !urls[0].contains("retry=true"),
+                "First attempt must not include retry=true (fresh request): {}",
+                urls[0]
+            );
+            assert!(
+                urls[1].contains("retry=true"),
+                "Second attempt must include retry=true so the server dedupes: {}",
+                urls[1]
+            );
+            assert!(
+                urls[2].contains("retry=true"),
+                "Third attempt must include retry=true so the server dedupes: {}",
+                urls[2]
+            );
+
+            let request_ids: Vec<&str> = urls
+                .iter()
+                .filter_map(|u| {
+                    u.split_once("requestId=")
+                        .map(|(_, rest)| rest.split('&').next().unwrap_or(rest))
+                })
+                .collect();
+            assert_eq!(request_ids.len(), 3);
+            assert!(
+                request_ids[0] == request_ids[1] && request_ids[1] == request_ids[2],
+                "requestId must be stable across HTTP-level retries: {:?}",
+                request_ids
             );
         }
     }

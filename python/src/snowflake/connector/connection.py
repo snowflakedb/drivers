@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import platform
 import re
 import warnings
 
@@ -19,6 +20,9 @@ from typing import Any, Callable, Union
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
+    ConnectionHandle,
+    DatabaseHandle,
+    WrapperIdentity,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
@@ -55,6 +59,7 @@ from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
+from .version import __version__
 
 
 # backward compatibility constant
@@ -65,7 +70,8 @@ from .telemetry import TelemetryClient
 # uncast.
 DEFAULT_CONFIGURATION: dict[str, tuple[Any, tuple[type, ...]]] = {}
 
-CLIENT_NAME = "PythonConnector"
+CLIENT_NAME = "snowflake-connector-python"
+_APPLICATION_NAME = "PythonConnector"
 # The old connector used re.match(r"[\w\d_]+") without anchors, so any string
 # starting with a word character was accepted (dots, hyphens, etc. in the tail
 # were silently ignored).  We keep a start-anchored pattern without $ so that
@@ -221,7 +227,7 @@ class Connection:
 
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):
-            self._application = CLIENT_NAME
+            self._application = _APPLICATION_NAME
         elif isinstance(application, str):
             if not APPLICATION_RE.match(application):
                 raise ProgrammingError(f"Invalid application name: {application!r}")
@@ -235,9 +241,9 @@ class Connection:
         self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
 
         self.db_api = database_driver_client()
-        self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
+        self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
-        self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+        self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
         if autocommit is not None and not isinstance(autocommit, bool):
             raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
@@ -268,7 +274,21 @@ class Connection:
         # Logout config → Core (typed RPCs, before connection_init)
         self._send_logout_config(self.logout_config)
 
-        self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self.db_api.connection_init(
+            ConnectionInitRequest(
+                conn_handle=self.conn_handle,
+                db_handle=self.db_handle,
+                wrapper_identity=WrapperIdentity(
+                    driver_name=CLIENT_NAME,
+                    driver_version=__version__,
+                    language_runtime=platform.python_implementation(),
+                    language_version=platform.python_version(),
+                    language_compiler=platform.python_compiler(),
+                ),
+            )
+        )
+        _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
+        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 

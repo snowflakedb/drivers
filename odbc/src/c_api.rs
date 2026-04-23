@@ -15,7 +15,6 @@ pub unsafe extern "C" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::Re
     api::handle_allocation::sql_alloc_handle(sql::HandleType::Env, 0 as sql::Handle, output_handle)
         .to_sql_code()
 }
-
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -80,7 +79,6 @@ pub unsafe extern "C" fn SQLFreeHandle(
 ) -> sql::RetCode {
     api::handle_allocation::sql_free_handle(handle_type, handle).to_sql_code()
 }
-
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -518,7 +516,6 @@ pub unsafe extern "C" fn SQLDriverConnectW(
 pub unsafe extern "C" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
     api::connection::disconnect(connection_handle).to_sql_code()
 }
-
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -971,7 +968,6 @@ pub unsafe extern "C" fn SQLGetDiagField(
     )
     .to_sql_code()
 }
-
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -1144,14 +1140,9 @@ pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::R
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    // TODO: Implement proper SQLMoreResults functionality (multiple result sets).
-    // For now, close the cursor as if SQLFreeStmt(SQL_CLOSE) was called, per ODBC spec.
-    let result = api::statement::free_stmt(statement_handle, api::FreeStmtOption::Close);
+    let result = api::statement::more_results(statement_handle);
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    if result.is_err() {
-        return result.to_sql_code();
-    }
-    sql::SqlReturn::NO_DATA.0
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -1243,7 +1234,6 @@ pub unsafe extern "C" fn SQLGetDescField(
     )
     .to_sql_code()
 }
-
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]

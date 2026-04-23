@@ -173,17 +173,30 @@ fn execute_iteration(rt: &DriverRuntime, stmt_handle: StatementHandle) -> Result
 
     sf_core::perf_timing::reset_perf_counters();
 
+    let query_id = match response.result {
+        Some(execute_query_response::Result::Single(descriptor)) => descriptor.query_id,
+        Some(execute_query_response::Result::Multi(_)) => {
+            return Err("Multi-statement results are not supported in performance tests".to_string());
+        }
+        None => {
+            return Err(
+                "Query returned no result set (response.result is None). \
+                 This may indicate a silent async execution timeout or server error."
+                    .to_string(),
+            );
+        }
+    };
+
     let cpu_before = process_cpu_seconds();
     let start_fetch = Instant::now();
-    let row_count = if let Some(result) = response.result {
-        fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {e:?}"))?
-    } else {
-        return Err(
-            "Query returned no result set (response.result is None). \
-             This may indicate a silent async execution timeout or server error."
-                .to_string(),
-        );
-    };
+    let result_set = rt
+        .client()
+        .statement_get_result_set_blocking(StatementGetResultSetRequest {
+            stmt_handle: Some(stmt_handle),
+            query_id,
+        })
+        .map_err(|e| format!("Failed to get result set: {e:?}"))?;
+    let row_count = fetch_result_rows(result_set).map_err(|e| format!("Failed to fetch results: {e:?}"))?;
     let fetch_time = start_fetch.elapsed().as_secs_f64();
     let cpu_time_s = process_cpu_seconds() - cpu_before;
     let peak_rss_mb = get_peak_rss_mb();

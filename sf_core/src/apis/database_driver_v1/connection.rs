@@ -11,6 +11,7 @@ use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::logout;
+use super::spcs_token::read_spcs_token;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
     normalize_host_underscores, resolve_options, validate_connection_seed_write,
@@ -113,6 +114,7 @@ impl DatabaseDriverV1 {
             sql: sql.to_string(),
             bindings: None,
             describe_only: None,
+            query_parameters: None,
         };
         let query_parameters = conn.query_transport_parameters()?;
         let http_client = conn
@@ -175,8 +177,10 @@ impl DatabaseDriverV1 {
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);
-                    let client_info =
+                    let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
+                    client_info.platforms = self.platforms().await.clone();
+                    client_info.os_details = self.os_details().clone();
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 
@@ -214,8 +218,12 @@ impl DatabaseDriverV1 {
 
                 let http_client = create_tls_client_with_config(config.tls.clone())
                     .context(TlsClientCreationSnafu)?;
-                let login_parameters =
-                    LoginParameters::from_connection_config(&config, client_info, None);
+                let login_parameters = LoginParameters::from_connection_config(
+                    &config,
+                    client_info,
+                    None,
+                    read_spcs_token(self.fs_adapter().as_ref()),
+                );
 
                 let mfa_caching_requested = matches!(
                     &login_parameters.login_method,
@@ -272,6 +280,27 @@ impl DatabaseDriverV1 {
                     )
                     .await;
                     conn.logout_config = logout_config;
+
+                    // Snowflake server defaults CLIENT_TELEMETRY_ENABLED to true; it only
+                    // sends "false" when the account or user has opted out. If the parameter
+                    // is absent (e.g. older server), we default to enabled to match server behavior.
+                    let telemetry_enabled = conn
+                        .session_parameters
+                        .read()
+                        .await
+                        .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
+                        .map(|v| v.eq_ignore_ascii_case("true"))
+                        .unwrap_or(true);
+                    drop(conn);
+
+                    // Best-effort session_init telemetry — spawned as a background task
+                    // so connection open never blocks on telemetry latency.
+                    if telemetry_enabled {
+                        let conn_ptr_clone = conn_ptr.clone();
+                        tokio::spawn(async move {
+                            Self::send_session_init_telemetry(&conn_ptr_clone).await;
+                        });
+                    }
                 }
                 Ok(())
             }
@@ -280,6 +309,56 @@ impl DatabaseDriverV1 {
             }
             .fail(),
         }
+    }
+
+    /// Send session_init telemetry for the given connection (best-effort, fire-and-forget).
+    ///
+    /// Acquires the connection Mutex briefly to extract identity, tokens Arc,
+    /// and transport parameters, then drops the Mutex before reading the tokens
+    /// RwLock or making any network call. This avoids holding the Mutex across
+    /// an RwLock await (which could deadlock if a concurrent token refresh holds
+    /// the write lock).
+    async fn send_session_init_telemetry(conn_ptr: &Arc<Mutex<Connection>>) {
+        use crate::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
+        use opentelemetry_sdk::trace::SpanExporter;
+
+        // Step 1: Hold the connection Mutex only to clone what we need.
+        let (env_info, tokens_arc, query_parameters, http_client) = {
+            let conn = conn_ptr.lock().await;
+            let Some(ref identity) = conn.wrapper_identity else {
+                return;
+            };
+            let env_info = crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
+            let Ok(query_parameters) = conn.query_transport_parameters() else {
+                return;
+            };
+            let Some(http_client) = conn.http_client.clone() else {
+                return;
+            };
+            (env_info, conn.tokens.clone(), query_parameters, http_client)
+        };
+        // Mutex is now dropped.
+
+        // Step 2: Read session_id from the tokens RwLock without holding the Mutex.
+        // After a successful login, tokens are always present. The unwrap_or(0)
+        // is a defensive fallback — session_id 0 acts as a "no session" sentinel
+        // in the telemetry payload and is harmless if it somehow occurs.
+        let session_id = tokens_arc
+            .read()
+            .await
+            .as_ref()
+            .map(|t| t.session_id)
+            .unwrap_or(0);
+
+        let span = crate::telemetry::build_session_init_span(&env_info, session_id);
+        let session = Arc::new(ExporterSession {
+            client: http_client,
+            query_parameters,
+            session_token: tokens_arc,
+        });
+
+        let exporter = SnowflakeInBandExporter::new(session);
+        let _ = exporter.export(vec![span]).await;
     }
 
     pub async fn connection_set_option(
@@ -430,6 +509,41 @@ impl DatabaseDriverV1 {
             .fail(),
         }
     }
+
+    /// Store wrapper identity on a connection. Called once from `ConnectionInit`.
+    pub async fn set_wrapper_identity(
+        &self,
+        conn_handle: Handle,
+        identity: WrapperIdentity,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                if conn.wrapper_identity.is_some() {
+                    tracing::warn!(
+                        "Wrapper identity set more than once on the same connection; overwriting previous identity"
+                    );
+                }
+                conn.wrapper_identity = Some(identity);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+}
+
+/// Wrapper identity set once via `ConnectionInit` and attached to all subsequent telemetry events.
+#[derive(Debug, Clone, Default)]
+pub struct WrapperIdentity {
+    pub driver_name: String,
+    pub driver_version: String,
+    pub language_runtime: String,
+    pub language_version: String,
+    /// `None` means compiler info is not applicable for this language.
+    pub language_compiler: Option<String>,
 }
 
 pub struct Connection {
@@ -473,6 +587,8 @@ pub struct Connection {
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
+    /// Wrapper identity for telemetry, set once via ConnectionInit.
+    pub wrapper_identity: Option<WrapperIdentity>,
 }
 
 impl Default for Connection {
@@ -500,6 +616,7 @@ impl Connection {
             is_closed: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
+            wrapper_identity: None,
         }
     }
 
@@ -716,6 +833,23 @@ impl RefreshContext {
         }
         Self::new(&guard)
     }
+
+    /// Create a `RefreshContext` from individual components (no `Connection` needed).
+    pub fn from_parts(
+        tokens_lock: Arc<AsyncRwLock<Option<SessionTokens>>>,
+        http_client: reqwest::Client,
+        server_url: String,
+        client_info: ClientInfo,
+    ) -> Self {
+        Self {
+            tokens_lock,
+            http_client,
+            server_url,
+            client_info,
+            state: RefreshState::Initial,
+        }
+    }
+
     /// Create a new `RefreshContext` by extracting connection info.
     ///
     /// Does **not** check `is_closed`. Use `from_arc` for query paths (which

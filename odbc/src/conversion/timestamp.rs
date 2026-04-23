@@ -1,3 +1,5 @@
+use std::io::{Cursor, Write as _};
+
 use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
@@ -223,10 +225,23 @@ fn read_struct_timestamp_tz(
 // ODBC write/read helpers (shared by all three timestamp types)
 // =============================================================================
 
-fn format_timestamp_string(dt: &NaiveDateTime) -> String {
+/// Format a `NaiveDateTime` as `YYYY-MM-DD HH:MM:SS[.fffffffff]` into a stack
+/// buffer without any heap allocation, returning the filled slice as `&str`.
+///
+/// 48 bytes is sufficient: `YYYY-MM-DD HH:MM:SS.` = 20 bytes + up to 9 fractional
+/// digits + signed/4-digit year headroom. If a future chrono release ever
+/// widens this beyond the buffer, the caller receives a typed
+/// `NumericValueOutOfRange` error instead of a silent truncation through
+/// the unsafe `from_utf8_unchecked` below.
+fn format_timestamp_string_into<'a>(
+    dt: &NaiveDateTime,
+    buf: &'a mut [u8; 48],
+) -> Result<&'a str, WriteOdbcError> {
     let nanos = dt.nanosecond();
-    if nanos == 0 {
-        format!(
+    let len = {
+        let mut cur = Cursor::new(&mut buf[..]);
+        let write_result = write!(
+            cur,
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             dt.year(),
             dt.month(),
@@ -235,20 +250,35 @@ fn format_timestamp_string(dt: &NaiveDateTime) -> String {
             dt.minute(),
             dt.second()
         )
-    } else {
-        let frac = format!("{:09}", nanos);
-        let trimmed = frac.trim_end_matches('0');
-        format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{}",
-            dt.year(),
-            dt.month(),
-            dt.day(),
-            dt.hour(),
-            dt.minute(),
-            dt.second(),
-            trimmed
-        )
+        .and_then(|()| {
+            if nanos != 0 {
+                write!(cur, ".{nanos:09}")
+            } else {
+                Ok(())
+            }
+        });
+        if write_result.is_err() {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "timestamp value does not fit in the {}-byte format buffer",
+                    buf.len()
+                ),
+            }
+            .fail();
+        }
+        cur.position() as usize
+    };
+    // Trim trailing zeros from the fractional part (matching the previous
+    // `.trim_end_matches('0')` behavior). Skip the scan entirely when we
+    // know no fractional part was written.
+    let mut end = len;
+    if nanos != 0 {
+        while end > 0 && buf[end - 1] == b'0' {
+            end -= 1;
+        }
     }
+    // SAFETY: only ASCII digits, '-', ':', ' ', and '.' were written above.
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..end]) })
 }
 
 fn to_sql_timestamp(dt: &NaiveDateTime) -> sql::Timestamp {
@@ -275,7 +305,6 @@ fn write_timestamp_to_odbc(
             Ok(vec![])
         }
         CDataType::Char => {
-            let s = format_timestamp_string(dt);
             if binding.buffer_length > 0 && binding.buffer_length < 20 {
                 return NumericValueOutOfRangeSnafu {
                     reason: "Buffer too small for SQL_C_CHAR timestamp (minimum 20 bytes)"
@@ -283,10 +312,11 @@ fn write_timestamp_to_odbc(
                 }
                 .fail();
             }
-            Ok(binding.write_char_string(&s, get_data_offset))
+            let mut buf = [0u8; 48];
+            let s = format_timestamp_string_into(dt, &mut buf)?;
+            Ok(binding.write_char_string(s, get_data_offset))
         }
         CDataType::WChar => {
-            let s = format_timestamp_string(dt);
             if binding.buffer_length > 0 && binding.buffer_length < 40 {
                 return NumericValueOutOfRangeSnafu {
                     reason: "Buffer too small for SQL_C_WCHAR timestamp (minimum 40 bytes)"
@@ -294,7 +324,9 @@ fn write_timestamp_to_odbc(
                 }
                 .fail();
             }
-            Ok(binding.write_wchar_string(&s, get_data_offset))
+            let mut buf = [0u8; 48];
+            let s = format_timestamp_string_into(dt, &mut buf)?;
+            Ok(binding.write_wchar_string(s, get_data_offset))
         }
         CDataType::Date | CDataType::TypeDate => {
             let date = sql::Date {
@@ -582,3 +614,58 @@ pub(crate) struct SnowflakeTimestampTz {
 }
 
 impl_snowflake_timestamp!(SnowflakeTimestampTz, tz, SnowflakeLogicalType::TimestampTz);
+
+#[cfg(test)]
+mod format_timestamp_string_into_tests {
+    use super::format_timestamp_string_into;
+    use chrono::{DateTime, NaiveDate};
+
+    fn fmt(secs: i64, nanos: u32) -> String {
+        let dt = DateTime::from_timestamp(secs, nanos)
+            .expect("DateTime::from_timestamp with in-range inputs")
+            .naive_utc();
+        let mut buf = [0u8; 48];
+        format_timestamp_string_into(&dt, &mut buf)
+            .expect("format_timestamp_string_into")
+            .to_string()
+    }
+
+    // 2023-11-14 22:13:20 UTC, an arbitrary mid-range instant used to exercise
+    // the fractional-seconds trimming paths.
+    const REF_EPOCH: i64 = 1_700_000_000;
+
+    #[test]
+    fn no_fractional_seconds() {
+        assert_eq!(fmt(0, 0), "1970-01-01 00:00:00");
+        assert_eq!(fmt(REF_EPOCH, 0), "2023-11-14 22:13:20");
+    }
+
+    #[test]
+    fn with_fractional_seconds_various_trailing_zero_counts() {
+        // Trailing-zero trimming is the interesting behavior to preserve.
+        assert_eq!(fmt(REF_EPOCH, 1), "2023-11-14 22:13:20.000000001");
+        assert_eq!(fmt(REF_EPOCH, 10), "2023-11-14 22:13:20.00000001");
+        assert_eq!(fmt(REF_EPOCH, 123_000_000), "2023-11-14 22:13:20.123");
+        assert_eq!(fmt(REF_EPOCH, 123_456_789), "2023-11-14 22:13:20.123456789");
+        assert_eq!(fmt(REF_EPOCH, 999_999_999), "2023-11-14 22:13:20.999999999");
+    }
+
+    #[test]
+    fn pre_epoch_timestamp() {
+        assert_eq!(fmt(-1_000, 0), "1969-12-31 23:43:20");
+        assert_eq!(fmt(-1_000, 500_000), "1969-12-31 23:43:20.0005");
+    }
+
+    #[test]
+    fn year_padding() {
+        let dt = NaiveDate::from_ymd_opt(1, 1, 1)
+            .expect("NaiveDate::from_ymd_opt with in-range inputs")
+            .and_hms_opt(0, 0, 0)
+            .expect("NaiveDate::and_hms_opt with in-range inputs");
+        let mut buf = [0u8; 48];
+        assert_eq!(
+            format_timestamp_string_into(&dt, &mut buf).expect("format_timestamp_string_into"),
+            "0001-01-01 00:00:00"
+        );
+    }
+}

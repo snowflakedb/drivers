@@ -345,8 +345,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Undefined fiel
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][getdescfield][descriptor][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -363,6 +361,28 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during 
   SQLSMALLINT count = -1;
   ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &count, 0, nullptr);
   REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+
+  SQLCancel(stmt_handle());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - IRD access during SQL_NEED_DATA",
+                 "[odbc-api][getdescfield][descriptor][error]") {
+  const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
+
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLSMALLINT count = -1;
+  ret = SQLGetDescField(ird, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", ird, SQL_HANDLE_DESC);
 
   SQLCancel(stmt_handle());
 }

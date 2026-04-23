@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 15435cef-d4bc-47f4-a3ec-21de3b1adb73
+    -- DTM_QRY:
+    show terse objects like 'hq18673\\_t' in "DTMREPLAYTESTDB"."PUBLIC"
+  mapped: show terse objects like 'zzz\\_nonexistent' in "DTMREPLAYTESTDB"."PUBLIC"

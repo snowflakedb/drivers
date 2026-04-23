@@ -73,6 +73,8 @@ cargo run -- --help
 
 ## Output
 
+By default only failures are printed. Use `--verbose` to see all features including passing ones, and to show the list of implemented steps per validation.
+
 - ✅ Successfully validated test implementations
 - ❌ Missing implementations or validation failures
 - ⚠️ Issues: validation errors (wrong directory), missing methods, missing steps

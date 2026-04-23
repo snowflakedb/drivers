@@ -55,8 +55,8 @@ pub struct QueryContext {
 pub struct QueryContextEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextData>,
-    pub id: i32,
-    pub priority: i32,
+    pub id: i64,
+    pub priority: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<i64>,
 }

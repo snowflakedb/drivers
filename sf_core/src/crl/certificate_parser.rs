@@ -73,11 +73,16 @@ pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
     is_short_lived_certificate_with_threshold(cert_der, threshold_days)
 }
 
-/// Get certificate serial number as bytes for CRL comparison
+/// Get certificate serial number as raw DER integer bytes for CRL comparison.
+///
+/// Uses `raw_serial()` (the raw DER INTEGER content octets) instead of
+/// `BigUint::to_bytes_be()` so the encoding matches `RevokedCertificate::raw_serial()`
+/// used in CRL lookups. DER integers include a leading 0x00 when the high bit is set;
+/// `to_bytes_be()` strips it, causing ~50% of serial comparisons to fail.
 pub fn get_certificate_serial_number(cert_der: &[u8]) -> Result<Vec<u8>, CrlError> {
     let (_, cert) =
         x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
-    Ok(cert.serial.to_bytes_be())
+    Ok(cert.raw_serial().to_vec())
 }
 
 /// Get the certificate's notBefore timestamp as chrono::DateTime<Utc>

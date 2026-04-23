@@ -2,7 +2,7 @@ use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::file_utils::{create_test_file, path_to_sql_uri};
 use crate::common::put_get_common::{assert_file_exists, upload_to_stage};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ResultSetResponse;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -199,7 +199,7 @@ fn get_from_stage_with_pattern(
     stage_name: &str,
     pattern: &str,
     download_dir: &Path,
-) -> ExecuteResult {
+) -> ResultSetResponse {
     let get_sql = format!(
         "GET @{stage_name} file://{}/ PATTERN='{}'",
         path_to_sql_uri(download_dir),
