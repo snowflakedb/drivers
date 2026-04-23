@@ -14,6 +14,7 @@ use tracing_subscriber::layer::SubscriberExt;
 pub mod c_api;
 mod callback_layer;
 mod error;
+pub mod event_sanitizer;
 mod opentelemetry;
 pub mod rolling_writer;
 
