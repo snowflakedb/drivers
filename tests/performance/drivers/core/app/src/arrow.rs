@@ -2,10 +2,10 @@
 
 type Result<T> = std::result::Result<T, String>;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
-use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ResultSetResponse;
 
-/// Creates an Arrow reader from a protobuf ExecuteResult
-pub fn create_arrow_reader(result: ExecuteResult) -> Result<ArrowArrayStreamReader> {
+/// Creates an Arrow reader from a protobuf ResultSetResponse
+pub fn create_arrow_reader(result: ResultSetResponse) -> Result<ArrowArrayStreamReader> {
     let stream_ptr: *mut FFI_ArrowArrayStream = result
         .stream
         .ok_or_else(|| "No stream in result".to_string())?
@@ -17,8 +17,8 @@ pub fn create_arrow_reader(result: ExecuteResult) -> Result<ArrowArrayStreamRead
         .map_err(|e| format!("Failed to create Arrow stream reader: {}", e))
 }
 
-/// Fetches all rows from an ExecuteResult and returns the count
-pub fn fetch_result_rows(result: ExecuteResult) -> Result<usize> {
+/// Fetches all rows from a ResultSetResponse and returns the count
+pub fn fetch_result_rows(result: ResultSetResponse) -> Result<usize> {
     let mut reader = create_arrow_reader(result)?;
     let mut total_rows = 0;
 
