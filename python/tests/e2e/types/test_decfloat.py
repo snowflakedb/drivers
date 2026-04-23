@@ -188,8 +188,8 @@ class TestDecfloatJsonResultFormat:
                 # Then Result should be returned as appropriate type with value 1234.56789012345678901234567890
                 assert row is not None
                 value = row[0]
-                assert isinstance(value, (Decimal, str)), f"Expected Decimal or str, got {type(value)}"
-                assert Decimal(str(value)) == Decimal("1234.56789012345678901234567890")
+                assert isinstance(value, Decimal), f"Expected Decimal, got {type(value)}"
+                assert value == Decimal("1234.56789012345678901234567890")
 
 
 class TestDecfloatTable:
