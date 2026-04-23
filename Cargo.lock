@@ -3318,6 +3318,7 @@ dependencies = [
  "serde_json",
  "sf_core",
  "snafu 0.8.9",
+ "tempfile",
  "test-case",
  "tokio",
  "tokio-util",
