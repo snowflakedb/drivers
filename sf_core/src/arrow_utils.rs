@@ -215,6 +215,40 @@ pub fn create_field_with_type(
                     .with_metadata(metadata),
             )
         }
+        RowType::IntervalYearMonth {
+            name,
+            nullable,
+            precision,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "INTERVAL_YEAR_MONTH".to_string());
+            metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            Ok(Field::new(
+                name,
+                data_type.unwrap_or(DataType::Int64), // Int64 is the default representation; large values may use Int32 or Decimal128
+                *nullable,
+            )
+            .with_metadata(metadata))
+        }
+        RowType::IntervalDaySecond {
+            name,
+            nullable,
+            precision,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "INTERVAL_DAY_TIME".to_string());
+            metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            Ok(Field::new(
+                name,
+                data_type.unwrap_or(DataType::Int64), // Int64 is the default; values >106,751 days require Decimal128
+                *nullable,
+            )
+            .with_metadata(metadata))
+        }
     }
 }
 
