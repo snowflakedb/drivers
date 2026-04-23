@@ -1,4 +1,5 @@
 // mod readers;
+pub(crate) mod batched;
 pub mod error;
 pub(crate) mod param_binding;
 mod parsers;
@@ -42,6 +43,7 @@ use arrow::datatypes::{
     DataType, Date32Type, Decimal128Type, Field, Float64Type, Int8Type, Int16Type, Int32Type,
     Int64Type,
 };
+pub use batched::BatchedWrite;
 use snafu::ResultExt;
 pub use traits::{
     Binding, BindingStrides, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType,
@@ -153,7 +155,7 @@ struct Converter<ArrowArrayType, T> {
 
 impl<
     ArrowArrayType: Array + 'static,
-    T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>,
+    T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType> + BatchedWrite<ArrowArrayType>,
 > ColumnConverter for Converter<ArrowArrayType, T>
 {
     fn convert_arrow_value(
@@ -178,11 +180,10 @@ impl<
             .context(WriteOdbcValueSnafu)
     }
 
-    /// Downcasts `array` once for the whole segment, then iterates rows
-    /// through statically-dispatched `read_arrow_type`/`write_odbc_type`
-    /// — no per-cell vtable, closure, or `Any` cost. Falls back to the
-    /// per-cell default impl on downcast failure so each row reports the
-    /// original error.
+    /// Downcast `array` once for the whole segment, then hand off to
+    /// `T::write_odbc_segment` which may pick a primitive-specialised hot
+    /// path. Falls back to per-cell `convert_arrow_value` on downcast
+    /// failure so each row still reports the original error.
     fn convert_arrow_range(
         &self,
         array: &dyn Array,
@@ -205,37 +206,14 @@ impl<
             return;
         };
 
-        for (i, batch_idx) in arrow_row_range.enumerate() {
-            if outputs[i].is_err() {
-                continue;
-            }
-            let binding = match strides.for_row(base_binding, out_row_start + i) {
-                Ok(b) => b,
-                Err(e) => {
-                    outputs[i] = Err(e);
-                    continue;
-                }
-            };
-            let result = self
-                .snowflake_type
-                .read_arrow_type(arrow_array, batch_idx)
-                .context(ReadArrowValueSnafu)
-                .and_then(|value| {
-                    self.snowflake_type
-                        .write_odbc_type(value, &binding, &mut None)
-                        .context(WriteOdbcValueSnafu)
-                });
-            match result {
-                Ok(w) => {
-                    if let Ok(existing) = &mut outputs[i] {
-                        existing.extend(w);
-                    }
-                }
-                Err(e) => {
-                    outputs[i] = Err(e);
-                }
-            }
-        }
+        self.snowflake_type.write_odbc_segment(
+            arrow_array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+        );
     }
 }
 

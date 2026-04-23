@@ -1,12 +1,15 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
 use serde_json::Value;
+use snafu::ResultExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::batched::{BatchedWrite, write_odbc_segment_per_row};
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
-    UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, ConversionError, JsonBindingError,
+    NumericMagnitudeOverflowSnafu, ReadArrowValueSnafu, UnsupportedCDataTypeSnafu,
+    WriteOdbcValueSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -18,7 +21,7 @@ use crate::conversion::numeric_helpers::{
 use crate::conversion::param_binding::{
     buffer_data_len, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
-use crate::conversion::traits::Binding;
+use crate::conversion::traits::{Binding, BindingStrides};
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
@@ -485,6 +488,99 @@ impl WriteODBCType for SnowflakeNumber {
             | CDataType::IntervalHourToSecond
             | CDataType::IntervalMinuteToSecond => reject_multi_field_interval(target_type),
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
+        }
+    }
+}
+
+/// Hoist the `target_type` match out of the per-cell loop. For
+/// `SQL_C_CHAR` (the dominant bind in the perf benchmark), each row goes
+/// straight through `format_decimal_into` + `write_char_string` with no
+/// branch on the C type. Other targets fall back to per-row dispatch.
+impl<T> BatchedWrite<PrimitiveArray<T>> for SnowflakeNumber
+where
+    T: ArrowPrimitiveType + 'static,
+    T::Native: Into<i128> + Copy,
+{
+    fn write_odbc_segment(
+        &self,
+        array: &PrimitiveArray<T>,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        if !matches!(base_binding.target_type, CDataType::Char) {
+            write_odbc_segment_per_row(
+                self,
+                array,
+                arrow_row_range,
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            );
+            return;
+        }
+
+        let scale = self.scale;
+        let buffer_length = base_binding.buffer_length;
+        let values = array.values();
+        let validity = array.nulls();
+        let mut num_buf = [0u8; 48];
+
+        for (i, batch_idx) in arrow_row_range.enumerate() {
+            if outputs[i].is_err() {
+                continue;
+            }
+
+            if let Some(nulls) = validity
+                && !nulls.is_valid(batch_idx)
+            {
+                outputs[i] = Err(ReadArrowError::NullValue {
+                    location: snafu::location!(),
+                })
+                .context(ReadArrowValueSnafu);
+                continue;
+            }
+
+            let value: i128 = values[batch_idx].into();
+
+            let num_str = match Self::format_decimal_into(value, scale, &mut num_buf) {
+                Ok(s) => s,
+                Err(e) => {
+                    outputs[i] = Err(e).context(WriteOdbcValueSnafu);
+                    continue;
+                }
+            };
+
+            let binding = match strides.for_row(base_binding, out_row_start + i) {
+                Ok(b) => b,
+                Err(e) => {
+                    outputs[i] = Err(e);
+                    continue;
+                }
+            };
+            let warnings = binding.write_char_string(num_str, &mut None);
+
+            if warnings
+                .iter()
+                .any(|w| matches!(w, Warning::StringDataTruncated))
+                && whole_digits_len(num_str) >= buffer_length as usize
+            {
+                outputs[i] = Err(WriteOdbcError::NumericValueOutOfRange {
+                    reason: format!(
+                        "Whole digits of '{num_str}' do not fit in buffer of {buffer_length} bytes",
+                    ),
+                    location: snafu::location!(),
+                })
+                .context(WriteOdbcValueSnafu);
+                continue;
+            }
+
+            if let Ok(existing) = &mut outputs[i] {
+                existing.extend(warnings);
+            }
         }
     }
 }
