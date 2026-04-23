@@ -15,6 +15,7 @@ pub mod c_api;
 mod callback_layer;
 mod error;
 mod opentelemetry;
+pub mod rolling_writer;
 
 const DEFAULT_LOG_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_LOG_FILE_COUNT: usize = 5;
