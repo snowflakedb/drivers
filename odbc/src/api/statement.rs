@@ -395,6 +395,17 @@ fn is_dml_statement_type(statement_type_id: Option<i64>) -> bool {
     statement_type_id.is_some_and(|id| (0x3000..0x4000).contains(&id))
 }
 
+/// Returns `true` for statement types that produce browsable result sets
+/// (SELECT, SHOW, DESCRIBE, etc.) — callers should use `QueryExecuted` state.
+/// Returns `false` for non-query types (TCL, session commands, etc.) that may
+/// carry a status column but should not open a cursor.
+fn is_query_statement(statement_type_id: i64) -> bool {
+    // 0x1000..0x2000 : DQL — SELECT and variants
+    // 0x4000..0x5000 : metadata queries — SHOW, DESCRIBE, LIST, etc.
+    (0x1000..0x2000).contains(&statement_type_id)
+        || (0x4000..0x5000).contains(&statement_type_id)
+}
+
 fn set_state(stmt: &mut Statement, state: StatementState) {
     stmt.ird.desc_count = match &state {
         StatementState::QueryExecuted { reader, .. } => {
@@ -518,6 +529,22 @@ fn create_execute_state_from_result_set(
             });
         }
         if is_dml_statement_type(Some(id)) {
+            return Ok(StatementState::DmlExecuted {
+                rows_affected: rows_affected.unwrap_or(0),
+                schema: reader.schema(),
+                origin,
+            });
+        }
+        if !is_query_statement(id) {
+            // TCL (COMMIT, ROLLBACK, BEGIN), session commands, and other
+            // non-query statement types that Snowflake returns with a status
+            // column but should not open a cursor.  Treating them as DML
+            // matches the old snowflake-odbc (Simba SDK) behavior where
+            // SQLNumResultCols returned 0 for these statements.
+            tracing::debug!(
+                "create_execute_state: treating statement_type_id={:#x} as DML (non-query, non-DDL)",
+                id
+            );
             return Ok(StatementState::DmlExecuted {
                 rows_affected: rows_affected.unwrap_or(0),
                 schema: reader.schema(),
