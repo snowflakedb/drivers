@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .._internal.arrow_stream_utils import release_arrow_stream
+from .._internal.errorcode import ER_NO_DATA_FOUND
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     PrepareResult,
     ResultSetDescriptor,
@@ -65,7 +66,10 @@ class _QueryResult:
         """
         ptr = self._stream_ptr
         if not ptr:
-            raise ProgrammingError("No arrow stream available (already consumed or not produced by this query)")
+            raise ProgrammingError(
+                msg="No results available (already consumed or not produced by this query)",
+                errno=ER_NO_DATA_FOUND,
+            )
         self._stream_ptr = None
         return ptr
 

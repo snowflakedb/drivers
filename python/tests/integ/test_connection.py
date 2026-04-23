@@ -9,7 +9,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import DictCursor
+from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
 class TestConnectionInfo:
@@ -79,6 +81,84 @@ class TestConnectionInfoReflectsSessionChanges:
             cur.close()
 
         assert connection.schema.upper() == "INFORMATION_SCHEMA"
+
+
+class TestClosedConnection:
+    """Test that operations on a closed connection behaves correctly."""
+
+    def test_commit_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.commit()
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_rollback_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.rollback()
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_cursor_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.cursor()
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_execute_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute("SELECT 1")
+        error = excinfo.value
+        assert "cursor is closed" in error.msg.lower()
+        assert error.errno == 252006
+
+    def test_double_close(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        conn.close()
+
+    def test_autocommit_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.autocommit(True)
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_get_query_status_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        sfqid = cur.sfqid
+        cur.close()
+        conn.close()
+        status = conn.get_query_status(sfqid)
+        assert status == QueryStatus.DISCONNECTED
+
+    def test_get_query_status_throw_if_error_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        sfqid = cur.sfqid
+        cur.close()
+        conn.close()
+        with pytest.raises(ProgrammingError) as excinfo:
+            conn.get_query_status_throw_if_error(sfqid)
+        error = excinfo.value
+        assert error.sfqid == sfqid
+        assert error.errno == -1
 
 
 class TestConnectionMethods:

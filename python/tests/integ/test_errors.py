@@ -1,8 +1,11 @@
 """
-Integration tests for error handling.
+Integration tests for the Snowflake error contract.
 
-Tests verify that real Snowflake errors are surfaced as proper PEP 249 exceptions
-with meaningful messages and structured attributes.
+Tests verify that real Snowflake server errors are surfaced as proper PEP 249
+exceptions with correct types, error codes, messages, and structured attributes.
+
+Object-lifecycle errors (closed cursor, closed connection) live in the test
+files for those objects (test_cursor.py, test_connection.py).
 
 These tests are designed to pass against both the new (universal) driver and
 the old (reference) snowflake-connector-python driver.
@@ -12,7 +15,7 @@ import uuid
 
 import pytest
 
-from snowflake.connector.errors import DatabaseError, Error, InterfaceError, ProgrammingError
+from snowflake.connector.errors import DatabaseError, Error, ProgrammingError
 from tests.compatibility import is_new_driver, is_old_driver
 
 
@@ -130,52 +133,6 @@ class TestObjectNotFoundErrors:
             cursor.execute(f"USE DATABASE {db_name}")
         error = excinfo.value
         assert error.errno == 2043
-
-
-class TestClosedCursorErrors:
-    """Test that operations on a closed cursor raise proper errors."""
-
-    def test_execute_on_closed_cursor(self, cursor):
-        """Test that execute on a closed cursor raises InterfaceError."""
-        cursor.close()
-        with pytest.raises(InterfaceError, match="(?i)cursor is closed"):
-            cursor.execute("SELECT 1")
-
-    def test_fetchone_on_closed_cursor(self, cursor):
-        """Test that fetchone on a closed cursor raises an error."""
-        cursor.close()
-        # New driver raises InterfaceError; old driver raises TypeError (no closed-cursor guard on fetch).
-        with pytest.raises((InterfaceError, TypeError)):
-            cursor.fetchone()
-
-    def test_fetchall_on_closed_cursor(self, cursor):
-        """Test that fetchall on a closed cursor raises an error."""
-        cursor.close()
-        # New driver raises InterfaceError; old driver raises TypeError (no closed-cursor guard on fetch).
-        with pytest.raises((InterfaceError, TypeError)):
-            cursor.fetchall()
-
-
-class TestClosedConnectionErrors:
-    """Test that operations on a closed connection raise proper errors."""
-
-    def test_cursor_on_closed_connection(self, connection_factory):
-        """Test that creating a cursor on a closed connection raises an error."""
-        conn = connection_factory()
-        conn.close()
-        # New driver: InterfaceError; old driver: DatabaseError (errno=250002)
-        with pytest.raises(Error, match="(?i)connection is closed"):
-            conn.cursor()
-
-    def test_execute_on_closed_connection(self, connection_factory):
-        """Test that execute via cursor on a closed connection raises an error."""
-        conn = connection_factory()
-        cur = conn.cursor()
-        conn.close()
-        # New driver: InterfaceError("Connection is closed.")
-        # Old driver: InterfaceError("Cursor is closed in execute.") or DatabaseError("Connection is closed")
-        with pytest.raises(Error, match="(?i)(?:connection|cursor) is closed"):
-            cur.execute("SELECT 1")
 
 
 class TestErrorAttributes:
