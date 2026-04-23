@@ -203,18 +203,10 @@ jobs:
         # See comment in build_wheel job — ARM64 Windows needs explicit arch request
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
-      - name: Download Linux wheels
-        if: runner.os == 'Linux'
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: python-wheels-linux-x86_64
-          path: python/dist
-
-      - name: Download Windows wheel
-        if: runner.os == 'Windows'
-        uses: actions/download-artifact@v4
-        with:
-          name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
+          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Decode secrets
@@ -416,10 +408,10 @@ jobs:
       - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
         run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
 
-      - name: Download Linux wheels
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: python-wheels-linux-x86_64
+          name: manylinux_x86_64_py${{ env.REFERENCE_PYTHON_VERSION }}
           path: python/dist
 
       - name: Decode secrets

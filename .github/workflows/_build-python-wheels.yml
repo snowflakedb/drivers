@@ -38,6 +38,7 @@ jobs:
                   "cargo_extra_args": "--features vendored-openssl",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_x86_64",
+                  "artifact_id": "manylinux_x86_64",
               },
               "linux_arm": {
                   "target": "linux-aarch64",
@@ -47,6 +48,7 @@ jobs:
                   "cargo_extra_args": "--features vendored-openssl",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_aarch64",
+                  "artifact_id": "manylinux_aarch64",
               },
               "windows_arm": {
                   "target": "windows-arm64",
@@ -55,6 +57,7 @@ jobs:
                   "lib_name": "sf_core.dll",
                   "cargo_extra_args": "",
                   "wheel_method": "manual",
+                  "artifact_id": "win_arm64",
               },
           }
 
@@ -81,23 +84,23 @@ jobs:
                   })
 
               if p["wheel_method"] == "cibuildwheel":
-                  minor = [v.replace(".", "") for v in versions]
-                  if len(minor) == 1:
-                      selector = f"cp{minor[0]}-{p['cibw_arch']}"
-                  else:
-                      selector = "cp3{" + ",".join(v[1:] for v in minor) + "}-" + p["cibw_arch"]
-                  cibw.append({
-                      "target": p["target"],
-                      "os": p["os"],
-                      "cibw_build": selector,
-                      "sf_core_artifact": f"sf-core-{p['target']}",
-                  })
+                  for v in versions:
+                      shortver = v.replace(".", "")
+                      cibw.append({
+                          "target": p["target"],
+                          "os": p["os"],
+                          "py": v,
+                          "cibw_build": f"cp{shortver}-{p['cibw_arch']}",
+                          "sf_core_artifact": f"sf-core-{p['target']}",
+                          "artifact_name": f"{p['artifact_id']}_py{v}",
+                      })
               else:
                   for v in versions:
                       wheel.append({
                           "os": p["os"],
                           "py": v,
                           "sf_core_artifact": f"sf-core-{p['target']}",
+                          "artifact_name": f"{p['artifact_id']}_py{v}",
                       })
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
@@ -209,7 +212,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.configure.outputs.cibw-matrix) }}
     runs-on: ${{ matrix.os }}
-    name: build_wheels (${{ matrix.target }})
+    name: build_wheels (${{ matrix.os }}, py${{ matrix.py }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -248,10 +251,10 @@ jobs:
             auditwheel show "$whl"
           done
 
-      - name: Upload wheels
+      - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: python-wheels-${{ matrix.target }}
+          name: ${{ matrix.artifact_name }}
           path: python/dist/*.whl
 
   # ── Build wheels manually per (os, py) pair (Windows ARM64) ────────
@@ -336,5 +339,5 @@ jobs:
       - name: Upload Python wheel
         uses: actions/upload-artifact@v4
         with:
-          name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
+          name: ${{ matrix.artifact_name }}
           path: python/dist/*.whl
