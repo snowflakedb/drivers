@@ -15,7 +15,7 @@ import functools
 import logging
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, NoReturn, TypeVar, cast, overload
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -50,7 +50,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementSetOptionsRequest,
 )
 from .._internal.statement_utils import create_statement
-from ..errors import InterfaceError, NotSupportedError, ProgrammingError
+from ..errors import Error, ErrorValue, InterfaceError, NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._query_result import _QueryResult
 from ._query_result_waiter import QueryResultWaiter
@@ -89,7 +89,7 @@ def _requires_open(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+            self._handle_error(InterfaceError, "Cursor is closed.", ER_CURSOR_IS_CLOSED)
 
         return func(self, *args, **kwargs)
 
@@ -109,7 +109,7 @@ def _requires_open_cursor_not_connection(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self._closed:
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+            self._handle_error(InterfaceError, "Cursor is closed.", ER_CURSOR_IS_CLOSED)
 
         return func(self, *args, **kwargs)
 
@@ -136,11 +136,15 @@ def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
         def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
             if self._fetch_mode and self._fetch_mode != mode:
                 if mode == FetchMode.ARROW:
-                    raise ProgrammingError("Cannot use arrow/pandas fetch methods after row-by-row fetching")
+                    self._handle_error(
+                        ProgrammingError, "Cannot use arrow/pandas fetch methods after row-by-row fetching"
+                    )
                 elif mode == FetchMode.ROW:
-                    raise ProgrammingError("Cannot use row-by-row fetch methods after arrow/pandas fetching")
+                    self._handle_error(
+                        ProgrammingError, "Cannot use row-by-row fetch methods after arrow/pandas fetching"
+                    )
                 else:
-                    raise ProgrammingError(f"Unexpected fetch mode: {mode}")
+                    self._handle_error(ProgrammingError, f"Unexpected fetch mode: {mode}")
             self._fetch_mode = mode
 
             return func(self, *args, **kwargs)
@@ -199,8 +203,8 @@ class SnowflakeCursorBase(abc.ABC):
         # -- Core cursor state (identity, lifecycle, error handling) --
         self._connection: Connection = connection
         self._closed: bool = False
-        self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
-        self._errorhandler: Callable
+        self._messages: list[tuple[type[Exception], ErrorValue]] = []
+        self._errorhandler: Callable[..., None] = Error.default_errorhandler
 
         # -- PEP 249 cursor configuration (persists for cursor lifetime) --
         self._arraysize: int = 1
@@ -282,12 +286,12 @@ class SnowflakeCursorBase(abc.ABC):
 
     @property
     @pep249
-    def messages(self) -> list[tuple[type[Exception], dict[str, str | bool]]]:
+    def messages(self) -> list[tuple[type[Exception], ErrorValue]]:
         """List of (exception class, exception value) tuples received from the database."""
         return self._messages
 
     @messages.setter
-    def messages(self, value: list[tuple[type[Exception], dict[str, str | bool]]]) -> None:
+    def messages(self, value: list[tuple[type[Exception], ErrorValue]]) -> None:
         self._messages = value
 
     # ------------------------------------------------------------------
@@ -473,9 +477,11 @@ class SnowflakeCursorBase(abc.ABC):
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
             if paramstyle == ParamStyle.FORMAT and isinstance(parameters, dict):
-                raise ProgrammingError(
+                self._handle_error(
+                    ProgrammingError,
                     "Dict parameters not supported with format paramstyle. "
-                    "Use pyformat paramstyle for named parameters, or use a sequence."
+                    "Use pyformat paramstyle for named parameters, or use a sequence.",
+                    ER_INVALID_VALUE,
                 )
             # Client-side binding: interpolate parameters into SQL string
             query = ClientSideBindingConverter.interpolate_query(operation, parameters)
@@ -483,9 +489,11 @@ class SnowflakeCursorBase(abc.ABC):
         else:
             # Server-side binding: qmark or numeric
             if isinstance(parameters, dict):
-                raise ProgrammingError(
+                self._handle_error(
+                    ProgrammingError,
                     "Named parameters (dict) not supported with qmark/numeric paramstyle. "
-                    "Use pyformat paramstyle for named parameters."
+                    "Use pyformat paramstyle for named parameters.",
+                    ER_INVALID_VALUE,
                 )
             bindings = self._build_query_bindings(parameters)
             return operation, bindings
@@ -605,10 +613,9 @@ class SnowflakeCursorBase(abc.ABC):
             )
             return self._connection.db_api.statement_get_result_set(request)
         except Exception as exc:
-            # Wrap non-ProgrammingError exceptions for consistency
             if isinstance(exc, ProgrammingError):
                 raise
-            raise ProgrammingError(f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
+            self._handle_error(ProgrammingError, f"Failed to fetch result set for query_id={query_id}: {exc}")
 
     def _handle_single_statement_response(
         self, response: ExecuteQueryResponse, stmt_handle: StatementHandle, query: str
@@ -675,13 +682,13 @@ class SnowflakeCursorBase(abc.ABC):
         request = StatementSetOptionsRequest(stmt_handle=stmt_handle, options=options)
         self._connection.db_api.statement_set_options(request)
 
-    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult:
+    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult | None:
         try:
             request = StatementPrepareRequest(stmt_handle=stmt_handle)
             return self._connection.db_api.statement_prepare(request).result
         except ProgrammingError as exc:
             self._query_result = _QueryResult.from_programming_error(exc)
-            raise
+            self._handle_error(ProgrammingError, msg=str(exc), errno=exc.errno)
 
     @pep249
     @_requires_open
@@ -733,9 +740,10 @@ class SnowflakeCursorBase(abc.ABC):
         first_len = len(first_params)
         for params in rows:
             if len(params) != first_len:
-                raise InterfaceError(
+                self._handle_error(
+                    InterfaceError,
                     f"Bulk data size don't match. expected: {first_len}, got: {len(params)}, command: {operation}",
-                    errno=ER_INVALID_VALUE,
+                    ER_INVALID_VALUE,
                 )
 
         # Transpose from row-major to column-major format
@@ -832,7 +840,9 @@ class SnowflakeCursorBase(abc.ABC):
             size = self.arraysize
 
         if size < 0:
-            raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
+            self._handle_error(
+                ProgrammingError, f"The number of rows is not zero or positive number: {size}", ER_INVALID_VALUE
+            )
 
         if size == 0:
             return []
@@ -1023,11 +1033,15 @@ class SnowflakeCursorBase(abc.ABC):
 
         Multi-statement state is also cleared: query IDs, current index, and parent query ID.
 
+        Also clears the ``messages`` list so that errors from previous
+        operations do not leak into the next one.
+
         Args:
             closing: If True, do not reset rowcount,
                      see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
                      If False, reset rowcount to None.
         """
+        del self._messages[:]
         self._query_result.reset(closing=closing)
         self._result_chunks = None
         self._iterator = None
@@ -1120,9 +1134,33 @@ class SnowflakeCursorBase(abc.ABC):
 
     @errorhandler.setter
     def errorhandler(self, value: Callable | None) -> None:
+        # Bare raise: we need a working errorhandler to route errors through the protocol.
         if value is None:
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
+
+    def _handle_error(
+        self,
+        error_class: type[Error],
+        msg: str,
+        errno: int = -1,
+        sqlstate: str | None = None,
+        sfqid: str | None = None,
+    ) -> NoReturn:
+        Error.errorhandler_wrapper(
+            connection=self.connection,
+            cursor=self,
+            error_class=error_class,
+            error_value={
+                "errno": errno,
+                "msg": msg,
+                "sqlstate": sqlstate,
+                "sfqid": sfqid,
+            },
+        )
+        # Safety net: the default handler always raises, but a user-installed handler might not.
+        # The bare raise ensures NoReturn is honored.
+        raise
 
     # ------------------------------------------------------------------
     # Fetch – Arrow / Pandas
