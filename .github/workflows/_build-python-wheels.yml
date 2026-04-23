@@ -9,7 +9,7 @@ on:
         description: >
           JSON object mapping platform keys to Python version arrays.
           Example: {"linux_x86": ["3.10","3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}
-          Supported platforms: linux_x86, linux_arm, windows_arm.
+          Supported platforms: linux_x86, windows_arm.
 
 env:
   CARGO_TERM_COLOR: always
@@ -39,16 +39,6 @@ jobs:
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_x86_64",
                   "artifact_id": "manylinux_x86_64",
-              },
-              "linux_arm": {
-                  "target": "linux-aarch64",
-                  "os": "ubuntu-latest",
-                  "container": "quay.io/pypa/manylinux_2_28_aarch64",
-                  "lib_name": "libsf_core.so",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
-                  "wheel_method": "cibuildwheel",
-                  "cibw_arch": "manylinux_aarch64",
-                  "artifact_id": "manylinux_aarch64",
               },
               "windows_arm": {
                   "target": "windows-arm64",
@@ -232,7 +222,6 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >-
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
             && yum install -y perl-IPC-Cmd perl-Time-Piece
