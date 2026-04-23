@@ -230,7 +230,7 @@ jobs:
           output-dir: python/dist
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
-          CIBW_PRERELEASE_PYTHONS: "1"
+          CIBW_ENABLE: cpython-prerelease
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_BEFORE_ALL_LINUX: >-
