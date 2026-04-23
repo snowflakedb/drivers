@@ -1,18 +1,12 @@
 //! Per-segment batched Arrow → ODBC conversion.
 //!
-//! `Converter<A, T>::convert_arrow_range` (added in PR #927) downcasts the
-//! Arrow array once per segment and then iterates rows with statically-
-//! dispatched calls to `read_arrow_type` / `write_odbc_type`. This module
-//! adds a thin trait — [`BatchedWrite`] — that gives the concrete
-//! `(ArrowArrayType, SnowflakeType)` pair an opportunity to override that
-//! per-row loop with a tight, hoisted version (resolve `target_type` once,
-//! cache scale lookups, skip `Result`/`Vec<Warning>` building when the
-//! output is known to fit, etc.).
-//!
-//! Pairs without a hot path use the [`batched_write_default_impl`] macro,
-//! which delegates straight back to [`write_odbc_segment_per_row`] — the
-//! same per-cell loop that lived inside `Converter::convert_arrow_range`
-//! before this module existed.
+//! [`BatchedWrite`] is called once per `(column, segment)` from
+//! [`ColumnConverter::convert_arrow_range`], after the Arrow array has been
+//! downcast to its concrete type. Specialised implementations can resolve
+//! `target_type` once for the whole segment and skip `Result`/`Vec<Warning>`
+//! overhead when the output is known to fit; pairs without a hot path use
+//! the [`batched_write_default_impl`] macro to fall back to the per-row
+//! helper [`write_odbc_segment_per_row`].
 
 use arrow::array::{Array, BooleanArray, GenericByteArray, PrimitiveArray, StructArray};
 use arrow::datatypes::{Float64Type, GenericBinaryType, Int64Type, Utf8Type};
