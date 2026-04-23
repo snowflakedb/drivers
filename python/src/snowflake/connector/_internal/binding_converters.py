@@ -45,6 +45,11 @@ class ParamStyle(Enum):
     def __str__(self) -> str:
         return self.value
 
+    def lower(self) -> str:
+        # Snowpark calls connection.paramstyle.lower() treating paramstyle as a plain string.
+        # All ParamStyle values are already lowercase, so this just returns the string value.
+        return self.value
+
     @classmethod
     def from_string(cls, value: str) -> ParamStyle:
         """Parse ParamStyle from string value, with normalization.

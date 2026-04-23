@@ -907,6 +907,7 @@ class SnowflakeCursorBase(abc.ABC):
         self,
         force_return_table: bool = False,
         force_microsecond_precision: bool = False,
+        **kwargs: Any,  # Snowpark passes split_blocks=True; ignored by the UD
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         iterator = create_table_iterator(
