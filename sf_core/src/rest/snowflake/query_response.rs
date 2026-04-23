@@ -1210,27 +1210,63 @@ mod tests {
     }
 
     #[test]
-    fn test_geography_geometry_vector_types_are_supported() {
-        for type_name in &["GEOGRAPHY", "GEOMETRY", "VECTOR"] {
-            let row_type = RowType {
-                name: "col".to_string(),
-                type_: type_name.to_string(),
-                nullable: true,
-                scale: None,
-                precision: None,
-                length: None,
-                byte_length: None,
-                ext_type_name: None,
-                _fields: None,
-            };
+    fn test_geography_type_is_supported() {
+        let row_type = RowType {
+            name: "col".to_string(),
+            type_: "GEOGRAPHY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            _fields: None,
+        };
 
-            let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
-            assert!(
-                result.is_ok(),
-                "{type_name} should be a supported column type but got error: {}",
-                result.unwrap_err()
-            );
-        }
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geography { .. }
+        ));
+    }
+
+    #[test]
+    fn test_geometry_type_is_supported() {
+        let row_type = RowType {
+            name: "col".to_string(),
+            type_: "GEOMETRY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            _fields: None,
+        };
+
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geometry { .. }
+        ));
+    }
+
+    #[test]
+    fn test_vector_type_is_supported() {
+        let row_type = RowType {
+            name: "col".to_string(),
+            type_: "VECTOR".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            _fields: None,
+        };
+
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(result, crate::query_types::RowType::Vector { .. }));
     }
 
     #[test]
