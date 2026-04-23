@@ -488,32 +488,23 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
-        // catch_unwind prevents double-panic abort when Drop runs during stack
-        // unwinding (e.g. test panic) or inside a tokio async context where
-        // block_on panics with "Cannot start a runtime from within a runtime".
-        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Release the connection when the client is dropped
-            if let Err(e) = self
-                .client
-                .connection_release_blocking(ConnectionReleaseRequest {
-                    conn_handle: Some(self.conn_handle),
-                })
-            {
-                tracing::warn!("Failed to release connection in Drop: {e:?}");
-            }
-            // Release the database handle
-            if let Err(e) = self
-                .client
-                .database_release_blocking(DatabaseReleaseRequest {
-                    db_handle: Some(self.db_handle),
-                })
-            {
-                tracing::warn!("Failed to release database handle in Drop: {e:?}");
-            }
-        })) {
-            // Use eprintln! not tracing::warn! — the tracing subscriber may
-            // itself be torn down during the panic that triggered this Drop.
-            eprintln!("SnowflakeTestClient::drop panicked: {payload:?}");
+        // Release the connection when the client is dropped
+        if let Err(e) = self
+            .client
+            .connection_release_blocking(ConnectionReleaseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+        {
+            tracing::warn!("Failed to release connection in Drop: {e:?}");
+        }
+        // Release the database handle
+        if let Err(e) = self
+            .client
+            .database_release_blocking(DatabaseReleaseRequest {
+                db_handle: Some(self.db_handle),
+            })
+        {
+            tracing::warn!("Failed to release database handle in Drop: {e:?}");
         }
     }
 }
