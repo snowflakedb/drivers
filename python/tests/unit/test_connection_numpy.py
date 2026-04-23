@@ -2,30 +2,17 @@
 Unit tests for Connection numpy parameter.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY
 from snowflake.connector._internal.extras import MissingOptionalDependency
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ConnectionHandle,
-    DatabaseHandle,
-)
 from snowflake.connector.errors import ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
 pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires universal driver")
-
-
-@pytest.fixture
-def mock_db_api():
-    db_api = MagicMock()
-    db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
-    db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
-    db_api.connection_get_parameter.return_value = MagicMock(value="")
-    return db_api
 
 
 def make_connection(mock_db_api, **kwargs):

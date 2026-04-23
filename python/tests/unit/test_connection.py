@@ -11,10 +11,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
-    ConnectionHandle,
     ConnectionIsClosedResponse,
     ConnectionSetOptionsResponse,
-    DatabaseHandle,
     StatementHandle,
     ValidationIssue,
 )
@@ -25,17 +23,6 @@ from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
 pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires universal driver")
-
-
-@pytest.fixture
-def mock_db_api():
-    """Create a mock DatabaseDriverClient with minimal stubs for Connection.__init__."""
-    db_api = MagicMock()
-    db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
-    db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
-    db_api.connection_get_parameter.return_value = MagicMock(value="")
-    db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=False)
-    return db_api
 
 
 @pytest.fixture

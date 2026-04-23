@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use crate::common::mocks::auth::mount_jwt_login_success;
+use crate::common::mocks::session::is_logout_request;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
@@ -244,12 +245,4 @@ async fn mount_logout_success(server: &MockServer) {
         )
         .mount(server)
         .await;
-}
-
-fn is_logout_request(r: &wiremock::Request) -> bool {
-    r.url.path() == "/session"
-        && r.url
-            .query()
-            .map(|q| q.contains("delete=true"))
-            .unwrap_or(false)
 }
