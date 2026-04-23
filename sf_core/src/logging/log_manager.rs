@@ -68,6 +68,11 @@ impl LogManager {
         self.callback_level.set(level);
     }
 
+    /// Returns the current file logger level filter.
+    pub fn level(&self) -> LevelFilter {
+        self.file_level.get()
+    }
+
     /// Disable all logging output (file and callback).
     pub fn disable(&self) {
         self.file_level.set(LevelFilter::OFF);

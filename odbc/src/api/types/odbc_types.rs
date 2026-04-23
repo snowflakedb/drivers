@@ -12,6 +12,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
 use std::collections::HashMap;
 use std::sync::Weak;
 use tokio_util::sync::CancellationToken;
+use tracing::level_filters::LevelFilter;
 
 use super::CDataType;
 
@@ -912,6 +913,9 @@ pub struct Connection {
     pub current_catalog: Option<String>,
     /// SQL_ATTR_METADATA_ID — identifier vs. pattern treatment for catalog functions (default false)
     pub metadata_id: bool,
+    /// File log level in effect before a per-DSN `TRACING` override was applied.
+    /// Stored at connect time so that `disconnect` can restore the previous level.
+    pub(crate) previous_log_level: Option<LevelFilter>,
 }
 
 // Safety: Send is required so that the async runtime can transfer ownership of the

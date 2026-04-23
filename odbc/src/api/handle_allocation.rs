@@ -40,6 +40,7 @@ pub fn alloc_connection() -> OdbcResult<*mut Connection> {
         cached_autocommit: crate::api::types::AutocommitValue::On,
         current_catalog: None,
         metadata_id: false,
+        previous_log_level: None,
     });
     Ok(Box::into_raw(dbc))
 }
@@ -219,18 +220,29 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     release_result
 }
 
-/// Initialize logging (helper function for allocation)
+/// Initialise the process-global logging subsystem.
+///
+/// Reads driver-level configuration from `sf.snowflake.ini` (log level, path,
+/// rotation settings) and installs the full [`LogManager`] subscriber with
+/// stderr enabled for early diagnostic output.  If no log path is specified in
+/// the INI file, defaults to `"odbc.log"` in the current working directory.
+///
+/// Called once (via [`LazyLock`]) from [`sql_alloc_handle`] before any handle
+/// work is done.  Per-DSN `TRACING` overrides are applied later at connect
+/// time via [`LogManager::set_level`].
+///
+/// [`LogManager`]: sf_core::logging::LogManager
+/// [`LogManager::set_level`]: sf_core::logging::LogManager::set_level
 pub fn init_logging() {
     use std::sync::LazyLock;
 
-    // TODO: This is a hack to initialize the logging system.
-    // We should find a better way to do this.
     static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
-        sf_core::logging::init(sf_core::logging::LoggingConfig::new(
-            Some("odbc.log".into()),
-            false,
-            false,
-        ))
+        let mut config = crate::api::ini_config::read_driver_logging_config();
+        config.stderr = true;
+        if config.log_path.is_none() && config.enabled {
+            config.log_path = Some("odbc.log".into());
+        }
+        sf_core::logging::init(config)
     });
 
     if let Err(e) = LOGGING_RESULT.as_ref() {

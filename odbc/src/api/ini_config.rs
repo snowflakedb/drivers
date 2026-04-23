@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -122,7 +120,7 @@ fn apply_ini_params(params: HashMap<String, String>) -> LoggingConfig {
 /// |   4   | INFO      | `INFO`           |
 /// |   5   | DEBUG     | `DEBUG`          |
 /// |   6   | TRACE     | `TRACE`          |
-fn numeric_to_level_filter(level: u8) -> LevelFilter {
+pub(crate) fn numeric_to_level_filter(level: u8) -> LevelFilter {
     match level {
         0 => LevelFilter::OFF,
         1 | 2 => LevelFilter::ERROR,

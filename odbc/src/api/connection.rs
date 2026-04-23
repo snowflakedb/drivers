@@ -201,8 +201,10 @@ pub fn driver_connect<E: OdbcEncoding>(
 /// the handle to `Connected`.
 fn connect_with_params(
     connection_handle: sql::Handle,
-    params: HashMap<String, String>,
+    mut params: HashMap<String, String>,
 ) -> OdbcResult<()> {
+    let tracing_override = extract_tracing_level(&mut params);
+
     {
         const REDACTED_KEYS: &[&str] = &[
             "PWD",
@@ -304,6 +306,10 @@ fn connect_with_params(
         db_handle,
         conn_handle,
     };
+
+    if let Some(level) = tracing_override {
+        apply_tracing_override(connection, level);
+    }
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
     // already established (state = Connected). Use warn-and-continue rather than `?`
@@ -562,6 +568,8 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let connection = conn_from_handle(connection_handle);
+    restore_tracing_level(connection);
+
     if let ConnectionState::Connected {
         db_handle,
         conn_handle,
@@ -1193,6 +1201,51 @@ pub fn get_info<E: OdbcEncoding>(
     }
 }
 
+/// Extract the `TRACING` key from the connection parameters and convert it
+/// to a [`LevelFilter`].  The key is removed from `params` so it is not
+/// forwarded to sf_core as a connection option.
+fn extract_tracing_level(
+    params: &mut HashMap<String, String>,
+) -> Option<tracing::level_filters::LevelFilter> {
+    let raw = params.remove("TRACING")?;
+    match raw.parse::<u8>() {
+        Ok(n) => {
+            let level = crate::api::ini_config::numeric_to_level_filter(n);
+            tracing::debug!("TRACING={n} → {level:?}");
+            Some(level)
+        }
+        Err(_) => {
+            tracing::warn!("invalid TRACING value {raw:?}, ignoring");
+            None
+        }
+    }
+}
+
+/// Apply a per-DSN tracing level override, saving the previous level on the
+/// connection so it can be restored in [`disconnect`].
+fn apply_tracing_override(
+    connection: &mut crate::api::Connection,
+    level: tracing::level_filters::LevelFilter,
+) {
+    if let Some(mgr) = sf_core::logging::LogManager::get() {
+        let previous = mgr.level();
+        tracing::info!("per-DSN TRACING override: {previous:?} → {level:?}");
+        mgr.set_level(level);
+        connection.previous_log_level = Some(previous);
+    }
+}
+
+/// Restore the file log level that was active before the per-DSN `TRACING`
+/// override, if one was applied.
+fn restore_tracing_level(connection: &mut crate::api::Connection) {
+    if let Some(previous) = connection.previous_log_level.take()
+        && let Some(mgr) = sf_core::logging::LogManager::get()
+    {
+        tracing::info!("restoring log level to {previous:?} after disconnect");
+        mgr.set_level(previous);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1433,6 +1486,82 @@ Server = myserver
             let ini = "[mydsn]\nServer = foo\n";
             let params = parse_ini_section(ini, "MyDSN").unwrap();
             assert_eq!(params.get("SERVER").unwrap(), "foo");
+        }
+    }
+
+    mod tracing_level_tests {
+        use super::*;
+        use tracing::level_filters::LevelFilter;
+
+        #[test]
+        fn extract_tracing_level_valid() {
+            let mut params = HashMap::from([
+                ("TRACING".to_string(), "5".to_string()),
+                ("SERVER".to_string(), "foo".to_string()),
+            ]);
+            let level = extract_tracing_level(&mut params);
+            assert_eq!(level, Some(LevelFilter::DEBUG));
+            assert!(
+                !params.contains_key("TRACING"),
+                "TRACING key should be removed"
+            );
+            assert!(params.contains_key("SERVER"), "other keys should remain");
+        }
+
+        #[test]
+        fn extract_tracing_level_off() {
+            let mut params = HashMap::from([("TRACING".to_string(), "0".to_string())]);
+            assert_eq!(extract_tracing_level(&mut params), Some(LevelFilter::OFF));
+        }
+
+        #[test]
+        fn extract_tracing_level_absent() {
+            let mut params = HashMap::from([("SERVER".to_string(), "foo".to_string())]);
+            assert_eq!(extract_tracing_level(&mut params), None);
+        }
+
+        #[test]
+        fn extract_tracing_level_invalid_value() {
+            let mut params = HashMap::from([("TRACING".to_string(), "abc".to_string())]);
+            assert_eq!(extract_tracing_level(&mut params), None);
+            assert!(
+                !params.contains_key("TRACING"),
+                "invalid TRACING key should still be removed"
+            );
+        }
+
+        #[test]
+        fn extract_tracing_level_all_valid_values() {
+            for (input, expected) in [
+                ("0", LevelFilter::OFF),
+                ("1", LevelFilter::ERROR),
+                ("2", LevelFilter::ERROR),
+                ("3", LevelFilter::WARN),
+                ("4", LevelFilter::INFO),
+                ("5", LevelFilter::DEBUG),
+                ("6", LevelFilter::TRACE),
+            ] {
+                let mut params = HashMap::from([("TRACING".to_string(), input.to_string())]);
+                assert_eq!(
+                    extract_tracing_level(&mut params),
+                    Some(expected),
+                    "TRACING={input} should map to {expected:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn extract_tracing_not_forwarded_to_normalize() {
+            let mut params = HashMap::from([
+                ("TRACING".to_string(), "6".to_string()),
+                ("UID".to_string(), "admin".to_string()),
+            ]);
+            let _ = extract_tracing_level(&mut params);
+            let options = normalize_connection_string_options(params);
+            assert!(
+                !options.contains_key("TRACING"),
+                "TRACING should not appear in normalized options"
+            );
         }
     }
 }
