@@ -9,16 +9,26 @@ struct CApiState {
     transport: RustTransport,
 }
 
-static STATE: LazyLock<CApiState> = LazyLock::new(|| CApiState {
-    // Single worker thread is intentional: keeps contention minimal and
-    // makes deadlocks easier to detect. Will be increased during
-    // performance optimization.
-    runtime: tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .expect("Failed to create tokio runtime"),
-    transport: RustTransport::new(),
+static STATE: LazyLock<CApiState> = LazyLock::new(|| {
+    // Telemetry state may not be available yet (sf_core_init_logger may be
+    // called after CApiState initialization). DatabaseDriverV1 falls back to
+    // reading TELEMETRY_INIT lazily when telemetry is first needed.
+    let providers = match crate::logging::c_api::TELEMETRY_INIT.get() {
+        Some(init) => init.to_providers(),
+        None => Default::default(),
+    };
+
+    CApiState {
+        // Single worker thread is intentional: keeps contention minimal and
+        // makes deadlocks easier to detect. Will be increased during
+        // performance optimization.
+        runtime: tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("Failed to create tokio runtime"),
+        transport: RustTransport::new_with(providers),
+    }
 });
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
