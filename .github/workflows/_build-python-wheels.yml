@@ -191,9 +191,43 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
+  # ── Generate protobuf Python code (platform-independent, runs once) ─
+  generate_proto:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore proto-target cache
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-proto-target-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Generate protobuf code
+        working-directory: python
+        run: |
+          uv run --with hatch hatch build --hooks-only
+        env:
+          SKIP_CORE_BUILD: "true"
+          SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSIONS: "true"
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Upload protobuf artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: protobuf-gen
+          path: python/src/snowflake/connector/internal/protobuf_gen/
+
   # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
   build_wheels:
-    needs: [configure, build_sf_core]
+    needs: [configure, build_sf_core, generate_proto]
     if: fromJSON(needs.configure.outputs.cibw-matrix)[0] != null
     strategy:
       fail-fast: false
@@ -214,6 +248,12 @@ jobs:
       - name: Ensure sf_core is executable
         run: chmod +x python/src/snowflake/connector/_core/*
 
+      - name: Download pre-built protobuf code
+        uses: actions/download-artifact@v4
+        with:
+          name: protobuf-gen
+          path: python/src/snowflake/connector/internal/protobuf_gen
+
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v3.4
         with:
@@ -222,13 +262,9 @@ jobs:
         env:
           CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BEFORE_ALL_LINUX: >-
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-            && yum install -y perl-IPC-Cmd perl-Time-Piece
           CIBW_ENVIRONMENT_LINUX: >-
-            PATH="$HOME/.cargo/bin:$PATH"
             SKIP_CORE_BUILD=true
-            PROTO_CARGO_TARGET_DIR=/tmp/proto-target
+            SKIP_PROTO_GENERATION=true
 
       - name: Check wheels with auditwheel
         run: |
@@ -246,7 +282,7 @@ jobs:
 
   # ── Build wheels manually per (os, py) pair (Windows ARM64) ────────
   build_wheel:
-    needs: [configure, build_sf_core]
+    needs: [configure, build_sf_core, generate_proto]
     if: fromJSON(needs.configure.outputs.win-arm-matrix)[0] != null
     strategy:
       fail-fast: false
@@ -257,6 +293,7 @@ jobs:
     env:
       CMAKE_GENERATOR_PLATFORM: ARM64
       SKIP_CORE_BUILD: "true"
+      SKIP_PROTO_GENERATION: "true"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -267,6 +304,12 @@ jobs:
           name: ${{ matrix.sf_core_artifact }}
           path: python/src/snowflake/connector/_core
 
+      - name: Download pre-built protobuf code
+        uses: actions/download-artifact@v4
+        with:
+          name: protobuf-gen
+          path: python/src/snowflake/connector/internal/protobuf_gen
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
         with:
@@ -274,14 +317,6 @@ jobs:
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
-
-      - name: Cache proto generator target
-        uses: actions/cache@v5
-        with:
-          path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-proto-target-
 
       # ── Windows ARM64 OpenSSL (needed by cryptography dependency) ──
       - name: Capture vcpkg version for cache key
@@ -315,8 +350,6 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
-        env:
-          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}\proto-target
 
       - name: Inspect wheel
         working-directory: ./python

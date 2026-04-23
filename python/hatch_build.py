@@ -125,6 +125,9 @@ class BuildHook(BuildHookInterface):
 
     def _generate_protobuf(self) -> None:
         """Generate Python protobuf code using the Rust proto_generator binary."""
+        if os.environ.get("SKIP_PROTO_GENERATION", "").lower() in ["true", "1"]:
+            return
+
         python_dir = Path(self.root)
         proto_input = (python_dir / self.PROTO_INPUT).resolve()
         protobuf_gen_dir = python_dir / self.PROTOBUF_GEN_DIR
