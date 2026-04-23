@@ -10,7 +10,9 @@ use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
 };
 use crate::conversion::warning::Warnings;
-use crate::conversion::{Binding, ConversionError, Converter, NumericSettings, make_converter};
+use crate::conversion::{
+    Binding, ColumnConverter, ConversionError, NumericSettings, make_converter,
+};
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
 use arrow::ffi_stream::ArrowArrayStreamReader;
@@ -51,7 +53,7 @@ struct CachedColumn {
     /// Snapshot of the ARD `Binding` so the inner loop never touches the
     /// `HashMap`. Safe because bindings cannot mutate during `SQLFetch`.
     binding: Binding,
-    converter: Option<Box<dyn Converter>>,
+    converter: Option<Box<dyn ColumnConverter>>,
 }
 
 impl FetchConverterCache {

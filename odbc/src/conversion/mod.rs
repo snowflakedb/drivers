@@ -61,7 +61,12 @@ use crate::conversion::warning::Warnings;
 /// `'static` so it can be cached and reused across every cell of a column
 /// within a `RecordBatch`. The array is passed in per call rather than held
 /// by the converter.
-pub trait Converter {
+///
+/// This is the type-erased handle stored in the per-batch cache as
+/// `Box<dyn ColumnConverter>`. The single concrete implementation is
+/// `Converter<ArrowArrayType, T>`, monomorphised once per Arrow/Snowflake
+/// type pair.
+pub trait ColumnConverter {
     fn convert_arrow_value(
         &self,
         array: &dyn Array,
@@ -71,7 +76,11 @@ pub trait Converter {
     ) -> Result<Warnings, ConversionError>;
 }
 
-struct GenericConverter<ArrowArrayType, T> {
+/// Concrete column converter, parameterised over a single Arrow array type
+/// `ArrowArrayType` and a single Snowflake logical type `T`. Each
+/// `(ArrowArrayType, T)` pair monomorphises into a distinct concrete type;
+/// the per-batch cache stores them as `Box<dyn ColumnConverter>`.
+struct Converter<ArrowArrayType, T> {
     snowflake_type: T,
     // `fn() -> ArrowArrayType` so the marker imposes no auto-trait bounds.
     _phantom: std::marker::PhantomData<fn() -> ArrowArrayType>,
@@ -80,7 +89,7 @@ struct GenericConverter<ArrowArrayType, T> {
 impl<
     ArrowArrayType: Array + 'static,
     T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>,
-> Converter for GenericConverter<ArrowArrayType, T>
+> ColumnConverter for Converter<ArrowArrayType, T>
 {
     fn convert_arrow_value(
         &self,
@@ -108,17 +117,17 @@ impl<
 macro_rules! make_converter {
     ($arrow_array_type:ty, $snowflake_type:expr, $nullable:expr) => {{
         if $nullable {
-            Ok(Box::new(GenericConverter::<$arrow_array_type, _> {
+            Ok(Box::new(Converter::<$arrow_array_type, _> {
                 snowflake_type: nullable::Nullable {
                     value: $snowflake_type,
                 },
                 _phantom: std::marker::PhantomData,
-            }) as Box<dyn Converter>)
+            }) as Box<dyn ColumnConverter>)
         } else {
-            Ok(Box::new(GenericConverter::<$arrow_array_type, _> {
+            Ok(Box::new(Converter::<$arrow_array_type, _> {
                 snowflake_type: $snowflake_type,
                 _phantom: std::marker::PhantomData,
-            }) as Box<dyn Converter>)
+            }) as Box<dyn ColumnConverter>)
         }
     }};
 }
@@ -337,13 +346,13 @@ impl SnowflakeFieldType {
 
 /// Build a converter for a column from its Arrow `Field`.
 ///
-/// The returned `Box<dyn Converter>` is `'static` and meant to be built once
-/// per column per `RecordBatch` (the `SnowflakeFieldType::from_field` work
-/// here parses field metadata and is too expensive to do per cell).
+/// The returned `Box<dyn ColumnConverter>` is `'static` and meant to be built
+/// once per column per `RecordBatch` (the `SnowflakeFieldType::from_field`
+/// work here parses field metadata and is too expensive to do per cell).
 pub fn make_converter(
     field: &Field,
     numeric_settings: &NumericSettings,
-) -> Result<Box<dyn Converter>, ConversionError> {
+) -> Result<Box<dyn ColumnConverter>, ConversionError> {
     let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
     let nullable = field.is_nullable();
     match field_type {
