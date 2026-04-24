@@ -29,7 +29,7 @@ def okta_params():
     okta_url = params.get("SNOWFLAKE_TEST_OKTA_URL")
 
     if not all([host, account, user, password, okta_url]):
-        pytest.skip(
+        pytest.fail(
             "Okta test credentials not configured. "
             "Set SNOWFLAKE_TEST_OKTA_HOST, SNOWFLAKE_TEST_OKTA_ACCOUNT, "
             "SNOWFLAKE_TEST_OKTA_USER, SNOWFLAKE_TEST_OKTA_PASSWORD, "
@@ -50,7 +50,7 @@ def okta_params():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip_reference(reason="Bug in reference connector: SNOW-3388171")
+@pytest.mark.require_vpn
 class TestNativeOktaAuthentication:
     def test_should_authenticate_using_native_okta(self, connection_factory, okta_params):
         # Given Okta authentication is configured with valid credentials

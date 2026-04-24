@@ -295,6 +295,28 @@ pipeline {
                         export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
                         ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
                       '''
+
+                      sh label: 'Install hatch', script: 'pip3 install hatch'
+
+                      sh label: 'Python VPN E2E tests (test.py3.13)', script: '''
+                        set +x
+                        export PARAMETER_PATH=$(pwd)/parameters.json
+                        cd python
+                        export SKIP_CORE_BUILD=1
+                        hatch build -t wheel
+                        hatch run test.py3.13:install-wheel
+                        hatch run test.py3.13:pytest tests/e2e/authentication/test_native_okta.py -m require_vpn
+                        hatch env remove test.py3.13
+                      '''
+
+                      sh label: 'Python VPN E2E tests (reference)', script: '''
+                        set +x
+                        export PARAMETER_PATH=$(pwd)/parameters.json
+                        cd python
+                        hatch run reference:install-wheel
+                        hatch run reference:test -- -m require_vpn
+                        hatch env remove reference
+                      '''
                     } finally {
                       sh label: 'Cleanup test PATs', script: '''
                         set +x
