@@ -813,24 +813,15 @@ class TestLogMaxQueryLength:
 
         assert conn._format_query_for_log("SELECT 1") == "..."
 
-    def test_not_sent_to_sf_core(self, mock_db_api):
-        """log_max_query_length is a client-side concern and must not be forwarded to sf_core."""
+    def test_sent_to_sf_core(self, mock_db_api):
+        """log_max_query_length is used by both Python (log formatting) and Core (log truncation)."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", log_max_query_length=200)
 
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
-        assert "log_max_query_length" not in request.options
-
-    def test_not_in_options(self, mock_db_api):
-        """log_max_query_length should be popped from kwargs, not sent to Core as a generic option."""
-        from snowflake.connector.connection import Connection
-
-        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            Connection(user="u", account="a", log_max_query_length=200)
-        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
-        assert "log_max_query_length" not in request.options
+        assert request.options["log_max_query_length"] == ConfigSetting(int_value=200)
 
     def test_format_query_at_exact_boundary(self, connection):
         """Legacy uses strict less-than: a query of exactly log_max_query_length chars IS truncated."""
