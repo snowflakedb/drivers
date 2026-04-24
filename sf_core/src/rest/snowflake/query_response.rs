@@ -6,6 +6,18 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
+/// Snowflake's default VARCHAR length (16 MB in characters).
+/// Used as fallback when the server omits length metadata for TEXT columns.
+/// See: https://docs.snowflake.com/en/sql-reference/data-types-text
+///   "If no length is specified, the default is 16777216."
+const DEFAULT_TEXT_LENGTH: u64 = 16_777_216;
+
+/// Multiplier to derive byte_length from character length.
+/// The SQL API returns byteLength equal to length for default TEXT columns, e.g.:
+///   {"type":"text", "length":16777216, "byteLength":16777216}
+/// See: https://docs.snowflake.com/en/developer-guide/sql-api/reference
+const DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER: u64 = 1;
+
 /// Response from the `POST /queries/{qid}/abort-request` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct AbortQueryResponse {
@@ -558,17 +570,14 @@ impl TryFrom<&RowType> for query_types::RowType {
 
         match value.type_.to_uppercase().as_str() {
             "TEXT" => {
-                let length = value.length.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> length for TEXT/STRING/VARCHAR/CHAR column '{name}'"
-                    ),
-                })?;
-
-                let byte_length = value.byte_length.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> byte length for TEXT/STRING/VARCHAR/CHAR column '{name}'"
-                    ),
-                })?;
+                // Use Snowflake's default VARCHAR max length when the server omits
+                // length metadata. This happens when the server returns DECFLOAT
+                // columns as TEXT type for clients it doesn't recognize as
+                // DECFLOAT-capable (e.g. JSON format fallback).
+                let length = value.length.unwrap_or(DEFAULT_TEXT_LENGTH);
+                let byte_length = value
+                    .byte_length
+                    .unwrap_or(length.saturating_mul(DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER));
 
                 Ok(query_types::RowType::text(
                     &name,
@@ -1186,6 +1195,98 @@ mod tests {
     }
 
     #[test]
+    fn test_fixed_missing_precision_returns_error() {
+        let row_type = RowType {
+            name: "num_col".to_string(),
+            type_: "FIXED".to_string(),
+            nullable: false,
+            scale: Some(2),
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("precision"),
+                "Error should mention missing precision: {err}"
+            ),
+            Ok(_) => panic!("Expected error for FIXED column without precision"),
+        }
+    }
+
+    #[test]
+    fn test_fixed_missing_scale_returns_error() {
+        let row_type = RowType {
+            name: "num_col".to_string(),
+            type_: "FIXED".to_string(),
+            nullable: false,
+            scale: None,
+            precision: Some(38),
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("scale"),
+                "Error should mention missing scale: {err}"
+            ),
+            Ok(_) => panic!("Expected error for FIXED column without scale"),
+        }
+    }
+
+    #[test]
+    fn test_binary_missing_length_returns_error() {
+        let row_type = RowType {
+            name: "bin_col".to_string(),
+            type_: "BINARY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: Some(100),
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("length"),
+                "Error should mention missing length: {err}"
+            ),
+            Ok(_) => panic!("Expected error for BINARY column without length"),
+        }
+    }
+
+    #[test]
+    fn test_binary_missing_byte_length_returns_error() {
+        let row_type = RowType {
+            name: "bin_col".to_string(),
+            type_: "BINARY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: Some(100),
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("byte length"),
+                "Error should mention missing byte length: {err}"
+            ),
+            Ok(_) => panic!("Expected error for BINARY column without byte_length"),
+        }
+    }
+
+    #[test]
     fn test_query_context_entry_id_exceeding_i32_max() {
         let json = r#"{
             "data": {
@@ -1235,5 +1336,40 @@ mod tests {
 
         let response: Response = serde_json::from_str(json).unwrap();
         assert!(response.success);
+    }
+
+    #[test]
+    fn test_text_type_without_length_uses_default() {
+        // Regression: the server may return DECFLOAT columns as TEXT without
+        // length/byteLength metadata when it doesn't recognize the client as
+        // DECFLOAT-capable. The driver must use defaults instead of failing.
+        let row_type = RowType {
+            name: "TEST_VALUE".to_string(),
+            type_: "TEXT".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: crate::query_types::RowType = (&row_type)
+            .try_into()
+            .expect("TEXT column without length should use defaults, not fail");
+        match result {
+            crate::query_types::RowType::Text {
+                length,
+                byte_length,
+                ..
+            } => {
+                assert_eq!(length, DEFAULT_TEXT_LENGTH);
+                assert_eq!(
+                    byte_length,
+                    DEFAULT_TEXT_LENGTH.saturating_mul(DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER)
+                );
+            }
+            _ => panic!("Expected RowType::Text"),
+        }
     }
 }
