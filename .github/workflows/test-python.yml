@@ -542,6 +542,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete sf-core artifacts
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
