@@ -53,7 +53,7 @@ from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
     LogoutOptionKeys,
-    remap_keep_alive_phase2,
+    remap_keep_alive_for_backward_compat,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
@@ -349,7 +349,7 @@ class Connection:
         """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
         keep_alive = _pop_optional_bool_kwarg(kwargs, "server_session_keep_alive")
         auto_detection = _extract_auto_detection_param(kwargs)
-        keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
+        keep_alive = remap_keep_alive_for_backward_compat(keep_alive, auto_detection)
         return LogoutConfig(
             server_session_keep_alive=keep_alive,
             enable_server_session_keep_alive_auto_detection=auto_detection,

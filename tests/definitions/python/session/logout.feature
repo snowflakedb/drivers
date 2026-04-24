@@ -18,8 +18,8 @@ Feature: Session Logout - Python-specific behavior
   #                   Session Lifecycle Parameters
   # ===========================================================================
   # Phase 2 (doc for: SNOW-2314152) behavior: Python defaults to auto-detection enabled
-  # when server_session_keep_alive is none. This will change in Phase 3 to
-  # always logout by default. ODBC already implements Phase 3 behavior.
+  # when server_session_keep_alive is none. This will change in Phase 3 (SNOW-2314152) to
+  # always logout by default. ODBC already implements Phase 3 (SNOW-2314152) behavior.
   # Auto-detection logic scenarios moved to fire-and-forget ticket (SNOW-2923705)
 
   # TODO: SNOW-2872349 - Requires improved assertions (weak log file parsing)
@@ -64,16 +64,16 @@ Feature: Session Logout - Python-specific behavior
   Scenario: should remap server_session_keep_alive false to none when auto_detection defaults to true
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
     # Phase 2 backward compat (SNOW-2314152): False + auto_detection=True (default)
-    # → remap → Core receives None and checks registry. Remap will be removed in Phase 3.
+    # → remap → Core receives None and checks registry. Remap will be removed in Phase 3 (SNOW-2314152).
     Given Snowflake Python client is created with server_session_keep_alive set to false
     When Client closes connection
     Then server_session_keep_alive false is remapped to none
     And Deprecation warning is emitted
-    And Warning mentions that false will force logout in Phase 3
+    And Warning mentions that false will force logout in Phase 3 (SNOW-2314152)
 
   @python_e2e
   Scenario: should pass server_session_keep_alive false to Core when auto_detection explicitly disabled
-    # False + auto_detection=False (explicit) → no Phase 2 remap → Core receives False (force logout)
+    # False + auto_detection=False (explicit) → no Phase 2 (SNOW-2314152) remap → Core receives False (force logout)
     # No deprecation warning: user opted out of auto-detection consciously
     Given Snowflake Python client is created with server_session_keep_alive set to false
     And enable_server_session_keep_alive_auto_detection is set to false
@@ -87,7 +87,7 @@ Feature: Session Logout - Python-specific behavior
 
   @python_e2e
   Scenario Outline: should skip logout when server_session_keep_alive is true regardless of auto_detection
-    # Phase 2 truth table: True + any + any → No logout, No deprecation
+    # Phase 2 (SNOW-2314152) truth table: True + any + any → No logout, No deprecation
     # Verifies Python correctly passes true to Core
     Given Snowflake Python client is created with server_session_keep_alive set to true
     And enable_server_session_keep_alive_auto_detection is set to <auto_detection>
@@ -162,10 +162,10 @@ Feature: Session Logout - Python-specific behavior
   # ===========================================================================
   # Approach 4 (doc for: SNOW-2314152): iteratively deprecate auto-cleanup.
   # UD Core is explicit-only (no process/GC hooks).
-  # Phase 2: keep existing atexit hooks, gated behind auto_cleanup param (default: enabled).
+  # Phase 2 (SNOW-2314152): keep existing atexit hooks, gated behind auto_cleanup param (default: enabled).
   #          Log deprecation warning whenever auto-cleanup runs.
-  # Phase 3: flip default so auto_cleanup is off unless explicitly enabled.
-  # Phase 4: remove auto_cleanup and its config entirely.
+  # Phase 3 (SNOW-2314152): flip default so auto_cleanup is off unless explicitly enabled.
+  # Phase 4 (SNOW-2314152): remove auto_cleanup and its config entirely.
 
   @python_int
   Scenario: should have auto_cleanup enabled by default

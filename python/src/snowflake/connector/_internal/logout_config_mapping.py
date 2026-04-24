@@ -1,7 +1,7 @@
 """Logout configuration for the Python wrapper (SNOW-2314152).
 
 LogoutConfig carries resolved logout settings with Python-specific defaults.
-remap_keep_alive_phase2 applies the Phase 2 backward-compat remap.
+remap_keep_alive_for_backward_compat applies the Phase 2 (SNOW-2314152) backward-compat remap.
 """
 
 import warnings
@@ -86,19 +86,19 @@ class LogoutConfig:
         return options
 
 
-def remap_keep_alive_phase2(
+def remap_keep_alive_for_backward_compat(
     server_session_keep_alive: Optional[bool],
     enable_auto_detection: Optional[bool],
 ) -> Optional[bool]:
     """Phase 2 backward-compat remap for server_session_keep_alive (SNOW-2314152).
 
     Old Python driver: server_session_keep_alive=False (default) always checked
-    _async_sfqids before logout. Phase 2 preserves this: False + True → None makes
-    Core check the registry (same behavior). Phase 3: False will mean "force logout".
+    _async_sfqids before logout. Phase 2 (SNOW-2314152) preserves this: False + True → None makes
+    Core check the registry (same behavior). Phase 3 (SNOW-2314152): False will mean "force logout".
 
     Truth table:
     - False + auto_detection=True  → None (Core checks registry) + deprecation warning
-    - False + auto_detection=False → False (no remap, no warning — same meaning in Phase 3)
+    - False + auto_detection=False → False (no remap, no warning — same meaning in Phase 3 (SNOW-2314152))
     - True / None                  → pass through unchanged
     """
     if server_session_keep_alive is False:

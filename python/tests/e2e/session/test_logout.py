@@ -257,8 +257,8 @@ class TestLogoutPythonWrapper:
     ):
         """Verify Python wrapper passes None keep-alive and True auto-detection to Core.
 
-        Phase 2 truth table: server_session_keep_alive=None + enable_auto_detection=True
-        → no Phase 2 remap (only False + True triggers remap) → Core receives None + True.
+        Phase 2 (SNOW-2314152) truth table: server_session_keep_alive=None + enable_auto_detection=True
+        → no Phase 2 (SNOW-2314152) remap (only False + True triggers remap) → Core receives None + True.
         """
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
@@ -302,8 +302,8 @@ class TestLogoutPythonWrapper:
     ):
         """Verify Python wrapper remaps False keep-alive to None when auto-detection is True (default).
 
-        Phase 2 truth table: server_session_keep_alive=False + enable_auto_detection=True (default)
-        → Phase 2 remap: False + True → None so Core checks registry (legacy Python behavior).
+        Phase 2 (SNOW-2314152) truth table: server_session_keep_alive=False + enable_auto_detection=True (default)
+        → Phase 2 (SNOW-2314152) remap: False + True → None so Core checks registry (legacy Python behavior).
         Default True is required for Phase 2 backward compat (SNOW-2314152).
         """
         with WiremockClient().start() as wiremock:
@@ -335,9 +335,9 @@ class TestLogoutPythonWrapper:
                 f"got: {[str(w.message) for w in captured_warnings]}"
             )
 
-            # And Warning mentions that false will force logout in Phase 3
+            # And Warning mentions that false will force logout in Phase 3 (SNOW-2314152)
             assert any("always logout" in str(w.message) for w in future_warnings), (
-                f"Warning should mention Phase 3 'always logout' behavior, "
+                f"Warning should mention Phase 3 (SNOW-2314152) 'always logout' behavior, "
                 f"got: {[str(w.message) for w in future_warnings]}"
             )
 
@@ -353,7 +353,7 @@ class TestLogoutPythonWrapper:
     ):
         """Verify Python wrapper passes False to Core when auto_detection is explicitly disabled.
 
-        False + auto_detection=False (explicit) → no Phase 2 remap → Core receives False (force logout).
+        False + auto_detection=False (explicit) → no Phase 2 (SNOW-2314152) remap → Core receives False (force logout).
         No deprecation warning: user opted out of auto-detection consciously.
         """
         with WiremockClient().start() as wiremock:
@@ -402,7 +402,7 @@ class TestLogoutPythonWrapper:
     ) -> None:
         """Verify no logout is sent when server_session_keep_alive=True, regardless of auto_detection.
 
-        Phase 2 truth table: True + any auto_detection → no logout, no deprecation.
+        Phase 2 (SNOW-2314152) truth table: True + any auto_detection → no logout, no deprecation.
         Core receives server_session_keep_alive=True and skips the logout request.
         """
         with WiremockClient().start() as wiremock:

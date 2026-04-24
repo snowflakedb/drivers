@@ -57,7 +57,7 @@ impl Default for LogoutConfig {
     /// Core defaults apply when no language wrapper overrides them.
     /// Language wrappers typically set their own defaults for backward compat:
     /// e.g. Python sets BestEffort, 15s timeout, 3 attempts
-    /// (see python/.../logout_config_mapping.py::map_logout_config_phase2).
+    /// (see python/.../logout_config_mapping.py::remap_keep_alive_for_backward_compat).
     fn default() -> Self {
         Self {
             server_session_keep_alive: None,
