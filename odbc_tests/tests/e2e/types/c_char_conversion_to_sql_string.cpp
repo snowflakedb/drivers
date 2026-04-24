@@ -87,16 +87,17 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR exceeding fixed-si
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the insert is rejected with SQL_ERROR
+  // Then the insert is rejected with SQL_ERROR and SQLSTATE 22000
   //
-  // The server returns the generic data-exception SQLSTATE 22000 (or no
-  // SQLSTATE at all, in which case the driver falls back to HY000). The
-  // driver forwards whatever the server sent and deliberately does NOT
-  // promote it client-side to the more specific 22001 — SQLSTATE
-  // classification belongs to the server.
+  // The server normally returns SQLSTATE 22000 (generic data exception)
+  // for this scenario, which the driver forwards verbatim. Two acceptable
+  // variants: if the server omits sqlState entirely the driver falls
+  // back to HY000; if it omits sqlState but supplies Snowflake error
+  // code 100078, sf_core::sql_state_from_code recovers 22001. We accept
+  // all three rather than promoting a specific value client-side.
   CHECK(ret == SQL_ERROR);
   std::string sqlstate = get_sqlstate(stmt);
-  CHECK((sqlstate == "HY000" || sqlstate == "22000"));
+  CHECK((sqlstate == "HY000" || sqlstate == "22000" || sqlstate == "22001"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR to SQL_VARCHAR and read back",

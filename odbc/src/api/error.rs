@@ -606,9 +606,11 @@ impl OdbcError {
                     ..
                 } => {
                     // Forward the server's SQLSTATE verbatim when it's a
-                    // well-formed 5-char error state. The driver does not
+                    // 5-character state outside the success/warning/no-data
+                    // classes. The character set isn't validated further
+                    // (no `[0-9A-Z]{5}` check) — the driver does not
                     // invent or override SQLSTATE classifications
-                    // client-side — that responsibility belongs to the
+                    // client-side, that responsibility belongs to the
                     // server (and to `sf_core::extract_vendor_info`, which
                     // fills in `sql_state` from the numeric error code on
                     // wire paths that drop it).

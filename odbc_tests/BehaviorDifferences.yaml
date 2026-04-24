@@ -424,13 +424,13 @@ behavior_differences:
 
   40:
     name: "SQLSTATE for string data exceeding column size"
-    status: cancelled
-    type: bugfix
+    status: allowed
+    type: bug
     reviewed: false
     old_driver_behavior: |
       Returns SQLSTATE 22000 (Data exception, generic class) when inserted string data exceeds the target VARCHAR column size.
     new_driver_behavior: |
-      Returns SQLSTATE 22000 (or HY000 if the server omits sqlState) — the driver forwards the server's SQLSTATE verbatim and does not promote it client-side to the more specific 22001. The previously planned upgrade to 22001 was cancelled because it required substring matching on the server's English error message, which is locale-fragile and would shift error-classification responsibility from the server to the driver.
+      Returns SQLSTATE 22000 verbatim from the server (or HY000 if the server omits sqlState, or 22001 if sf_core recovers it from the numeric error code 100078). The driver forwards the server's SQLSTATE rather than promoting it client-side; the previously planned upgrade to 22001 was dropped to keep error classification on the server side and avoid locale-fragile message-text heuristics.
 
   41:
     name: "DATE to SQL_C_CHAR/WCHAR undersized buffer returns 07006 instead of 22003"
