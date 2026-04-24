@@ -465,18 +465,6 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set
 });
 
-fn sql_state_from_server_message(message: &str) -> SqlState {
-    if message.contains("SQL compilation error") {
-        SqlState::SyntaxErrorOrAccessRuleViolation
-    } else if message.contains("out of representable range") {
-        SqlState::NumericValueOutOfRange
-    } else if message.contains("too long and would be truncated") {
-        SqlState::StringDataRightTruncation
-    } else {
-        SqlState::GeneralError
-    }
-}
-
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
@@ -614,7 +602,6 @@ impl OdbcError {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
                 CoreProtobufError::Application {
                     error,
-                    message,
                     sql_state: server_sql_state,
                     ..
                 } => {
@@ -626,8 +613,8 @@ impl OdbcError {
                     //   is_warning(), so is_error() treats it as an error, but ODBC
                     //   callers expect 02000 only on success returns (e.g. SQLFetch).
                     // - Unknown states (unrecognised codes) are excluded so the
-                    //   fallback match arms below can apply heuristics instead of
-                    //   forwarding an opaque code.
+                    //   fallback match arms below can apply per-ErrorType defaults
+                    //   instead of forwarding an opaque code.
                     // SqlState::from_str is infallible (type Err = ()) — unrecognised
                     // codes map to SqlState::Unknown, so the Unknown guard is the real
                     // filter.
@@ -646,7 +633,15 @@ impl OdbcError {
                     match error.as_ref() {
                         ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
                         ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
-                            sql_state_from_server_message(message)
+                            // SQLSTATE classification for generic/internal server
+                            // errors is performed in `sf_core` (see
+                            // `extract_vendor_info` and `sql_state_from_code`),
+                            // which forwards a well-formed `sql_state` on the
+                            // wire whenever the numeric code is recognised. By
+                            // the time we get here the server-supplied SQLSTATE
+                            // was either absent or unknown, so HY000 is the
+                            // honest answer — do NOT sniff the message text.
+                            SqlState::GeneralError
                         }
                         ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
                             parameter,
@@ -808,6 +803,9 @@ mod tests {
 
     #[test]
     fn server_numeric_out_of_range_maps_to_22003() {
+        // sf_core's `extract_vendor_info` populates `sql_state` from the
+        // numeric error code (100038 → "22003") for paths where the server
+        // omitted `sqlState`. The ODBC layer just trusts that value.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
@@ -819,7 +817,7 @@ mod tests {
                     .to_string(),
                 status_code: 0,
                 error_trace: vec![],
-                sql_state: None,
+                sql_state: Some("22003".to_string()),
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -835,6 +833,29 @@ mod tests {
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
                 message: "Some other server error".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn server_generic_error_without_sql_state_does_not_sniff_message() {
+        // Regression guard: a generic error whose message text happens to
+        // contain "out of representable range" must NOT be auto-classified as
+        // 22003 by the ODBC layer. Classification is owned by sf_core, which
+        // only fires for recognised numeric codes (status_code, not the human
+        // message). If sf_core didn't supply a SQLSTATE, HY000 is the answer.
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "Number out of representable range: spurious match".to_string(),
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: None,
@@ -863,6 +884,8 @@ mod tests {
 
     #[test]
     fn server_truncation_error_maps_to_22001() {
+        // sf_core maps Snowflake error code 100078 → "22001"; the ODBC layer
+        // trusts the server-supplied SQLSTATE without inspecting the message.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
@@ -871,7 +894,7 @@ mod tests {
                 message: "String 'hello world' is too long and would be truncated".to_string(),
                 status_code: 0,
                 error_trace: vec![],
-                sql_state: None,
+                sql_state: Some("22001".to_string()),
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),

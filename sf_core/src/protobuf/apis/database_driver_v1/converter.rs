@@ -15,6 +15,7 @@ use crate::apis::database_driver_v1::{
 };
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use error_trace::ErrorTrace;
@@ -573,10 +574,16 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// code is the user-facing error number.  Login errors use client-side error codes
 /// (mapped by the Python layer) so the server code is NOT surfaced here.
 ///
+/// When the server omits `sqlState` from its response (notably the async-poll
+/// and query-monitoring paths) but supplies a known numeric error code, the
+/// SQLSTATE is filled in from `sql_state_from_code` so downstream consumers
+/// (ODBC, JDBC, ADBC) can rely on `sql_state` as the single source of truth
+/// for error classification.
+///
 /// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
 /// New query-related error variants should be added here as they are introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
-    match error {
+    let (code, sql_state) = match error {
         ApiError::Query {
             source: RestError::QueryFailed {
                 code, sql_state, ..
@@ -592,7 +599,14 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
             ..
         } => (Some(*code), None),
         _ => (None, None),
-    }
+    };
+
+    let sql_state = sql_state.or_else(|| {
+        code.and_then(sql_state_from_code)
+            .map(|s| s.to_owned())
+    });
+
+    (code, sql_state)
 }
 
 fn extract_query_id(error: &ApiError) -> Option<String> {
@@ -756,5 +770,98 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     #[allow(clippy::result_large_err)]
     fn to_protobuf(self) -> Result<T, DriverException> {
         self.map_err(to_driver_exception)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rest::snowflake::error::SfError;
+    use snafu::Location;
+
+    fn loc() -> Location {
+        Location::new("test", 0, 0)
+    }
+
+    fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
+        ApiError::Query {
+            location: loc(),
+            source: RestError::QueryFailed {
+                message: "test".to_owned(),
+                code,
+                sql_state: sql_state.map(|s| s.to_owned()),
+                query_id: None,
+                location: loc(),
+            },
+        }
+    }
+
+    fn async_query(code: i32) -> ApiError {
+        ApiError::Query {
+            location: loc(),
+            source: RestError::AsyncQuery {
+                location: loc(),
+                source: SfError::SnowflakeBody {
+                    code,
+                    message: "test".to_owned(),
+                    location: loc(),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn query_failed_passes_through_server_sql_state() {
+        let err = query_failed(Some(1003), Some("42000"));
+        assert_eq!(extract_vendor_info(&err), (Some(1003), Some("42000".to_owned())));
+    }
+
+    #[test]
+    fn server_sql_state_wins_over_lookup_table() {
+        // If the server provides "22000", trust it even though our table maps
+        // 100038 → "22003". The wire value is authoritative.
+        let err = query_failed(Some(100038), Some("22000"));
+        assert_eq!(extract_vendor_info(&err), (Some(100038), Some("22000".to_owned())));
+    }
+
+    #[test]
+    fn query_failed_falls_back_to_lookup_when_sql_state_missing() {
+        let err = query_failed(Some(100038), None);
+        assert_eq!(extract_vendor_info(&err), (Some(100038), Some("22003".to_owned())));
+
+        let err = query_failed(Some(100078), None);
+        assert_eq!(extract_vendor_info(&err), (Some(100078), Some("22001".to_owned())));
+
+        let err = query_failed(Some(1003), None);
+        assert_eq!(extract_vendor_info(&err), (Some(1003), Some("42000".to_owned())));
+    }
+
+    #[test]
+    fn unknown_code_with_no_sql_state_stays_none() {
+        let err = query_failed(Some(999_999), None);
+        assert_eq!(extract_vendor_info(&err), (Some(999_999), None));
+    }
+
+    #[test]
+    fn missing_code_and_sql_state_stays_none() {
+        let err = query_failed(None, None);
+        assert_eq!(extract_vendor_info(&err), (None, None));
+    }
+
+    #[test]
+    fn async_query_path_now_supplies_sql_state() {
+        // Previously this path returned (Some(code), None) unconditionally —
+        // the regression this fix is targeting.
+        let err = async_query(1003);
+        assert_eq!(extract_vendor_info(&err), (Some(1003), Some("42000".to_owned())));
+
+        let err = async_query(100038);
+        assert_eq!(extract_vendor_info(&err), (Some(100038), Some("22003".to_owned())));
+    }
+
+    #[test]
+    fn async_query_unknown_code_keeps_sql_state_none() {
+        let err = async_query(424_242);
+        assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
     }
 }
