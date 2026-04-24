@@ -2935,8 +2935,14 @@ mod tests {
         Ok(())
     }
 
+    // Per MS ODBC "C to SQL: Binary" spec, SQL_C_BINARY -> SQL_REAL/DOUBLE is
+    // specified to do a length-equals check only and then pass the bytes
+    // through. NaN and +/-Infinity are valid IEEE-754 values and Snowflake
+    // FLOAT columns accept them, so the driver forwards them to the server
+    // rather than rejecting client-side. These tests pin that behavior.
+
     #[test]
-    fn convert_binary_nan_to_double_fails() {
+    fn convert_binary_nan_to_double_forwards_to_server() -> TestResult {
         let val: f64 = f64::NAN;
         let bytes = val.to_ne_bytes();
         let mut ind: sql::Len = bytes.len() as sql::Len;
@@ -2947,14 +2953,16 @@ mod tests {
             bytes.len() as sql::Len,
             &mut ind,
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        // Rust's Display for f64::NAN is the literal "NaN" — the server-side
+        // JSON binding parser accepts the same literal for FLOAT targets.
+        assert_eq!(v, Value::String("NaN".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn convert_binary_infinity_to_real_fails() {
+    fn convert_binary_infinity_to_real_forwards_to_server() -> TestResult {
         let val: f32 = f32::INFINITY;
         let bytes = val.to_ne_bytes();
         let mut ind: sql::Len = bytes.len() as sql::Len;
@@ -2965,10 +2973,35 @@ mod tests {
             bytes.len() as sql::Len,
             &mut ind,
         );
-        assert!(matches!(
-            convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
-        ));
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        // The driver's `SnowflakeReal::write_json` maps non-finite floats to
+        // the literals Snowflake's JSON bind parser accepts: "Infinity" /
+        // "-Infinity" / "NaN". Rust's `Display` for f32::INFINITY is the
+        // short form "inf", which the server rejects.
+        assert_eq!(v, Value::String("Infinity".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_negative_infinity_to_real_forwards_to_server() -> TestResult {
+        let val: f32 = f32::NEG_INFINITY;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::REAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        // Same rationale as the +Infinity case: `SnowflakeReal::write_json`
+        // emits the full "-Infinity" literal Snowflake's JSON bind parser
+        // accepts, not Rust's short "-inf" form.
+        assert_eq!(v, Value::String("-Infinity".to_string()));
+        Ok(())
     }
 
     #[test]
