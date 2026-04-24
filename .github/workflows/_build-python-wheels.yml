@@ -225,6 +225,58 @@ jobs:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen/
 
+  # ── Build source distribution (platform-independent, runs once) ────
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache proto generator target
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-proto-target-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Build sdist
+        working-directory: ./python
+        run: >
+          uv run --python 3.13
+          --with hatch --with cython --with setuptools --with "virtualenv<21.0.0"
+          hatch build --target sdist
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Inspect sdist
+        working-directory: ./python
+        run: tar tzf dist/*.tar.gz | head -40
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist/*.tar.gz
+
   # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
   build_wheels:
     needs: [configure, build_sf_core, generate_proto]

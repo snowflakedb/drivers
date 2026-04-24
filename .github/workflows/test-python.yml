@@ -32,7 +32,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.10","3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -204,10 +204,27 @@ jobs:
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download wheel
+        if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
           name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
+
+      - name: Download sdist
+        if: matrix.py == '3.10'
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist
+
+      # sdist installs build sf_core from source, so Rust is needed
+      - name: Restore Rust cache (sdist)
+        if: matrix.py == '3.10'
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sdist-test
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -261,7 +278,7 @@ jobs:
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.py != '3.10'
         working-directory: python
         run: |
           WHEELS=(dist/*.whl)
@@ -271,6 +288,16 @@ jobs:
           export WHEEL_PATH="${WHEELS[0]}"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from sdist
+        if: matrix.py == '3.10'
+        working-directory: python
+        run: |
+          echo "Installing from sdist: $(ls dist/*.tar.gz)"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        env:
+          WHEEL_PATH: dist/*.tar.gz
+          SKIP_CORE_BUILD: "false"
 
       - name: Install snowflake ud driver from wheel (Windows)
         if: runner.os == 'Windows'
@@ -372,6 +399,15 @@ jobs:
         with:
           path: ${{ runner.temp }}\.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+
+      - name: Save Rust cache (sdist)
+        if: always() && matrix.py == '3.10'
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sdist-test
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
@@ -498,6 +534,23 @@ jobs:
             --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}.json \
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
+
+  # ── Clean up intermediate artifacts ────────────────────────────────
+  cleanup:
+    needs: [build_wheels, python_tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete sf-core artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
+          | while read id; do
+              echo "Deleting artifact $id"
+              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+            done
 
   python-status:
     needs: [detect-changes, build_wheels, packaging_tests, python_tests, python_tests_reference, python_compare_results]
