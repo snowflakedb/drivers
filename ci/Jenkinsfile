@@ -255,7 +255,7 @@ pipeline {
 
         stage('Tests') {
           parallel {
-            stage('VPN E2E Tests') {
+            stage('Rust Core VPN E2E Tests') {
               agent { label 'build-node-extra-large' }
               environment {
                 E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
@@ -276,7 +276,36 @@ pipeline {
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cargo test --package sf_core -- --ignored
                       '''
+                    } finally {
+                      sh label: 'Cleanup test PATs', script: '''
+                        set +x
+                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                        python3 scripts/cleanup_test_pats.py \
+                          --parameter-path $(pwd)/parameters.json \
+                          --build-tag "JNK_${BUILD_NUMBER}" || true
+                      '''
+                    }
+                  }
+                }
+              }
+            }
 
+            stage('ODBC VPN E2E Tests') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    }
+                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+
+                    try {
                       sh label: 'ODBC VPN E2E tests', script: '''
                         set +x
                         cargo build
@@ -295,14 +324,42 @@ pipeline {
                         export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
                         ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
                       '''
+                    } finally {
+                      sh label: 'Cleanup test PATs', script: '''
+                        set +x
+                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                        python3 scripts/cleanup_test_pats.py \
+                          --parameter-path $(pwd)/parameters.json \
+                          --build-tag "JNK_${BUILD_NUMBER}" || true
+                      '''
+                    }
+                  }
+                }
+              }
+            }
 
+            stage('Python VPN E2E Tests') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    }
+                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+
+                    try {
                       sh label: 'Install hatch', script: 'pip3 install hatch'
 
                       sh label: 'Python VPN E2E tests (dev.py3.13)', script: '''
                         set +x
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
-                        export SKIP_CORE_BUILD=1
                         hatch run dev.py3.13:e2e -m require_vpn
                         hatch env remove dev.py3.13
                       '''
