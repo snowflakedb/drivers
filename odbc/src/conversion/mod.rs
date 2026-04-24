@@ -121,7 +121,13 @@ fn per_cell_convert_range(
         if outputs[i].is_err() {
             continue;
         }
-        let binding = strides.for_row(base_binding, out_row_start + i);
+        let binding = match strides.for_row(base_binding, out_row_start + i) {
+            Ok(b) => b,
+            Err(e) => {
+                outputs[i] = Err(e);
+                continue;
+            }
+        };
         match converter.convert_arrow_value(array, batch_idx, &binding, &mut None) {
             Ok(w) => {
                 if let Ok(existing) = &mut outputs[i] {
@@ -203,7 +209,13 @@ impl<
             if outputs[i].is_err() {
                 continue;
             }
-            let binding = strides.for_row(base_binding, out_row_start + i);
+            let binding = match strides.for_row(base_binding, out_row_start + i) {
+                Ok(b) => b,
+                Err(e) => {
+                    outputs[i] = Err(e);
+                    continue;
+                }
+            };
             let result = self
                 .snowflake_type
                 .read_arrow_type(arrow_array, batch_idx)

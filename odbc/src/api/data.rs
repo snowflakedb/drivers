@@ -442,16 +442,9 @@ fn current_batch_idx(stmt: &Statement) -> usize {
     }
 }
 
-/// Advance `batch_idx` by `delta` rows within the current `RecordBatch`
-/// (caller must ensure the batch has at least `delta` more rows left).
-///
-/// Returns `OdbcError::InternalError` when an invariant is violated:
-///   * advancing would cross the batch boundary, or
-///   * the statement is not in the `Fetching` state.
-///
-/// Both indicate a driver bug; raising a real error (instead of a
-/// `debug_assert!` no-op in release builds) prevents silent cursor
-/// corruption and surfaces the problem to the application.
+/// Advance `batch_idx` by `delta` rows within the current `RecordBatch`.
+/// Returns `OdbcError::InternalError` if advancing would cross the batch
+/// boundary or the statement is not in the `Fetching` state.
 fn bump_batch_idx(
     state: &mut crate::api::State<StatementState>,
     delta: usize,

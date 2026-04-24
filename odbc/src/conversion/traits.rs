@@ -4,7 +4,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    IndicatorRequiredSnafu, JsonBindingError, ReadArrowError, WriteOdbcError,
+    BindingStrideOverflowSnafu, ConversionError, IndicatorRequiredSnafu, JsonBindingError,
+    ReadArrowError, WriteOdbcError,
 };
 use crate::conversion::warning::{Warning, Warnings};
 
@@ -93,8 +94,14 @@ impl BindingStrides {
     /// application's bound buffers, given the column's `base` binding.
     /// `#[inline]` so callers in `convert_arrow_range` monomorphise and
     /// LLVM can hoist the stride math.
+    ///
+    /// Returns `ConversionError::BindingStrideOverflow` if the address
+    /// arithmetic for any of the three per-row pointers would overflow
+    /// `usize`. This can only happen with a pathological combination of
+    /// caller-supplied `bind_type` and `array_size` values, but a row
+    /// error is still preferable to a panic across the FFI boundary.
     #[inline]
-    pub fn for_row(self, base: &Binding, row_idx: usize) -> Binding {
+    pub fn for_row(self, base: &Binding, row_idx: usize) -> Result<Binding, ConversionError> {
         let value_stride = if self.bind_type == 0 {
             base.target_type
                 .fixed_size()
@@ -107,49 +114,62 @@ impl BindingStrides {
         } else {
             self.bind_type
         };
-        Binding {
-            target_type: base.target_type,
-            target_value_ptr: advance_ptr(
-                base.target_value_ptr,
+        let overflow_err = || {
+            BindingStrideOverflowSnafu {
                 row_idx,
                 value_stride,
-                self.bind_offset,
-            ),
+                indicator_stride,
+                bind_offset: self.bind_offset,
+            }
+            .build()
+        };
+        let target_value_ptr =
+            advance_ptr(base.target_value_ptr, row_idx, value_stride, self.bind_offset)
+                .ok_or_else(overflow_err)?;
+        let octet_length_ptr = advance_ptr(
+            base.octet_length_ptr,
+            row_idx,
+            indicator_stride,
+            self.bind_offset,
+        )
+        .ok_or_else(overflow_err)?;
+        let indicator_ptr = advance_ptr(
+            base.indicator_ptr,
+            row_idx,
+            indicator_stride,
+            self.bind_offset,
+        )
+        .ok_or_else(overflow_err)?;
+        Ok(Binding {
+            target_type: base.target_type,
+            target_value_ptr,
             buffer_length: base.buffer_length,
-            octet_length_ptr: advance_ptr(
-                base.octet_length_ptr,
-                row_idx,
-                indicator_stride,
-                self.bind_offset,
-            ),
-            indicator_ptr: advance_ptr(
-                base.indicator_ptr,
-                row_idx,
-                indicator_stride,
-                self.bind_offset,
-            ),
+            octet_length_ptr,
+            indicator_ptr,
             precision: base.precision,
             scale: base.scale,
             datetime_interval_precision: base.datetime_interval_precision,
-        }
+        })
     }
 }
 
+/// Returns `None` if `row_idx * element_stride` overflows `usize`. The
+/// raw pointer arithmetic is unchanged; the caller is responsible for
+/// ensuring the resulting address stays inside the bound allocation
+/// (the same guarantee the application makes via `SQLBindCol`).
 #[inline]
 fn advance_ptr<T>(
     ptr: *mut T,
     row_idx: usize,
     element_stride: usize,
     bind_offset: isize,
-) -> *mut T {
+) -> Option<*mut T> {
     if ptr.is_null() {
-        return std::ptr::null_mut();
+        return Some(std::ptr::null_mut());
     }
-    let stride = row_idx
-        .checked_mul(element_stride)
-        .expect("row index and element stride multiplication overflowed");
+    let stride = row_idx.checked_mul(element_stride)?;
     let byte_ptr = ptr as *mut u8;
-    unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T }
+    Some(unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T })
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -547,7 +567,7 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 0,
         };
-        let row3 = strides.for_row(&base, 3);
+        let row3 = strides.for_row(&base, 3).expect("for_row must not overflow in tests");
         assert_eq!(row3.target_value_ptr as usize, 1024 + 3 * 8);
         let len_size = size_of::<sql::Len>();
         assert_eq!(row3.octet_length_ptr as usize, 2048 + 3 * len_size);
@@ -561,7 +581,7 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 0,
         };
-        let row5 = strides.for_row(&base, 5);
+        let row5 = strides.for_row(&base, 5).expect("for_row must not overflow in tests");
         assert_eq!(row5.target_value_ptr as usize, 1024 + 5 * 64);
     }
 
@@ -572,7 +592,7 @@ mod binding_strides_tests {
             bind_type: 64,
             bind_offset: 0,
         };
-        let row2 = strides.for_row(&base, 2);
+        let row2 = strides.for_row(&base, 2).expect("for_row must not overflow in tests");
         assert_eq!(row2.target_value_ptr as usize, 1024 + 2 * 64);
         assert_eq!(row2.octet_length_ptr as usize, 2048 + 2 * 64);
         assert_eq!(row2.indicator_ptr as usize, 4096 + 2 * 64);
@@ -585,7 +605,7 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 32,
         };
-        let row1 = strides.for_row(&base, 1);
+        let row1 = strides.for_row(&base, 1).expect("for_row must not overflow in tests");
         assert_eq!(row1.target_value_ptr as usize, 1024 + 32 + 8);
         let len_size = size_of::<sql::Len>();
         assert_eq!(row1.octet_length_ptr as usize, 2048 + 32 + len_size);
@@ -599,7 +619,7 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: -16,
         };
-        let row0 = strides.for_row(&base, 0);
+        let row0 = strides.for_row(&base, 0).expect("for_row must not overflow in tests");
         assert_eq!(row0.target_value_ptr as usize, 1024 - 16);
     }
 
@@ -612,10 +632,26 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 64,
         };
-        let row7 = strides.for_row(&base, 7);
+        let row7 = strides.for_row(&base, 7).expect("for_row must not overflow in tests");
         assert!(row7.octet_length_ptr.is_null());
         assert!(row7.indicator_ptr.is_null());
         assert_eq!(row7.target_value_ptr as usize, 1024 + 64 + 7 * 8);
+    }
+
+    #[test]
+    fn for_row_returns_err_on_stride_overflow() {
+        let base = base_binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: usize::MAX / 2,
+            bind_offset: 0,
+        };
+        let err = strides
+            .for_row(&base, 4)
+            .expect_err("expected BindingStrideOverflow on pathological stride");
+        assert!(
+            matches!(err, ConversionError::BindingStrideOverflow { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -628,7 +664,7 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 0,
         };
-        let row4 = strides.for_row(&base, 4);
+        let row4 = strides.for_row(&base, 4).expect("for_row must not overflow in tests");
         assert_eq!(row4.precision, Some(10));
         assert_eq!(row4.scale, Some(2));
         assert_eq!(row4.datetime_interval_precision, Some(6));
