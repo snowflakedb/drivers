@@ -169,7 +169,7 @@ jobs:
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          # --timeout 120: Gherkin-required logout tests sleep 50s; tarpaulin's
+          # --timeout 300: Gherkin-required logout tests sleep 50s; tarpaulin's
           # ptrace default (60s) kills idle processes too early on Linux.
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --timeout 300 --out lcov --output-dir .
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
