@@ -19,6 +19,21 @@ from .utils import assert_type, parse_geojson
 
 
 # =============================================================================
+# WKT TEST VALUES
+# =============================================================================
+# Point on the San Francisco coast (longitude, latitude)
+POINT_WKT = "POINT(-122.35 37.55)"
+POINT_GEOJSON_COORDS = [-122.35, 37.55]
+
+# Simple 3-vertex line
+LINESTRING_WKT = "LINESTRING(0 0, 1 1, 2 2)"
+LINESTRING_GEOJSON_COORDS = [[0, 0], [1, 1], [2, 2]]
+
+# Simple square polygon (ring must be closed)
+POLYGON_WKT = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
+POLYGON_GEOJSON_COORDS = [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]
+
+# =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 20_000
@@ -32,42 +47,29 @@ class TestGeographyTypeCasting:
         pass
 
         # When Query "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')" is executed
-        sql = "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')"
+        sql = f"SELECT TO_GEOGRAPHY('{POINT_WKT}')"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
         assert_type(result, str)
         geo = parse_geojson(result[0])
         assert geo["type"] == "Point"
-        assert geo["coordinates"] == [-122.35, 37.55]
+        assert geo["coordinates"] == POINT_GEOJSON_COORDS
 
 
 class TestGeographyLiteral:
     """Tests for GEOGRAPHY type using SELECT with literals (no tables)."""
 
+    LITERAL_TEST_CASES = [
+        ("Point", f"TO_GEOGRAPHY('{POINT_WKT}')", "Point", POINT_GEOJSON_COORDS),
+        ("LineString", f"TO_GEOGRAPHY('{LINESTRING_WKT}')", "LineString", LINESTRING_GEOJSON_COORDS),
+        ("Polygon", f"TO_GEOGRAPHY('{POLYGON_WKT}')", "Polygon", POLYGON_GEOJSON_COORDS),
+    ]
+
     @pytest.mark.parametrize(
         "shape, query_value, expected_type, expected_coords",
-        [
-            (
-                "Point",
-                "TO_GEOGRAPHY('POINT(-122.35 37.55)')",
-                "Point",
-                [-122.35, 37.55],
-            ),
-            (
-                "LineString",
-                "TO_GEOGRAPHY('LINESTRING(0 0, 1 1, 2 2)')",
-                "LineString",
-                [[0, 0], [1, 1], [2, 2]],
-            ),
-            (
-                "Polygon",
-                "TO_GEOGRAPHY('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')",
-                "Polygon",
-                [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]],
-            ),
-        ],
-        ids=["Point", "LineString", "Polygon"],
+        LITERAL_TEST_CASES,
+        ids=[c[0] for c in LITERAL_TEST_CASES],
     )
     def test_should_select_shape_geography_literal(
         self, execute_query, shape, query_value, expected_type, expected_coords
@@ -90,28 +92,29 @@ class TestGeographyLiteral:
         pass
 
         # When Query "SELECT TO_GEOGRAPHY('{"type":"Point","coordinates":[-122.35,37.55]}')" is executed
-        sql = 'SELECT TO_GEOGRAPHY(\'{"type":"Point","coordinates":[-122.35,37.55]}\')'
+        geojson = f'{{"type":"Point","coordinates":[{POINT_GEOJSON_COORDS[0]},{POINT_GEOJSON_COORDS[1]}]}}'
+        sql = f"SELECT TO_GEOGRAPHY('{geojson}')"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain a GeoJSON Point value
         assert isinstance(result[0], str)
         geo = parse_geojson(result[0])
         assert geo["type"] == "Point"
-        assert geo["coordinates"] == [-122.35, 37.55]
+        assert geo["coordinates"] == POINT_GEOJSON_COORDS
 
     def test_should_handle_null_geography_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
         # When Query "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)'), TO_GEOGRAPHY(NULL)" is executed
-        sql = "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)'), TO_GEOGRAPHY(NULL)"
+        sql = f"SELECT TO_GEOGRAPHY('{POINT_WKT}'), TO_GEOGRAPHY(NULL)"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain [GeoJSON Point, NULL]
         assert isinstance(result[0], str)
         geo = parse_geojson(result[0])
         assert geo["type"] == "Point"
-        assert geo["coordinates"] == [-122.35, 37.55]
+        assert geo["coordinates"] == POINT_GEOJSON_COORDS
         assert result[1] is None
 
 
@@ -141,7 +144,7 @@ class TestGeographyOutputFormat:
         with connection_factory(session_parameters={"GEOGRAPHY_OUTPUT_FORMAT": output_format}) as conn:
             with conn.cursor() as cursor:
                 # When Query "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')" is executed
-                cursor.execute("SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')")
+                cursor.execute(f"SELECT TO_GEOGRAPHY('{POINT_WKT}')")
                 result = cursor.fetchone()
 
                 # Then Result should be returned as <expected_type> type
@@ -160,8 +163,8 @@ class TestGeographyTable:
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id INT, geo GEOGRAPHY)")
         execute_query(
             f"INSERT INTO {table_name} "
-            f"SELECT 1, TO_GEOGRAPHY('POINT(-122.35 37.55)') "
-            f"UNION ALL SELECT 2, TO_GEOGRAPHY('LINESTRING(0 0, 1 1, 2 2)')"
+            f"SELECT 1, TO_GEOGRAPHY('{POINT_WKT}') "
+            f"UNION ALL SELECT 2, TO_GEOGRAPHY('{LINESTRING_WKT}')"
         )
 
         # When Query "SELECT * FROM <table> ORDER BY id" is executed
@@ -183,9 +186,7 @@ class TestGeographyTable:
         # And Table with GEOGRAPHY column exists containing NULLs and values
         table_name = f"{tmp_schema}.geography_null_table"
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id INT, geo GEOGRAPHY)")
-        execute_query(
-            f"INSERT INTO {table_name} SELECT 1, TO_GEOGRAPHY('POINT(-122.35 37.55)') UNION ALL SELECT 2, NULL"
-        )
+        execute_query(f"INSERT INTO {table_name} SELECT 1, TO_GEOGRAPHY('{POINT_WKT}') UNION ALL SELECT 2, NULL")
 
         # When Query "SELECT * FROM <table> ORDER BY id" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY id")
@@ -231,7 +232,7 @@ class TestGeographyBinding:
     @pytest.mark.parametrize(
         "bind_value, is_null",
         [
-            ("POINT(-122.35 37.55)", False),
+            (POINT_WKT, False),
             (None, True),
         ],
         ids=["WKT string", "NULL"],
@@ -253,7 +254,7 @@ class TestGeographyBinding:
             assert isinstance(result[0], str)
             geo = parse_geojson(result[0])
             assert geo["type"] == "Point"
-            assert geo["coordinates"] == [-122.35, 37.55]
+            assert geo["coordinates"] == POINT_GEOJSON_COORDS
 
     def test_should_insert_geography_using_parameter_binding(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -263,11 +264,7 @@ class TestGeographyBinding:
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id INT, geo GEOGRAPHY)")
 
         # When Geography WKT values are inserted using parameter binding via TO_GEOGRAPHY(?)
-        test_values = [
-            "POINT(-122.35 37.55)",
-            "LINESTRING(0 0, 1 1, 2 2)",
-            "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))",
-        ]
+        test_values = [POINT_WKT, LINESTRING_WKT, POLYGON_WKT]
         for i, wkt in enumerate(test_values, 1):
             execute_query(f"INSERT INTO {table_name} SELECT {i}, TO_GEOGRAPHY(?)", (wkt,))
 
@@ -277,12 +274,12 @@ class TestGeographyBinding:
 
         geo1 = parse_geojson(rows[0][0])
         assert geo1["type"] == "Point"
-        assert geo1["coordinates"] == [-122.35, 37.55]
+        assert geo1["coordinates"] == POINT_GEOJSON_COORDS
 
         geo2 = parse_geojson(rows[1][0])
         assert geo2["type"] == "LineString"
-        assert geo2["coordinates"] == [[0, 0], [1, 1], [2, 2]]
+        assert geo2["coordinates"] == LINESTRING_GEOJSON_COORDS
 
         geo3 = parse_geojson(rows[2][0])
         assert geo3["type"] == "Polygon"
-        assert geo3["coordinates"] == [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]
+        assert geo3["coordinates"] == POLYGON_GEOJSON_COORDS
