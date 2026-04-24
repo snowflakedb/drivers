@@ -723,7 +723,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
-        mutable_after_connect: false,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str(),
@@ -737,7 +737,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
-        mutable_after_connect: false,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_MAX_ATTEMPTS.as_str(),
@@ -751,7 +751,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
-        mutable_after_connect: false,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str(),
@@ -765,7 +765,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
-        mutable_after_connect: false,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::CLIENT_APP_ID.as_str(),
