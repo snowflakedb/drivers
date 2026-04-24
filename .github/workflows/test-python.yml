@@ -126,14 +126,14 @@ jobs:
       # or python_tests_reference. If you add a new test cell, add a matching build entry.
       #
       # Excluded combinations and why:
-      #   - ubuntu × 3.10, 3.11, 3.12 : not exercised by python_tests
-      #   - windows-11-arm × 3.9, 3.10, 3.14 : no native ARM64 Windows builds in uv
+      #   - ubuntu × 3.11, 3.12 : not exercised by python_tests
+      #   - windows-11-arm × 3.10, 3.14 : no native ARM64 Windows builds in uv
       #     (revisit 3.14 once https://github.com/astral-sh/uv/releases ships ARM64 builds)
       #   - windows-11-arm × 3.13 : not exercised by python_tests
       matrix:
         include:
           - os: ubuntu-latest
-            py: "3.9"
+            py: "3.10"
           - os: ubuntu-latest
             py: "3.13"  # Reference combination consumed by python_tests_reference
           - os: ubuntu-latest
@@ -348,7 +348,7 @@ jobs:
             hatch_env: "test"
             cloud_provider: gcp
           - os: ubuntu-latest
-            py: "3.9"
+            py: "3.10"
             hatch_env: "test"
             cloud_provider: azure
           - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
@@ -369,7 +369,7 @@ jobs:
             cloud_provider: azure
           # test integration with Pandas
           - os: ubuntu-latest
-            py: "3.9"
+            py: "3.10"
             hatch_env: "test-pandas"
             cloud_provider: gcp
           - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
