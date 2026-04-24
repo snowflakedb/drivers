@@ -118,7 +118,6 @@ Feature: Session Logout - Python-specific behavior
     Then enable_server_session_keep_alive_auto_detection is true
     And No deprecation warning is emitted about auto_detection default
 
-  # TODO: SNOW-2314153 - Requires logging integration between Rust Core and Python
   @python_e2e
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
