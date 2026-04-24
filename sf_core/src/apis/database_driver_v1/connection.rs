@@ -1,7 +1,6 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -19,7 +18,9 @@ use super::validation::{
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
-use crate::config::logout::{CloseParamsOverrides, LogoutConfig};
+use crate::config::logout::{
+    CloseParamsOverrides, CloseResult, ErrorStrategy, LogoutConfig, LogoutOutcome,
+};
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
@@ -280,6 +281,8 @@ impl DatabaseDriverV1 {
                     )
                     .await;
                     conn.logout_config = logout_config;
+                    *conn.state.lock().expect("ConnectionState mutex poisoned") =
+                        ConnectionState::Connected;
 
                     // Snowflake server defaults CLIENT_TELEMETRY_ENABLED to true; it only
                     // sends "false" when the account or user has opted out. If the parameter
@@ -546,6 +549,26 @@ pub struct WrapperIdentity {
     pub language_compiler: Option<String>,
 }
 
+/// Connection lifecycle state machine.
+///
+/// Transitions: `Pristine → Connected → Closing → Closed` (one-way, never back).
+/// `Closing` carries a watch channel so concurrent `connection_close()` callers
+/// can wait for the first caller's result instead of returning a false `Ok(())`.
+pub enum ConnectionState {
+    /// Constructed but not yet initialized (`connection_init` not called).
+    Pristine,
+    /// Initialized — transport ready, queries allowed.
+    Connected,
+    /// `connection_close()` in progress. Concurrent callers subscribe to `rx`
+    /// and wait for the `LogoutOutcome` to be broadcast.
+    Closing {
+        rx: tokio::sync::watch::Receiver<Option<LogoutOutcome>>,
+        error_strategy: ErrorStrategy,
+    },
+    /// Terminal — close completed. Result cached for late callers.
+    Closed(CloseResult),
+}
+
 pub struct Connection {
     /// Explicit connection-string / API options (merged as the top layer in [`resolver::resolve`]).
     pub(crate) connection_seed: ParamStore,
@@ -571,16 +594,10 @@ pub struct Connection {
     pub init_session_parameters: Option<HashMap<String, String>>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
-    /// Flag indicating if connection has been closed.
-    ///
-    /// `Arc<AtomicBool>` is used (rather than a `Mutex<State>` state machine) because:
-    /// - `Arc` provides shared ownership across concurrent async tasks — the logout task,
-    ///   token refresh, and query cancellation all need to observe the closed state.
-    /// - `AtomicBool` allows lock-free closed-state checks without async lock acquisition.
-    ///
-    /// A state machine (`Open → Closing → Closed`) would require a single owner or
-    /// message-passing, conflicting with the parallel-task architecture.
-    pub is_closed: Arc<AtomicBool>,
+    /// Connection lifecycle state (Pristine → Connected → Closing → Closed).
+    /// `std::sync::Mutex` (not tokio) because state checks happen in sync contexts
+    /// (query guards, Drop). Lock held only for reads/transitions, never across I/O.
+    pub state: std::sync::Mutex<ConnectionState>,
 
     /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
     pub logout_config: LogoutConfig,
@@ -613,7 +630,7 @@ impl Connection {
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
-            is_closed: Arc::new(AtomicBool::new(false)),
+            state: std::sync::Mutex::new(ConnectionState::Pristine),
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
@@ -623,6 +640,15 @@ impl Connection {
     /// `true` after a successful [`Connection::initialize`] (post-login transport is ready).
     pub(crate) fn is_post_connect(&self) -> bool {
         self.http_client.is_some()
+    }
+
+    /// `true` if `connection_close()` is in progress or has completed.
+    pub(crate) fn is_closed_or_closing(&self) -> bool {
+        let state = self.state.lock().expect("ConnectionState mutex poisoned");
+        matches!(
+            &*state,
+            ConnectionState::Closing { .. } | ConnectionState::Closed(_)
+        )
     }
 
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
@@ -828,7 +854,7 @@ impl RefreshContext {
     /// the token refresh setup.
     pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().await;
-        if guard.is_closed.load(Ordering::SeqCst) {
+        if guard.is_closed_or_closing() {
             return Err(ConnectionClosedSnafu {}.build());
         }
         Self::new(&guard)
@@ -852,9 +878,9 @@ impl RefreshContext {
 
     /// Create a new `RefreshContext` by extracting connection info.
     ///
-    /// Does **not** check `is_closed`. Use `from_arc` for query paths (which
-    /// must reject creation on a closed connection). The logout path calls
-    /// `new` directly because logout itself runs after `is_closed` is set.
+    /// Does **not** check `ConnectionState`. Use `from_arc` for query paths
+    /// (which must reject creation on a closing/closed connection). The logout
+    /// path calls `new` directly because logout runs after `Closing` transition.
     pub fn new(conn: &Connection) -> Result<Self, ApiError> {
         Ok(Self {
             tokens_lock: conn.tokens.clone(),
@@ -1517,7 +1543,7 @@ impl DatabaseDriverV1 {
             })?;
 
         let conn = conn_ptr.lock().await;
-        Ok(conn.is_closed.load(Ordering::SeqCst))
+        Ok(conn.is_closed_or_closing())
     }
 
     /// Close a connection and optionally send logout request.
@@ -1539,56 +1565,117 @@ impl DatabaseDriverV1 {
                 argument: "Connection handle not found".to_string(),
             })?;
 
-        // Single lock acquisition for all pre-network synchronous work:
-        // atomically mark closed, capture config, and extract logout data.
-        // Holding the lock here prevents a concurrent set_option_int from racing
-        // between the "mark closed" and "read config" steps.
-        let prepare_result = {
+        // Roles for the close state machine. Determined under the connection lock
+        // (no I/O), then executed after the lock is released.
+        enum CloseRole {
+            /// First caller — does the actual logout I/O.
+            Owner {
+                logout_data: Box<Option<logout::LogoutData>>,
+                error_strategy: ErrorStrategy,
+                tx: tokio::sync::watch::Sender<Option<LogoutOutcome>>,
+            },
+            /// Concurrent caller — waits for the Owner's result.
+            Waiter {
+                rx: tokio::sync::watch::Receiver<Option<LogoutOutcome>>,
+                error_strategy: ErrorStrategy,
+            },
+            /// Late caller — close already finished, result cached.
+            AlreadyClosed(CloseResult),
+        }
+
+        let role = {
             let conn = conn_ptr.lock().await;
+            let mut state = conn.state.lock().expect("ConnectionState mutex poisoned");
 
-            // Atomic swap returns true if connection was already closed (idempotent guard)
-            let was_already_closed = conn.is_closed.swap(true, Ordering::SeqCst);
-            if was_already_closed {
-                tracing::debug!("Connection already closed, skipping duplicate close");
-                // Return None to signal early exit after the block
-                None
-            } else {
-                // Merge close-time overrides into the frozen init-time config.
-                // Any None override leaves the init-time value unchanged.
-                let config = conn
-                    .logout_config
-                    .merge_with_request(&overrides)
-                    .context(ConfigurationSnafu)?;
-                let error_strategy = config.error_strategy;
+            match &*state {
+                ConnectionState::Closed(result) => CloseRole::AlreadyClosed(result.clone()),
+                ConnectionState::Closing { rx, error_strategy } => CloseRole::Waiter {
+                    rx: rx.clone(),
+                    error_strategy: *error_strategy,
+                },
+                _ => {
+                    // Merge close-time overrides into the frozen init-time config.
+                    let config = conn
+                        .logout_config
+                        .merge_with_request(&overrides)
+                        .context(ConfigurationSnafu)?;
+                    let error_strategy = config.error_strategy;
 
-                // TODO: SNOW-2912513 - Record telemetry for logout decision
+                    // Prepare logout data while holding the lock (pure reads, no I/O)
+                    let logout_data = logout::prepare_logout_from_conn(&conn, &config)?;
 
-                // Prepare logout data while holding the lock (pure reads, no network I/O)
-                let logout_data = logout::prepare_logout_from_conn(&conn, &config)?;
+                    let (tx, rx) = tokio::sync::watch::channel(None);
+                    *state = ConnectionState::Closing { rx, error_strategy };
 
-                Some((logout_data, error_strategy))
+                    CloseRole::Owner {
+                        logout_data: Box::new(logout_data),
+                        error_strategy,
+                        tx,
+                    }
+                }
             }
         };
+        // Lock released — all I/O below.
 
-        let Some((logout_data, error_strategy)) = prepare_result else {
-            return Ok(());
-        };
+        match role {
+            CloseRole::AlreadyClosed(result) => result.into_result(),
 
-        // Execute logout — network I/O, lock must not be held
-        let logout_result = logout::execute_logout_with_strategy(logout_data, error_strategy).await;
+            CloseRole::Waiter {
+                mut rx,
+                error_strategy,
+            } => {
+                // Wait for the Owner to finish. watch guarantees we see the final value.
+                let _ = rx.wait_for(|v| v.is_some()).await;
+                let outcome = rx.borrow().clone().unwrap_or(LogoutOutcome::Success);
+                error_strategy.handle_logout_result(&outcome)
+            }
 
-        // Cleanup connection resources (separate lock acquisition after I/O)
-        cleanup_connection(&conn_ptr).await?;
+            CloseRole::Owner {
+                logout_data,
+                error_strategy,
+                tx,
+            } => {
+                // Execute logout — network I/O, no lock held.
+                let outcome = match *logout_data {
+                    Some(data) => match logout::send_logout_request(data).await {
+                        Ok(()) => LogoutOutcome::Success,
+                        Err(e) => LogoutOutcome::Failed {
+                            message: e.to_string(),
+                        },
+                    },
+                    None => LogoutOutcome::Skipped,
+                };
 
-        if logout_result.is_ok() {
-            tracing::info!("Connection closed successfully");
+                let close_result = CloseResult {
+                    outcome: outcome.clone(),
+                    error_strategy,
+                };
+
+                // CRITICAL: broadcast + state transition BEFORE cleanup.
+                // If cleanup panics, waiters must still be unblocked.
+                let _ = tx.send(Some(outcome));
+                {
+                    let conn = conn_ptr.lock().await;
+                    *conn.state.lock().expect("ConnectionState mutex poisoned") =
+                        ConnectionState::Closed(close_result.clone());
+                }
+
+                // Cleanup resources. State is already Closed — waiters are unblocked.
+                cleanup_connection(&conn_ptr).await;
+
+                // Same function as waiters — owner is not special.
+                close_result.into_result()
+            }
         }
-        logout_result
     }
 }
 
 /// Clear tokens, HTTP client, and stop background tasks.
-async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
+///
+/// Infallible by design: state is already `Closed` when this runs, so cleanup
+/// must not abort the close path. Future cleanup steps that can fail should
+/// log and continue, not return errors.
+async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) {
     let mut conn = conn_ptr.lock().await;
     *conn.tokens.write().await = None;
     conn.http_client = None;
@@ -1597,8 +1684,6 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
     // TODO: SNOW-2881763 - Stop heartbeat thread
     // TODO: SNOW-2912513 - Flush telemetry cache
     // TODO: Implement QCC (query result cache) clearing
-
-    Ok(())
 }
 
 #[cfg(test)]

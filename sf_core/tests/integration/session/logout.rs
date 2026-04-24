@@ -1615,6 +1615,117 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
 }
 
 // ===========================================================================
+//              Concurrent Close Error Propagation
+// ===========================================================================
+// Verifies that concurrent connection_close() callers wait for the in-progress
+// close and receive the same error result — no false Ok() while close is still
+// in flight. This was a bug with the old AtomicBool::swap(true) gate: the second
+// caller returned Ok(()) immediately without waiting.
+
+#[tokio::test]
+async fn should_wait_for_in_progress_close_and_propagate_error() {
+    //Given Server delays logout response by 2 seconds then returns 500
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(query_param("delete", "true"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_json(json!({
+                    "success": false,
+                    "code": "500",
+                    "message": "Internal Server Error"
+                }))
+                .set_delay(Duration::from_secs(2)),
+        )
+        .mount(&server)
+        .await;
+
+    //And Client is configured with STRICT error strategy and no retries
+    let server_uri = server.uri();
+    let client = Arc::new(
+        tokio::task::spawn_blocking(move || {
+            let client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+            client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+            let temp_key_file = private_key_helper::get_test_private_key_file()
+                .expect("Failed to create test private key file");
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+            client.set_connection_option_bool("server_session_keep_alive", false);
+            client.set_logout_error_strategy(ErrorStrategy::Strict);
+            client.set_connection_option_int("logout_max_attempts", 1);
+            client.connection_init_blocking().unwrap();
+            client
+        })
+        .await
+        .unwrap(),
+    );
+
+    // std::sync::Barrier — correct for OS threads via spawn_blocking
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+
+    //When Two threads call close() simultaneously
+    let client_a = client.clone();
+    let barrier_a = barrier.clone();
+    let handle_a = tokio::task::spawn_blocking(move || {
+        barrier_a.wait();
+        client_a.connection_close_blocking()
+    });
+
+    let client_b = client.clone();
+    let barrier_b = barrier.clone();
+    let handle_b = tokio::task::spawn_blocking(move || {
+        barrier_b.wait();
+        client_b.connection_close_blocking()
+    });
+
+    let result_a = handle_a.await.unwrap();
+    let result_b = handle_b.await.unwrap();
+
+    //Then Both callers see the error — no false Ok()
+    assert!(
+        result_a.is_err() && result_b.is_err(),
+        "Both callers must see the error (STRICT + 500). \
+         Old code: one gets Ok(()) without waiting. \
+         result_a={result_a:?}, result_b={result_b:?}"
+    );
+
+    //And Only one logout HTTP request was sent (no duplicate)
+    let logout_count = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| is_logout_request(r))
+        .count();
+    assert_eq!(
+        logout_count, 1,
+        "One logout request despite 2 concurrent close() calls"
+    );
+
+    //And Connection is closed for both callers
+    let is_closed = tokio::task::spawn_blocking({
+        let c = client.clone();
+        move || c.connection_is_closed_blocking()
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        is_closed,
+        "Connection must be closed regardless of logout outcome"
+    );
+
+    // Drop SnowflakeTestClient on a blocking thread — its Drop impl calls
+    // BLOCKING_CLIENT_RUNTIME.block_on() which panics inside a tokio runtime.
+    tokio::task::spawn_blocking(move || drop(client))
+        .await
+        .unwrap();
+}
+
+// ===========================================================================
 //                      Timeout Failure Scenarios
 // ===========================================================================
 
@@ -1755,14 +1866,13 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     );
 
     //And Timeout is logged as WARN
-    let api_result =
-        result.map_err(
-            |e| sf_core::apis::database_driver_v1::ApiError::LogoutFailed {
-                message: format!("{e}"),
-                location: snafu::Location::default(),
-            },
-        );
-    let handled_result = config.error_strategy.handle_failed_logout(api_result);
+    let outcome = match result {
+        Ok(()) => sf_core::config::logout::LogoutOutcome::Success,
+        Err(e) => sf_core::config::logout::LogoutOutcome::Failed {
+            message: format!("{e}"),
+        },
+    };
+    let handled_result = config.error_strategy.handle_logout_result(&outcome);
 
     //Then Close succeeds
     assert!(

@@ -226,7 +226,7 @@ pub(super) fn prepare_logout_from_conn(
 ///
 /// Uses `RefreshContext::execute_with_refresh` — the shared refresh-retry loop.
 /// Calls `execute_with_refresh` directly (not `with_valid_session`) because logout
-/// uses `RefreshContext::new()` (no `is_closed` check — logout runs after close).
+/// uses `RefreshContext::new()` (no state check — logout runs after `Closing` transition).
 pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
     let mut ctx = data.refresh_ctx;
 
@@ -248,36 +248,6 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
         .build(),
         other => other,
     })
-}
-
-/// Execute logout with error strategy handling.
-///
-/// This helper encapsulates the pattern of:
-/// 1. Sending logout if data is available
-/// 2. Logging success
-/// 3. Applying error strategy to handle failures
-///
-/// This keeps connection_close clean and makes the logout execution flow testable.
-pub(super) async fn execute_logout_with_strategy(
-    logout_data: Option<LogoutData>,
-    error_strategy: crate::config::logout::ErrorStrategy,
-) -> Result<(), ApiError> {
-    let logout_result = match logout_data {
-        Some(data) => {
-            let result = send_logout_request(data).await;
-            if result.is_ok() {
-                tracing::info!("Logout completed successfully");
-            }
-            result
-        }
-        None => {
-            // Logout skipped (explicit config or connection not initialized)
-            // Skip reason already logged by prepare_logout
-            Ok(())
-        }
-    };
-
-    error_strategy.handle_failed_logout(logout_result)
 }
 
 #[cfg(test)]

@@ -12,6 +12,38 @@ use std::time::Duration;
 
 use super::{ConfigError, InvalidParameterValueSnafu};
 
+/// What happened when the logout HTTP request was attempted.
+///
+/// Stored in `ConnectionState::Closed` so every caller (first, concurrent, late)
+/// can run it through `ErrorStrategy::handle_logout_result` themselves.
+#[derive(Clone, Debug)]
+pub enum LogoutOutcome {
+    /// Logout HTTP request succeeded.
+    Success,
+    /// Logout was skipped (keep_alive=true, connection not initialized, etc.).
+    Skipped,
+    /// Logout HTTP request failed after all retries were exhausted.
+    Failed { message: String },
+}
+
+/// A `LogoutOutcome` paired with the `ErrorStrategy` that should interpret it.
+///
+/// Always travel together: you can't apply error policy without knowing the
+/// strategy, and an outcome without a strategy is uninterpretable.
+#[derive(Clone, Debug)]
+pub struct CloseResult {
+    pub outcome: LogoutOutcome,
+    pub error_strategy: ErrorStrategy,
+}
+
+impl CloseResult {
+    /// Apply the error strategy to the outcome.
+    #[allow(clippy::result_large_err)]
+    pub fn into_result(&self) -> Result<(), ApiError> {
+        self.error_strategy.handle_logout_result(&self.outcome)
+    }
+}
+
 /// Validate that a seconds value is strictly positive and return as `Duration`.
 ///
 /// Shared by both `from_settings()` (init-time) and `merge_with_request()` (close-time)
@@ -235,29 +267,28 @@ impl ErrorStrategy {
         }
     }
 
-    /// Handle a failed logout after all retry mechanisms have been exhausted.
+    /// Apply error policy to a logout outcome.
     ///
-    /// Called after both retry layers have given up:
-    /// - HTTP retries (execute_with_retry) for 503, 429, transport errors
-    /// - Token refresh (RefreshContext) for 390112 session token expired
-    ///
-    /// By this point, recoverable errors (390111 session gone, 390112 token expired)
-    /// have already been resolved. What remains are unrecoverable failures
-    /// (network unreachable, timeout exceeded, unknown server errors).
+    /// Called by every `connection_close` caller (first, concurrent, late) with the
+    /// same stored `LogoutOutcome`. Multiple WARN/ERROR logs from concurrent callers
+    /// are honest — each exercised the close path and received a result.
     ///
     /// Strict: surface the error to the caller (close() may fail)
     /// BestEffort: suppress the error, log WARN (close() always succeeds)
     #[allow(clippy::result_large_err)]
-    pub fn handle_failed_logout(self, result: Result<(), ApiError>) -> Result<(), ApiError> {
-        match result {
-            Ok(()) => Ok(()),
-            Err(e) => match self {
+    pub fn handle_logout_result(self, outcome: &LogoutOutcome) -> Result<(), ApiError> {
+        match outcome {
+            LogoutOutcome::Success | LogoutOutcome::Skipped => Ok(()),
+            LogoutOutcome::Failed { message } => match self {
                 ErrorStrategy::Strict => {
-                    tracing::error!(error = %e, "Logout failed after retries exhausted");
-                    Err(e)
+                    tracing::error!(error = %message, "Logout failed after retries exhausted");
+                    Err(ApiError::LogoutFailed {
+                        message: message.clone(),
+                        location: snafu::Location::new(file!(), line!(), 0),
+                    })
                 }
                 ErrorStrategy::BestEffort => {
-                    tracing::warn!(error = %e, "Logout failed after retries exhausted, suppressed");
+                    tracing::warn!(error = %message, "Logout failed after retries exhausted, suppressed");
                     Ok(())
                 }
             },
@@ -291,7 +322,6 @@ impl FromStr for ErrorStrategy {
 mod tests {
     use super::*;
     use crate::config::settings::Setting;
-    use snafu::Location;
     use std::collections::HashMap;
 
     fn create_test_settings(options: Vec<(&str, Setting)>) -> HashMap<String, Setting> {
@@ -318,37 +348,43 @@ mod tests {
         assert_eq!(strategy, ErrorStrategy::Strict);
     }
 
-    fn make_logout_error(message: &str) -> ApiError {
-        ApiError::LogoutFailed {
-            message: message.to_string(),
-            location: Location::default(),
-        }
+    #[test]
+    fn test_strict_raises_on_failed_outcome() {
+        let outcome = LogoutOutcome::Failed {
+            message: "test error".to_string(),
+        };
+        let result = ErrorStrategy::Strict.handle_logout_result(&outcome);
+        assert!(
+            result.is_err(),
+            "Strict should raise errors on Failed outcome"
+        );
     }
 
     #[test]
-    fn test_strict_raises_error() {
-        let error = make_logout_error("test error");
-        let result = ErrorStrategy::Strict.handle_failed_logout(Err(error));
-        assert!(result.is_err(), "Strict should raise errors");
+    fn test_strict_passes_on_success_outcome() {
+        let result = ErrorStrategy::Strict.handle_logout_result(&LogoutOutcome::Success);
+        assert!(result.is_ok(), "Strict should pass through Success");
     }
 
     #[test]
-    fn test_strict_passes_through_ok() {
-        let result = ErrorStrategy::Strict.handle_failed_logout(Ok(()));
-        assert!(result.is_ok(), "Strict should pass through Ok");
+    fn test_strict_passes_on_skipped_outcome() {
+        let result = ErrorStrategy::Strict.handle_logout_result(&LogoutOutcome::Skipped);
+        assert!(result.is_ok(), "Strict should pass through Skipped");
     }
 
     #[test]
-    fn test_best_effort_suppresses_error() {
-        let error = make_logout_error("test error");
-        let result = ErrorStrategy::BestEffort.handle_failed_logout(Err(error));
-        assert!(result.is_ok(), "BestEffort should suppress errors");
+    fn test_best_effort_suppresses_failed_outcome() {
+        let outcome = LogoutOutcome::Failed {
+            message: "test error".to_string(),
+        };
+        let result = ErrorStrategy::BestEffort.handle_logout_result(&outcome);
+        assert!(result.is_ok(), "BestEffort should suppress Failed outcome");
     }
 
     #[test]
-    fn test_best_effort_passes_through_ok() {
-        let result = ErrorStrategy::BestEffort.handle_failed_logout(Ok(()));
-        assert!(result.is_ok(), "BestEffort should pass through Ok");
+    fn test_best_effort_passes_on_success_outcome() {
+        let result = ErrorStrategy::BestEffort.handle_logout_result(&LogoutOutcome::Success);
+        assert!(result.is_ok(), "BestEffort should pass through Success");
     }
 
     #[test]

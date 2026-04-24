@@ -28,7 +28,6 @@ use crate::rest::snowflake::async_exec::submit_statement_async;
 use crate::rest::snowflake::query_request;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
-use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -686,8 +685,8 @@ async fn query_context(
     conn: &Arc<Mutex<Connection>>,
 ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
     let conn = conn.lock().await;
-    // Reject query execution if close() has been called
-    if conn.is_closed.load(Ordering::SeqCst) {
+    // Reject query execution if close() has been called or is in progress
+    if conn.is_closed_or_closing() {
         return Err(ConnectionClosedSnafu {}.build());
     }
     Ok((
