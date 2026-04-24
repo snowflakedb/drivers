@@ -351,7 +351,11 @@ pipeline {
                     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
                       sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
                     }
-                    sh label: 'Install system dependencies', script: 'yum install -y unzip libffi-devel'
+                    sh label: 'Install system dependencies', script: '''
+                      yum install -y unzip \
+                        libffi-devel openssl-devel zlib-devel bzip2-devel \
+                        readline-devel sqlite-devel xz-devel
+                    '''
 
                     try {
                       sh label: 'Setup Python 3.13', script: '''
@@ -397,9 +401,8 @@ pipeline {
                         eval "$(pyenv init -)"
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
-                        hatch run reference.py3.13:install-wheel
-                        hatch run reference.py3.13:test -- -m require_vpn
-                        hatch env remove reference.py3.13
+                        hatch run reference:test -- -m require_vpn
+                        hatch env remove reference
                       '''
                     } finally {
                       sh label: 'Cleanup test PATs', script: '''
