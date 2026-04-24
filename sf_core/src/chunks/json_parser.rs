@@ -347,11 +347,40 @@ impl ColumnBuilder {
             RowType::IntervalYearMonth { .. } => ColumnBuilder::IntervalYearMonth {
                 builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
             },
-            RowType::IntervalDaySecond { .. } => ColumnBuilder::IntervalDaySecond {
-                storage: IntervalDaySecondStorage::I64 {
-                    builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
-                },
-            },
+            RowType::IntervalDaySecond { precision, .. } => {
+                // Snowflake uses different physical representations:
+                // 1. Compound intervals (DAY TO SECOND family, precision >= 147):
+                //    - Default DAY TO SECOND (precision=153): Decimal128 -> ms in numpy
+                //    - Reduced DAY(3) TO SECOND (precision=147): Int64 -> ns in numpy
+                // 2. Simple intervals (DAY, HOUR, etc., precision < 100):
+                //    - Use value-based promotion (Int64 → Decimal128 on overflow)
+
+                if *precision >= 147 {
+                    // Compound interval: precision-based choice
+                    if *precision >= 150 {
+                        // High precision (default): Decimal128 for ms resolution
+                        ColumnBuilder::IntervalDaySecond {
+                            storage: IntervalDaySecondStorage::I128 {
+                                builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
+                            },
+                        }
+                    } else {
+                        // Low precision (reduced): Int64 for ns resolution
+                        ColumnBuilder::IntervalDaySecond {
+                            storage: IntervalDaySecondStorage::I64 {
+                                builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
+                            },
+                        }
+                    }
+                } else {
+                    // Simple interval: start with Int64, will promote if needed
+                    ColumnBuilder::IntervalDaySecond {
+                        storage: IntervalDaySecondStorage::I64 {
+                            builder: arrow::array::PrimitiveBuilder::with_capacity(capacity),
+                        },
+                    }
+                }
+            }
         }
     }
 
@@ -554,13 +583,14 @@ impl ColumnBuilder {
                 builder.append_value(months);
             }
             ColumnBuilder::IntervalDaySecond { storage } => match storage {
-                // Start with i64 for compactness. On the first value that overflows i64,
-                // promote the entire column to Decimal128 and stay there for all
-                // subsequent values in this chunk.
+                // Compound intervals with high precision always use Decimal128
+                IntervalDaySecondStorage::I128 { builder } => {
+                    let nanoseconds = parse_int_bytes::<i128>(cell)?;
+                    builder.append_value(nanoseconds);
+                }
+                // Low-precision compound intervals and simple intervals use Int64,
+                // with promotion to Decimal128 if value exceeds i64 range
                 IntervalDaySecondStorage::I64 { builder } => {
-                    // Interval day-time values are stored as nanoseconds in JSON.
-                    // Max i64: 9,223,372,036,854,775,807 nanoseconds = ~106,751 days
-                    // Snowflake supports up to 999,999,999 days, so large values need i128.
                     let nanoseconds_i128 = parse_int_bytes::<i128>(cell)?;
                     if let Ok(nanoseconds_i64) = i64::try_from(nanoseconds_i128) {
                         builder.append_value(nanoseconds_i64);
@@ -572,10 +602,6 @@ impl ColumnBuilder {
                             builder: decimal_builder,
                         };
                     }
-                }
-                IntervalDaySecondStorage::I128 { builder } => {
-                    let nanoseconds = parse_int_bytes::<i128>(cell)?;
-                    builder.append_value(nanoseconds);
                 }
             },
         }

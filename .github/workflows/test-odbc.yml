@@ -355,6 +355,11 @@ jobs:
             name: Linux x64
             driver_lib: libsfodbc.so
             cloud_provider: aws
+          - os: ubuntu-latest
+            name: Linux x64 (JSON)
+            driver_lib: libsfodbc.so
+            cloud_provider: aws
+            result_format: json
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
@@ -388,7 +393,7 @@ jobs:
             driver_lib: sfodbc.dll
             cloud_provider: azure
     runs-on: ${{ matrix.os }}
-    name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }})
+    name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -571,6 +576,7 @@ jobs:
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
           export DRIVER_TYPE=NEW
+          export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           ./scripts/odbc/run_tests_unix.sh
 
       - name: Rerun failed ODBC tests (Unix)
@@ -580,6 +586,7 @@ jobs:
           DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_TYPE: NEW
+          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Build and run ODBC tests (Windows)
         if: runner.os == 'Windows'
@@ -591,6 +598,7 @@ jobs:
           $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $env:DRIVER_TYPE = "NEW"
+          $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
           .\scripts\odbc\run_tests_windows.ps1
 
       - name: Rerun failed ODBC tests (Windows)
@@ -601,6 +609,7 @@ jobs:
           DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: NEW
+          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Cleanup test PATs
         if: always()

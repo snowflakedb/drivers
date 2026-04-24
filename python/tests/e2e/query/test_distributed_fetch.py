@@ -12,6 +12,8 @@ import pickle
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import pytest
+
 from tests.e2e.types.utils import assert_connection_is_open
 
 
@@ -21,6 +23,7 @@ LARGE_RESULT_SET_ROW_COUNT = 100_000
 class TestDistributedFetch:
     """Tests for cursor.get_result_batches()."""
 
+    @pytest.mark.skip_for_json_result_set(reason="JSON format remote chunks not yet supported in pickle path")
     def test_should_fetch_all_rows_when_batches_are_pickled_and_fetched_in_parallel_threads(
         self, execute_query, cursor, connection
     ):

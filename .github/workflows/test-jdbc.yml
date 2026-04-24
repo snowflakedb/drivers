@@ -23,13 +23,18 @@ jobs:
   jdbc_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
-    name: JDBC Tests (full suite)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        java-version: ['8']
+        include:
+          - os: ubuntu-latest
+            java-version: '8'
+            result_format: default
+          - os: ubuntu-latest
+            java-version: '8'
+            result_format: json
     runs-on: ${{ matrix.os }}
+    name: JDBC Tests (${{ matrix.result_format }} format)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -79,6 +84,7 @@ jobs:
           ls -l target/debug/
           export PARAMETER_PATH=$(pwd)/parameters.json
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+          export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           cd jdbc
           ./gradlew test jacocoTestReport --stacktrace
         env:
