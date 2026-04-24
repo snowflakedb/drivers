@@ -86,6 +86,16 @@ pub mod param_names {
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
+    // Logout configuration
+    pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
+    pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
+        ParamKey("enable_server_session_keep_alive_auto_detection");
+    pub const LOGOUT_ERROR_STRATEGY: ParamKey = ParamKey("logout_error_strategy");
+    pub const LOGOUT_TOTAL_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_total_timeout_seconds");
+    pub const LOGOUT_MAX_ATTEMPTS: ParamKey = ParamKey("logout_max_attempts");
+    pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
+    // Application identity
+    pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -667,6 +677,105 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Int(80)),
         sensitive: false,
         description: "Maximum number of characters of a query string to include in log messages",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    // ── Logout ────────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::SERVER_SESSION_KEEP_ALIVE.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Enable auto-detection of async queries before logout (SNOW-2314152)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_ERROR_STRATEGY.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Error handling strategy for logout: 'best_effort' or 'strict'",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Total timeout budget for logout operation including retries",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_MAX_ATTEMPTS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Maximum total attempts for logout (1 = no retry, 3 = 2 retries)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Per-request socket timeout for individual logout attempts",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_APP_ID.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Application identifier sent by the client wrapper (e.g. PythonConnector)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
