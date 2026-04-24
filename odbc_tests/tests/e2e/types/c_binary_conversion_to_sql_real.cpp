@@ -1,4 +1,4 @@
-// ODBC E2E: SQL_C_BINARY bound via SQLBindParameter to SQL real types (SQL_DOUBLE, SQL_REAL, SQL_FLOAT)
+// ODBC E2E: SQL_C_BINARY bound via SQLBindParameter to SQL real types (SQL_DOUBLE, SQL_REAL)
 
 #include <cmath>
 #include <limits>

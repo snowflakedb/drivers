@@ -1,5 +1,6 @@
-// ODBC E2E: SQL_C_BINARY bound via SQLBindParameter to SQL temporal types (SQL_DATE, SQL_TIME, SQL_TIMESTAMP)
-// The binary buffer is interpreted as the raw bytes of the corresponding C struct.
+// ODBC E2E: SQL_C_BINARY bound via SQLBindParameter to ODBC 3.x SQL temporal types
+// (SQL_TYPE_DATE, SQL_TYPE_TIME, SQL_TYPE_TIMESTAMP).
+// The binary buffer is interpreted as the raw bytes of the corresponding C temporal struct.
 
 #include <catch2/catch_test_macros.hpp>
 
