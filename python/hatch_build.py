@@ -125,6 +125,9 @@ class BuildHook(BuildHookInterface):
 
     def _generate_protobuf(self) -> None:
         """Generate Python protobuf code using the Rust proto_generator binary."""
+        if os.environ.get("SKIP_PROTO_GENERATION", "").lower() in self.POSITIVE_VALUES:
+            return
+
         python_dir = Path(self.root)
         proto_input = (python_dir / self.PROTO_INPUT).resolve()
         protobuf_gen_dir = python_dir / self.PROTOBUF_GEN_DIR
@@ -313,7 +316,7 @@ class BuildHook(BuildHookInterface):
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""
 
-        if os.environ.get("SKIP_CORE_BUILD", "").lower() in ["true", "1"]:
+        if os.environ.get("SKIP_CORE_BUILD", "").lower() in self.POSITIVE_VALUES:
             return
 
         # Get paths relative to the Python wrapper directory
