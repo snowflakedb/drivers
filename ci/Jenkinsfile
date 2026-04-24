@@ -298,24 +298,21 @@ pipeline {
 
                       sh label: 'Install hatch', script: 'pip3 install hatch'
 
-                      sh label: 'Python VPN E2E tests (test.py3.13)', script: '''
+                      sh label: 'Python VPN E2E tests (dev.py3.13)', script: '''
                         set +x
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
                         export SKIP_CORE_BUILD=1
-                        hatch build -t wheel
-                        hatch run test.py3.13:install-wheel
-                        hatch run test.py3.13:pytest tests/e2e/authentication/test_native_okta.py -m require_vpn
-                        hatch env remove test.py3.13
+                        hatch run dev.py3.13:e2e -m require_vpn
+                        hatch env remove dev.py3.13
                       '''
 
                       sh label: 'Python VPN E2E tests (reference)', script: '''
                         set +x
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
-                        hatch run reference:install-wheel
-                        hatch run reference:test -- -m require_vpn
-                        hatch env remove reference
+                        hatch run reference.py3.13:test -- -m require_vpn
+                        hatch env remove reference.py3.13
                       '''
                     } finally {
                       sh label: 'Cleanup test PATs', script: '''
