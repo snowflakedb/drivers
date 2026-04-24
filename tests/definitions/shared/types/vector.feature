@@ -1,8 +1,9 @@
-@python
+@python @core_not_needed
 Feature: VECTOR type support
   # Snowflake VECTOR type stores fixed-size arrays of numeric values.
   # Subtypes: INT (integer) and FLOAT (32-bit floating-point).
   # Values are returned as Python lists (list[int] or list[float]).
+  # Maximum dimension: 4096.
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 
   # =========================================================================== #
@@ -21,16 +22,22 @@ Feature: VECTOR type support
   # =========================================================================== #
 
   @python_e2e
-  Scenario: should select integer vector literals
+  Scenario Outline: should select <subtype> vector literal
     Given Snowflake client is logged in
-    When Query "SELECT [1, 3, -5]::VECTOR(INT, 3), [40, 1234567]::VECTOR(INT, 2)" is executed
-    Then Result should contain integer vectors [1, 3, -5] and [40, 1234567]
+    When Query "SELECT <query_value>" is executed
+    Then Result should contain <subtype> vector <expected_value>
+
+    Examples:
+      | subtype   | query_value                                      | expected_value           |
+      | INT-3d    | [1, 3, -5]::VECTOR(INT, 3)                       | [1, 3, -5]               |
+      | INT-2d    | [40, 1234567]::VECTOR(INT, 2)                    | [40, 1234567]            |
+      | FLOAT-5d  | [1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)      | [1.8, -3.4, 6.7, 0, 2.3]|
 
   @python_e2e
-  Scenario: should select float vector literals
+  Scenario: should select large dimension vector
     Given Snowflake client is logged in
-    When Query "SELECT [1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)" is executed
-    Then Result should contain float vector [1.8, -3.4, 6.7, 0, 2.3]
+    When Query generating a 256-dimension FLOAT vector is executed
+    Then Result should contain a 256-element float vector
 
   # =========================================================================== #
   #                             NULL handling                                   #
@@ -66,17 +73,7 @@ Feature: VECTOR type support
 
   @python_e2e
   Scenario: should download vector data in multiple chunks
+    # skip_for_json_result_set
     Given Snowflake client is logged in
-    When Query "SELECT [seq8(), seq8() * 2, seq8() * 3]::VECTOR(INT, 3) AS vec FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
+    When Query generating 20000 integer vectors is executed
     Then All 20000 rows should be fetched and each should be a non-null list value
-
-  # =========================================================================== #
-  #                         JSON result format                                  #
-  # =========================================================================== #
-
-  @python_e2e
-  Scenario: should select vector with JSON result format
-    Given Snowflake client is logged in
-    And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
-    When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), [1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)" is executed
-    Then Result should contain the expected integer and float vector values

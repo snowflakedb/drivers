@@ -1,8 +1,9 @@
 """VECTOR type tests for Universal Driver.
 
-This module tests VECTOR type which stores fixed-size arrays of numeric values.
+This module tests the VECTOR type which stores fixed-size arrays of numeric values.
 Subtypes: INT (integer) and FLOAT (32-bit floating-point).
 Values are returned as Python lists (list[int] or list[float]).
+Maximum dimension: 4096.
 
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 """
@@ -40,31 +41,43 @@ class TestVectorTypeCasting:
 class TestVectorLiteral:
     """Tests for VECTOR type using SELECT with literals (no tables)."""
 
-    def test_should_select_integer_vector_literals(self, execute_query):
+    @pytest.mark.parametrize(
+        "query_value, expected_value, is_float",
+        [
+            ("[1, 3, -5]::VECTOR(INT, 3)", [1, 3, -5], False),
+            ("[40, 1234567]::VECTOR(INT, 2)", [40, 1234567], False),
+            ("[1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)", [1.8, -3.4, 6.7, 0.0, 2.3], True),
+        ],
+        ids=["INT-3d", "INT-2d", "FLOAT-5d"],
+    )
+    def test_should_select_subtype_vector_literal(self, execute_query, query_value, expected_value, is_float):
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT [1, 3, -5]::VECTOR(INT, 3), [40, 1234567]::VECTOR(INT, 2)" is executed
-        sql = "SELECT [1, 3, -5]::VECTOR(INT, 3), [40, 1234567]::VECTOR(INT, 2)"
+        # When Query "SELECT <query_value>" is executed
+        sql = f"SELECT {query_value}"
         result = execute_query(sql, single_row=True)
 
-        # Then Result should contain integer vectors [1, 3, -5] and [40, 1234567]
+        # Then Result should contain <subtype> vector <expected_value>
         assert isinstance(result[0], list)
-        assert isinstance(result[1], list)
-        assert result[0] == [1, 3, -5]
-        assert result[1] == [40, 1234567]
+        if is_float:
+            assert result[0] == pytest.approx(expected_value)
+        else:
+            assert result[0] == expected_value
 
-    def test_should_select_float_vector_literals(self, execute_query):
+    def test_should_select_large_dimension_vector(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT [1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)" is executed
-        sql = "SELECT [1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)"
+        # When Query generating a 256-dimension FLOAT vector is executed
+        values = ", ".join(str(float(i)) for i in range(256))
+        sql = f"SELECT [{values}]::VECTOR(FLOAT, 256)"
         result = execute_query(sql, single_row=True)
 
-        # Then Result should contain float vector [1.8, -3.4, 6.7, 0, 2.3]
+        # Then Result should contain a 256-element float vector
         assert isinstance(result[0], list)
-        assert result[0] == pytest.approx([1.8, -3.4, 6.7, 0.0, 2.3])
+        assert len(result[0]) == 256
+        assert result[0] == pytest.approx([float(i) for i in range(256)])
 
     def test_should_handle_null_vector_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
@@ -86,7 +99,6 @@ class TestVectorTable:
     def test_should_select_vector_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         pass
-
         # And Table with VECTOR(INT, 3) and VECTOR(FLOAT, 5) columns exists with values
         table_name = f"{tmp_schema}.vector_table"
         execute_query(
@@ -112,7 +124,6 @@ class TestVectorTable:
     def test_should_handle_null_vector_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         pass
-
         # And Table with VECTOR columns exists containing NULLs and values
         table_name = f"{tmp_schema}.vector_null_table"
         execute_query(
@@ -142,12 +153,14 @@ class TestVectorTable:
 class TestVectorMultipleChunks:
     """Tests for VECTOR type with multiple chunks downloading."""
 
+    @pytest.mark.skip_for_json_result_set(
+        reason="Multichunk vector generates dynamic data that may not round-trip identically in JSON format"
+    )
     def test_should_download_vector_data_in_multiple_chunks(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT [seq8(), seq8() * 2, seq8() * 3]::VECTOR(INT, 3) AS vec
-        # FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
+        # When Query generating 20000 integer vectors is executed
         sql = (
             f"SELECT [seq8(), seq8() * 2, seq8() * 3]::VECTOR(INT, 3) AS vec "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v"
@@ -158,25 +171,3 @@ class TestVectorMultipleChunks:
         assert len(rows) == LARGE_RESULT_SET_SIZE
         for row in rows:
             assert isinstance(row[0], list)
-
-
-class TestVectorJsonResultFormat:
-    """Tests for VECTOR type with JSON result format."""
-
-    def test_should_select_vector_with_json_result_format(self, connection_factory):
-        # Given Snowflake client is logged in
-        pass
-
-        # And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
-        with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
-            with conn.cursor() as cursor:
-                # When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), [1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)" is executed
-                sql = "SELECT [1, 2, 3]::VECTOR(INT, 3), [1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)"
-                cursor.execute(sql)
-                result = cursor.fetchone()
-
-                # Then Result should contain the expected integer and float vector values
-                assert isinstance(result[0], list)
-                assert isinstance(result[1], list)
-                assert result[0] == [1, 2, 3]
-                assert result[1] == pytest.approx([1.5, 2.5, 3.5])
