@@ -580,9 +580,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 ///      code, which covers paths (async-poll, query-monitoring) that drop
 ///      `sqlState` on the wire but keep the error code.
 ///
-/// We deliberately do NOT inspect the human-readable message text — that
-/// matches the legacy ODBC driver's contract (server-supplied SQLSTATE or
-/// nothing) and avoids locale-fragile, false-positive-prone heuristics.
+/// We deliberately do NOT inspect the human-readable message text:
+/// classification belongs to the server, and substring matching on
+/// English error messages is locale-fragile and false-positive-prone.
 ///
 /// Centralising this here means downstream consumers (ODBC, JDBC, ADBC) can
 /// rely on `sql_state` as the single source of truth for error

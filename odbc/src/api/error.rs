@@ -606,10 +606,12 @@ impl OdbcError {
                     ..
                 } => {
                     // Forward the server's SQLSTATE verbatim when it's a
-                    // well-formed 5-char error state. This matches the
-                    // legacy ODBC driver's contract (trust the server) and
-                    // keeps the universal driver from inventing or
-                    // overriding SQLSTATE classifications client-side.
+                    // well-formed 5-char error state. The driver does not
+                    // invent or override SQLSTATE classifications
+                    // client-side — that responsibility belongs to the
+                    // server (and to `sf_core::extract_vendor_info`, which
+                    // fills in `sql_state` from the numeric error code on
+                    // wire paths that drop it).
                     //
                     // Filtering rules:
                     // - "00xxx" (success) and "01xxx" (warning) must not appear in an
@@ -618,10 +620,10 @@ impl OdbcError {
                     //   is_warning(), so is_error() treats it as an error, but ODBC
                     //   callers expect 02000 only on success returns (e.g. SQLFetch).
                     //
-                    // SQLSTATEs the local enum doesn't recognise (e.g. server
-                    // sends "22000") are passed through as `SqlState::Unknown`,
-                    // which `as_str()` renders verbatim — same observable
-                    // behaviour the legacy driver produced.
+                    // SQLSTATEs the local enum doesn't recognise (e.g. the
+                    // generic data-exception "22000") are passed through as
+                    // `SqlState::Unknown`, which `as_str()` renders
+                    // verbatim so consumers still see the server's code.
                     if let Some(state) = server_sql_state
                         && state.len() == 5
                         && !state.starts_with("00")
@@ -634,11 +636,12 @@ impl OdbcError {
                     match error.as_ref() {
                         ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
                         ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
-                            // No usable SQLSTATE on the wire (and `sf_core`'s
-                            // `extract_vendor_info` couldn't recover one from
-                            // the numeric error code either). Mirror the
-                            // legacy driver and surface HY000 — do NOT sniff
-                            // the message text.
+                            // No usable SQLSTATE on the wire and `sf_core`'s
+                            // `extract_vendor_info` couldn't recover one
+                            // from the numeric error code either, so HY000
+                            // is the honest default. Do NOT sniff the
+                            // message text — classification belongs to the
+                            // server, not to the driver.
                             SqlState::GeneralError
                         }
                         ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
@@ -800,30 +803,6 @@ mod tests {
     }
 
     #[test]
-    fn server_numeric_out_of_range_maps_to_22003() {
-        // sf_core's `extract_vendor_info` populates `sql_state` from the
-        // numeric error code (100038 → "22003") for paths where the server
-        // omitted `sqlState`. The ODBC layer just trusts that value.
-        let odbc_err = OdbcError::CoreError {
-            source: Box::new(CoreProtobufError::Application {
-                error: Box::new(ErrorType::GenericError(
-                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
-                )),
-                message: "DML operation to table T failed on column COL with error: \
-                          Number out of representable range: type FIXED[SB2](3,0){nullable}, \
-                          value 99999"
-                    .to_string(),
-                status_code: 0,
-                error_trace: vec![],
-                sql_state: Some("22003".to_string()),
-                location: snafu::Location::new("test", 0, 0),
-            }),
-            location: snafu::Location::new("test", 0, 0),
-        };
-        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
-    }
-
-    #[test]
     fn server_generic_error_maps_to_hy000() {
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
@@ -843,11 +822,11 @@ mod tests {
 
     #[test]
     fn server_unknown_sql_state_passes_through_verbatim() {
-        // Mirror the legacy ODBC driver: when the server sends a SQLSTATE
-        // that's not in our enum (here "22000", a generic data exception
-        // that Snowflake actually returns for some bind-time truncation
-        // failures), we forward it as-is rather than masking it with a more
-        // specific or a generic HY000.
+        // When the server sends a SQLSTATE that's not in our enum (here
+        // "22000", the generic data-exception class that Snowflake returns
+        // for some bind-time truncation failures), we forward it as-is
+        // rather than masking it with a more-specific reclassification or
+        // collapsing it to HY000.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
@@ -886,8 +865,9 @@ mod tests {
 
     #[test]
     fn server_truncation_error_maps_to_22001() {
-        // sf_core maps Snowflake error code 100078 → "22001"; the ODBC layer
-        // trusts the server-supplied SQLSTATE without inspecting the message.
+        // `sf_core::extract_vendor_info` populates `sql_state` from
+        // Snowflake error code 100078 → "22001"; the ODBC layer trusts
+        // that value without inspecting the human-readable message.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
