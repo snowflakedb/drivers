@@ -293,10 +293,14 @@ jobs:
         if: runner.os == 'Linux' && matrix.py == '3.10'
         working-directory: python
         run: |
-          echo "Installing from sdist: $(ls dist/*.tar.gz)"
+          SDISTS=(dist/*.tar.gz)
+          if [[ ${#SDISTS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 sdist, found ${#SDISTS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${SDISTS[0]}"
+          echo "Installing sdist: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
         env:
-          WHEEL_PATH: dist/*.tar.gz
           SKIP_CORE_BUILD: "false"
 
       - name: Install snowflake ud driver from wheel (Windows)
