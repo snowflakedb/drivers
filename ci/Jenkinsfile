@@ -354,24 +354,50 @@ pipeline {
                     sh label: 'Install system dependencies', script: 'yum install -y unzip'
 
                     try {
-                      sh label: 'Install hatch', script: 'pip3 install hatch'
-
-                      sh label: 'Python VPN E2E tests (dev.py3.13)', script: '''
+                      sh label: 'Setup Python 3.13', script: '''
                         set +x
                         source /opt/rh/gcc-toolset-11/enable
                         export CC=gcc CXX=g++
+                        curl -fsSL https://pyenv.run | bash
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
+                        pyenv install 3.13 -s
+                        pyenv global 3.13
+                        pip install hatch
+                      '''
+
+                      sh label: 'Build Python wheel', script: '''
+                        set +x
+                        source /opt/rh/gcc-toolset-11/enable
+                        export CC=gcc CXX=g++
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
+                        cd python
+                        hatch build -t wheel
+                      '''
+
+                      sh label: 'Python VPN E2E tests (test.py3.13)', script: '''
+                        set +x
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
-                        hatch run dev.py3.13:e2e -m require_vpn
-                        hatch env remove dev.py3.13
+                        hatch run test.py3.13:install-wheel
+                        hatch run test.py3.13:pytest tests/e2e/authentication/test_native_okta.py -m require_vpn
+                        hatch env remove test.py3.13
                       '''
 
                       sh label: 'Python VPN E2E tests (reference)', script: '''
                         set +x
-                        source /opt/rh/gcc-toolset-11/enable
-                        export CC=gcc CXX=g++
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
+                        hatch run reference.py3.13:install-wheel
                         hatch run reference.py3.13:test -- -m require_vpn
                         hatch env remove reference.py3.13
                       '''
