@@ -358,6 +358,8 @@ pipeline {
 
                       sh label: 'Python VPN E2E tests (dev.py3.13)', script: '''
                         set +x
+                        source /opt/rh/gcc-toolset-11/enable
+                        export CC=gcc CXX=g++
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
                         hatch run dev.py3.13:e2e -m require_vpn
@@ -366,6 +368,8 @@ pipeline {
 
                       sh label: 'Python VPN E2E tests (reference)', script: '''
                         set +x
+                        source /opt/rh/gcc-toolset-11/enable
+                        export CC=gcc CXX=g++
                         export PARAMETER_PATH=$(pwd)/parameters.json
                         cd python
                         hatch run reference.py3.13:test -- -m require_vpn
