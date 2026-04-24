@@ -1,11 +1,15 @@
 use crate::logging;
+use crate::logging::{LogConfig, LogManager};
 
 #[cfg(not(feature = "protobuf"))]
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 
+/// Initialise logging with a C callback as the application sink.
+///
+/// Wrapper calls this at import time, before any API call.
+/// Always returns 0.
 #[unsafe(no_mangle)]
 pub extern "C" fn sf_core_init_logger(callback: logging::CLogCallback) -> u32 {
-    let config = logging::LoggingConfig::new(None, false, false);
     let layer = logging::CallbackLayer::new(callback);
 
     // When the protobuf feature is enabled the SessionRegistry is owned by
@@ -17,7 +21,8 @@ pub extern "C" fn sf_core_init_logger(callback: logging::CLogCallback) -> u32 {
     #[cfg(not(feature = "protobuf"))]
     let sessions = SessionRegistry::default();
 
-    match logging::init_logging(config, Some(layer), sessions) {
+    // TODO: with_app_sink (sessions, returning instance)
+    match LogManager::with_app_sink(LogConfig::default(), layer, sessions) {
         Ok(provider) => {
             #[cfg(feature = "protobuf")]
             crate::protobuf::c_api::set_telemetry_provider(provider);

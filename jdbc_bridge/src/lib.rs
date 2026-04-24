@@ -55,10 +55,10 @@ mod sflogger_layer;
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
-    let config = sf_core::logging::LoggingConfig::new(None, false, false);
     let layer = sflogger_layer::SFLoggerLayer::new(jvm);
     let sessions = SessionRegistry::default();
-    match sf_core::logging::init_logging(config, Some(layer), sessions.clone()) {
+    // TODO: with_app_sink + sessions, why clone?
+    match sf_core::logging::LogManager::with_app_sink(sf_core::logging::LogConfig::default(), layer, sessions.clone()) {
         Ok(provider) => {
             JDBC_TELEMETRY
                 .set(TelemetryInit { provider, sessions })

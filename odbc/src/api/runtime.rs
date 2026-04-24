@@ -1,7 +1,9 @@
 use std::ops::Deref;
 use std::sync::RwLock;
 
-use sf_core::protobuf::apis::database_driver_v1::{DatabaseDriverClient, database_driver_client};
+use sf_core::protobuf::apis::database_driver_v1::{
+    DatabaseDriverClient, DriverProviders, database_driver_client_with,
+};
 use snafu::{Location, ResultExt, Snafu};
 
 use crate::api::handle_registry::EnvironmentHandleRegistry;
@@ -84,11 +86,13 @@ pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     if guard.globals.is_none() {
+        sf_core::logging::LogManager::for_odbc();
+
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .context(RuntimeCreationSnafu)?;
-        let client = database_driver_client();
+        let client = database_driver_client_with(DriverProviders::default());
         guard.globals = Some(OdbcGlobals {
             runtime,
             client,

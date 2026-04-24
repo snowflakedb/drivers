@@ -3,38 +3,46 @@ use std::path::PathBuf;
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
-use crate::logging::opentelemetry::init_tracer;
+pub use crate::logging::log_manager::LogManager;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use ::opentelemetry::trace::TracerProvider;
 use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
-use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
-use tracing_subscriber::Registry;
-use tracing_subscriber::layer::SubscriberExt;
 
 pub mod c_api;
-mod callback_layer;
-mod error;
-mod opentelemetry;
+pub(crate) mod callback_layer;
+pub(crate) mod error;
+pub mod ini_config;
+pub mod log_manager;
+pub(crate) mod opentelemetry;
 
-pub struct LoggingConfig {
-    pub log_file: Option<PathBuf>,
-    pub stderr: bool,
+/// Configuration for the logging subsystem.
+pub struct LogConfig {
+    pub enabled: bool,
+    pub level: LevelFilter,
+    pub log_path: Option<PathBuf>,
+    pub log_file_name: Option<String>,
+    pub max_file_size: Option<u64>,
+    pub max_file_count: Option<u32>,
     pub opentelemetry: bool,
 }
 
-impl LoggingConfig {
-    pub fn new(log_file: Option<PathBuf>, stderr: bool, opentelemetry: bool) -> Self {
+impl Default for LogConfig {
+    fn default() -> Self {
         Self {
-            log_file,
-            stderr,
-            opentelemetry,
+            enabled: true,
+            level: LevelFilter::INFO,
+            log_path: None,
+            log_file_name: None,
+            max_file_size: None,
+            max_file_count: None,
+            opentelemetry: false,
         }
     }
 }
 
-struct EmptyLayer;
+pub(crate) struct EmptyLayer;
 
 impl<S: Subscriber> Layer<S> for EmptyLayer {}
 
