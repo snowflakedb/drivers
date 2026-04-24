@@ -50,6 +50,31 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BINARY numeric struct to 
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "123.45");
 }
 
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BINARY numeric struct with negative sign to SQL_DECIMAL",
+                 "[c_binary][conversion][sql_decimal]") {
+  SKIP_OLD_DRIVER("BD#46", "Old driver does not support SQL_C_BINARY as source for SQL_DECIMAL");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col NUMBER(10,2))");
+
+  // When A 19-byte binary buffer containing a SQL_NUMERIC_STRUCT with sign=0 is bound as SQL_DECIMAL
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  // sign=0 in this driver's SQL_NUMERIC_STRUCT convention means "negative"
+  // (the driver mirrors the same encoding on the output path: see
+  // SnowflakeNumeric → SQL_C_NUMERIC tests in odbc/src/api/data.rs).
+  SQL_NUMERIC_STRUCT ns = make_numeric(10, 2, 0, 12345);
+  SQLLEN ind = sizeof(ns);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_DECIMAL, 10, 2, &ns, sizeof(ns), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The value -123.45 should be read back correctly
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-123.45");
+}
+
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BINARY numeric struct integer to SQL_NUMERIC",
                  "[c_binary][conversion][sql_decimal]") {
   SKIP_OLD_DRIVER("BD#46", "Old driver does not support SQL_C_BINARY as source for SQL_NUMERIC");

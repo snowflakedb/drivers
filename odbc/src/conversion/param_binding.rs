@@ -2984,6 +2984,27 @@ mod tests {
     }
 
     #[test]
+    fn convert_binary_negative_infinity_to_real_forwards_to_server() -> TestResult {
+        let val: f32 = f32::NEG_INFINITY;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::REAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        // Same rationale as the +Infinity case: `SnowflakeReal::write_json`
+        // emits the full "-Infinity" literal Snowflake's JSON bind parser
+        // accepts, not Rust's short "-inf" form.
+        assert_eq!(v, Value::String("-Infinity".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn convert_binary_wrong_size_to_double_fails() {
         let bytes: [u8; 3] = [1, 2, 3];
         let mut ind: sql::Len = bytes.len() as sql::Len;

@@ -108,6 +108,33 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should accept SQL_C_BINARY infinity for SQL
   CHECK(fetched > 0);
 }
 
+TEST_CASE_METHOD(ConnSchemaFixture, "should accept SQL_C_BINARY negative infinity for SQL_REAL",
+                 "[c_binary][conversion][sql_real]") {
+  // Per MS ODBC "C to SQL: Binary", the only validation for SQL_C_BINARY ->
+  // SQL_REAL is the length-equals check (4 bytes). -Infinity is a valid
+  // IEEE-754 value that Snowflake FLOAT columns accept, so the bind and
+  // insert must succeed and the value must round-trip.
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When A 4-byte binary buffer containing negative infinity is bound as SQL_REAL
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLREAL val = -std::numeric_limits<SQLREAL>::infinity();
+  SQLLEN ind = sizeof(val);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_REAL, 0, 0, &val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The negative infinity value should round-trip back to the client as -Infinity
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  double fetched = get_data<SQL_C_DOUBLE>(fetch_stmt, 1);
+  CHECK(std::isinf(fetched));
+  CHECK(fetched < 0);
+}
+
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_BINARY with wrong size for SQL_DOUBLE",
                  "[c_binary][conversion][sql_real]") {
   // Given Snowflake client is logged in
