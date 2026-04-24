@@ -3,13 +3,19 @@ import pytest
 ITERATIONS = 3
 WARMUP_ITERATIONS = 0
 
+_ARROW_FORMAT_SETUP = [
+    "alter session set query_result_format = 'ARROW'",
+    "alter session set PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'ARROW'",
+    "alter session set ODBC_QUERY_RESULT_FORMAT = 'ARROW'",
+]
+
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
 def test_select_15columns_50M_arrow(perf_test):
     perf_test(
         sql_command="""
-            SELECT 
+            SELECT
                 L_ORDERKEY,
                 L_PARTKEY,
                 L_SUPPKEY,
@@ -25,9 +31,10 @@ def test_select_15columns_50M_arrow(perf_test):
                 L_RECEIPTDATE,
                 L_SHIPINSTRUCT,
                 L_COMMENT
-            FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM 
+            FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM
             LIMIT 50000000
-        """
+        """,
+        setup_queries=_ARROW_FORMAT_SETUP,
     )
 
 
@@ -35,7 +42,8 @@ def test_select_15columns_50M_arrow(perf_test):
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
 def test_select_string_50M_ordered_arrow(perf_test):
     perf_test(
-        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000"
+        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000",
+        setup_queries=_ARROW_FORMAT_SETUP,
     )
 
 
@@ -43,6 +51,7 @@ def test_select_string_50M_ordered_arrow(perf_test):
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
 def test_select_number_50M_ordered_arrow(perf_test):
     perf_test(
-        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000"
+        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000",
+        setup_queries=_ARROW_FORMAT_SETUP,
     )
 

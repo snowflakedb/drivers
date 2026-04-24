@@ -322,9 +322,7 @@ def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_
     """
     match test_type:
         case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP:
-            # SELECT tests: always use ARROW format
-            arrow_query = "alter session set query_result_format = 'ARROW'"
-            return [arrow_query] + (setup_queries or [])
+            return list(setup_queries or [])
         
         case PerfTestType.PUT_GET:
             # PUT/GET tests: USE DATABASE is required for TEMPORARY STAGE
@@ -348,8 +346,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 setup_queries=["ALTER SESSION SET QUERY_TAG = 'perf_test'"]  # optional
             )
     
-    Note: ARROW format is automatically enabled. Any setup_queries provided will be
-    appended after "alter session set query_result_format = 'ARROW'".
+    Note: Pass format-setting queries in setup_queries (e.g. "alter session set query_result_format = 'ARROW'").
 
     The test_name is automatically derived from the test function name (strips "test_" prefix).
     You can also explicitly provide test_name if needed.
@@ -369,8 +366,8 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         setup_queries: list[str] = None,
         test_name: str = None,
         test_type: PerfTestType = PerfTestType.SELECT,
-        s3_download_url: str = None,  # S3 URL for PUT/GET tests
-        s3_download_dir: str = None  # Local directory for downloaded files
+        s3_download_url: str = None,
+        s3_download_dir: str = None,
     ):
         # Prepare test parameters
         if test_name is None:
@@ -413,7 +410,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
     ):
         """Run WireMock test (recorded HTTP traffic)."""
         _validate_wiremock_old_driver(driver, driver_type)
-        
+
         if is_comparison:
             from runner.modes.wiremock_runner import run_wiremock_comparison_test
             return run_wiremock_comparison_test(
@@ -449,7 +446,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 preserve_mappings=preserve_mappings,
                 reuse_mappings_dir=reuse_mappings_dir,
             )
-    
+
     def _run_e2e_test(
         test_name: str,
         sql_command: str,

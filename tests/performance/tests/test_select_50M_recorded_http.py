@@ -4,6 +4,12 @@ from runner.test_types import PerfTestType
 ITERATIONS = 3
 WARMUP_ITERATIONS = 0
 
+_ARROW_FORMAT_SETUP = [
+    "alter session set query_result_format = 'ARROW'",
+    "alter session set PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'ARROW'",
+    "alter session set ODBC_QUERY_RESULT_FORMAT = 'ARROW'",
+]
+
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
