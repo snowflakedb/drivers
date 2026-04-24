@@ -19,9 +19,9 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, TypeVar, Union, cast
 
+from snowflake.connector._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ConfigSetting,
     ConnectionHandle,
     DatabaseHandle,
     WrapperIdentity,
@@ -53,7 +53,6 @@ from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
     LogoutOptionKeys,
-    remap_keep_alive_for_backward_compat,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
@@ -87,75 +86,6 @@ ConnectionParameters = dict[str, ConnectionParamValue]
 
 # Module-level logger
 logger = logging.getLogger(__name__)
-
-
-_UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
-
-
-def _pop_bool_kwarg(kwargs: dict[str, Any], key: str, default: bool) -> bool:
-    """Pop a required boolean kwarg with runtime type validation.
-
-    Raises ProgrammingError for non-bool values (e.g. string "false" is truthy).
-    """
-    value = kwargs.pop(key, default)
-    if not isinstance(value, bool):
-        raise ProgrammingError(f"{key} must be bool, got {type(value).__name__}")
-    return value
-
-
-def _pop_optional_bool_kwarg(kwargs: dict[str, Any], key: str) -> bool | None:
-    """Pop an optional boolean kwarg with runtime type validation.
-
-    Returns None if not provided. Raises ProgrammingError for non-bool/non-None values.
-    """
-    value = kwargs.pop(key, None)
-    if value is not None and not isinstance(value, bool):
-        raise ProgrammingError(f"{key} must be bool or None, got {type(value).__name__}")
-    return value
-
-
-def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
-    """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
-
-    If not provided, defaults to True and emits a FutureWarning:
-    the default will change to None in a future version (SNOW-2314152).
-    """
-    raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
-    if raw is _UNSET:
-        warnings.warn(
-            "enable_server_session_keep_alive_auto_detection was not set and defaults "
-            "to True. In a future version, the default will change to None. "
-            "Please provide an explicit value: "
-            "True = check for running async queries before logout (queries are preserved); "
-            "False/None = always send logout on close (async queries may be terminated by server). "
-            "Logout behavior can also be overridden with server_session_keep_alive. "
-            "See the connection parameter docs for more info.",
-            FutureWarning,
-            stacklevel=5,
-        )
-        return True
-    if raw is not None and not isinstance(raw, bool):
-        raise ProgrammingError(
-            f"enable_server_session_keep_alive_auto_detection must be bool or None, got {type(raw).__name__}"
-        )
-    return raw
-
-
-def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
-    """Wrap kwargs values into ConfigSetting protobuf messages for Core."""
-    options: dict[str, ConfigSetting] = {}
-    for key, value in kwargs.items():
-        if isinstance(value, bool):
-            options[key] = ConfigSetting(bool_value=value)
-        elif isinstance(value, int):
-            options[key] = ConfigSetting(int_value=value)
-        elif isinstance(value, str):
-            options[key] = ConfigSetting(string_value=value)
-        elif isinstance(value, float):
-            options[key] = ConfigSetting(double_value=value)
-        elif isinstance(value, bytes):
-            options[key] = ConfigSetting(bytes_value=value)
-    return options
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -310,7 +240,7 @@ class Connection:
         on self (auto_cleanup, _session_params, _numpy, logout_config).
         """
         # Python-only (pop — never goes to Core)
-        self.auto_cleanup: bool = _pop_bool_kwarg(kwargs, "auto_cleanup", True)
+        self.auto_cleanup: bool = pop_typed_kwarg(kwargs, "auto_cleanup", bool, True)
 
         # Session params use a dedicated RPC (connection_set_session_parameters),
         # not the generic connection_set_options path, so pop them from kwargs.
@@ -323,7 +253,7 @@ class Connection:
         # Logout params (pop + resolve defaults + build config).
         # Init-time snapshot only; Core re-derives at close() time from connection_seed,
         # so post-init overrides like close(retry=False) won't be reflected here.
-        self.logout_config = self._parse_logout_config(kwargs)
+        self.logout_config = LogoutConfig.from_kwargs(kwargs)
 
     @staticmethod
     def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
@@ -333,16 +263,6 @@ class Connection:
             params["AUTOCOMMIT"] = str(autocommit).lower()
         return params
 
-    def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
-        """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
-        keep_alive = _pop_optional_bool_kwarg(kwargs, "server_session_keep_alive")
-        auto_detection = _extract_auto_detection_param(kwargs)
-        keep_alive = remap_keep_alive_for_backward_compat(keep_alive, auto_detection)
-        return LogoutConfig(
-            server_session_keep_alive=keep_alive,
-            enable_server_session_keep_alive_auto_detection=auto_detection,
-        )
-
     def _send_driver_options(self, kwargs: dict[str, Any]) -> None:
         """Send all driver config to Core in a single connection_set_options RPC.
 
@@ -350,8 +270,8 @@ class Connection:
         config from self.logout_config (server_session_keep_alive, error_strategy,
         timeouts, ...) into one batched call. Called at init time, before connection_init.
         """
-        options = _build_config_settings(kwargs)
-        options.update(_build_config_settings(self.logout_config.to_option_dict()))
+        options = create_config_settings_from_dict(kwargs)
+        options.update(create_config_settings_from_dict(self.logout_config.to_option_dict()))
         if options:
             response = self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
@@ -397,7 +317,7 @@ class Connection:
                     self.db_api.connection_set_options(
                         ConnectionSetOptionsRequest(
                             conn_handle=conn_handle,
-                            options=_build_config_settings({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
+                            options=create_config_settings_from_dict({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
                         )
                     )
 

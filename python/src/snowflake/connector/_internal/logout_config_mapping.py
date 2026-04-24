@@ -45,6 +45,9 @@ class ErrorStrategy(str, Enum):
     STRICT = "strict"
 
 
+_UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
+
+
 @dataclass
 class LogoutConfig:
     """Final logout configuration for Core API.
@@ -64,6 +67,26 @@ class LogoutConfig:
     logout_total_timeout_seconds: int = PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS
     max_attempts: Optional[int] = PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS
     logout_request_timeout_seconds: Optional[int] = PYTHON_DEFAULT_LOGOUT_REQUEST_TIMEOUT_SECONDS
+
+    @classmethod
+    def from_kwargs(cls, kwargs: dict) -> "LogoutConfig":
+        """Pop logout params from kwargs, apply defaults and backward-compat mapping.
+
+        Mutates kwargs in-place (pops logout-specific keys).
+        """
+        from snowflake.connector.errors import ProgrammingError
+
+        keep_alive = kwargs.pop("server_session_keep_alive", None)
+        if keep_alive is not None and not isinstance(keep_alive, bool):
+            raise ProgrammingError(f"server_session_keep_alive must be bool, got {type(keep_alive).__name__}")
+
+        auto_detection = _extract_auto_detection_param(kwargs)
+        keep_alive = remap_keep_alive_for_backward_compat(keep_alive, auto_detection)
+
+        return cls(
+            server_session_keep_alive=keep_alive,
+            enable_server_session_keep_alive_auto_detection=auto_detection,
+        )
 
     def to_option_dict(self) -> dict[str, "bool | int | str"]:
         """Convert to a dict suitable for ``_build_config_settings`` + ``connection_set_options``.
@@ -86,6 +109,35 @@ class LogoutConfig:
         return options
 
 
+def _extract_auto_detection_param(kwargs: dict) -> Optional[bool]:
+    """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
+
+    If not provided, defaults to True and emits a FutureWarning:
+    the default will change to None in a future version (SNOW-2314152).
+    """
+    from snowflake.connector.errors import ProgrammingError
+
+    raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
+    if raw is _UNSET:
+        warnings.warn(
+            "enable_server_session_keep_alive_auto_detection was not set and defaults "
+            "to True. In a future version, the default will change to None. "
+            "Please provide an explicit value: "
+            "True = check for running async queries before logout (queries are preserved); "
+            "False/None = always send logout on close (async queries may be terminated by server). "
+            "Logout behavior can also be overridden with server_session_keep_alive. "
+            "See the connection parameter docs for more info.",
+            FutureWarning,
+            stacklevel=6,
+        )
+        return True
+    if raw is not None and not isinstance(raw, bool):
+        raise ProgrammingError(
+            f"enable_server_session_keep_alive_auto_detection must be bool or None, got {type(raw).__name__}"
+        )
+    return raw
+
+
 def remap_keep_alive_for_backward_compat(
     server_session_keep_alive: Optional[bool],
     enable_auto_detection: Optional[bool],
@@ -101,16 +153,15 @@ def remap_keep_alive_for_backward_compat(
     - False + auto_detection=False → False (no remap, no warning — same meaning in Phase 3 (SNOW-2314152))
     - True / None                  → pass through unchanged
     """
-    if server_session_keep_alive is False:
-        if enable_auto_detection:
-            warnings.warn(
-                "server_session_keep_alive=False currently respects auto-detection "
-                "(async query registry is checked before logout). In a future version, "
-                "False will mean 'always logout' without registry check. "
-                "To keep current behavior, use server_session_keep_alive=None with "
-                "enable_server_session_keep_alive_auto_detection=True.",
-                FutureWarning,
-                stacklevel=5,
-            )
-            return None
+    if server_session_keep_alive is False and enable_auto_detection:
+        warnings.warn(
+            "server_session_keep_alive=False currently respects auto-detection "
+            "(async query registry is checked before logout). In a future version, "
+            "False will mean 'always logout' without registry check. "
+            "To keep current behavior, use server_session_keep_alive=None with "
+            "enable_server_session_keep_alive_auto_detection=True.",
+            FutureWarning,
+            stacklevel=5,
+        )
+        return None
     return server_session_keep_alive

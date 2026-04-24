@@ -27,12 +27,12 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
+from .._internal.config_utils import create_config_setting
 from .._internal.decorators import pep249
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
-    ConfigSetting,
     ConnectionAbortQueryRequest,
     ConnectionGetQueryResultRequest,
     ConnectionGetResultSetRequest,
@@ -148,36 +148,6 @@ def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
         return cast(F, wrapper)
 
     return decorator
-
-
-def _create_config_setting(value: Any) -> ConfigSetting:
-    """Create a ConfigSetting protobuf from a Python value.
-
-    Args:
-        value: Python value (int, str, bool, float, or bytes).
-
-    Returns:
-        ConfigSetting protobuf message.
-
-    Raises:
-        TypeError: If value type is not supported.
-    """
-    config_setting = ConfigSetting()
-    if isinstance(value, bool):  # Check bool before int (bool is subclass of int)
-        config_setting.bool_value = value
-    elif isinstance(value, int):
-        config_setting.int_value = value
-    elif isinstance(value, str):
-        config_setting.string_value = value
-    elif isinstance(value, float):
-        config_setting.double_value = value
-    elif isinstance(value, bytes):
-        config_setting.bytes_value = value
-    else:
-        raise TypeError(
-            f"Unsupported parameter type: {type(value).__name__}. Supported types: int, str, bool, float, bytes"
-        )
-    return config_setting
 
 
 class SnowflakeCursorBase(abc.ABC):
@@ -667,7 +637,7 @@ class SnowflakeCursorBase(abc.ABC):
         options = {}
         for key, value in self._statement_parameters.items():
             try:
-                options[key] = _create_config_setting(value)
+                options[key] = create_config_setting(value)
             except TypeError as err:
                 raise TypeError(f"Cannot set parameter '{key}': {err}") from err
 
