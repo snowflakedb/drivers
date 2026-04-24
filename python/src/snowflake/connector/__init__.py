@@ -5,9 +5,12 @@ This module provides an empty implementation of the Python Database API Specific
 as defined in PEP 249.
 """
 
+import atexit as _atexit
+
 from typing import Any
 
 from . import util_text  # noqa: F401 - backward compatibility re-exports
+from ._internal.api_client.c_api import core as _core
 from ._internal.api_client.c_api import register_default_logger_callback
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
@@ -48,6 +51,11 @@ threadsafety = 2  # Threads may share the module and connections, but not cursor
 paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
 register_default_logger_callback()
+
+# Register sf_core_shutdown as atexit handler — runs before Py_Finalize to
+# disable the Rust→Python logging callback. Prevents SIGSEGV when Rust
+# threads try to log into torn-down Python state (SNOW-3416420).
+_atexit.register(_core.sf_core_shutdown)
 
 
 @pep249

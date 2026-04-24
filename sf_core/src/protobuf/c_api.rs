@@ -21,6 +21,21 @@ static STATE: LazyLock<CApiState> = LazyLock::new(|| CApiState {
     transport: RustTransport::new(),
 });
 
+/// Disable the Rust→Python logging callback before Python interpreter finalization.
+///
+/// Must be called from Python's atexit (before `Py_Finalize`) to prevent
+/// SIGSEGV/SIGABRT caused by Rust threads calling into torn-down Python state
+/// (SNOW-3416420).
+///
+/// After this call, Rust `tracing::*` macros still work but the `CallbackLayer`
+/// returns immediately without invoking the Python function pointer. Rust
+/// threads (tokio worker, CRL) continue running safely — they just can't log
+/// to Python anymore. They're killed by `_exit()` when the process terminates.
+#[unsafe(no_mangle)]
+pub extern "C" fn sf_core_shutdown() {
+    crate::logging::disable_callback();
+}
+
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
     let boxed = vec.into_boxed_slice();
     unsafe {

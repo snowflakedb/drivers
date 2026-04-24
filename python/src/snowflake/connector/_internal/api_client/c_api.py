@@ -79,6 +79,10 @@ core.sf_core_free_buffer.argtypes = [
     ctypes.c_size_t,  # size_t len
 ]
 
+# Shutdown: disables Rust→Python logging callback before Py_Finalize (SNOW-3416420).
+core.sf_core_shutdown.restype = None
+core.sf_core_shutdown.argtypes = []
+
 
 # Performance instrumentation FFI bindings (see sf_core/src/c_api.rs).
 # These symbols are always present in libsf_core; when the perf_timing feature
