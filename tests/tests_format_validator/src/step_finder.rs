@@ -824,6 +824,7 @@ impl StepFinder {
         let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::rust());
         let all_methods = boundary_finder.find_all_test_methods_with_lines(content)?;
 
+        // Generate possible function names from scenario name
         let snake_scenario = to_snake_case(scenario_name);
 
         let matching_methods = all_methods

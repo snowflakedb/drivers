@@ -52,7 +52,7 @@ from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
-    remap_keep_alive_phase2,
+    remap_keep_alive_for_backward_compat,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
@@ -240,7 +240,7 @@ class Connection:
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
 
-        self._log_max_query_length: int = kwargs.pop("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
+        self._log_max_query_length: int = kwargs.get("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
 
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):
@@ -269,17 +269,8 @@ class Connection:
         # After this, kwargs contains only generic Core options.
         self._parse_kwargs(kwargs, autocommit)
 
-        # Generic options → Core (kwargs is now clean, no filtering needed)
-        options = _build_config_settings(kwargs)
-        if options:
-            response = self.db_api.connection_set_options(
-                ConnectionSetOptionsRequest(
-                    conn_handle=self.conn_handle,
-                    options=options,
-                )
-            )
-            for warning in response.warnings:
-                warnings.warn(warning.message, stacklevel=2)
+        # All driver config → Core in a single RPC (generic kwargs + logout config)
+        self._send_driver_options(kwargs)
 
         # Session params → Core (separate RPC: these are Snowflake server
         # SET commands (string→string), not driver config (typed ConfigSetting))
@@ -287,9 +278,6 @@ class Connection:
             self.db_api.connection_set_session_parameters(
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=self._session_params)
             )
-
-        # Logout config → Core (typed RPCs, before connection_init)
-        self._send_logout_config(self.logout_config)
 
         self.db_api.connection_init(
             ConnectionInitRequest(
@@ -348,28 +336,32 @@ class Connection:
         """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
         keep_alive = _pop_optional_bool_kwarg(kwargs, "server_session_keep_alive")
         auto_detection = _extract_auto_detection_param(kwargs)
-        keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
+        keep_alive = remap_keep_alive_for_backward_compat(keep_alive, auto_detection)
         return LogoutConfig(
             server_session_keep_alive=keep_alive,
             enable_server_session_keep_alive_auto_detection=auto_detection,
         )
 
-    def _send_logout_config(self, logout_config: LogoutConfig) -> None:
-        """Send resolved LogoutConfig to Core via batch connection_set_options RPC.
+    def _send_driver_options(self, kwargs: dict[str, Any]) -> None:
+        """Send all driver config to Core in a single connection_set_options RPC.
 
-        Called at init time, before connection_init. Sets the BASE config that
-        Core stores as conn.logout_config. At close() time, Core merges any
-        close-time overrides (from ConnectionCloseRequest fields) into this base
-        via merge_with_request().
+        Combines generic kwargs (user, account, host, ...) with resolved logout
+        config from self.logout_config (server_session_keep_alive, error_strategy,
+        timeouts, ...) into one batched call. Called at init time, before connection_init.
+        Core stores this as conn.logout_config. At close() time, Core merges any
+        close-time overrides (from ConnectionCloseRequest fields) via merge_with_request().
         """
-        options = _build_config_settings(logout_config.to_option_dict())
+        options = _build_config_settings(kwargs)
+        options.update(_build_config_settings(self.logout_config.to_option_dict()))
         if options:
-            self.db_api.connection_set_options(
+            response = self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
                     options=options,
                 )
             )
+            for warning in response.warnings:
+                warnings.warn(warning.message, stacklevel=2)
 
     @pep249
     def close(self, retry: bool = True) -> None:

@@ -23,13 +23,13 @@ Feature: Session Logout - JDBC-specific behavior
   #                   Session Lifecycle Parameters
   # ===========================================================================
   # Phase 2 (doc for: SNOW-2314152): UD mirrors old JDBC behavior (auto-detection enabled by default).
-  # Phase 3: All drivers converge on unified model (auto-detection disabled by default).
+  # Phase 3 (SNOW-2314152): All drivers converge on unified model (auto-detection disabled by default).
 
   Scenario: should have auto_detection enabled and server_session_keep_alive null by default
     # Phase 2 (doc for: SNOW-2314152): JDBC defaults mirror old driver behavior
     # server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
     # Using these defaults emits deprecation warning because auto-detection
-    # will be switched off by default in the future (Phase 3)
+    # will be switched off by default in the future (Phase 3 (SNOW-2314152))
     Given Snowflake JDBC connection is created with default parameters
     When Connection configuration is checked
     Then server_session_keep_alive defaults to null
@@ -65,7 +65,7 @@ Feature: Session Logout - JDBC-specific behavior
     Then server_session_keep_alive null is passed to Core
     And enable_server_session_keep_alive_auto_detection true is passed to Core
     And Deprecation warning is logged
-    And Warning mentions migration to Phase 3 compliant behavior
+    And Warning mentions migration to Phase 3 (SNOW-2314152) compliant behavior
 
   Scenario: should pass correct parameters when server_session_keep_alive is null and auto_detection false
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
