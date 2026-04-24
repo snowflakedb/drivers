@@ -223,7 +223,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: protobuf-gen
-          path: python/src/snowflake/connector/internal/protobuf_gen/
+          path: python/src/snowflake/connector/_internal/protobuf_gen/
 
   # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
   build_wheels:
@@ -252,7 +252,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: protobuf-gen
-          path: python/src/snowflake/connector/internal/protobuf_gen
+          path: python/src/snowflake/connector/_internal/protobuf_gen
 
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v3.4
@@ -308,7 +308,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: protobuf-gen
-          path: python/src/snowflake/connector/internal/protobuf_gen
+          path: python/src/snowflake/connector/_internal/protobuf_gen
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
