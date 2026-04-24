@@ -9,7 +9,7 @@ use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
     validate_statement_option_write,
 };
-use crate::chunks::ChunkDownloadData;
+use crate::chunks::{ChunkDownloadData, ChunkFormatKind};
 use crate::config::ParamStore;
 use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
@@ -458,10 +458,12 @@ impl DatabaseDriverV1 {
 
         // Re-acquire lock to store results
         let mut stmt = stmt_ptr.lock().await;
+        let format = response_chunk_format(&response.data)?;
         stmt.chunk_info = Some(StoredChunkInfo {
             query_id: descriptor.query_id.clone(),
             descriptor: descriptor.clone(),
-            initial_chunk_base64: response.data.to_initial_base64_opt().map(String::from),
+            format,
+            inline: response_inline_data(&response.data, format),
             chunks: response.data.to_chunk_download_data().unwrap_or_default(),
             prebuilt_stream,
             number_of_binds: response.data.number_of_binds.unwrap_or(0),
@@ -581,7 +583,8 @@ impl DatabaseDriverV1 {
         Ok(StoredChunkInfo {
             query_id: chunk_info.query_id.clone(),
             descriptor: chunk_info.descriptor.clone(),
-            initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
+            format: chunk_info.format,
+            inline: chunk_info.inline.clone(),
             chunks: chunk_info.chunks.clone(),
             prebuilt_stream: None, // prebuilt stream is not cloneable; chunks path only
             number_of_binds: chunk_info.number_of_binds,
@@ -711,6 +714,33 @@ fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
         }
         .build()
     })
+}
+
+/// Map the server's `queryResultFormat` onto `ChunkFormatKind`; absent field defaults to Arrow IPC, unknown values error.
+fn response_chunk_format(data: &Data) -> Result<ChunkFormatKind, ApiError> {
+    match data.query_result_format.as_deref() {
+        Some(s) if s.eq_ignore_ascii_case("json") => Ok(ChunkFormatKind::Json),
+        Some(s) if s.eq_ignore_ascii_case("arrow") => Ok(ChunkFormatKind::ArrowIpc),
+        None => Ok(ChunkFormatKind::ArrowIpc),
+        Some(other) => UnsupportedQueryResultFormatSnafu {
+            format: other.to_string(),
+        }
+        .fail(),
+    }
+}
+
+/// Extract the inline initial chunk from the response; empty/missing payloads collapse to `InlineData::None`.
+fn response_inline_data(data: &Data, format: ChunkFormatKind) -> InlineData {
+    match format {
+        ChunkFormatKind::Json => match data.rowset.as_ref() {
+            Some(rowset) if !rowset.is_empty() => InlineData::Json(rowset.clone()),
+            _ => InlineData::None,
+        },
+        ChunkFormatKind::ArrowIpc => match data.to_initial_base64_opt() {
+            Some(b) => InlineData::ArrowIpc(b.to_string()),
+            None => InlineData::None,
+        },
+    }
 }
 
 /// Extract metadata from a Snowflake query response into a `ResultSetDescriptor`.
@@ -876,10 +906,22 @@ impl DatabaseDriverV1 {
     }
 }
 
+/// Inline initial chunk of a result set, if any.
+#[derive(Clone)]
+pub enum InlineData {
+    /// Base64-encoded Arrow IPC stream.
+    ArrowIpc(String),
+    /// JSON rowset (rows of nullable string cells).
+    Json(Vec<Vec<Option<String>>>),
+    None,
+}
+
 pub struct StoredChunkInfo {
     pub query_id: String,
     pub descriptor: ResultSetDescriptor,
-    pub initial_chunk_base64: Option<String>,
+    /// Wire format reported by the server (`ARROW` or `JSON`).
+    pub format: ChunkFormatKind,
+    pub inline: InlineData,
     pub chunks: Vec<ChunkDownloadData>,
     /// Pre-built Arrow stream from execute. Consumed once by `statement_get_result_set`.
     pub prebuilt_stream: Option<Box<FFI_ArrowArrayStream>>,

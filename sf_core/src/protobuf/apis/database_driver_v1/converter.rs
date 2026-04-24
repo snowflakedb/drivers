@@ -6,19 +6,24 @@ use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::ResolvedResultSet as NativeResolvedResultSet;
 use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescriptor;
 use crate::apis::database_driver_v1::Setting;
-use crate::apis::database_driver_v1::error::ConfigError;
-use crate::apis::database_driver_v1::error::RestError;
+use crate::apis::database_driver_v1::error::{ConfigError, InvalidColumnMetadataSnafu, RestError};
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
     ValidationSeverity as CoreValidationSeverity,
 };
+use crate::chunks::{
+    ArrowIpcEncodingSnafu, ChunkError, ChunkFormatKind, ChunkReadingSnafu,
+    convert_string_rowset_to_arrow_reader,
+};
 use crate::protobuf::generated::database_driver_v1::*;
+use crate::query_types::RowType;
 use crate::rest::snowflake::error::SfError;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use error_trace::ErrorTrace;
-
+use snafu::ResultExt;
 // ---------------------------------------------------------------------------
 // Arrow FFI pointer conversions
 // ---------------------------------------------------------------------------
@@ -133,6 +138,50 @@ impl From<Handle> for StatementHandle {
 }
 
 // ---------------------------------------------------------------------------
+// Chunk format conversions (native ↔ proto)
+// ---------------------------------------------------------------------------
+
+impl From<ChunkFormatKind> for ChunkFormat {
+    fn from(value: ChunkFormatKind) -> Self {
+        match value {
+            ChunkFormatKind::ArrowIpc => ChunkFormat::ArrowIpc,
+            ChunkFormatKind::Json => ChunkFormat::Json,
+        }
+    }
+}
+
+/// Proto `ChunkFormat` → `ChunkFormatKind`; returns `None` for unspecified/unknown values.
+pub(super) fn proto_chunk_format_to_kind(value: i32) -> Option<ChunkFormatKind> {
+    let format = ChunkFormat::try_from(value).unwrap_or(ChunkFormat::Unspecified);
+    match format {
+        ChunkFormat::ArrowIpc => Some(ChunkFormatKind::ArrowIpc),
+        ChunkFormat::Json => Some(ChunkFormatKind::Json),
+        ChunkFormat::Unspecified => None,
+    }
+}
+
+/// Encode a JSON rowset as a base64 Arrow IPC stream so inline chunks ship uniformly over the proto boundary.
+pub(super) fn json_rowset_to_arrow_ipc_base64(
+    rowset: &[Vec<Option<String>>],
+    row_types: &[RowType],
+) -> Result<String, ChunkError> {
+    let reader = convert_string_rowset_to_arrow_reader(rowset, row_types)?;
+    let schema = reader.schema();
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
+            .context(ArrowIpcEncodingSnafu)?;
+        for batch in reader {
+            // Iterator error = JSON rowset read/decode failure, not IPC encoding.
+            let batch = batch.context(ChunkReadingSnafu)?;
+            writer.write(&batch).context(ArrowIpcEncodingSnafu)?;
+        }
+        writer.finish().context(ArrowIpcEncodingSnafu)?;
+    }
+    Ok(BASE64.encode(&buf))
+}
+
+// ---------------------------------------------------------------------------
 // Result / chunk / column conversions
 // ---------------------------------------------------------------------------
 
@@ -165,6 +214,44 @@ impl From<NativeColumnMetadata> for ColumnMetadata {
             nullable: meta.nullable,
         }
     }
+}
+
+impl From<ColumnMetadata> for NativeColumnMetadata {
+    fn from(meta: ColumnMetadata) -> Self {
+        NativeColumnMetadata {
+            name: meta.name,
+            r#type: meta.r#type,
+            precision: meta.precision,
+            scale: meta.scale,
+            length: meta.length,
+            byte_length: meta.byte_length,
+            nullable: meta.nullable,
+        }
+    }
+}
+
+/// Convert a native `ColumnMetadata` into `RowType` via the shared `query_response::RowType` parser.
+// TODO: replace the transient shim with a shared type-string → RowType function.
+#[allow(clippy::result_large_err)]
+pub(super) fn column_metadata_to_row_type(
+    column_metadata: &NativeColumnMetadata,
+) -> Result<RowType, ApiError> {
+    let temp_row_type = crate::rest::snowflake::query_response::RowType {
+        name: column_metadata.name.clone(),
+        scale: column_metadata.scale.map(|v| v as u64),
+        nullable: column_metadata.nullable,
+        type_: column_metadata.r#type.clone(),
+        byte_length: column_metadata.byte_length.map(|v| v as u64),
+        length: column_metadata.length.map(|v| v as u64),
+        precision: column_metadata.precision.map(|v| v as u64),
+        ext_type_name: None,
+        _fields: None,
+    };
+    (&temp_row_type)
+        .try_into()
+        .context(InvalidColumnMetadataSnafu {
+            column: column_metadata.name.clone(),
+        })
 }
 
 fn native_stats_to_proto(
@@ -520,7 +607,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ArrowParsing { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::JsonChunkDecoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::InlineJsonEncoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::InvalidColumnMetadata { column, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
+                InvalidParameterValue {
+                    parameter: format!("column: {column}"),
+                    value: String::new(),
+                    explanation: Some("Failed to parse column metadata".to_string()),
+                },
+            )),
+        },
         ApiError::Base64Decoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::TokenCacheInitialization { source, .. } => DriverError {
@@ -697,7 +802,11 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
         ApiError::ArrowParsing { .. } => StatusCode::InternalError,
+        ApiError::JsonChunkDecoding { .. } => StatusCode::InternalError,
+        ApiError::InlineJsonEncoding { .. } => StatusCode::InternalError,
+        ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
         ApiError::Base64Decoding { .. } => StatusCode::InternalError,
+        ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
     };

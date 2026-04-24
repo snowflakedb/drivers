@@ -595,6 +595,8 @@ message ResultChunk {
 
 message ResultChunksResult {
   repeated ResultChunk chunks = 1;
+  // Result column metadata. Required for CHUNK_FORMAT_JSON (forward verbatim on DatabaseFetchChunkRequest); ignored for CHUNK_FORMAT_ARROW_IPC.
+  repeated ColumnMetadata columns = 2;
 }
 
 // Fetch raw result chunks for a query executed on this statement.
@@ -613,6 +615,8 @@ message StatementResultChunksResponse {
 message DatabaseFetchChunkRequest {
   DatabaseHandle db_handle = 1;
   ResultChunk chunk = 2;
+  // Required when chunk.format == CHUNK_FORMAT_JSON (forward verbatim from ResultChunksResult.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
+  repeated ColumnMetadata columns = 3;
 }
 
 message DatabaseFetchChunkResponse {

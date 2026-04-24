@@ -18,6 +18,7 @@ use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 pub use error::ChunkError;
 use error::*;
+pub(crate) use error::{ArrowIpcEncodingSnafu, ChunkReadingSnafu};
 pub use json_parser::convert_string_rowset_to_arrow_reader;
 use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, PrefetchChunkReader};
 use reqwest::Client;
@@ -96,6 +97,12 @@ pub fn empty_reader() -> Box<dyn RecordBatchReader + Send> {
         vec![],
         Arc::new(Schema::new(Fields::empty())),
     ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkFormatKind {
+    ArrowIpc,
+    Json,
 }
 
 #[derive(Debug, Clone)]
