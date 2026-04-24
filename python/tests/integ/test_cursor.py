@@ -431,19 +431,24 @@ class TestCursorDescription:
     # type metadata even for zero-row results (which hit the SchemaOnly code path).
     EMPTY_SUBQUERY_TYPES = [
         ("1", 0, "FIXED"),
+        ("1.5::FLOAT", 1, "REAL"),
         ("'1'", 2, "TEXT"),
         ("cast('2019-01-01' as date)", 3, "DATE"),
-        ("true", 13, "BOOLEAN"),
-        ("'2013-11-03 00:00:00-07'::timestamptz", 7, "TIMESTAMP_TZ"),
-        ("'2013-11-03 00:00:00-07'::timestamp", 8, "TIMESTAMP_NTZ"),
-        ("ARRAY_CONSTRUCT('a','b','c')", 10, "ARRAY"),
-        ("TO_GEOGRAPHY('POINT(-122.35 37.55)')", 14, "GEOGRAPHY"),
-        ("TO_GEOMETRY('POINT(1820.12 890.56)')", 15, "GEOMETRY"),
         (
             """TO_VARIANT(PARSE_JSON('{"key3": "value3"}'))""",
             5,
             "VARIANT",
         ),
+        ("'2013-11-03 00:00:00'::TIMESTAMP_LTZ", 6, "TIMESTAMP_LTZ"),
+        ("'2013-11-03 00:00:00-07'::timestamptz", 7, "TIMESTAMP_TZ"),
+        ("'2013-11-03 00:00:00-07'::timestamp", 8, "TIMESTAMP_NTZ"),
+        ("OBJECT_CONSTRUCT('key', 'value')", 9, "OBJECT"),
+        ("ARRAY_CONSTRUCT('a','b','c')", 10, "ARRAY"),
+        ("TO_BINARY('48454C4C4F', 'HEX')", 11, "BINARY"),
+        ("'12:00:00'::TIME", 12, "TIME"),
+        ("true", 13, "BOOLEAN"),
+        ("TO_GEOGRAPHY('POINT(-122.35 37.55)')", 14, "GEOGRAPHY"),
+        ("TO_GEOMETRY('POINT(1820.12 890.56)')", 15, "GEOMETRY"),
         ("[1.0, 2.0, 3.0]::VECTOR(FLOAT, 3)", 16, "VECTOR"),
     ]
 
@@ -473,13 +478,18 @@ class TestCursorDescription:
 
     CAST_NULL_TYPES = [
         ("INT", 0, "FIXED"),
+        ("FLOAT", 1, "REAL"),
         ("TEXT", 2, "TEXT"),
         ("DATE", 3, "DATE"),
-        ("BOOLEAN", 13, "BOOLEAN"),
+        ("VARIANT", 5, "VARIANT"),
+        ("TIMESTAMP_LTZ", 6, "TIMESTAMP_LTZ"),
         ("TIMESTAMP_TZ", 7, "TIMESTAMP_TZ"),
         ("TIMESTAMP_NTZ", 8, "TIMESTAMP_NTZ"),
+        ("OBJECT", 9, "OBJECT"),
         ("ARRAY", 10, "ARRAY"),
-        ("VARIANT", 5, "VARIANT"),
+        ("BINARY", 11, "BINARY"),
+        ("TIME", 12, "TIME"),
+        ("BOOLEAN", 13, "BOOLEAN"),
     ]
 
     @pytest.mark.parametrize(
