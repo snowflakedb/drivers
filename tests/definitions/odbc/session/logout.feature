@@ -21,7 +21,7 @@ Feature: Session Logout - ODBC-specific behavior
 
   Scenario: should have enable_server_session_keep_alive_auto_detection default to false
     # Phase 3 (doc for: SNOW-2314152) key default.
-    # ODBC implements Phase 3 from day one: auto-detection is opt-in, not default.
+    # ODBC implements Phase 3 (SNOW-2314152) from day one: auto-detection is opt-in, not default.
     Given Snowflake ODBC connection is created without ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION attribute
     When Connection configuration is checked
     Then enable_server_session_keep_alive_auto_detection defaults to false

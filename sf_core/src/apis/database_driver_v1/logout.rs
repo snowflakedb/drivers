@@ -424,8 +424,8 @@ mod tests {
     }
 
     #[test]
-    fn test_default_config_phase3() {
-        // Given default config (Phase 3: both None - SNOW-2314152)
+    fn test_default_config_unified() {
+        // Given default config (Phase 3 (SNOW-2314152): both None)
         let config = LogoutConfig::default();
         let registry = AsyncQueryRegistry::new();
         registry.register("query1".to_string()).unwrap(); // Should be ignored
@@ -433,11 +433,11 @@ mod tests {
         // When checking decision
         let decision = should_send_logout(&config, Some(&registry));
 
-        // Then should send logout (Phase 3 default: always logout - SNOW-2314152)
+        // Then should send logout (Phase 3 (SNOW-2314152) default: always logout)
         assert_eq!(
             decision,
             LogoutDecision::Send,
-            "Phase 3 default should send logout"
+            "Phase 3 (SNOW-2314152) default should send logout"
         );
     }
 
