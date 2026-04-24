@@ -121,6 +121,34 @@ name = "integration_tests"
 path = "tests/integration/mod.rs"
 
 [[test]]
+name = "logging_tests"
+path = "tests/logging_tests.rs"
+
+[[test]]
+name = "logging_disabled_tests"
+path = "tests/logging_disabled_tests.rs"
+
+[[test]]
+name = "logging_toml_tests"
+path = "tests/logging_toml_tests.rs"
+
+[[test]]
+name = "logging_callback_tests"
+path = "tests/logging_callback_tests.rs"
+
+[[test]]
+name = "logging_for_odbc_tests"
+path = "tests/logging_for_odbc_tests.rs"
+
+[[test]]
+name = "logging_level_filtering_tests"
+path = "tests/logging_level_filtering_tests.rs"
+
+[[test]]
+name = "logging_custom_file_tests"
+path = "tests/logging_custom_file_tests.rs"
+
+[[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 
