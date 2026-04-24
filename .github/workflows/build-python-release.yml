@@ -13,7 +13,7 @@ jobs:
   build_wheels:
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.10","3.11","3.12","3.13","3.14"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"]}'
 
   # ── Test wheels against cloud providers ────────────────────────────
   test_wheels:
@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        py: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        py: ["3.11", "3.12", "3.13", "3.14"]
         hatch_env: ["test", "test-pandas"]
         cloud_provider: ["aws", "gcp", "azure"]
         exclude:
@@ -85,61 +85,10 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
-  # ── Build sdist ────────────────────────────────────────────────────
-  build_sdist:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache proto generator target
-        uses: actions/cache@v5
-        with:
-          path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-proto-target-
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
-        with:
-          version: "0.9.28"
-
-      - name: Set up Python
-        run: uv python install ${{ env.SDIST_PYTHON_VERSION }}
-
-      - name: Build sdist
-        working-directory: ./python
-        run: >
-          uv run --python ${{ env.SDIST_PYTHON_VERSION }}
-          --with hatch --with cython --with setuptools --with "virtualenv<21.0.0"
-          hatch build --target sdist
-        env:
-          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
-
-      - name: Inspect sdist
-        working-directory: ./python
-        run: tar tzf dist/*.tar.gz | head -40
-
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-sdist
-          path: python/dist/*.tar.gz
-
   # ── Test sdist (aws, with and without pandas) ──────────────────────
+  # sdist is built by the reusable _build-python-wheels.yml workflow
   test_sdist:
-    needs: build_sdist
+    needs: build_wheels
     strategy:
       fail-fast: false
       matrix:
@@ -216,7 +165,7 @@ jobs:
 
   # ── Status gate ────────────────────────────────────────────────────
   release_status:
-    needs: [build_wheels, test_wheels, build_sdist, test_sdist]
+    needs: [build_wheels, test_wheels, test_sdist]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -226,12 +175,10 @@ jobs:
 
           if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build_sdist.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_sdist.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "FAILED"
             echo "  build_wheels: ${{ needs.build_wheels.result }}"
             echo "  test_wheels:  ${{ needs.test_wheels.result }}"
-            echo "  build_sdist:  ${{ needs.build_sdist.result }}"
             echo "  test_sdist:   ${{ needs.test_sdist.result }}"
             exit 1
           fi
@@ -239,5 +186,4 @@ jobs:
           echo "PASSED"
           echo "  build_wheels: ${{ needs.build_wheels.result }}"
           echo "  test_wheels:  ${{ needs.test_wheels.result }}"
-          echo "  build_sdist:  ${{ needs.build_sdist.result }}"
           echo "  test_sdist:   ${{ needs.test_sdist.result }}"
