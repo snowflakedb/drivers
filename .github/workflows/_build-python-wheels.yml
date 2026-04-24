@@ -36,7 +36,6 @@ jobs:
                   "container": "quay.io/pypa/manylinux_2_28_x86_64",
                   "lib_name": "libsf_core.so",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
-                  "rust_target": "",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_x86_64",
                   "artifact_id": "manylinux_x86_64",
@@ -57,7 +56,6 @@ jobs:
                   "container": "",
                   "lib_name": "sf_core.dll",
                   "cargo_extra_args": "--config profile.release.opt-level=2 --config profile.release.strip=false",
-                  "rust_target": "",
                   "wheel_method": "manual",
                   "artifact_id": "win_arm64",
               },
@@ -83,7 +81,6 @@ jobs:
                       "container": p["container"],
                       "lib_name": p["lib_name"],
                       "cargo_extra_args": p["cargo_extra_args"],
-                      "rust_target": p["rust_target"],
                   })
 
               if p["wheel_method"] == "cibuildwheel":
@@ -131,7 +128,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Linux container setup (native builds: x86 in manylinux container) ──
+      # ── Linux container setup ──
       - name: Install Rust toolchain (container)
         if: matrix.container != ''
         run: |
@@ -141,15 +138,6 @@ jobs:
       - name: Install vendored OpenSSL build deps (container)
         if: matrix.container != ''
         run: yum install -y perl-IPC-Cmd perl-Time-Piece
-
-      # ── Linux cross-compilation setup (aarch64 on x86 host) ──
-      - name: Install cross-compilation toolchain
-        if: matrix.rust_target != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          rustup target add ${{ matrix.rust_target }}
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       # ── Windows ARM64 OpenSSL setup ──
       - name: Capture vcpkg version for cache key
@@ -189,10 +177,7 @@ jobs:
 
       - name: Build sf_core (Linux)
         if: runner.os == 'Linux'
-        run: >
-          cargo build --release --package sf_core
-          ${{ matrix.cargo_extra_args }}
-          ${{ matrix.rust_target != '' && format('--target {0}', matrix.rust_target) || '' }}
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
 
       - name: Build sf_core (Windows ARM64)
         if: runner.os == 'Windows'
@@ -205,7 +190,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sf-core-${{ matrix.target }}
-          path: target/${{ matrix.rust_target != '' && format('{0}/release', matrix.rust_target) || 'release' }}/${{ matrix.lib_name }}
+          path: target/release/${{ matrix.lib_name }}
 
       - name: Save Rust cache
         if: always()
@@ -333,10 +318,6 @@ jobs:
         with:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen
-
-      - name: Set up QEMU
-        if: contains(matrix.cibw_build, 'aarch64')
-        uses: docker/setup-qemu-action@v3
 
       - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v3.4
