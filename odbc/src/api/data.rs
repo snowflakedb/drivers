@@ -10,7 +10,9 @@ use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
 };
 use crate::conversion::warning::Warnings;
-use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
+use crate::conversion::{
+    Binding, ColumnConverter, ConversionError, NumericSettings, make_converter,
+};
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
 use arrow::ffi_stream::ArrowArrayStreamReader;
@@ -18,6 +20,8 @@ use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
 
+/// One-shot conversion used on the `SQLGetData` path; caching is not
+/// worthwhile because only a single cell is read per call.
 fn read_arrow_value(
     binding: &Binding,
     array_ref: &dyn Array,
@@ -26,9 +30,101 @@ fn read_arrow_value(
     numeric_settings: &NumericSettings,
     get_data_offset: &mut Option<usize>,
 ) -> Result<Warnings, ConversionError> {
-    let converter = make_converter(field, array_ref, numeric_settings)?;
-    let warnings = converter.convert_arrow_value(batch_idx, binding, get_data_offset)?;
+    let converter = make_converter(field, numeric_settings)?;
+    let warnings = converter.convert_arrow_value(array_ref, batch_idx, binding, get_data_offset)?;
     Ok(warnings)
+}
+
+/// Per-batch cache of converters and `Binding` snapshots for the bound
+/// columns. Lets the `SQLFetch` inner loop avoid rebuilding a converter and
+/// re-reading the ARD `HashMap` for every cell. Lives for one fetch call and
+/// is rebuilt whenever the cursor crosses into a new `RecordBatch`.
+struct FetchConverterCache {
+    /// `Arc::as_ptr(record_batch.column(0))` when the batch has columns,
+    /// otherwise the schema `Arc` pointer. Null means "no cache yet".
+    batch_identity: *const (),
+    entries: Vec<CachedColumn>,
+}
+
+struct CachedColumn {
+    /// `usize::MAX` sentinels an out-of-range column (logged + skipped).
+    arrow_col: usize,
+    /// Snapshot of the ARD `Binding` so the inner loop never touches the
+    /// `HashMap`. Safe because bindings cannot mutate during `SQLFetch`.
+    binding: Binding,
+    converter: Option<Box<dyn ColumnConverter>>,
+}
+
+impl FetchConverterCache {
+    fn new() -> Self {
+        Self {
+            batch_identity: std::ptr::null(),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Rebuild the cache if the current `RecordBatch` differs from the
+    /// cached one (or if the cache is empty).
+    fn refresh_if_needed(
+        &mut self,
+        stmt: &Statement,
+        numeric_settings: &NumericSettings,
+    ) -> OdbcResult<()> {
+        let StatementState::Fetching { record_batch, .. } = stmt.state.as_ref() else {
+            return Ok(());
+        };
+
+        let identity: *const () = if record_batch.num_columns() > 0 {
+            std::sync::Arc::as_ptr(record_batch.column(0)) as *const ()
+        } else {
+            std::sync::Arc::as_ptr(&record_batch.schema()) as *const ()
+        };
+
+        // `batch_identity` is null after `new()` and only set to a real
+        // `Arc::as_ptr` after a successful rebuild, so it doubles as the
+        // "have we ever populated this cache?" sentinel — no extra check
+        // needed for the empty-bindings case.
+        if identity == self.batch_identity {
+            return Ok(());
+        }
+
+        let schema = record_batch.schema();
+        self.entries.clear();
+        self.entries.reserve(stmt.ard.bindings.len());
+
+        for (&column_number, binding) in &stmt.ard.bindings {
+            // ODBC reserves column 0 for bookmarks; `checked_sub` also guards
+            // debug-mode panics if `SQLBindCol` accepted a 0.
+            let arrow_col = (column_number as usize).checked_sub(1);
+            let in_range = arrow_col.is_some_and(|idx| idx < schema.fields().len());
+            if !in_range {
+                // Log once per batch rebuild, not once per fetched row.
+                tracing::error!(
+                    "fetch converter cache: column_number {} is out of range \
+                     (schema has {} columns)",
+                    column_number,
+                    schema.fields().len(),
+                );
+                self.entries.push(CachedColumn {
+                    arrow_col: usize::MAX,
+                    binding: *binding,
+                    converter: None,
+                });
+                continue;
+            }
+            let arrow_col = arrow_col.unwrap();
+            let field = schema.field(arrow_col);
+            let converter = make_converter(field, numeric_settings).context(ConversionSnafu)?;
+            self.entries.push(CachedColumn {
+                arrow_col,
+                binding: *binding,
+                converter: Some(converter),
+            });
+        }
+
+        self.batch_identity = identity;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -192,12 +288,16 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let row_status_ptr = stmt.ird.array_status_ptr;
     let rows_fetched_ptr = stmt.ird.rows_processed_ptr;
 
+    let mut cache = FetchConverterCache::new();
+
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut stmt.state)?;
+        let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
+        cache.refresh_if_needed(stmt, &numeric_settings)?;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
-        match execute_bindings_for_row(stmt, 0, 0, 0) {
+        match execute_bindings_for_row(stmt, &cache, 0, 0, 0) {
             Ok(row_warnings) => {
                 let status = if row_warnings.is_empty() {
                     RowStatus::Success
@@ -223,12 +323,28 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
 
     let mut rows_fetched: usize = 0;
     let mut has_error = false;
+    let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
 
     for row_idx in 0..array_size {
         match advance_cursor(&mut stmt.state) {
             Ok(()) => {
+                if let Err(e) = cache.refresh_if_needed(stmt, &numeric_settings) {
+                    if rows_fetched == 0 {
+                        return Err(e);
+                    }
+                    write_row_status(row_status_ptr, row_idx, RowStatus::Error);
+                    has_error = true;
+                    // Errored rows count toward `SQL_ATTR_ROWS_FETCHED_PTR`
+                    // per the ODBC spec, so the row-status array and the
+                    // reported count stay consistent.
+                    rows_fetched += 1;
+                    for remaining in (row_idx + 1)..array_size {
+                        write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+                    }
+                    break;
+                }
                 rows_fetched += 1;
-                match execute_bindings_for_row(stmt, row_idx, bind_type, bind_offset) {
+                match execute_bindings_for_row(stmt, &cache, row_idx, bind_type, bind_offset) {
                     Ok(w) => {
                         let status = if w.is_empty() {
                             RowStatus::Success
@@ -256,6 +372,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 }
                 write_row_status(row_status_ptr, row_idx, RowStatus::Error);
                 has_error = true;
+                rows_fetched += 1;
                 for remaining in (row_idx + 1)..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
@@ -415,9 +532,11 @@ fn adjust_binding_for_row(
     }
 }
 
-/// Execute column bindings for a single row within a block-cursor fetch.
+/// Execute column bindings for a single row within a block-cursor fetch
+/// using the pre-built `FetchConverterCache`.
 fn execute_bindings_for_row(
-    stmt: &mut Statement,
+    stmt: &Statement,
+    cache: &FetchConverterCache,
     row_idx: usize,
     bind_type: usize,
     bind_offset: isize,
@@ -430,41 +549,17 @@ fn execute_bindings_for_row(
     } = stmt.state.as_ref()
     {
         let batch_idx = *batch_idx;
-        let schema = record_batch.schema();
-        let bindings: Vec<(u16, Binding)> = stmt
-            .ard
-            .bindings
-            .iter()
-            .map(|(&col, b)| {
-                (
-                    col,
-                    adjust_binding_for_row(b, row_idx, bind_type, bind_offset),
-                )
-            })
-            .collect();
 
-        for (column_number, adjusted) in &bindings {
-            let arrow_col = *column_number as usize - 1;
-            if arrow_col >= schema.fields().len() {
-                tracing::error!(
-                    "execute_bindings_for_row: column_number {} is out of range",
-                    column_number
-                );
+        for cached in &cache.entries {
+            // Out-of-range columns were reported once in `refresh_if_needed`.
+            let Some(converter) = cached.converter.as_deref() else {
                 continue;
-            }
-            let array_ref = record_batch.column(arrow_col);
-            let field = schema.field(arrow_col);
-            let w = read_arrow_value(
-                adjusted,
-                array_ref,
-                field,
-                batch_idx,
-                // SAFETY: conn pointer is valid for the statement's lifetime;
-                // no mutable reference to the Connection exists in this scope.
-                &unsafe { stmt.conn() }.connection.numeric_settings,
-                &mut None,
-            )
-            .context(ConversionSnafu)?;
+            };
+            let adjusted = adjust_binding_for_row(&cached.binding, row_idx, bind_type, bind_offset);
+            let array_ref = record_batch.column(cached.arrow_col);
+            let w = converter
+                .convert_arrow_value(array_ref.as_ref(), batch_idx, &adjusted, &mut None)
+                .context(ConversionSnafu)?;
             warnings.extend(w);
         }
     }
