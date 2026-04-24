@@ -81,8 +81,9 @@ pub trait ColumnConverter {
     /// Convert each row in `arrow_row_range` into `outputs[i]`, skipping
     /// rows that already hold `Err` (preserving row-major "first error
     /// aborts the row" semantics). The per-row `Binding` is materialised
-    /// inline via `BindingStrides::for_row`. Default impl is per-cell;
-    /// `Converter<A, T>` overrides it to downcast once per segment.
+    /// inline via `BindingStrides::for_row`. Default impl is per-cell via
+    /// [`per_cell_convert_range`]; `Converter<A, T>` overrides it to
+    /// downcast once per segment.
     fn convert_arrow_range(
         &self,
         array: &dyn Array,
@@ -92,20 +93,43 @@ pub trait ColumnConverter {
         strides: BindingStrides,
         outputs: &mut [Result<Warnings, ConversionError>],
     ) {
-        for (i, batch_idx) in arrow_row_range.enumerate() {
-            if outputs[i].is_err() {
-                continue;
+        per_cell_convert_range(
+            self,
+            array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+        );
+    }
+}
+
+/// Shared per-row loop used by both the default `convert_arrow_range`
+/// impl and the downcast-failure fallback in `Converter`. Extracted so
+/// the row-skip / first-error semantics live in exactly one place.
+fn per_cell_convert_range(
+    converter: &(impl ColumnConverter + ?Sized),
+    array: &dyn Array,
+    arrow_row_range: std::ops::Range<usize>,
+    base_binding: &Binding,
+    out_row_start: usize,
+    strides: BindingStrides,
+    outputs: &mut [Result<Warnings, ConversionError>],
+) {
+    for (i, batch_idx) in arrow_row_range.enumerate() {
+        if outputs[i].is_err() {
+            continue;
+        }
+        let binding = strides.for_row(base_binding, out_row_start + i);
+        match converter.convert_arrow_value(array, batch_idx, &binding, &mut None) {
+            Ok(w) => {
+                if let Ok(existing) = &mut outputs[i] {
+                    existing.extend(w);
+                }
             }
-            let binding = strides.for_row(base_binding, out_row_start + i);
-            match self.convert_arrow_value(array, batch_idx, &binding, &mut None) {
-                Ok(w) => {
-                    if let Ok(existing) = &mut outputs[i] {
-                        existing.extend(w);
-                    }
-                }
-                Err(e) => {
-                    outputs[i] = Err(e);
-                }
+            Err(e) => {
+                outputs[i] = Err(e);
             }
         }
     }
@@ -163,22 +187,15 @@ impl<
         outputs: &mut [Result<Warnings, ConversionError>],
     ) {
         let Some(arrow_array) = array.as_any().downcast_ref::<ArrowArrayType>() else {
-            for (i, batch_idx) in arrow_row_range.enumerate() {
-                if outputs[i].is_err() {
-                    continue;
-                }
-                let binding = strides.for_row(base_binding, out_row_start + i);
-                match self.convert_arrow_value(array, batch_idx, &binding, &mut None) {
-                    Ok(w) => {
-                        if let Ok(existing) = &mut outputs[i] {
-                            existing.extend(w);
-                        }
-                    }
-                    Err(e) => {
-                        outputs[i] = Err(e);
-                    }
-                }
-            }
+            per_cell_convert_range(
+                self,
+                array,
+                arrow_row_range,
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            );
             return;
         };
 
