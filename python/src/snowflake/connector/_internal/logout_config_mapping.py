@@ -11,11 +11,6 @@ from enum import Enum
 from typing import Optional
 
 
-# Timeout and attempt defaults are owned by Core (sf_core/src/config/logout.rs).
-# Python sends None for these fields → Core uses its own defaults (15s, 3 attempts).
-# Only error_strategy is explicitly set by Python (BestEffort for backward compat).
-
-
 class LogoutOptionKeys(str, Enum):
     """Core API option key strings for logout configuration.
 
