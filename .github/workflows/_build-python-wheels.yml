@@ -324,6 +324,11 @@ jobs:
           for whl in python/dist/*.whl; do
             echo "=== $(basename $whl) ==="
             auditwheel show "$whl"
+            # Enforce manylinux_2_28 tag
+            if ! auditwheel show "$whl" 2>&1 | grep -q 'manylinux_2_28'; then
+              echo "::error::Wheel $(basename $whl) does not meet manylinux_2_28 policy"
+              exit 1
+            fi
           done
 
       - name: Upload wheel
