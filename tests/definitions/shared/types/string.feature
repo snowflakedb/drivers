@@ -1,4 +1,4 @@
-@odbc @python @jdbc
+@odbc @python @jdbc @core_not_needed
 Feature: String datatype handling
   # Snowflake String types: VARCHAR, CHAR, CHARACTER, NCHAR, STRING, TEXT, VARCHAR2, NVARCHAR, NVARCHAR2, CHAR VARYING, NCHAR VARYING
   # All are synonymous with VARCHAR and store Unicode UTF-8 characters.

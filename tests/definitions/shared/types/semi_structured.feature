@@ -1,4 +1,4 @@
-@python @odbc
+@python @odbc @core_not_needed
 Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
   # Snowflake semi-structured types: VARIANT, OBJECT, ARRAY
   # Internal representation varies by driver and result format (JSON string, parsed

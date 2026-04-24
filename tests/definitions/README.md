@@ -4,21 +4,19 @@ This directory contains Gherkin feature files that define test scenarios for the
 
 ## Directory Structure
 
-Features are organized into two categories:
+All feature files must live under `shared/`:
 
-- **`shared/`** - Multi-language test features (implemented across multiple drivers)
-  - `authentication/`, `http/`, `put_get/`, `query/`, `tls/`
-- **`core/`** - Core (Rust) driver-only features (marked with `@core_only`)
-- **`python/`** - Python driver-only features (marked with `@python_only`)
-- **`odbc/`** - ODBC driver-only features (marked with `@odbc_only`)
-- **`jdbc/`** - JDBC driver-only features (marked with `@jdbc_only`)
+- **`shared/`** - All test feature definitions
+  - `authentication/`, `http/`, `put_get/`, `query/`, `session/`, `tls/`, `types/`
+
+Language-specific directories (`core/`, `python/`, `odbc/`, `jdbc/`) are **not allowed**. Non-shared (language-specific) test Gherkin steps should be added directly in test files as comments, not in separate feature files.
 
 ## Test Types
 
 ### E2E Tests
-- Tests that requires connection to Snowflake deployment
+- Tests that require connection to Snowflake deployment
 
-### Integration Tests  
+### Integration Tests
 - Tests that are testing multiple layers, but are not connecting to Snowflake
 
 ## Annotations
@@ -27,19 +25,15 @@ Features are organized into two categories:
 - **Required**: `@{driver}` - Specifies which drivers should implement this feature
   - **Example**: `@core @python`
 - **Exclusions**: `@{driver}_not_needed` - Excludes ALL scenarios in this feature for the specified driver
-  - **Example**: `@python_not_needed` means no Python tests needed for this feature
+  - **Example**: `@core_not_needed` means no Core (Rust) tests needed for this feature
 
 **Feature Level Behavior:**
 - **If feature has NO driver annotation**: All scenarios marked as "TODO" by default
 - **Feature-level exclusion**: `@{driver}_not_needed` on feature excludes ALL scenarios for that driver
-- **Language-specific features**: Detected by folder location (e.g., `core/`, `python/`)
-  - Features in language-specific folders can ONLY have tags for that driver
-  - Example: Features in `core/` can only use `@core`, `@core_e2e`, `@core_int`
-  - Excluded from cross-language coverage calculations
 
-### Scenario Level  
+### Scenario Level
 - **Test Types**: `@{driver}_{test_type}` - Specifies driver and test type
-  - **Test Types**: `_e2e` (end-to-end), `_int` (integration)
+  - **Test Types**: `_e2e` (end-to-end), `_int` (integration), `_unit` (unit)
   - **Examples**: `@core_e2e`, `@python_int`
 - **Exclusions**: `@{driver}_not_needed` - Excludes scenario for specific driver
   - **Example**: `@python_not_needed`
@@ -50,33 +44,47 @@ Features are organized into two categories:
 - HTML Report: Shows "-" when excluded, "TODO" when expected but not implemented
 - Coverage calculations include TODO scenarios as expected implementations
 
+### Language-Specific Scenarios
+
+If a scenario is truly language-specific (e.g., Python tuple/list handling, ODBC SQLSetConnectAttr forwarding), it should **not** be in the shared feature file. Instead, move the test to a separate driver-specific test file and add Gherkin steps as comments directly in the test code. The validator will not track these.
+
+If a scenario has a single-language tag but the behavior **could be shared** (other drivers just haven't implemented it yet), keep it in the shared feature file with the appropriate tag. Other drivers will see it as "TODO" in coverage reports.
+
 ## Validator & HTML Report Flow
 
 1. **Validator** (`tests_format_validator/`)
-   - Ensures every Gherkin scenario for which driver specific annotation is added, has a corresponding test method implementation with correct name and comments containing Gherkin steps
-   
+   - Ensures every Gherkin scenario for which a driver-specific annotation is added has a corresponding test method implementation with correct name and comments containing Gherkin steps
+   - Validates that all feature files are under `shared/`
+   - Detects orphaned test files (tests with no matching feature scenario)
+   - Checks that every test method has at least one `When` and `Then` step comment
+
 2. **Coverage Report** (`tests/test_coverage_report/`)
    - Creates interactive HTML dashboards showing test coverage status and Behavior Difference annotations for easy visualization
 
 ## Adding New Tests
 
-1. **Choose location** - Determine if the feature is shared or language-specific:
-   - **Shared features**: Place in `shared/{category}/` (e.g., `shared/authentication/`)
-   - **Language-specific features**: Place in `{driver}/{category}/` (e.g., `core/tls/`, `python/http/`)
+1. **Choose location** - All feature files go in `shared/{category}/` (e.g., `shared/authentication/`)
 2. **Write the feature file** - Create a `.feature` file with Gherkin scenarios
 3. **Add appropriate tags**:
    - Tag feature with `@{driver}` (e.g., `@core`, `@python`, or `@core @python`)
-   - Tag scenarios with `@{driver}_{test_type}` format (`_e2e` or `_int`)
-   - **Important**: Features in language-specific folders must only use tags for that driver
-     - Example: `core/` features can only have `@core` tags, not `@python`
+   - Use `@{driver}_not_needed` to exclude drivers that don't need this feature
+   - Tag scenarios with `@{driver}_{test_type}` format (`_e2e`, `_int`, or `_unit`)
 4. **Implement tests** - Write tests with corresponding test steps added as comments in each tagged driver's test suite:
    - **E2E tests**: use `e2e/` directories
    - **Integration tests**: use `integration/` directories
 5. **Run validator** - Use the format validator to check all scenarios have matching implementations (it is added to pre-commit)
 
+### Adding Language-Specific Tests
+
+If a test is specific to one driver and does not belong in a shared feature:
+
+1. Add the test directly in the driver's test directory
+2. Include Gherkin step comments (`// Given`, `// When`, `// Then`) in the test method
+3. No feature file is needed — the validator does not track these
+
 ## Behavior Differences (BD)
 
-Behavior Differences document changes in driver behaviour between New and Old drivers. 
+Behavior Differences document changes in driver behaviour between New and Old drivers.
 Each Behaviour Difference will have separate assertions for New and Old drivers.
 
 ### BD Types
@@ -145,3 +153,5 @@ NEW_DRIVER_ONLY("BD#1") {
 - **Descriptive scenario names** - Use "should" statements
 - **Clear Given-When-Then flow** - Setup → Action → Verification
 - **Preferably one WHEN per scenario** - Each scenario should test one specific action (some exceptions for tests with long setup steps could be allowed)
+- **Every test method must have at least one When and Then step** - The validator enforces this
+- **No empty steps** - Every step comment must be followed by implementation code before the next step comment

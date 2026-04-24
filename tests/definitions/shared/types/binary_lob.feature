@@ -1,4 +1,4 @@
-@python @jdbc
+@python @jdbc @core_not_needed
 Feature: Binary LOB (Large Object) handling
   # Snowflake LOB feature supports these large BINARY values:
   #   - Default (pre-2025_03 bundle): Maximum 8 MB (8,388,608 bytes)
