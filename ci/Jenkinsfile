@@ -351,7 +351,7 @@ pipeline {
                     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
                       sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
                     }
-                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+                    sh label: 'Install system dependencies', script: 'yum install -y unzip libffi-devel'
 
                     try {
                       sh label: 'Setup Python 3.13', script: '''
