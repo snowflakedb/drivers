@@ -828,6 +828,42 @@ mod tests {
     }
 
     #[test]
+    fn server_generic_error_does_not_sniff_message_text() {
+        // Regression guard: this code path used to upgrade GenericError
+        // to a more specific SqlState by substring-matching the
+        // human-readable message ("SQL compilation error",
+        // "out of representable range", "too long and would be
+        // truncated"). That heuristic is gone — when sf_core supplies
+        // no SQLSTATE, the answer is HY000 regardless of message
+        // content. Classification belongs to the server.
+        let sniffable_messages = [
+            "SQL compilation error: invalid identifier 'X'",
+            "Number out of representable range: type FIXED[SB2](3,0), value 99999",
+            "String 'hello world' is too long and would be truncated",
+        ];
+        for message in sniffable_messages {
+            let odbc_err = OdbcError::CoreError {
+                source: Box::new(CoreProtobufError::Application {
+                    error: Box::new(ErrorType::GenericError(
+                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                    )),
+                    message: message.to_string(),
+                    status_code: 0,
+                    error_trace: vec![],
+                    sql_state: None,
+                    location: snafu::Location::new("test", 0, 0),
+                }),
+                location: snafu::Location::new("test", 0, 0),
+            };
+            assert_eq!(
+                odbc_err.to_sql_state(),
+                SqlState::GeneralError,
+                "message {message:?} must not be sniffed for SQLSTATE",
+            );
+        }
+    }
+
+    #[test]
     fn server_unknown_sql_state_passes_through_verbatim() {
         // When the server sends a SQLSTATE that's not in our enum (here
         // "22000", the generic data-exception class that Snowflake returns

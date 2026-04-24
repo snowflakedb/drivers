@@ -87,15 +87,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR exceeding fixed-si
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the insert is rejected with SQL_ERROR and SQLSTATE 22000
+  // Then the insert is rejected with SQL_ERROR and a server-supplied
+  // SQLSTATE (one of HY000, 22000, or 22001 — see below for why)
   //
   // The server normally returns SQLSTATE 22000 (generic data exception)
-  // for this scenario, which the driver forwards verbatim. Two
-  // additional outcomes are also acceptable: if the server omits
-  // sqlState entirely the driver falls back to HY000; if it omits
-  // sqlState but supplies Snowflake error code 100078,
-  // sf_core::sql_state_from_code recovers 22001. We accept any of these
-  // three rather than promoting a specific value client-side.
+  // for this scenario, which the driver forwards verbatim. Two further
+  // outcomes are also acceptable: if the server omits sqlState entirely
+  // the driver falls back to HY000; if it omits sqlState but supplies
+  // Snowflake error code 100078, sf_core::sql_state_from_code recovers
+  // 22001. We accept any of these three rather than promoting a
+  // specific value client-side.
   CHECK(ret == SQL_ERROR);
   std::string sqlstate = get_sqlstate(stmt);
   CHECK((sqlstate == "HY000" || sqlstate == "22000" || sqlstate == "22001"));
