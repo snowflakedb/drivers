@@ -1,10 +1,10 @@
 use crate::api::CDataType;
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
-    InvalidDescriptorIndexSnafu, InvalidDuringDaeSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu,
-    NullPointerSnafu, OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu,
-    UnsupportedFeatureSnafu,
+    InternalSnafu, InvalidBufferLengthSnafu, InvalidCursorPositionSnafu,
+    InvalidCursorStateSnafu, InvalidDescriptorIndexSnafu, InvalidDuringDaeSnafu,
+    MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcError,
+    StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -416,7 +416,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
         // `advance_cursor` already landed on the first row of the segment;
         // skip the rest so the next call lands on the row after it.
         if segment_len > 1 {
-            bump_batch_idx(&mut stmt.state, segment_len - 1);
+            bump_batch_idx(&mut stmt.state, segment_len - 1)?;
         }
     }
 
@@ -444,11 +444,22 @@ fn current_batch_idx(stmt: &Statement) -> usize {
 
 /// Advance `batch_idx` by `delta` rows within the current `RecordBatch`
 /// (caller must ensure the batch has at least `delta` more rows left).
-fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) {
+///
+/// Returns `OdbcError::InternalError` when an invariant is violated:
+///   * advancing would cross the batch boundary, or
+///   * the statement is not in the `Fetching` state.
+///
+/// Both indicate a driver bug; raising a real error (instead of a
+/// `debug_assert!` no-op in release builds) prevents silent cursor
+/// corruption and surfaces the problem to the application.
+fn bump_batch_idx(
+    state: &mut crate::api::State<StatementState>,
+    delta: usize,
+) -> OdbcResult<()> {
     if delta == 0 {
-        return;
+        return Ok(());
     }
-    let _: Result<(), ()> = state.transition_or_err(|s| match s {
+    state.transition_or_err(|s| match s {
         StatementState::Fetching {
             reader,
             record_batch,
@@ -456,13 +467,24 @@ fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) {
             rows_affected,
             origin,
         } => {
-            debug_assert!(
-                batch_idx + delta < record_batch.num_rows(),
-                "bump_batch_idx crossed batch boundary (delta={}, batch_idx={}, num_rows={})",
-                delta,
-                batch_idx,
-                record_batch.num_rows(),
-            );
+            let num_rows = record_batch.num_rows();
+            if batch_idx + delta >= num_rows {
+                let err = InternalSnafu {
+                    message: format!(
+                        "bump_batch_idx crossed batch boundary (delta={delta}, \
+                         batch_idx={batch_idx}, num_rows={num_rows})"
+                    ),
+                }
+                .build();
+                let restored = StatementState::Fetching {
+                    reader,
+                    record_batch,
+                    batch_idx,
+                    rows_affected,
+                    origin,
+                };
+                return Err((restored, err));
+            }
             Ok((
                 StatementState::Fetching {
                     reader,
@@ -475,10 +497,13 @@ fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) {
             ))
         }
         other => {
-            debug_assert!(false, "bump_batch_idx called outside Fetching state",);
-            Err((other, ()))
+            let err = InternalSnafu {
+                message: "bump_batch_idx called outside Fetching state".to_string(),
+            }
+            .build();
+            Err((other, err))
         }
-    });
+    })
 }
 
 /// `SQLFetchScroll` — currently only `SQL_FETCH_NEXT` is supported.
