@@ -7,7 +7,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
-  SDIST_PYTHON_VERSION: "3.13"
 
 jobs:
   # ── Build wheels (shared reusable workflow) ────────────────────────
@@ -16,20 +15,27 @@ jobs:
     with:
       targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"]}'
 
-  # ── Test wheels against cloud providers ────────────────────────────
-  test_wheels:
+  # ── Test wheels and sdist against cloud providers ───────────────────
+  # Each Python version tested once per env, cloud providers distributed evenly.
+  # Python 3.10 tests from sdist (builds sf_core from source), others from wheels.
+  test:
     needs: build_wheels
     strategy:
       fail-fast: false
       matrix:
-        py: ["3.11", "3.12", "3.13", "3.14"]
-        hatch_env: ["test", "test-pandas"]
-        cloud_provider: ["aws", "gcp", "azure"]
-        exclude:
-          - hatch_env: "test-pandas"
-            cloud_provider: "gcp"
-          - hatch_env: "test-pandas"
-            cloud_provider: "azure"
+        include:
+          # test env — cloud providers rotated across versions
+          - { py: "3.10", hatch_env: "test",        cloud_provider: "aws"   }
+          - { py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
+          - { py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
+          - { py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
+          # test-pandas env
+          - { py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { py: "3.11", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
     runs-on: ubuntu-latest
     name: test (${{ matrix.hatch_env }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
@@ -56,10 +62,27 @@ jobs:
         run: uv python install ${{ matrix.py }}
 
       - name: Download wheel
+        if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
           name: manylinux_x86_64_py${{ matrix.py }}
           path: python/dist
+
+      - name: Download sdist
+        if: matrix.py == '3.10'
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist
+
+      # sdist installs build sf_core from source, so Rust is needed
+      - name: Restore Rust cache (sdist)
+        if: matrix.py == '3.10'
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sdist-test
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -70,12 +93,30 @@ jobs:
         run: uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel
+        if: matrix.py != '3.10'
         working-directory: python
         run: |
-          PY_TAG="cp$(echo '${{ matrix.py }}' | tr -d '.')"
-          export WHEEL_PATH="$(ls dist/*-${PY_TAG}-*.whl | head -1)"
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from sdist
+        if: matrix.py == '3.10'
+        working-directory: python
+        run: |
+          SDISTS=(dist/*.tar.gz)
+          if [[ ${#SDISTS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 sdist, found ${#SDISTS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${SDISTS[0]}"
+          echo "Installing sdist: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        env:
+          SKIP_CORE_BUILD: "false"
 
       - name: Run tests
         working-directory: python
@@ -86,70 +127,18 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
-  # ── Test sdist (aws, with and without pandas) ──────────────────────
-  # sdist is built by the reusable _build-python-wheels.yml workflow
-  test_sdist:
-    needs: build_wheels
-    strategy:
-      fail-fast: false
-      matrix:
-        hatch_env: ["test", "test-pandas"]
-    runs-on: ubuntu-latest
-    name: test_sdist (${{ matrix.hatch_env }})
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Save Rust cache (sdist)
+        if: always() && matrix.py == '3.10'
+        uses: ./.github/actions/cargo-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
-        with:
-          version: "0.9.28"
-
-      - name: Set up Python ${{ env.SDIST_PYTHON_VERSION }}
-        run: uv python install ${{ env.SDIST_PYTHON_VERSION }}
-
-      - name: Download sdist
-        uses: actions/download-artifact@v4
-        with:
-          name: python-sdist
-          path: python/dist
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh aws
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-
-      - name: Install Hatch
-        run: uv tool install hatch --with "virtualenv<21.0.0"
-
-      - name: Install snowflake ud driver from sdist
-        working-directory: python
-        run: hatch run ${{ matrix.hatch_env }}.py${{ env.SDIST_PYTHON_VERSION }}:install-wheel
-        env:
-          WHEEL_PATH: dist/*.tar.gz
-          SKIP_CORE_BUILD: "false"
-
-      - name: Run tests
-        working-directory: python
-        run: |
-          hatch run ${{ matrix.hatch_env }}.py${{ env.SDIST_PYTHON_VERSION }}:cov \
-            --junitxml=reports/sdist-${{ matrix.hatch_env }}.xml
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+          mode: save
+          shared-key: sdist-test
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # ── Clean up intermediate artifacts ────────────────────────────────
   cleanup:
-    needs: [build_wheels, test_wheels]
+    needs: [build_wheels, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -166,7 +155,7 @@ jobs:
 
   # ── Status gate ────────────────────────────────────────────────────
   release_status:
-    needs: [build_wheels, test_wheels, test_sdist]
+    needs: [build_wheels, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -175,16 +164,13 @@ jobs:
           echo "=== Python Release Build Status ==="
 
           if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.test_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.test_sdist.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "FAILED"
             echo "  build_wheels: ${{ needs.build_wheels.result }}"
-            echo "  test_wheels:  ${{ needs.test_wheels.result }}"
-            echo "  test_sdist:   ${{ needs.test_sdist.result }}"
+            echo "  test:         ${{ needs.test.result }}"
             exit 1
           fi
 
           echo "PASSED"
           echo "  build_wheels: ${{ needs.build_wheels.result }}"
-          echo "  test_wheels:  ${{ needs.test_wheels.result }}"
-          echo "  test_sdist:   ${{ needs.test_sdist.result }}"
+          echo "  test:         ${{ needs.test.result }}"
