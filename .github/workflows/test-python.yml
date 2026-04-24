@@ -136,7 +136,7 @@ jobs:
             hatch_env: "test"
             cloud_provider: gcp
           - os: windows-11-arm
-            py: "3.10"
+            py: "3.11"
             hatch_env: "test"
             cloud_provider: azure
           # test integration with Pandas
@@ -299,19 +299,8 @@ jobs:
           WHEEL_PATH: dist/*.tar.gz
           SKIP_CORE_BUILD: "false"
 
-      - name: Install snowflake ud driver from sdist (Windows)
-        if: runner.os == 'Windows' && matrix.py == '3.10'
-        working-directory: python
-        shell: pwsh
-        run: |
-          Write-Host "Installing from sdist: $(Get-ChildItem dist/*.tar.gz)"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-        env:
-          WHEEL_PATH: dist/*.tar.gz
-          SKIP_CORE_BUILD: "false"
-
       - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows'
         working-directory: python
         shell: pwsh
         run: |
