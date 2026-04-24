@@ -54,6 +54,16 @@ pub enum RowType {
         name: String,
         nullable: bool,
     },
+    IntervalYearMonth {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
+    IntervalDayTime {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
     Variant {
         name: String,
         nullable: bool,
@@ -162,6 +172,22 @@ impl RowType {
         RowType::Decfloat {
             name: name.to_string(),
             nullable,
+        }
+    }
+
+    pub fn interval_year_month(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::IntervalYearMonth {
+            name: name.to_string(),
+            nullable,
+            scale,
+        }
+    }
+
+    pub fn interval_day_time(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::IntervalDayTime {
+            name: name.to_string(),
+            nullable,
+            scale,
         }
     }
 

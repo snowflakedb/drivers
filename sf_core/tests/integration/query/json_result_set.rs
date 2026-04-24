@@ -126,6 +126,44 @@ fn should_return_decfloat_as_arrow_even_if_json_result_set_is_returned() {
 }
 
 #[test]
+fn should_return_interval_year_month_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_ym (\
+            ym_zero INTERVAL YEAR TO MONTH,\
+            ym_pos INTERVAL YEAR TO MONTH,\
+            ym_neg INTERVAL YEAR TO MONTH,\
+            ym_max INTERVAL YEAR TO MONTH,\
+            ym_min INTERVAL YEAR TO MONTH)",
+        "INSERT INTO json_result_set_interval_ym SELECT \
+            '0-0'::INTERVAL YEAR TO MONTH, \
+            '1-2'::INTERVAL YEAR TO MONTH, \
+            '-1-3'::INTERVAL YEAR TO MONTH, \
+            '999999999-11'::INTERVAL YEAR TO MONTH, \
+            '-999999999-11'::INTERVAL YEAR TO MONTH",
+        "SELECT * FROM json_result_set_interval_ym",
+    )
+}
+
+#[test]
+fn should_return_interval_day_time_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_interval_dt (\
+            dt_zero INTERVAL DAY TO SECOND,\
+            dt_pos INTERVAL DAY TO SECOND,\
+            dt_neg INTERVAL DAY TO SECOND,\
+            dt_large INTERVAL DAY TO SECOND,\
+            dt_large_neg INTERVAL DAY TO SECOND)",
+        "INSERT INTO json_result_set_interval_dt SELECT \
+            '0 0:0:0.0'::INTERVAL DAY TO SECOND, \
+            '12 3:4:5.678'::INTERVAL DAY TO SECOND, \
+            '-1 2:3:4.567'::INTERVAL DAY TO SECOND, \
+            '99999 23:59:59.999999'::INTERVAL DAY TO SECOND, \
+            '-99999 23:59:59.999999'::INTERVAL DAY TO SECOND",
+        "SELECT * FROM json_result_set_interval_dt",
+    )
+}
+
+#[test]
 fn should_return_variant_as_arrow_even_if_json_result_set_is_returned() {
     run_arrow_and_json_and_match(
         "CREATE OR REPLACE TABLE json_result_set_variant (\

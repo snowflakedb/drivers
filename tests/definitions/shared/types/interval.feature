@@ -53,6 +53,26 @@ Feature: INTERVAL datatype handling
     Then all INTERVAL values should be returned as appropriate type for the driver
 
   # ============================================================================
+  #                         JSON result format
+  # ============================================================================
+
+  # TODO: Remove once all e2e tests run on both Arrow and JSON result formats.
+  @python_e2e
+  Scenario: should select interval year to month literal with JSON result format
+    Given Snowflake client is logged in
+    And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
+    When Query "SELECT '1-2'::INTERVAL YEAR TO MONTH AS ym" is executed
+    Then the result should contain expected INTERVAL YEAR TO MONTH value '1-2'
+
+  # TODO: Remove once all e2e tests run on both Arrow and JSON result formats.
+  @python_e2e
+  Scenario: should select interval day to second literal with JSON result format
+    Given Snowflake client is logged in
+    And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
+    When Query "SELECT '3 4:5:6.789'::INTERVAL DAY TO SECOND AS dt" is executed
+    Then the result should contain expected INTERVAL DAY TO SECOND value '3 4:5:6.789000'
+
+  # ============================================================================
   # SELECT LITERALS
   # ============================================================================
 

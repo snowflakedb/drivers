@@ -630,6 +630,18 @@ impl TryFrom<&RowType> for query_types::RowType {
                 ))
             }
             "DECFLOAT" => Ok(query_types::RowType::decfloat(&name, nullable)),
+            "INTERVAL_YEAR_MONTH" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::interval_year_month(
+                    &name, nullable, scale,
+                ))
+            }
+            "INTERVAL_DAY_TIME" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::interval_day_time(
+                    &name, nullable, scale,
+                ))
+            }
             "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
             "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
             "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),

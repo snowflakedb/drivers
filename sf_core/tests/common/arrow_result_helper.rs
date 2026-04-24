@@ -173,6 +173,13 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
             "scale",
             "physicalType",
         ],
+        "INTERVAL_YEAR_MONTH" | "INTERVAL_DAY_TIME" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "precision",
+            "physicalType",
+        ],
         _ => &[],
     }
 }
@@ -219,10 +226,13 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
         .get("logicalType")
         .unwrap_or_else(|| panic!("logicalType metadata key missing for field {}", left.name()));
 
-    // FIXED columns may use different integer widths (e.g. Arrow-native Int8
-    // vs JSON-converted Int64). Accept any integer/decimal pair.
-    let is_fixed = logical_type == "FIXED";
-    if !is_fixed {
+    // FIXED and INTERVAL columns may use different integer widths (e.g.
+    // Arrow-native Int16 vs JSON-converted Int64). Accept any integer/decimal pair.
+    let is_integer_flexible = matches!(
+        logical_type.as_str(),
+        "FIXED" | "INTERVAL_YEAR_MONTH" | "INTERVAL_DAY_TIME"
+    );
+    if !is_integer_flexible {
         assert_eq!(
             discriminant(left.data_type()),
             discriminant(right.data_type()),
@@ -272,11 +282,12 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
                 .zip(right_fields.iter())
                 .for_each(|(a, j)| assert_fields_match(a, j));
         }
-        (left_dt, right_dt) if is_fixed => {
+        (left_dt, right_dt) if is_integer_flexible => {
             assert!(
                 is_integer_or_decimal(left_dt) && is_integer_or_decimal(right_dt),
-                "FIXED field '{}' has non-numeric types: left={:?}, right={:?}",
+                "Integer-flexible field '{}' (logicalType={}) has non-numeric types: left={:?}, right={:?}",
                 left.name(),
+                logical_type,
                 left_dt,
                 right_dt
             );

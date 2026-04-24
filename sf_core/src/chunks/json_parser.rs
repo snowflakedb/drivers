@@ -239,6 +239,12 @@ pub(super) enum ColumnBuilder {
         mant_builder: arrow::array::BinaryBuilder,
         nulls: arrow::array::BooleanBufferBuilder,
     },
+    /// INTERVAL_YEAR_MONTH: total months as Int64
+    IntervalYearMonth {
+        builder: arrow::array::PrimitiveBuilder<Int64Type>,
+    },
+    /// INTERVAL_DAY_TIME: nanoseconds, i64 with promotion to Decimal128 for large values
+    IntervalDayTime { storage: FixedStorage },
 }
 
 impl ColumnBuilder {
@@ -322,6 +328,14 @@ impl ColumnBuilder {
                 mant_builder: arrow::array::BinaryBuilder::with_capacity(capacity, capacity * 8),
                 nulls: arrow::array::BooleanBufferBuilder::new(capacity),
             },
+            RowType::IntervalYearMonth { .. } => ColumnBuilder::IntervalYearMonth {
+                builder: arrow::array::PrimitiveBuilder::<Int64Type>::with_capacity(capacity),
+            },
+            RowType::IntervalDayTime { .. } => ColumnBuilder::IntervalDayTime {
+                storage: FixedStorage::I64 {
+                    builder: arrow::array::PrimitiveBuilder::<Int64Type>::with_capacity(capacity),
+                },
+            },
         }
     }
 
@@ -380,6 +394,11 @@ impl ColumnBuilder {
                 mant_builder.append_value(&[] as &[u8]);
                 nulls.append(false);
             }
+            ColumnBuilder::IntervalYearMonth { builder } => builder.append_null(),
+            ColumnBuilder::IntervalDayTime { storage } => match storage {
+                FixedStorage::I64 { builder } => builder.append_null(),
+                FixedStorage::I128 { builder } => builder.append_null(),
+            },
         }
     }
 
@@ -514,6 +533,33 @@ impl ColumnBuilder {
                 mant_builder.append_value(mantissa);
                 nulls.append(true);
             }
+            ColumnBuilder::IntervalYearMonth { builder } => {
+                let v: i64 = parse_int_bytes(cell)?;
+                builder.append_value(v);
+            }
+            ColumnBuilder::IntervalDayTime { storage } => match storage {
+                FixedStorage::I64 { builder } => {
+                    if cell.len() <= 18 {
+                        let v: i64 = parse_int_bytes(cell)?;
+                        builder.append_value(v);
+                    } else {
+                        let v128: i128 = parse_int_bytes(cell)?;
+                        if let Ok(v) = i64::try_from(v128) {
+                            builder.append_value(v);
+                        } else {
+                            let mut decimal_builder = convert_i64_to_decimal128(builder);
+                            decimal_builder.append_value(v128);
+                            *storage = FixedStorage::I128 {
+                                builder: decimal_builder,
+                            };
+                        }
+                    }
+                }
+                FixedStorage::I128 { builder } => {
+                    let v: i128 = parse_int_bytes(cell)?;
+                    builder.append_value(v);
+                }
+            },
         }
         Ok(())
     }
@@ -684,6 +730,27 @@ impl ColumnBuilder {
                 );
                 Ok((field, Arc::new(struct_arr)))
             }
+            ColumnBuilder::IntervalYearMonth { mut builder } => Ok((
+                create_field(row_type).map_err(err)?,
+                Arc::new(builder.finish()),
+            )),
+            ColumnBuilder::IntervalDayTime { storage } => match storage {
+                FixedStorage::I64 { mut builder, .. } => Ok((
+                    create_field_with_type(row_type, Some(DataType::Int64)).map_err(err)?,
+                    Arc::new(builder.finish()),
+                )),
+                FixedStorage::I128 { mut builder } => {
+                    let arr = builder
+                        .finish()
+                        .with_precision_and_scale(38, 0)
+                        .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+                    Ok((
+                        create_field_with_type(row_type, Some(DataType::Decimal128(38, 0)))
+                            .map_err(err)?,
+                        Arc::new(arr),
+                    ))
+                }
+            },
         }
     }
 }

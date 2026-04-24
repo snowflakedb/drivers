@@ -191,6 +191,32 @@ pub fn create_field_with_type(
             });
             Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
+        RowType::IntervalYearMonth {
+            name,
+            nullable,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "INTERVAL_YEAR_MONTH".to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Int64), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::IntervalDayTime {
+            name,
+            nullable,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "INTERVAL_DAY_TIME".to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Int64), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
         RowType::Variant { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "VARIANT".to_string());
