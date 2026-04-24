@@ -1,7 +1,8 @@
 name: Python Release Build
 
 on:
-  push:  # DEBUG: remove before merge
+  push:
+    branches: [main]
   workflow_dispatch:
 
 env:
