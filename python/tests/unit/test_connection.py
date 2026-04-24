@@ -302,10 +302,13 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", port=443, insecure_mode=False, timeout=1.5)
 
-        # 2 calls: (1) generic kwargs, (2) logout config via _send_logout_config
-        assert mock_db_api.connection_set_options.call_count == 2
+        # Single batched call: generic kwargs + logout config combined
+        assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
-        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
+        # Generic kwargs + logout config keys in one batch
+        assert {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}.issubset(
+            set(request.options.keys())
+        )
 
     def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
         """ValidationIssue warnings from the response should be surfaced via warnings.warn."""
@@ -331,17 +334,17 @@ class TestConnectionSetOptions:
         assert "param 'x' is deprecated" in str(validation_warnings[0].message)
         assert "param 'y' has no effect" in str(validation_warnings[1].message)
 
-    def test_no_user_options_sends_only_client_app_id(self, mock_db_api):
-        """When there are no user-supplied kwargs, only the injected client_app_id is sent."""
+    def test_no_user_options_sends_client_app_id_and_logout_defaults(self, mock_db_api):
+        """When there are no user-supplied kwargs, client_app_id + logout defaults are sent."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(session_parameters={"AUTOCOMMIT": "true"})
 
-        # 2 calls: (1) generic kwargs, (2) logout config via _send_logout_config
-        assert mock_db_api.connection_set_options.call_count == 2
+        # Single batched call: client_app_id + logout config defaults
+        assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
-        assert set(request.options.keys()) == {"client_app_id"}
+        assert "client_app_id" in request.options
         assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
 
 
