@@ -4,11 +4,15 @@ import ctypes
 import threading
 
 from ctypes import c_char_p
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-
-if TYPE_CHECKING:
-    from snowflake.connector.errors import Error
+from snowflake.connector._internal.status_codes import (
+    STATUS_CODE_LABELS,
+    STATUS_TO_ERRNO,
+    STATUS_TO_EXCEPTION,
+    VENDOR_CODE_TO_EXCEPTION,
+)
+from snowflake.connector.errors import DatabaseError, Error, OperationalError
 
 from ..protobuf_gen.database_driver_v1_pb2 import (
     AuthenticationError as ProtoAuthenticationError,
@@ -80,8 +84,6 @@ def _proto_to_public_error(proto_exc: Exception) -> Error:
     The caller (``_raise_error`` in the generated client) is responsible for
     raising the returned value.
     """
-    from snowflake.connector.errors import DatabaseError, OperationalError
-
     if isinstance(proto_exc, ProtoApplicationException):
         return _convert_application_error(proto_exc)
     if isinstance(proto_exc, ProtoTransportException):
@@ -89,14 +91,22 @@ def _proto_to_public_error(proto_exc: Exception) -> Error:
     return DatabaseError(str(proto_exc))
 
 
-def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
-    from snowflake.connector._internal.status_codes import (
-        STATUS_CODE_LABELS,
-        STATUS_TO_ERRNO,
-        STATUS_TO_EXCEPTION,
-    )
-    from snowflake.connector.errors import DatabaseError
+def _resolve_exception_class(status_code: int, vendor_code: int | None) -> type[Error]:
+    """Pick the PEP 249 exception class for a proto error.
 
+    Resolution order:
+      1. VENDOR_CODE_TO_EXCEPTION — Snowflake-specific vendor_code overrides (e.g. 100072 → IntegrityError).
+      2. STATUS_TO_EXCEPTION — default mapping from the proto StatusCode.
+      3. DatabaseError — catch-all when the status code is unrecognized.
+    """
+    if vendor_code is not None:
+        cls = VENDOR_CODE_TO_EXCEPTION.get(vendor_code)
+        if cls is not None:
+            return cls
+    return STATUS_TO_EXCEPTION.get(status_code, DatabaseError)
+
+
+def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     driver_exc = getattr(proto_exc, "api_error_pb", None)
     if driver_exc is None:
         return DatabaseError(str(proto_exc))
@@ -117,13 +127,13 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     if not message:
         message = STATUS_CODE_LABELS.get(status_code, "Unknown error")
 
-    exc_class = STATUS_TO_EXCEPTION.get(status_code, DatabaseError)
-
     # Prefer the Snowflake server vendor_code when the core driver provides it
     # (e.g. 1003 for syntax error, 904 for invalid identifier).
     # Fall back to the old-driver-compatible errno mapping, then to the raw
     # proto status code.
     vendor_code = _get_optional_int(driver_exc, "vendor_code")
+
+    exc_class = _resolve_exception_class(status_code, vendor_code)
     errno = vendor_code if vendor_code is not None else STATUS_TO_ERRNO.get(status_code, status_code)
 
     # Prefer the server-provided sql_state; fall back to a type-derived value.

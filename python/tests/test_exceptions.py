@@ -374,6 +374,24 @@ class TestConvertProtoError:
         msg_str = str(result)
         assert msg_str.count("division by zero") == 1
 
+    def test_application_exception_vendor_code_100072_maps_to_integrity_error(self):
+        from snowflake.connector._internal.protobuf_gen.proto_exception import (
+            ProtoApplicationException,
+        )
+
+        driver_exc = ProtoDriverException(
+            message="NULL result in a non-nullable column",
+            status_code=STATUS_CODE_INTERNAL_ERROR,
+            vendor_code=100072,
+            sql_state="23000",
+        )
+        proto_exc = ProtoApplicationException(driver_exc)
+
+        result = _proto_to_public_error(proto_exc)
+        assert isinstance(result, IntegrityError)
+        assert result.errno == 100072
+        assert result.sqlstate == "23000"
+
     def test_application_exception_report_not_included(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
             ProtoApplicationException,
