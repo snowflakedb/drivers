@@ -1,10 +1,10 @@
 use crate::api::CDataType;
 use crate::api::error::{
-    ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu,
-    InternalSnafu, InvalidBufferLengthSnafu, InvalidCursorPositionSnafu,
-    InvalidCursorStateSnafu, InvalidDescriptorIndexSnafu, InvalidDuringDaeSnafu,
-    MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcError,
-    StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu, InternalSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
+    InvalidDescriptorIndexSnafu, InvalidDuringDaeSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu,
+    NullPointerSnafu, OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu,
+    UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -445,10 +445,7 @@ fn current_batch_idx(stmt: &Statement) -> usize {
 /// Advance `batch_idx` by `delta` rows within the current `RecordBatch`.
 /// Returns `OdbcError::InternalError` if advancing would cross the batch
 /// boundary or the statement is not in the `Fetching` state.
-fn bump_batch_idx(
-    state: &mut crate::api::State<StatementState>,
-    delta: usize,
-) -> OdbcResult<()> {
+fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) -> OdbcResult<()> {
     if delta == 0 {
         return Ok(());
     }

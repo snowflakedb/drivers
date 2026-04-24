@@ -123,9 +123,13 @@ impl BindingStrides {
             }
             .build()
         };
-        let target_value_ptr =
-            advance_ptr(base.target_value_ptr, row_idx, value_stride, self.bind_offset)
-                .ok_or_else(overflow_err)?;
+        let target_value_ptr = advance_ptr(
+            base.target_value_ptr,
+            row_idx,
+            value_stride,
+            self.bind_offset,
+        )
+        .ok_or_else(overflow_err)?;
         let octet_length_ptr = advance_ptr(
             base.octet_length_ptr,
             row_idx,
@@ -567,7 +571,9 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 0,
         };
-        let row3 = strides.for_row(&base, 3).expect("for_row must not overflow in tests");
+        let row3 = strides
+            .for_row(&base, 3)
+            .expect("for_row must not overflow in tests");
         assert_eq!(row3.target_value_ptr as usize, 1024 + 3 * 8);
         let len_size = size_of::<sql::Len>();
         assert_eq!(row3.octet_length_ptr as usize, 2048 + 3 * len_size);
@@ -581,7 +587,9 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 0,
         };
-        let row5 = strides.for_row(&base, 5).expect("for_row must not overflow in tests");
+        let row5 = strides
+            .for_row(&base, 5)
+            .expect("for_row must not overflow in tests");
         assert_eq!(row5.target_value_ptr as usize, 1024 + 5 * 64);
     }
 
@@ -592,7 +600,9 @@ mod binding_strides_tests {
             bind_type: 64,
             bind_offset: 0,
         };
-        let row2 = strides.for_row(&base, 2).expect("for_row must not overflow in tests");
+        let row2 = strides
+            .for_row(&base, 2)
+            .expect("for_row must not overflow in tests");
         assert_eq!(row2.target_value_ptr as usize, 1024 + 2 * 64);
         assert_eq!(row2.octet_length_ptr as usize, 2048 + 2 * 64);
         assert_eq!(row2.indicator_ptr as usize, 4096 + 2 * 64);
@@ -605,7 +615,9 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 32,
         };
-        let row1 = strides.for_row(&base, 1).expect("for_row must not overflow in tests");
+        let row1 = strides
+            .for_row(&base, 1)
+            .expect("for_row must not overflow in tests");
         assert_eq!(row1.target_value_ptr as usize, 1024 + 32 + 8);
         let len_size = size_of::<sql::Len>();
         assert_eq!(row1.octet_length_ptr as usize, 2048 + 32 + len_size);
@@ -619,7 +631,9 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: -16,
         };
-        let row0 = strides.for_row(&base, 0).expect("for_row must not overflow in tests");
+        let row0 = strides
+            .for_row(&base, 0)
+            .expect("for_row must not overflow in tests");
         assert_eq!(row0.target_value_ptr as usize, 1024 - 16);
     }
 
@@ -632,7 +646,9 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 64,
         };
-        let row7 = strides.for_row(&base, 7).expect("for_row must not overflow in tests");
+        let row7 = strides
+            .for_row(&base, 7)
+            .expect("for_row must not overflow in tests");
         assert!(row7.octet_length_ptr.is_null());
         assert!(row7.indicator_ptr.is_null());
         assert_eq!(row7.target_value_ptr as usize, 1024 + 64 + 7 * 8);
@@ -664,7 +680,9 @@ mod binding_strides_tests {
             bind_type: 0,
             bind_offset: 0,
         };
-        let row4 = strides.for_row(&base, 4).expect("for_row must not overflow in tests");
+        let row4 = strides
+            .for_row(&base, 4)
+            .expect("for_row must not overflow in tests");
         assert_eq!(row4.precision, Some(10));
         assert_eq!(row4.scale, Some(2));
         assert_eq!(row4.datetime_interval_precision, Some(6));
