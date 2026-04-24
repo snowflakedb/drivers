@@ -210,6 +210,9 @@ pub struct RowType {
     #[serde(rename = "precision")]
     pub precision: Option<u64>,
 
+    #[serde(rename = "extTypeName")]
+    pub ext_type_name: Option<String>,
+
     // unused fields
     #[serde(rename = "fields")]
     pub _fields: Option<Vec<FieldMetadata>>,
@@ -225,11 +228,11 @@ pub struct FieldMetadata {
     #[serde(rename = "nullable")]
     _nullable: bool,
     #[serde(rename = "length")]
-    _length: i32,
+    _length: Option<i32>,
     #[serde(rename = "scale")]
-    _scale: i32,
+    _scale: Option<i32>,
     #[serde(rename = "precision")]
-    _precision: i32,
+    _precision: Option<i32>,
     #[serde(rename = "fields")]
     _fields: Option<Vec<FieldMetadata>>,
 }
@@ -567,8 +570,13 @@ impl TryFrom<&RowType> for query_types::RowType {
     fn try_from(value: &RowType) -> Result<Self, Self::Error> {
         let name = value.name.clone();
         let nullable = value.nullable;
+        let effective_type = value
+            .ext_type_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&value.type_);
 
-        match value.type_.to_uppercase().as_str() {
+        match effective_type.to_uppercase().as_str() {
             "TEXT" => {
                 // Use Snowflake's default VARCHAR max length when the server omits
                 // length metadata. This happens when the server returns DECFLOAT
@@ -670,6 +678,9 @@ impl TryFrom<&RowType> for query_types::RowType {
                     &name, nullable, precision, scale,
                 ))
             }
+            "GEOGRAPHY" => Ok(query_types::RowType::geography(&name, nullable)),
+            "GEOMETRY" => Ok(query_types::RowType::geometry(&name, nullable)),
+            "VECTOR" => Ok(query_types::RowType::vector(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -1028,6 +1039,7 @@ mod tests {
             precision: None,
             length: Some(1024),
             byte_length: Some(4096),
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1051,6 +1063,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1074,6 +1087,7 @@ mod tests {
             precision: None,
             length: Some(512),
             byte_length: Some(2048),
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1175,23 +1189,84 @@ mod tests {
     fn test_unsupported_column_type_returns_error() {
         let row_type = RowType {
             name: "bad_col".to_string(),
-            type_: "GEOGRAPHY".to_string(),
+            type_: "UNSUPPORTED_TYPE_XYZ".to_string(),
             nullable: false,
             scale: None,
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
         match result {
             Err(err) => assert!(
-                err.to_string().contains("GEOGRAPHY"),
+                err.to_string().contains("UNSUPPORTED_TYPE_XYZ"),
                 "Error should mention the unsupported type: {err}"
             ),
-            Ok(_) => panic!("Expected error for unsupported column type GEOGRAPHY"),
+            Ok(_) => panic!("Expected error for unsupported column type UNSUPPORTED_TYPE_XYZ"),
         }
+    }
+
+    #[test]
+    fn test_geography_type_is_supported() {
+        let row_type = RowType {
+            name: "col".to_string(),
+            type_: "GEOGRAPHY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            _fields: None,
+        };
+
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geography { .. }
+        ));
+    }
+
+    #[test]
+    fn test_geometry_type_is_supported() {
+        let row_type = RowType {
+            name: "col".to_string(),
+            type_: "GEOMETRY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            _fields: None,
+        };
+
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geometry { .. }
+        ));
+    }
+
+    #[test]
+    fn test_vector_type_is_supported() {
+        let row_type = RowType {
+            name: "col".to_string(),
+            type_: "VECTOR".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: None,
+            _fields: None,
+        };
+
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(result, crate::query_types::RowType::Vector { .. }));
     }
 
     #[test]
@@ -1204,6 +1279,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1227,6 +1303,7 @@ mod tests {
             precision: Some(38),
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1250,6 +1327,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: Some(100),
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1273,6 +1351,7 @@ mod tests {
             precision: None,
             length: Some(100),
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
@@ -1284,6 +1363,57 @@ mod tests {
             ),
             Ok(_) => panic!("Expected error for BINARY column without byte_length"),
         }
+    }
+
+    #[test]
+    fn test_ext_type_name_takes_precedence_over_type() {
+        // Server sends type="object" but extTypeName="GEOGRAPHY" for geography columns
+        let row_type = RowType {
+            name: "geo_col".to_string(),
+            type_: "object".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: Some("GEOGRAPHY".to_string()),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Geography {
+                ref name,
+                nullable: true,
+            } if name == "geo_col"
+        ));
+    }
+
+    #[test]
+    fn test_empty_ext_type_name_falls_back_to_type() {
+        // Stored procedures may return ext_type_name="" with type="text"
+        let row_type = RowType {
+            name: "RESULT_COL".to_string(),
+            type_: "text".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: Some(100),
+            byte_length: Some(400),
+            ext_type_name: Some("".to_string()),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Text {
+                ref name,
+                nullable: false,
+                ..
+            } if name == "RESULT_COL"
+        ));
     }
 
     #[test]
@@ -1351,6 +1481,7 @@ mod tests {
             precision: None,
             length: None,
             byte_length: None,
+            ext_type_name: None,
             _fields: None,
         };
 
