@@ -14,7 +14,7 @@ jobs:
   build_wheels:
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # ── Test wheels and sdist against cloud providers ───────────────────
   # Each Python version tested once per env, cloud providers distributed evenly.
