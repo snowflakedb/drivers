@@ -265,7 +265,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR Infinity string fo
   char val[] = "Infinity";
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
   // Then SQLExecute fails with SQLSTATE 22018
@@ -285,7 +285,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR negative Infinity 
   char val[] = "-Infinity";
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
   // Then SQLExecute fails with SQLSTATE 22018
@@ -305,7 +305,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR NaN string for SQL
   char val[] = "NaN";
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
   // Then SQLExecute fails with SQLSTATE 22018
@@ -325,7 +325,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR Infinity string f
   SQLWCHAR val[] = {'I', 'n', 'f', 'i', 'n', 'i', 't', 'y', 0};
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
   // Then SQLExecute fails with SQLSTATE 22018
@@ -345,7 +345,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR negative Infinity
   SQLWCHAR val[] = {'-', 'I', 'n', 'f', 'i', 'n', 'i', 't', 'y', 0};
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
   // Then SQLExecute fails with SQLSTATE 22018
@@ -365,7 +365,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR NaN string for SQ
   SQLWCHAR val[] = {'N', 'a', 'N', 0};
   SQLLEN ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
   // Then SQLExecute fails with SQLSTATE 22018

@@ -138,6 +138,65 @@ fn fractional_warning(value: f64) -> Warnings {
     }
 }
 
+/// Returns `true` iff `s` (already trimmed of surrounding whitespace) is one
+/// of the explicit non-finite tokens that Rust's `f64::from_str` accepts but
+/// the ODBC "numeric-literal" grammar does not (MS ODBC spec, Appendix C).
+///
+/// We need this to disambiguate two distinct paths that both end up with
+/// `!v.is_finite()` after `parse::<f64>()`:
+///
+///   1. The user *typed* a non-finite token (e.g. `"Infinity"`, `"NaN"`,
+///      `"inf"`, with optional leading sign and any case). The literal is
+///      not in the ODBC grammar at all, so the spec-aligned SQLSTATE is
+///      22018 (`InvalidNumericLiteral`).
+///
+///   2. The user typed a *well-formed* decimal/scientific literal whose
+///      magnitude exceeds `f64::MAX` (e.g. `"1e309"`, `"-1.0e309"`). Rust's
+///      parser overflows these silently to `+/-inf`. The literal IS in the
+///      ODBC grammar; it just doesn't fit the target type. The spec-aligned
+///      SQLSTATE here is 22003 (`NumericMagnitudeOverflow`).
+///
+/// Treating both cases the same regresses out-of-range reporting from 22003
+/// to 22018, which is why we discriminate on the input token rather than on
+/// `is_finite()` alone.
+///
+/// Rust's `f64::from_str` is documented to accept (case-insensitive)
+/// `nan`, `inf`, `infinity`, each with an optional leading `+` or `-` sign,
+/// and nothing else maps to a non-finite result without overflowing. This
+/// helper mirrors exactly that token set.
+fn is_explicit_non_finite_token(s: &str) -> bool {
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    unsigned.eq_ignore_ascii_case("nan")
+        || unsigned.eq_ignore_ascii_case("inf")
+        || unsigned.eq_ignore_ascii_case("infinity")
+}
+
+/// Map a parsed-but-non-finite `f64` from a SQL_C_CHAR / SQL_C_WCHAR bind to
+/// the spec-aligned `JsonBindingError`, distinguishing explicit non-finite
+/// tokens (22018) from numeric overflow (22003). Returns `Ok(())` for any
+/// finite value; the caller continues with `v` unchanged.
+///
+/// `trimmed` is the (already whitespace-trimmed) source literal as the user
+/// typed it; `v` is the result of `trimmed.parse::<f64>()`. See
+/// `is_explicit_non_finite_token` for the rationale behind discriminating on
+/// the input token rather than on `is_finite()` alone.
+fn reject_non_finite_real_literal(trimmed: &str, v: f64) -> Result<(), JsonBindingError> {
+    if v.is_finite() {
+        return Ok(());
+    }
+    if is_explicit_non_finite_token(trimmed) {
+        InvalidNumericLiteralSnafu {
+            reason: format!("non-finite literal {trimmed:?} is not a valid ODBC numeric literal"),
+        }
+        .fail()
+    } else {
+        NumericMagnitudeOverflowSnafu {
+            reason: format!("literal {trimmed:?} overflows f64 range (parses to non-finite value)"),
+        }
+        .fail()
+    }
+}
+
 impl WriteODBCType for SnowflakeReal {
     fn sql_type(&self) -> sql::SqlDataType {
         sql::SqlDataType::DOUBLE
@@ -423,19 +482,7 @@ impl ReadODBC for SnowflakeReal {
                     }
                     .build()
                 })?;
-                // The ODBC "numeric-literal" grammar (MS ODBC spec, Appendix C)
-                // does not permit "Infinity" / "-Infinity" / "NaN" tokens, even
-                // though Rust's f64::from_str accepts them. Reject them with
-                // SQLSTATE 22018 so clients get a spec-aligned error instead of
-                // a value that would only work for SQL_REAL/SQL_DOUBLE targets.
-                if !v.is_finite() {
-                    return InvalidNumericLiteralSnafu {
-                        reason: format!(
-                            "non-finite literal {trimmed:?} is not a valid ODBC numeric literal"
-                        ),
-                    }
-                    .fail();
-                }
+                reject_non_finite_real_literal(trimmed, v)?;
                 v
             }
             CDataType::WChar => {
@@ -447,14 +494,7 @@ impl ReadODBC for SnowflakeReal {
                     }
                     .build()
                 })?;
-                if !v.is_finite() {
-                    return InvalidNumericLiteralSnafu {
-                        reason: format!(
-                            "non-finite literal {trimmed:?} is not a valid ODBC numeric literal"
-                        ),
-                    }
-                    .fail();
-                }
+                reject_non_finite_real_literal(trimmed, v)?;
                 v
             }
             CDataType::Binary => {

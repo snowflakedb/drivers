@@ -2008,6 +2008,91 @@ mod tests {
         ));
     }
 
+    // Overflow vs. explicit-non-finite-token discrimination
+    //
+    // Rust's `f64::from_str` overflows well-formed numeric literals whose
+    // magnitude exceeds `f64::MAX` (e.g. "1e309") silently to +/-inf. Those
+    // literals are valid ODBC numeric-literals; only the magnitude is out of
+    // range, so the spec-aligned SQLSTATE is 22003 (NumericMagnitudeOverflow),
+    // not 22018 (InvalidNumericLiteral, reserved for tokens that aren't in
+    // the ODBC numeric-literal grammar at all). The next four tests pin both
+    // halves of that contract.
+
+    #[test]
+    fn convert_char_overflow_as_real_overflows() {
+        let val = b"1e309\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_char_neg_overflow_as_real_overflows() {
+        let val = b"-1e309\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_wchar_overflow_as_real_overflows() {
+        // UTF-16 of "1e309"
+        let val: [u16; 6] = [
+            b'1' as u16,
+            b'e' as u16,
+            b'3' as u16,
+            b'0' as u16,
+            b'9' as u16,
+            0,
+        ];
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_char_lowercase_inf_as_real_rejected() {
+        // Lock in case-insensitive token detection: a future "let's only
+        // match the canonical \"Infinity\" spelling" regression must fail
+        // this test, since "inf" is also accepted by Rust's parser.
+        let val = b"inf\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DOUBLE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
     // -- Structured C types → VARCHAR -----------------------------------------
     //
     // These tests live here (not in varchar.rs) because they validate the full
