@@ -87,11 +87,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR exceeding fixed-si
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the insert is rejected with SQL_ERROR. The server returns the
-  // generic data-exception SQLSTATE 22000 (or no SQLSTATE at all, in which
-  // case the driver falls back to HY000); we deliberately do NOT promote
-  // it client-side to the more specific 22001 — both the legacy and
-  // universal drivers forward whatever the server sent.
+  // Then the insert is rejected with SQL_ERROR
+  //
+  // The server returns the generic data-exception SQLSTATE 22000 (or no
+  // SQLSTATE at all, in which case the driver falls back to HY000); we
+  // deliberately do NOT promote it client-side to the more specific 22001 —
+  // both the legacy and universal drivers forward whatever the server sent.
   CHECK(ret == SQL_ERROR);
   std::string sqlstate = get_sqlstate(stmt);
   CHECK((sqlstate == "HY000" || sqlstate == "22000"));
