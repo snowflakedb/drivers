@@ -448,35 +448,31 @@ class TestLogoutPythonWrapper:
             )
 
     @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
-    def test_should_use_python_default_15_second_timeout_and_3_max_retries(
-        self, int_test_connection_factory, core_proxy
-    ):
-        """Verify Python wrapper configures 15s total timeout and 3 max attempts by default."""
+    def test_should_use_python_default_15_second_timeout_and_3_max_retries(self, int_test_connection_factory):
+        """Verify default logout uses 15s timeout and 3 max attempts (Core defaults)."""
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
-            wiremock.add_mapping("session/logout_success.json")
+            wiremock.add_mapping("session/logout_500_always.json")
 
             # Given Snowflake Python client is created with default timeout configuration
             conn = int_test_connection_factory(server_url=wiremock.http_url())
 
             # When Connection is closed
             start = time.monotonic()
-            conn.close()
+            conn.close()  # BestEffort — won't raise despite 500s
             elapsed = time.monotonic() - start
 
-            # Then Logout timeout of 15 seconds is passed to Core
-            options = core_proxy.get_options_sent()
-            assert options.get("logout_total_timeout_seconds") == 15, (
-                f"Expected {15}s total timeout, got {options.get('logout_total_timeout_seconds')}"
+            # Then Logout completes within 15 seconds
+            DEFAULT_LOGOUT_TIMEOUT = 15
+            SCHEDULING_TOLERANCE = 2  # backoff jitter + OS scheduling overhead
+            assert elapsed < DEFAULT_LOGOUT_TIMEOUT + SCHEDULING_TOLERANCE, (
+                f"Expected completion within {DEFAULT_LOGOUT_TIMEOUT}s + {SCHEDULING_TOLERANCE}s tolerance, "
+                f"took {elapsed:.1f}s"
             )
 
-            # And Logout max retries of 3 is passed to Core
-            assert options.get("logout_max_attempts") == 3, (
-                f"Expected {3} max attempts, got {options.get('logout_max_attempts')}"
-            )
-
-            # And Logout request completes within 15 seconds
-            assert elapsed < 15.0, f"Close should complete within 15 seconds, took {elapsed:.1f}s"
+            # And Logout retries up to 3 times on failure
+            logout_requests = wiremock.get_logout_requests()
+            assert len(logout_requests) == 3, f"Expected 3 attempts (default max_attempts), got {len(logout_requests)}"
 
     @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_use_best_effort_error_handling_strategy_by_default(

@@ -10,9 +10,8 @@ Feature: Session Logout - Python-specific behavior
     # Old Python driver used 5s timeout and 3 attempts.
     Given Snowflake Python client is created with default timeout configuration
     When Connection is closed
-    Then Logout timeout of 15 seconds is passed to Core
-    And Logout max retries of 3 is passed to Core
-    And Logout request completes within 15 seconds
+    Then Logout completes within 15 seconds
+    And Logout retries up to 3 times on failure
 
   # ===========================================================================
   #                   Session Lifecycle Parameters

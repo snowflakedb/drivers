@@ -53,10 +53,10 @@ Feature: Session Logout - Core HTTP Layer Integration
   # ===========================================================================
 
   @core_int
-  Scenario: should timeout after 5 seconds by default when server does not respond
+  Scenario: should timeout after 15 seconds by default when server does not respond
     # Tests that default timeout is applied when no override provided
-    # Mock server holds connection open (10s) to verify timeout interrupts after 5s
-    Given Mock HTTP server holds connection open for 10 seconds without responding
+    # Mock server holds connection open (20s) to verify timeout interrupts after 15s
+    Given Mock HTTP server holds connection open for 20 seconds without responding
     And UD Core connection is logged in with no timeout override
     When Logout is initiated
     Then Close throws timeout error
