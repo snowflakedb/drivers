@@ -95,7 +95,7 @@ fn should_fail_when_multistatement_sql_is_sent_without_multi_statement_count() {
         result.is_err(),
         "Expected error when executing multi-statement without multi_statement_count"
     );
-    let err = format!("{:?}", result.unwrap_err());
+    let err = result.unwrap_err();
     assert!(err.contains("Actual statement count 3 did not match the desired statement count 1"));
 }
 
