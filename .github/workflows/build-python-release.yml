@@ -39,6 +39,8 @@ jobs:
           # Windows ARM64
           - { os: windows-11-arm,  py: "3.11", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-11-arm,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: windows-11-arm,  py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: windows-11-arm,  py: "3.12", hatch_env: "test-pandas", cloud_provider: "aws"   }
     runs-on: ${{ matrix.os }}
     name: test (${{ matrix.hatch_env }}, ${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
