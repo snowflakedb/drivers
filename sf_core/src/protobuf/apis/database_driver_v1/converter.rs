@@ -574,14 +574,23 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// code is the user-facing error number.  Login errors use client-side error codes
 /// (mapped by the Python layer) so the server code is NOT surfaced here.
 ///
-/// When the server omits `sqlState` from its response (notably the async-poll
-/// and query-monitoring paths) but supplies a known numeric error code, the
-/// SQLSTATE is filled in from `sql_state_from_code` so downstream consumers
-/// (ODBC, JDBC, ADBC) can rely on `sql_state` as the single source of truth
-/// for error classification.
+/// SQLSTATE resolution order (first hit wins):
+///   1. The `sqlState` the server included in its response (verbatim).
+///   2. `sql_state_from_code` lookup against the numeric Snowflake error
+///      code, which covers paths (async-poll, query-monitoring) that drop
+///      `sqlState` on the wire but keep the error code.
+///
+/// We deliberately do NOT inspect the human-readable message text — that
+/// matches the legacy ODBC driver's contract (server-supplied SQLSTATE or
+/// nothing) and avoids locale-fragile, false-positive-prone heuristics.
+///
+/// Centralising this here means downstream consumers (ODBC, JDBC, ADBC) can
+/// rely on `sql_state` as the single source of truth for error
+/// classification.
 ///
 /// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
-/// New query-related error variants should be added here as they are introduced.
+/// New query-related error variants should be added here as they are
+/// introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
         ApiError::Query {
@@ -601,10 +610,7 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
         _ => (None, None),
     };
 
-    let sql_state = sql_state.or_else(|| {
-        code.and_then(sql_state_from_code)
-            .map(|s| s.to_owned())
-    });
+    let sql_state = sql_state.or_else(|| code.and_then(sql_state_from_code).map(|s| s.to_owned()));
 
     (code, sql_state)
 }
@@ -813,7 +819,10 @@ mod tests {
     #[test]
     fn query_failed_passes_through_server_sql_state() {
         let err = query_failed(Some(1003), Some("42000"));
-        assert_eq!(extract_vendor_info(&err), (Some(1003), Some("42000".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(1003), Some("42000".to_owned()))
+        );
     }
 
     #[test]
@@ -821,19 +830,31 @@ mod tests {
         // If the server provides "22000", trust it even though our table maps
         // 100038 → "22003". The wire value is authoritative.
         let err = query_failed(Some(100038), Some("22000"));
-        assert_eq!(extract_vendor_info(&err), (Some(100038), Some("22000".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100038), Some("22000".to_owned()))
+        );
     }
 
     #[test]
     fn query_failed_falls_back_to_lookup_when_sql_state_missing() {
         let err = query_failed(Some(100038), None);
-        assert_eq!(extract_vendor_info(&err), (Some(100038), Some("22003".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100038), Some("22003".to_owned()))
+        );
 
         let err = query_failed(Some(100078), None);
-        assert_eq!(extract_vendor_info(&err), (Some(100078), Some("22001".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100078), Some("22001".to_owned()))
+        );
 
         let err = query_failed(Some(1003), None);
-        assert_eq!(extract_vendor_info(&err), (Some(1003), Some("42000".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(1003), Some("42000".to_owned()))
+        );
     }
 
     #[test]
@@ -853,10 +874,16 @@ mod tests {
         // Previously this path returned (Some(code), None) unconditionally —
         // the regression this fix is targeting.
         let err = async_query(1003);
-        assert_eq!(extract_vendor_info(&err), (Some(1003), Some("42000".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(1003), Some("42000".to_owned()))
+        );
 
         let err = async_query(100038);
-        assert_eq!(extract_vendor_info(&err), (Some(100038), Some("22003".to_owned())));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100038), Some("22003".to_owned()))
+        );
     }
 
     #[test]

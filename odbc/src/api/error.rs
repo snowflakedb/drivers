@@ -605,19 +605,23 @@ impl OdbcError {
                     sql_state: server_sql_state,
                     ..
                 } => {
-                    // Prefer the ANSI SQL state forwarded from the server when present,
-                    // but only for well-formed, recognised error states:
+                    // Forward the server's SQLSTATE verbatim when it's a
+                    // well-formed 5-char error state. This matches the
+                    // legacy ODBC driver's contract (trust the server) and
+                    // keeps the universal driver from inventing or
+                    // overriding SQLSTATE classifications client-side.
+                    //
+                    // Filtering rules:
                     // - "00xxx" (success) and "01xxx" (warning) must not appear in an
                     //   error record — callers would silently ignore the error.
                     // - "02xxx" (no-data) must be excluded: NoDataFound is not in
                     //   is_warning(), so is_error() treats it as an error, but ODBC
                     //   callers expect 02000 only on success returns (e.g. SQLFetch).
-                    // - Unknown states (unrecognised codes) are excluded so the
-                    //   fallback match arms below can apply per-ErrorType defaults
-                    //   instead of forwarding an opaque code.
-                    // SqlState::from_str is infallible (type Err = ()) — unrecognised
-                    // codes map to SqlState::Unknown, so the Unknown guard is the real
-                    // filter.
+                    //
+                    // SQLSTATEs the local enum doesn't recognise (e.g. server
+                    // sends "22000") are passed through as `SqlState::Unknown`,
+                    // which `as_str()` renders verbatim — same observable
+                    // behaviour the legacy driver produced.
                     if let Some(state) = server_sql_state
                         && state.len() == 5
                         && !state.starts_with("00")
@@ -625,22 +629,16 @@ impl OdbcError {
                         && !state.starts_with("02")
                     {
                         // parse() for SqlState is infallible (Err = ()).
-                        let parsed: SqlState = state.parse().unwrap();
-                        if !matches!(parsed, SqlState::Unknown(_)) {
-                            return parsed;
-                        }
+                        return state.parse().unwrap();
                     }
                     match error.as_ref() {
                         ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
                         ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
-                            // SQLSTATE classification for generic/internal server
-                            // errors is performed in `sf_core` (see
-                            // `extract_vendor_info` and `sql_state_from_code`),
-                            // which forwards a well-formed `sql_state` on the
-                            // wire whenever the numeric code is recognised. By
-                            // the time we get here the server-supplied SQLSTATE
-                            // was either absent or unknown, so HY000 is the
-                            // honest answer — do NOT sniff the message text.
+                            // No usable SQLSTATE on the wire (and `sf_core`'s
+                            // `extract_vendor_info` couldn't recover one from
+                            // the numeric error code either). Mirror the
+                            // legacy driver and surface HY000 — do NOT sniff
+                            // the message text.
                             SqlState::GeneralError
                         }
                         ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
@@ -844,26 +842,30 @@ mod tests {
     }
 
     #[test]
-    fn server_generic_error_without_sql_state_does_not_sniff_message() {
-        // Regression guard: a generic error whose message text happens to
-        // contain "out of representable range" must NOT be auto-classified as
-        // 22003 by the ODBC layer. Classification is owned by sf_core, which
-        // only fires for recognised numeric codes (status_code, not the human
-        // message). If sf_core didn't supply a SQLSTATE, HY000 is the answer.
+    fn server_unknown_sql_state_passes_through_verbatim() {
+        // Mirror the legacy ODBC driver: when the server sends a SQLSTATE
+        // that's not in our enum (here "22000", a generic data exception
+        // that Snowflake actually returns for some bind-time truncation
+        // failures), we forward it as-is rather than masking it with a more
+        // specific or a generic HY000.
         let odbc_err = OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
-                message: "Number out of representable range: spurious match".to_string(),
+                message: "String 'hello world' is too long and would be truncated".to_string(),
                 status_code: 0,
                 error_trace: vec![],
-                sql_state: None,
+                sql_state: Some("22000".to_string()),
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
         };
-        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::Unknown("22000".to_string())
+        );
+        assert_eq!(odbc_err.to_sql_state().as_str(), "22000");
     }
 
     #[test]

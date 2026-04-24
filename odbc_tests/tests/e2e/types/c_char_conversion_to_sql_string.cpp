@@ -4,7 +4,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -88,12 +87,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR exceeding fixed-si
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the insert is rejected with SQL_ERROR and SQLSTATE 22001
+  // Then the insert is rejected with SQL_ERROR. The server returns the
+  // generic data-exception SQLSTATE 22000 (or no SQLSTATE at all, in which
+  // case the driver falls back to HY000); we deliberately do NOT promote
+  // it client-side to the more specific 22001 — both the legacy and
+  // universal drivers forward whatever the server sent.
   CHECK(ret == SQL_ERROR);
-
-  OLD_DRIVER_ONLY("BD#40") { CHECK(get_sqlstate(stmt) == "22000"); }
-
-  NEW_DRIVER_ONLY("BD#40") { CHECK(get_sqlstate(stmt) == "22001"); }
+  std::string sqlstate = get_sqlstate(stmt);
+  CHECK((sqlstate == "HY000" || sqlstate == "22000"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR to SQL_VARCHAR and read back",

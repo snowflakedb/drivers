@@ -422,16 +422,6 @@ behavior_differences:
     new_driver_behavior: |
       Correctly converts SQL_C_WCHAR decimal strings to SQL_DECIMAL values on all platforms, matching the ODBC spec.
 
-  40:
-    name: "SQLSTATE for string data exceeding column size"
-    status: unknown
-    type: bug
-    reviewed: false
-    old_driver_behavior: |
-      Returns SQLSTATE 22000 (Data exception, generic class) when inserted string data exceeds the target VARCHAR column size.
-    new_driver_behavior: |
-      Returns SQLSTATE 22001 (String data, right truncation) per the ODBC spec (SQLExecute diagnostics table).
-
   41:
     name: "DATE to SQL_C_CHAR/WCHAR undersized buffer returns 07006 instead of 22003"
     status: unknown
