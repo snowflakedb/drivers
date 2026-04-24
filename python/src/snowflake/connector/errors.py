@@ -66,31 +66,6 @@ class Error(Exception):
     the **error-handler protocol** used throughout the driver to raise errors in
     a way that is consistent with PEP 249 and backward-compatible with the old
     ``snowflake-connector-python`` driver.
-
-    How to raise errors in the driver
-    ----------------------------------
-    **Always** use :pyfunc:`Error.errorhandler_wrapper` rather than a bare
-    ``raise`` when reporting errors that originate from connection or cursor
-    operations.
-    This ensures that:
-    1. The error is recorded in the ``messages`` list of the connection and/or
-       cursor (PEP 249 §.messages).
-    2. A user-supplied ``errorhandler`` callback (if any) gets a chance to
-       intercept the error before it is raised.
-    3. If no connection or cursor context is available, the error is still
-       raised with proper formatting.
-
-    Example::
-
-        Error.errorhandler_wrapper(
-            connection,  # may be None
-            cursor,  # may be None
-            ProgrammingError,
-            {
-                "msg": "Invalid parameter: ...",
-                "errno": ER_INVALID_VALUE,
-            },
-        )
     """
 
     def __init__(

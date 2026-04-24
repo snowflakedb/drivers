@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from .._internal.decorators import with_errorhandler
 from ._base import Row, SnowflakeCursorBase
 
 
+@with_errorhandler
 class SnowflakeCursor(SnowflakeCursorBase):
     """Cursor returning results as tuples (default).
 

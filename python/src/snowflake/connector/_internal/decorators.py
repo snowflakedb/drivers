@@ -41,6 +41,16 @@ def pep249(func: F) -> F:
     return func
 
 
+def with_errorhandler(cls: type) -> type:
+    """Route ``Error`` exceptions from public methods through the PEP 249 errorhandler.
+
+    The decorated class must inherit from ``ErrorHandlerMixin``.
+    """
+    from .errorhandler import apply_errorhandler
+
+    return apply_errorhandler(cls)
+
+
 def backward_compatibility(obj: T) -> T:
     """Mark an object as a backward-compatibility shim and, where applicable,
     wrap it so that first external use emits a ``DeprecationWarning``.

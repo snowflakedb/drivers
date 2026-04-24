@@ -21,7 +21,8 @@ from ._internal.arrow_stream_utils import (
     create_table_iterator,
 )
 from ._internal.backward_compatibility import install_backward_compatibility_getattr
-from ._internal.decorators import backward_compatibility
+from ._internal.decorators import backward_compatibility, with_errorhandler
+from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     DatabaseFetchChunkRequest,
@@ -67,7 +68,8 @@ class IterTableStructure(Enum):
         return cls(value)
 
 
-class ResultBatch:
+@with_errorhandler
+class ResultBatch(ErrorHandlerMixin):
     """Represents a single chunk of a query result set.
 
     Each ``ResultBatch`` corresponds to what the Snowflake back-end calls
@@ -139,6 +141,10 @@ class ResultBatch:
     @connection.setter
     def connection(self, value: Connection | None) -> None:
         self._connection = value
+
+    @property
+    def _errorhandler_connection(self) -> Connection | None:
+        return self._connection
 
     # ------------------------------------------------------------------
     # Data fetching

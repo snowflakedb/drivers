@@ -15,7 +15,7 @@ import functools
 import logging
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, NoReturn, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -27,8 +27,9 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
-from .._internal.decorators import pep249
+from .._internal.decorators import pep249, with_errorhandler
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
+from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
@@ -89,8 +90,7 @@ def _requires_open(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():
-            self._handle_error(InterfaceError, "Cursor is closed.", ER_CURSOR_IS_CLOSED)
-
+            raise InterfaceError(msg="Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
@@ -109,8 +109,7 @@ def _requires_open_cursor_not_connection(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self._closed:
-            self._handle_error(InterfaceError, "Cursor is closed.", ER_CURSOR_IS_CLOSED)
-
+            raise InterfaceError(msg="Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
@@ -136,15 +135,11 @@ def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
         def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
             if self._fetch_mode and self._fetch_mode != mode:
                 if mode == FetchMode.ARROW:
-                    self._handle_error(
-                        ProgrammingError, "Cannot use arrow/pandas fetch methods after row-by-row fetching"
-                    )
+                    raise ProgrammingError(msg="Cannot use arrow/pandas fetch methods after row-by-row fetching")
                 elif mode == FetchMode.ROW:
-                    self._handle_error(
-                        ProgrammingError, "Cannot use row-by-row fetch methods after arrow/pandas fetching"
-                    )
+                    raise ProgrammingError(msg="Cannot use row-by-row fetch methods after arrow/pandas fetching")
                 else:
-                    self._handle_error(ProgrammingError, f"Unexpected fetch mode: {mode}")
+                    raise ProgrammingError(msg=f"Unexpected fetch mode: {mode}")
             self._fetch_mode = mode
 
             return func(self, *args, **kwargs)
@@ -184,7 +179,8 @@ def _create_config_setting(value: Any) -> ConfigSetting:
     return config_setting
 
 
-class SnowflakeCursorBase(abc.ABC):
+@with_errorhandler
+class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
 
@@ -477,11 +473,10 @@ class SnowflakeCursorBase(abc.ABC):
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
             if paramstyle == ParamStyle.FORMAT and isinstance(parameters, dict):
-                self._handle_error(
-                    ProgrammingError,
-                    "Dict parameters not supported with format paramstyle. "
+                raise ProgrammingError(
+                    msg="Dict parameters not supported with format paramstyle. "
                     "Use pyformat paramstyle for named parameters, or use a sequence.",
-                    ER_INVALID_VALUE,
+                    errno=ER_INVALID_VALUE,
                 )
             # Client-side binding: interpolate parameters into SQL string
             query = ClientSideBindingConverter.interpolate_query(operation, parameters)
@@ -489,11 +484,10 @@ class SnowflakeCursorBase(abc.ABC):
         else:
             # Server-side binding: qmark or numeric
             if isinstance(parameters, dict):
-                self._handle_error(
-                    ProgrammingError,
-                    "Named parameters (dict) not supported with qmark/numeric paramstyle. "
+                raise ProgrammingError(
+                    msg="Named parameters (dict) not supported with qmark/numeric paramstyle. "
                     "Use pyformat paramstyle for named parameters.",
-                    ER_INVALID_VALUE,
+                    errno=ER_INVALID_VALUE,
                 )
             bindings = self._build_query_bindings(parameters)
             return operation, bindings
@@ -615,7 +609,7 @@ class SnowflakeCursorBase(abc.ABC):
         except Exception as exc:
             if isinstance(exc, ProgrammingError):
                 raise
-            self._handle_error(ProgrammingError, f"Failed to fetch result set for query_id={query_id}: {exc}")
+            raise ProgrammingError(msg=f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
 
     def _handle_single_statement_response(
         self, response: ExecuteQueryResponse, stmt_handle: StatementHandle, query: str
@@ -688,7 +682,7 @@ class SnowflakeCursorBase(abc.ABC):
             return self._connection.db_api.statement_prepare(request).result
         except ProgrammingError as exc:
             self._query_result = _QueryResult.from_programming_error(exc)
-            self._handle_error(ProgrammingError, msg=str(exc), errno=exc.errno)
+            raise
 
     @pep249
     @_requires_open
@@ -740,10 +734,9 @@ class SnowflakeCursorBase(abc.ABC):
         first_len = len(first_params)
         for params in rows:
             if len(params) != first_len:
-                self._handle_error(
-                    InterfaceError,
-                    f"Bulk data size don't match. expected: {first_len}, got: {len(params)}, command: {operation}",
-                    ER_INVALID_VALUE,
+                raise InterfaceError(
+                    msg=f"Bulk data size don't match. expected: {first_len}, got: {len(params)}, command: {operation}",
+                    errno=ER_INVALID_VALUE,
                 )
 
         # Transpose from row-major to column-major format
@@ -840,8 +833,8 @@ class SnowflakeCursorBase(abc.ABC):
             size = self.arraysize
 
         if size < 0:
-            self._handle_error(
-                ProgrammingError, f"The number of rows is not zero or positive number: {size}", ER_INVALID_VALUE
+            raise ProgrammingError(
+                msg=f"The number of rows is not zero or positive number: {size}", errno=ER_INVALID_VALUE
             )
 
         if size == 0:
@@ -1134,33 +1127,17 @@ class SnowflakeCursorBase(abc.ABC):
 
     @errorhandler.setter
     def errorhandler(self, value: Callable | None) -> None:
-        # Bare raise: we need a working errorhandler to route errors through the protocol.
         if value is None:
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
 
-    def _handle_error(
-        self,
-        error_class: type[Error],
-        msg: str,
-        errno: int = -1,
-        sqlstate: str | None = None,
-        sfqid: str | None = None,
-    ) -> NoReturn:
-        Error.errorhandler_wrapper(
-            connection=self.connection,
-            cursor=self,
-            error_class=error_class,
-            error_value={
-                "errno": errno,
-                "msg": msg,
-                "sqlstate": sqlstate,
-                "sfqid": sfqid,
-            },
-        )
-        # Safety net: the default handler always raises, but a user-installed handler might not.
-        # The bare raise ensures NoReturn is honored.
-        raise
+    @property
+    def _errorhandler_connection(self) -> Connection:
+        return self._connection
+
+    @property
+    def _errorhandler_cursor(self) -> SnowflakeCursorBase:
+        return self
 
     # ------------------------------------------------------------------
     # Fetch – Arrow / Pandas
