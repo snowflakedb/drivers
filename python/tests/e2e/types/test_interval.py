@@ -86,39 +86,39 @@ class TestIntervalTypeCasting:
 class TestIntervalJsonResultFormat:
     """Tests for INTERVAL types with JSON result format."""
 
-    def test_should_select_interval_year_to_month_literal_with_json_result_format(self, execute_query):
+    # TODO: Remove this test once all e2e tests run on both Arrow and JSON result formats.
+    def test_should_select_interval_year_to_month_literal_with_json_result_format(self, connection_factory):
         # Given Snowflake client is logged in
         pass
 
         # And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
-        try:
-            execute_query("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'JSON'")
+        with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
+            with conn.cursor() as cursor:
+                # When Query "SELECT '1-2'::INTERVAL YEAR TO MONTH AS ym" is executed
+                cursor.execute("SELECT '1-2'::INTERVAL YEAR TO MONTH AS ym")
+                row = cursor.fetchone()
 
-            # When Query "SELECT '1-2'::INTERVAL YEAR TO MONTH AS ym" is executed
-            result = execute_query("SELECT '1-2'::INTERVAL YEAR TO MONTH AS ym", single_row=True)
+                # Then the result should contain expected INTERVAL YEAR TO MONTH value '1-2'
+                assert row is not None
+                assert isinstance(row[0], str), f"Expected str, got {type(row[0])}"
+                assert row[0] == "+1-02"
 
-            # Then the result should contain expected INTERVAL YEAR TO MONTH value '1-2'
-            assert_type(result, str)
-            assert result == ("+1-02",)
-        finally:
-            execute_query("ALTER SESSION UNSET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT")
-
-    def test_should_select_interval_day_to_second_literal_with_json_result_format(self, execute_query):
+    # TODO: Remove this test once all e2e tests run on both Arrow and JSON result formats.
+    def test_should_select_interval_day_to_second_literal_with_json_result_format(self, connection_factory):
         # Given Snowflake client is logged in
         pass
 
         # And Session parameter PYTHON_CONNECTOR_QUERY_RESULT_FORMAT is set to JSON
-        try:
-            execute_query("ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'JSON'")
+        with connection_factory(session_parameters={"PYTHON_CONNECTOR_QUERY_RESULT_FORMAT": "JSON"}) as conn:
+            with conn.cursor() as cursor:
+                # When Query "SELECT '3 4:5:6.789'::INTERVAL DAY TO SECOND AS dt" is executed
+                cursor.execute("SELECT '3 4:5:6.789'::INTERVAL DAY TO SECOND AS dt")
+                row = cursor.fetchone()
 
-            # When Query "SELECT '3 4:5:6.789'::INTERVAL DAY TO SECOND AS dt" is executed
-            result = execute_query("SELECT '3 4:5:6.789'::INTERVAL DAY TO SECOND AS dt", single_row=True)
-
-            # Then the result should contain expected INTERVAL DAY TO SECOND value '3 4:5:6.789000'
-            assert_type(result, timedelta)
-            assert result == (timedelta(days=3, hours=4, minutes=5, seconds=6, microseconds=789000),)
-        finally:
-            execute_query("ALTER SESSION UNSET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT")
+                # Then the result should contain expected INTERVAL DAY TO SECOND value '3 4:5:6.789000'
+                assert row is not None
+                assert isinstance(row[0], timedelta), f"Expected timedelta, got {type(row[0])}"
+                assert row[0] == timedelta(days=3, hours=4, minutes=5, seconds=6, microseconds=789000)
 
 
 # =============================================================================
