@@ -632,8 +632,13 @@ impl OdbcError {
                         && !state.starts_with("01")
                         && !state.starts_with("02")
                     {
-                        // parse() for SqlState is infallible (Err = ()).
-                        return state.parse().unwrap();
+                        // `SqlState::FromStr` is currently infallible (every
+                        // unrecognised code falls into `SqlState::Unknown`),
+                        // but use `unwrap_or_else` to keep the driver
+                        // panic-free if that contract ever changes.
+                        return state
+                            .parse()
+                            .unwrap_or_else(|_| SqlState::Unknown(state.to_owned()));
                     }
                     match error.as_ref() {
                         ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
