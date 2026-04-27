@@ -497,3 +497,17 @@ behavior_differences:
       Per the MS ODBC specification ("C to SQL: Binary" appendix) the driver checks that BufferLength equals the SQL data length (sizeof(SQL_NUMERIC_STRUCT) = 19 for DECIMAL/NUMERIC, sizeof(SQL_TIME_STRUCT) = 6 for TIME, sizeof(SQL_TIMESTAMP_STRUCT) = 16 for TIMESTAMP) and forwards the raw bytes to the server. Buffers of any other length are rejected with SQLSTATE 22003, matching the spec's "Byte length of data <> SQL data length -> 22003" rule.
     impact: |
       Applications that bind a typed C struct as SQL_C_BINARY now have a portable way to insert these SQL types without separate SQL_C_NUMERIC / SQL_C_TYPE_TIMESTAMP / etc. bindings. See SNOW-3031774 (PR #833 for the Rust implementation, PR #834 for E2E coverage).
+
+  47:
+    name: "Cross-thread SQLCancel/SQLCancelHandle returns SQL_ERROR with HY008 instead of SQL_SUCCESS"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLCancel or SQLCancelHandle is called from a different thread to cancel an in-progress SQLExecDirect, the cancel function intermittently returns SQL_ERROR with SQLSTATE HY008 (NativeError 604, "SQL execution canceled") instead of SQL_SUCCESS. This happens because the driver's internal CancelExecute() calls Statement::cancel() without a try-catch. When the server's abort-request endpoint responds with a non-success status (e.g. the query was already canceled before the REST abort completed), cancel() throws and the exception propagates to the caller.
+    new_driver_behavior: |
+      Cross-thread SQLCancel and SQLCancelHandle always return SQL_SUCCESS per the ODBC specification. The cancel function posts no diagnostics of its own; only the canceled function (SQLExecDirect) returns SQL_ERROR with HY008.
+    impact: |
+      Applications that check the return code of SQLCancel/SQLCancelHandle in multi-threaded scenarios may see intermittent SQL_ERROR on the old driver. The cancellation itself still takes effect (the executing function returns HY008), so the functional impact is limited to the cancel call's return code.
+    description: |
+      Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function — "When SQLCancel is successfully called to cancel a function running in another thread, the driver does not post SQL_ERROR with SQLSTATE HY008."
