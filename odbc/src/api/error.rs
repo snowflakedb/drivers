@@ -465,6 +465,18 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set
 });
 
+/// Returns `true` when `state` is a syntactically valid ANSI/ODBC SQLSTATE:
+/// exactly five characters, each an ASCII digit (`0-9`) or uppercase letter
+/// (`A-Z`). Used to gate server-supplied values before forwarding them
+/// verbatim to ODBC consumers, so the driver never emits non-conforming
+/// SQLSTATEs in diagnostics.
+fn is_well_formed_sql_state(state: &str) -> bool {
+    state.len() == 5
+        && state
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b.is_ascii_uppercase())
+}
+
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
@@ -606,16 +618,22 @@ impl OdbcError {
                     ..
                 } => {
                     // Forward the server's SQLSTATE verbatim when it's a
-                    // 5-character state outside the success/warning/no-data
-                    // classes. The character set isn't validated further
-                    // (no `[0-9A-Z]{5}` check) — the driver does not
+                    // well-formed 5-character ANSI/ODBC state outside the
+                    // success/warning/no-data classes. The driver does not
                     // invent or override SQLSTATE classifications
-                    // client-side, that responsibility belongs to the
+                    // client-side — that responsibility belongs to the
                     // server (and to `sf_core::extract_vendor_info`, which
                     // fills in `sql_state` from the numeric error code on
                     // wire paths that drop it).
                     //
-                    // Filtering rules:
+                    // Validation rules:
+                    // - Must match `[0-9A-Z]{5}` exactly. SQLSTATE is
+                    //   defined as five characters drawn from digits and
+                    //   uppercase ASCII letters; anything else (lowercase,
+                    //   punctuation, non-ASCII) is malformed and would
+                    //   produce a non-spec SQLSTATE in diagnostics.
+                    //   Malformed values fall through to the per-error
+                    //   default (typically HY000).
                     // - "00xxx" (success) and "01xxx" (warning) must not appear in an
                     //   error record — callers would silently ignore the error.
                     // - "02xxx" (no-data) must be excluded: NoDataFound is not in
@@ -627,15 +645,16 @@ impl OdbcError {
                     // `SqlState::Unknown`, which `as_str()` renders
                     // verbatim so consumers still see the server's code.
                     if let Some(state) = server_sql_state
-                        && state.len() == 5
+                        && is_well_formed_sql_state(state)
                         && !state.starts_with("00")
                         && !state.starts_with("01")
                         && !state.starts_with("02")
                     {
-                        // `SqlState::FromStr` is currently infallible (every
-                        // unrecognised code falls into `SqlState::Unknown`),
-                        // but use `unwrap_or_else` to keep the driver
-                        // panic-free if that contract ever changes.
+                        // The `impl FromStr for SqlState` is currently
+                        // infallible (every unrecognised code falls into
+                        // `SqlState::Unknown`), but use `unwrap_or_else` to
+                        // keep the driver panic-free if that contract ever
+                        // changes.
                         return state
                             .parse()
                             .unwrap_or_else(|_| SqlState::Unknown(state.to_owned()));
@@ -888,6 +907,43 @@ mod tests {
             SqlState::Unknown("22000".to_string())
         );
         assert_eq!(odbc_err.to_sql_state().as_str(), "22000");
+    }
+
+    #[test]
+    fn server_malformed_sql_state_falls_back_to_default() {
+        // Anything outside `[0-9A-Z]{5}` is malformed: lowercase letters,
+        // punctuation, padding, non-ASCII, wrong length. None of those may
+        // be forwarded verbatim — the driver must fall back to the
+        // per-error-type default (HY000 for GenericError) rather than
+        // emitting a non-conforming SQLSTATE in diagnostics.
+        let malformed = [
+            "22a01",  // lowercase letter
+            "22 01",  // embedded space
+            "22-01",  // punctuation
+            "2201",   // too short
+            "220011", // too long
+            "22ą01",  // non-ASCII
+        ];
+        for state in malformed {
+            let odbc_err = OdbcError::CoreError {
+                source: Box::new(CoreProtobufError::Application {
+                    error: Box::new(ErrorType::GenericError(
+                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                    )),
+                    message: "boom".to_string(),
+                    status_code: 0,
+                    error_trace: vec![],
+                    sql_state: Some(state.to_string()),
+                    location: snafu::Location::new("test", 0, 0),
+                }),
+                location: snafu::Location::new("test", 0, 0),
+            };
+            assert_eq!(
+                odbc_err.to_sql_state(),
+                SqlState::GeneralError,
+                "malformed SQLSTATE {state:?} must not be forwarded; expected HY000 fallback",
+            );
+        }
     }
 
     #[test]
