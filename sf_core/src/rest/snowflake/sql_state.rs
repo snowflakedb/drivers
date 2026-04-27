@@ -44,7 +44,18 @@ pub fn sql_state_from_code(code: i32) -> Option<&'static str> {
         // String length exceeds the column's declared maximum and would be
         // truncated. e.g. "String 'hello world' is too long and would be truncated".
         100078 => Some("22001"),
-        _ => None,
+        _ => {
+            // Surface unmapped codes so we can grow this table as new ones
+            // appear in production telemetry. Logged at `debug` because this
+            // function is on a hot error path and we don't want to spam
+            // operator logs for every unknown code; bumping verbosity is
+            // sufficient when investigating an HY000 fallback.
+            tracing::debug!(
+                snowflake_error_code = code,
+                "no SQLSTATE mapping for Snowflake error code; consider adding it to sql_state_from_code"
+            );
+            None
+        }
     }
 }
 
