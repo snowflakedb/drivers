@@ -116,10 +116,6 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: ubuntu-latest
             py: "3.10"
             hatch_env: "test"
             cloud_provider: azure
@@ -132,6 +128,14 @@ jobs:
             hatch_env: "test"
             cloud_provider: aws
             result_format: json
+          - os: ubuntu-24.04-arm
+            py: "3.14"
+            hatch_env: "test"
+            cloud_provider: gcp
+          - os: ubuntu-24.04-arm
+            py: "3.11"
+            hatch_env: "test"
+            cloud_provider: aws
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
@@ -146,7 +150,7 @@ jobs:
             cloud_provider: azure
           # test integration with Pandas
           - os: ubuntu-latest
-            py: "3.10"
+            py: "3.14"
             hatch_env: "test-pandas"
             cloud_provider: gcp
           - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
@@ -158,8 +162,8 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
             result_format: json
-          - os: ubuntu-latest
-            py: "3.14"
+          - os: ubuntu-24.04-arm
+            py: "3.12"
             hatch_env: "test-pandas"
             cloud_provider: azure
     runs-on: ${{ matrix.os }}
