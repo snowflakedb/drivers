@@ -501,7 +501,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-zlib-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v1
+          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v2
           restore-keys: |
             ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-
 
@@ -578,7 +578,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
-          Invoke-Checked "vcpkg install zlib:${{ matrix.vcpkg_triplet }}" { vcpkg install zlib:${{ matrix.vcpkg_triplet }} }
+          $triplet = "${{ matrix.vcpkg_triplet }}"
+          Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet openssl:$triplet }
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -747,7 +748,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-zlib-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v1
+          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v2
 
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
