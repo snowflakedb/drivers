@@ -214,6 +214,21 @@ impl ReadODBC for SnowflakeDate {
                         .build()
                     })
             }
+            // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the date
+            // portion of the timestamp (matches the legacy 3.16.0 driver, which
+            // accepts a TIMESTAMP source against a DATE target and silently
+            // discards the time part).
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32).ok_or_else(
+                    || {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    },
+                )
+            }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
             }

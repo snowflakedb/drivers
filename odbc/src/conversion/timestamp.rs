@@ -433,6 +433,24 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                     .build()
                 })
         }
+        // Bind SQL_C_TYPE_DATE into a TIMESTAMP column by combining the date
+        // with midnight (matches the legacy 3.16.0 driver, which auto-promotes
+        // a DATE source to a TIMESTAMP at 00:00:00.000000000).
+        CDataType::Date | CDataType::TypeDate => {
+            let date = read_unaligned::<sql::Date>(binding);
+            let date =
+                NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
+                    .ok_or_else(|| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })?;
+            Ok(NaiveDateTime::new(
+                date,
+                NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 is always valid"),
+            ))
+        }
         CDataType::Binary => {
             let ts = read_binary_struct::<sql::Timestamp>(binding, "SQL_TIMESTAMP_STRUCT")?;
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)

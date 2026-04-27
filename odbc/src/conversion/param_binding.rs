@@ -1981,6 +1981,110 @@ mod tests {
         Ok(())
     }
 
+    // -- Cross-temporal binds (DATE↔TIMESTAMP, TIME↔TIMESTAMP) ----------------
+    //
+    // These mirror the legacy 3.16.0 behavior:
+    //   - SQL_C_TYPE_TIMESTAMP → SQL_DATE: extract the date portion.
+    //   - SQL_C_TYPE_TIMESTAMP → SQL_TIME: extract the time portion (incl. nanos).
+    //   - SQL_C_TYPE_DATE → SQL_TIMESTAMP*: combine the date with 00:00:00.
+
+    #[test]
+    fn convert_timestamp_as_date_extracts_date_part() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 12,
+            day: 25,
+            hour: 23,
+            minute: 59,
+            second: 59,
+            fraction: 999_999_999,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Date);
+        let expected_millis = (chrono::NaiveDate::from_ymd_opt(2024, 12, 25).unwrap()
+            - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days()
+            * 86_400_000;
+        assert_eq!(v, Value::String(expected_millis.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_extracts_time_part() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 15,
+            hour: 12,
+            minute: 30,
+            second: 45,
+            fraction: 123_456_789,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Time);
+        // 12:30:45.123456789 -> 45045s 123456789ns = 45_045_123_456_789ns.
+        assert_eq!(v, Value::String("45045123456789".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_timestamp_combines_with_midnight() -> TestResult {
+        let d = sql::Date {
+            year: 2024,
+            month: 6,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::TIMESTAMP,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2024, 6, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
+        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_timestamp_rejects_invalid_date() {
+        let d = sql::Date {
+            year: 2024,
+            month: 13,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::TIMESTAMP,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(convert_binding(&binding).is_err());
+    }
+
     #[test]
     fn convert_numeric_as_varchar() -> TestResult {
         let n = sql::Numeric {

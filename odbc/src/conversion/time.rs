@@ -265,6 +265,24 @@ impl ReadODBC for SnowflakeTime {
                         .build()
                     })
             }
+            // Bind SQL_C_TYPE_TIMESTAMP into a TIME column by extracting the time
+            // portion of the timestamp (matches the legacy 3.16.0 driver). The
+            // sub-second `fraction` is in nanoseconds per the ODBC spec.
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })
+            }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
             }
