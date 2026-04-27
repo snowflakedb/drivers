@@ -37,6 +37,18 @@ jobs:
           - { os: ubuntu-latest,   py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: ubuntu-latest,   py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-latest,   py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          # Linux ARM64 — test env
+          - { os: ubuntu-24.04-arm, py: "3.10", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: ubuntu-24.04-arm, py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
+          # Linux ARM64 — test-pandas env
+          - { os: ubuntu-24.04-arm, py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: ubuntu-24.04-arm, py: "3.11", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
           # Windows ARM64 (no test-pandas — pyarrow has no win_arm64 wheel)
           - { os: windows-11-arm,  py: "3.11", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-11-arm,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
