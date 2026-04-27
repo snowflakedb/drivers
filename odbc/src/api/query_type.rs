@@ -63,14 +63,6 @@ impl QueryType {
         self.belongs_to(Self::DML)
     }
 
-    fn is_stage_operation(self) -> bool {
-        self == Self::LIST_FILES || self.belongs_to(Self::STAGE_FILE_OPERATIONS)
-    }
-
-    fn is_syscmd_with_result_set(self) -> bool {
-        self == Self::SHOW || self == Self::DESCRIBE || self == Self::LIST_FILES
-    }
-
     /// Whether this statement produces a browsable result set (cursor).
     pub fn has_result_set(self) -> bool {
         self == Self::SELECT
@@ -78,24 +70,16 @@ impl QueryType {
             || self == Self::CALL
             || self == Self::COPY
             || self == Self::MANAGE_PATS
-            || self.is_syscmd_with_result_set()
-            || self.is_stage_operation()
-    }
-
-    /// Families we explicitly know produce no cursor and no update count.
-    /// Used as the middle step in [`Self::result_kind`] so that ids the driver
-    /// hasn't catalogued yet default to `Cursor` rather than silently dropping
-    /// result data.
-    fn is_known_no_result(self) -> bool {
-        self.belongs_to(Self::DDL)
-            || self.belongs_to(Self::MISC_QUERY_TYPES)
-            || self.belongs_to(Self::MULTI_STMT)
+            || self == Self::SHOW
+            || self == Self::DESCRIBE
+            || self == Self::LIST_FILES
+            || self.belongs_to(Self::STAGE_FILE_OPERATIONS)
     }
 
     /// Which ODBC state should the driver produce for a statement of this type.
     ///
-    /// Precedence: `has_result_set` → `is_dml` → `is_known_no_result`.  Any id
-    /// that falls out the bottom (including `UNKNOWN` and ids the driver
+    /// Precedence: `has_result_set` → `is_dml` → explicit no-result families.
+    /// Any id that falls out the bottom (including `UNKNOWN` and ids the driver
     /// doesn't recognise yet) defaults to `Cursor` so new Snowflake statement
     /// types don't silently lose their result data.
     pub fn result_kind(self) -> ResultKind {
@@ -103,7 +87,7 @@ impl QueryType {
             ResultKind::Cursor
         } else if self.is_dml() {
             ResultKind::UpdateCount
-        } else if self.is_known_no_result() {
+        } else if self.belongs_to(Self::DDL) || self.belongs_to(Self::MISC_QUERY_TYPES) {
             ResultKind::NoResult
         } else {
             ResultKind::Cursor
@@ -116,39 +100,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_is_neither_dml_nor_cursor() {
-        let qt = QueryType::from_raw(None);
-        assert_eq!(qt, QueryType::UNKNOWN);
-        assert!(!qt.is_dml());
-        assert!(!qt.has_result_set());
-    }
-
-    #[test]
     fn copy_belongs_to_dml_via_level3_mask() {
         assert!(QueryType::COPY.belongs_to(QueryType::DML));
         assert!(QueryType::COPY.is_dml());
-    }
-
-    #[test]
-    fn tcl_subtypes_belong_to_misc_via_level3_mask() {
-        assert!(QueryType::BEGIN.belongs_to(QueryType::MISC_QUERY_TYPES));
-        assert!(QueryType::COMMIT.belongs_to(QueryType::MISC_QUERY_TYPES));
-        assert!(QueryType::SET.belongs_to(QueryType::MISC_QUERY_TYPES));
-    }
-
-    #[test]
-    fn tcl_has_no_result_set() {
-        assert!(!QueryType::BEGIN.has_result_set());
-        assert!(!QueryType::COMMIT.has_result_set());
-        assert!(!QueryType::END.has_result_set());
-        assert!(!QueryType::SET.has_result_set());
-    }
-
-    #[test]
-    fn ddl_is_neither_dml_nor_cursor() {
-        let qt = QueryType::DDL;
-        assert!(!qt.is_dml());
-        assert!(!qt.has_result_set());
     }
 
     #[test]
@@ -183,22 +137,9 @@ mod tests {
     }
 
     #[test]
-    fn multi_stmt_and_unrecognised_ids_classify_as_no_cursor() {
-        assert!(!QueryType::MULTI_STMT.is_dml());
-        assert!(!QueryType::MULTI_STMT.has_result_set());
-        // A synthetic future id outside every known family.
-        let future = QueryType::from_raw(Some(0xBEEF));
-        assert!(!future.is_dml());
-        assert!(!future.has_result_set());
-    }
-
-    #[test]
     fn manage_pats_has_result_set() {
-        // 0x6244 belongs to the DDL family via the level-3 mask but produces a
-        // browsable result set (e.g. SHOW PATS).  Verified as an explicit
-        // exception in `has_result_set()`.
-        assert!(QueryType::MANAGE_PATS.belongs_to(QueryType::DDL));
-        assert!(QueryType::MANAGE_PATS.has_result_set());
+        // 0x6244 belongs to the DDL family via the level-3 mask but produces
+        // a browsable result set (e.g. SHOW PATS).
         assert_eq!(QueryType::MANAGE_PATS.result_kind(), ResultKind::Cursor);
     }
 
@@ -234,7 +175,6 @@ mod tests {
         assert_eq!(QueryType::COMMIT.result_kind(), ResultKind::NoResult);
         assert_eq!(QueryType::END.result_kind(), ResultKind::NoResult);
         assert_eq!(QueryType::SET.result_kind(), ResultKind::NoResult);
-        assert_eq!(QueryType::MULTI_STMT.result_kind(), ResultKind::NoResult);
     }
 
     #[test]

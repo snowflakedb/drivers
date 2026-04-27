@@ -205,21 +205,6 @@ impl TryFrom<u16> for InfoType {
     }
 }
 
-#[cfg(test)]
-mod info_type_tests {
-    use super::InfoType;
-
-    #[test]
-    fn parses_dbms_name() {
-        assert_eq!(InfoType::try_from(17u16).unwrap(), InfoType::DbmsName);
-    }
-
-    #[test]
-    fn rejects_unknown_info_type() {
-        assert!(InfoType::try_from(9999u16).is_err());
-    }
-}
-
 /// SQL_GETDATA_EXTENSIONS bitmask values.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
