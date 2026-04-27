@@ -250,6 +250,8 @@ jobs:
 
       - name: Save test dependencies cache
         if: always()
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
@@ -257,6 +259,8 @@ jobs:
 
       - name: Save ccache
         if: always()
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -639,6 +643,8 @@ jobs:
       # which the combined actions/cache@v5 does NOT support (save-always was removed in v5).
       - name: Save test dependencies cache
         if: always() && steps.test-deps-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
@@ -646,6 +652,8 @@ jobs:
 
       - name: Save ccache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -653,6 +661,8 @@ jobs:
 
       - name: Save vcpkg binary cache (Windows)
         if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: .vcpkg-binary-cache
@@ -660,6 +670,8 @@ jobs:
 
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Caches/Homebrew
@@ -727,12 +739,16 @@ jobs:
             bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
 
       - name: Save Cargo registry cache (RPM build)
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (RPM build)
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: .cargo-target-rpm

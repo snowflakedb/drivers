@@ -111,8 +111,16 @@ runs:
         key: ${{ steps.keys.outputs.registry }}
         lookup-only: true
 
+    # continue-on-error on save steps: cache save is a CI optimisation, not a
+    # correctness requirement. Failures here are typically transient — runner
+    # disk fills up mid-tar (ENOSPC), GHA cache service throttling, network
+    # blips, or another job winning the reservation race. Letting any of these
+    # fail the build punishes a green test run for an infra hiccup. The next CI
+    # run rebuilds from scratch (worst case) and the warning is still surfaced
+    # in the job log via actions/cache/save's own `core.warning` calls.
     - name: Save Cargo registry cache
       if: inputs.mode == 'save' && inputs.registry-cache-hit != 'true' && steps.precheck-registry.outputs.cache-hit != 'true'
+      continue-on-error: true
       uses: actions/cache/save@v5
       with:
         path: |
@@ -130,8 +138,39 @@ runs:
         key: ${{ steps.keys.outputs.target }}
         lookup-only: true
 
+    # Slim the target/ tree before save: cargo accumulates regenerable artifacts
+    # (incremental compilation data, fingerprint metadata, dependency-tracking .d
+    # files) that bloat the cache without speeding up cross-runner builds. Across
+    # CI runs the workspace is fresh anyway, so incremental data is rebuilt from
+    # scratch — caching it is pure overhead. Without this cleanup, target caches
+    # routinely grow to 5-9 GB, producing 3-5 minute cache download/extract steps
+    # that often cancel any speedup the cache was meant to provide.
+    #
+    # What we keep: deps/*.rlib, deps/*.rmeta, build/*/output (compiled deps and
+    # build script outputs that are expensive to regenerate).
+    # What we remove: incremental/, .fingerprint/, *.d (regenerable, large).
+    - name: Slim target dir before cache save
+      if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -e
+        target_dir="${{ inputs.target-dir }}"
+        if [ ! -d "$target_dir" ]; then
+          echo "target dir not present, skipping slim"
+          exit 0
+        fi
+        size_before=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
+        # -prune skips descending into matched dirs, exec rm -rf removes them.
+        find "$target_dir" -type d -name 'incremental' -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$target_dir" -type d -name '.fingerprint' -prune -exec rm -rf {} + 2>/dev/null || true
+        find "$target_dir" -type f -name '*.d' -delete 2>/dev/null || true
+        size_after=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
+        echo "Slimmed ${target_dir}: ${size_before} -> ${size_after}"
+
+    # See comment above on Save Cargo registry cache: cache save is best-effort.
     - name: Save Rust target cache
       if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
+      continue-on-error: true
       uses: actions/cache/save@v5
       with:
         path: ${{ inputs.target-dir }}

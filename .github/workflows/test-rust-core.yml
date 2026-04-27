@@ -245,6 +245,8 @@ jobs:
 
       - name: Save vcpkg ARM64 OpenSSL cache
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows

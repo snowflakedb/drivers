@@ -122,6 +122,8 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: |
@@ -194,6 +196,8 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache-ref.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: |

@@ -69,6 +69,10 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Save pre-commit hooks cache
+        # continue-on-error: cache save is best-effort. ENOSPC, throttling, or
+        # cache-key races shouldn't fail an otherwise-green build; the next run
+        # rebuilds from scratch.
+        continue-on-error: true
         uses: actions/cache/save@v5
         with:
           path: ~/.cache/pre-commit
