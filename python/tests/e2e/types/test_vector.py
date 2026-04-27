@@ -8,10 +8,9 @@ Maximum dimension: 4096.
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 """
 
-from __future__ import annotations
-
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import assert_type
 
 
@@ -65,15 +64,15 @@ class TestVectorLiteral:
     """Tests for VECTOR type using SELECT with literals (no tables)."""
 
     @pytest.mark.parametrize(
-        "query_value, expected_value, is_float",
+        "query_value, expected_value",
         [
-            ("[1, 3, -5]::VECTOR(INT, 3)", [1, 3, -5], False),
-            ("[40, 1234567]::VECTOR(INT, 2)", [40, 1234567], False),
-            ("[1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)", [1.8, -3.4, 6.7, 0.0, 2.3], True),
+            ("[1, 3, -5]::VECTOR(INT, 3)", [1, 3, -5]),
+            ("[40, 1234567]::VECTOR(INT, 2)", [40, 1234567]),
+            ("[1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)", [1.8, -3.4, 6.7, 0.0, 2.3]),
         ],
         ids=["INT-3d", "INT-2d", "FLOAT-5d"],
     )
-    def test_should_select_subtype_vector_literal(self, execute_query, query_value, expected_value, is_float):
+    def test_should_select_subtype_vector_literal(self, execute_query, query_value, expected_value):
         # Given Snowflake client is logged in
         pass
 
@@ -83,10 +82,7 @@ class TestVectorLiteral:
 
         # Then Result should contain <subtype> vector <expected_value>
         assert isinstance(result[0], list)
-        if is_float:
-            assert result[0] == pytest.approx(expected_value)
-        else:
-            assert result[0] == expected_value
+        assert result[0] == pytest.approx(expected_value)
 
     def test_should_select_large_dimension_vector(self, execute_query):
         # Given Snowflake client is logged in
@@ -195,3 +191,38 @@ class TestVectorMultipleChunks:
         assert len(rows) == LARGE_RESULT_SET_SIZE
         for row in rows:
             assert isinstance(row[0], list)
+
+
+@with_paramstyle("qmark")
+class TestVectorBinding:
+    """Tests for VECTOR type using parameter binding."""
+
+    def test_should_insert_and_select_vectors_using_parameter_binding(self, execute_query, tmp_schema):
+        # Given Snowflake client is logged in
+        pass
+        # And Table with VECTOR columns exists
+        table_name = f"{tmp_schema}.vector_bind_table"
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
+            f"(id INT, int_vec VECTOR(INT, 3), float_vec VECTOR(FLOAT, 3))"
+        )
+
+        # When Vector values are inserted using parameter binding
+        execute_query(
+            f"INSERT INTO {table_name} SELECT ?, {_vec_sql(INT_VEC_3D, 'INT')}, {_vec_sql(FLOAT_VEC_3D, 'FLOAT')}",
+            (1,),
+        )
+        execute_query(
+            f"INSERT INTO {table_name} SELECT ?, {_vec_sql(INT_VEC_3D_B, 'INT')}, NULL::VECTOR(FLOAT, 3)",
+            (2,),
+        )
+
+        # And Query "SELECT * FROM <table> ORDER BY id" is executed
+        rows = execute_query(f"SELECT int_vec, float_vec FROM {table_name} ORDER BY id")
+
+        # Then Result should contain the bound vector values
+        assert len(rows) == 2
+        assert rows[0][0] == INT_VEC_3D
+        assert rows[0][1] == pytest.approx(FLOAT_VEC_3D)
+        assert rows[1][0] == INT_VEC_3D_B
+        assert rows[1][1] is None
