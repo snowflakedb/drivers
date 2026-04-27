@@ -7,6 +7,7 @@ use crate::api::error::{
     JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu,
     Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
 };
+use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::{
     ApdRecord, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord, OdbcResult,
@@ -410,20 +411,6 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     }
 }
 
-const STATEMENT_TYPE_ID_MANAGE_PATS: i64 = 0x6244;
-
-fn is_ddl_statement(statement_type_id: i64) -> bool {
-    tracing::debug!("is_ddl_statement: statement_type_id={}", statement_type_id);
-    if statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS {
-        return false;
-    }
-    (0x6000..0x7000).contains(&statement_type_id)
-}
-
-fn is_dml_statement_type(statement_type_id: Option<i64>) -> bool {
-    statement_type_id.is_some_and(|id| (0x3000..0x4000).contains(&id))
-}
-
 fn set_state(stmt: &mut Statement, state: StatementState) {
     stmt.ird.desc_count = match &state {
         StatementState::QueryExecuted { reader, .. } => {
@@ -539,26 +526,22 @@ fn create_execute_state_from_result_set(
 ) -> OdbcResult<StatementState> {
     let stream = rs.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
-    if let Some(id) = statement_type_id {
-        if is_ddl_statement(id) {
-            return Ok(StatementState::DdlExecuted {
-                schema: reader.schema(),
-                origin,
-            });
-        }
-        if is_dml_statement_type(Some(id)) {
-            return Ok(StatementState::DmlExecuted {
-                rows_affected: rows_affected.unwrap_or(0),
-                schema: reader.schema(),
-                origin,
-            });
-        }
-    }
-    Ok(StatementState::QueryExecuted {
-        reader,
-        rows_affected,
-        origin,
-    })
+    let schema = reader.schema();
+
+    let state = match QueryType::from_raw(statement_type_id).result_kind() {
+        ResultKind::UpdateCount => StatementState::DmlExecuted {
+            rows_affected: rows_affected.unwrap_or(0),
+            schema,
+            origin,
+        },
+        ResultKind::Cursor => StatementState::QueryExecuted {
+            reader,
+            rows_affected,
+            origin,
+        },
+        ResultKind::NoResult => StatementState::DdlExecuted { schema, origin },
+    };
+    Ok(state)
 }
 
 /// Build JSON query bindings from ODBC parameter bindings.
