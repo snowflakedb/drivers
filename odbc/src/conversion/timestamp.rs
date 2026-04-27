@@ -446,10 +446,7 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                         }
                         .build()
                     })?;
-            Ok(NaiveDateTime::new(
-                date,
-                NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 is always valid"),
-            ))
+            Ok(NaiveDateTime::new(date, NaiveTime::MIN))
         }
         CDataType::Binary => {
             let ts = read_binary_struct::<sql::Timestamp>(binding, "SQL_TIMESTAMP_STRUCT")?;
