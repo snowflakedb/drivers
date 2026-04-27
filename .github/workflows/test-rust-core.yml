@@ -411,27 +411,23 @@ jobs:
           mode: restore
           shared-key: "x86-core-test"
 
-      - name: Setup MSVC x86 environment
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
-          if not "%VSCMD_ARG_TGT_ARCH%"=="x86" (
-            echo ERROR: VSCMD_ARG_TGT_ARCH is '%VSCMD_ARG_TGT_ARCH%', expected 'x86'
-            exit /b 1
-          )
-
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      - name: Build sf_core (x86)
+      - name: Build and test
+        id: run_rust_tests_x86
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+
           cargo build --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
           :: Verify the DLL is 32-bit (machine type 14C = x86)
           dumpbin /headers target\i686-pc-windows-msvc\debug\sf_core.dll | findstr "14C" >nul
           if %ERRORLEVEL% neq 0 (
@@ -440,13 +436,6 @@ jobs:
             exit /b 1
           )
 
-      - name: Run sf_core tests (x86)
-        id: run_rust_tests_x86
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
-          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
 
       - name: Rerun tests (Windows x86)
