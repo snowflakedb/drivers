@@ -291,18 +291,22 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            cache_key: odbc
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
+            cache_key: odbc
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
             cargo_extra: "--features vendored-openssl"
+            cache_key: odbc-x64
           - os: windows-latest
             name: Windows x86
             driver_lib: sfodbc32.dll
             cargo_target: i686-pc-windows-msvc
             cargo_extra: "--no-default-features --features vendored-openssl"
+            cache_key: odbc-x86
     runs-on: ${{ matrix.os }}
     name: build_odbc_driver (${{ matrix.name }})
     steps:
@@ -314,7 +318,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "odbc"
+          shared-key: ${{ matrix.cache_key }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -362,7 +366,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "odbc"
+          shared-key: ${{ matrix.cache_key }}
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
