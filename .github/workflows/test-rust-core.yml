@@ -343,24 +343,45 @@ jobs:
           path: windows-arm64-diagnostics/
           if-no-files-found: warn
 
-      # The cryptography wheel for Windows ARM64 dynamically links against the
-      # Visual C++ runtime, but the windows-11-arm runner image does not always
-      # ship with the ARM64 redistributable. Without it, `import cryptography`
-      # fails with "DLL load failed while importing _rust", which breaks the
-      # cleanup script (and any other Python tooling that touches cryptography).
-      - name: Install Visual C++ ARM64 runtime
+      # snowflake-connector-python pulls in `cryptography`, which has no working
+      # pre-built Windows ARM64 wheel (pyca/cryptography#14216 dropped official
+      # arm64 wheel publishing in early 2026). We follow the same pattern as
+      # test-python.yml and build cryptography from source against vcpkg's
+      # static OpenSSL — Rust toolchain is already on the runner. The cache key
+      # is intentionally identical to the one used in test-python.yml /
+      # build-python-release.yml so we hit their cache when it's warm.
+      - name: Restore vcpkg ARM64 static OpenSSL cache (for cryptography)
         if: always()
-        shell: pwsh
+        id: vcpkg-static-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
+      - name: Install ARM64 static OpenSSL via vcpkg (cache miss)
+        if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        shell: cmd
         run: |
-          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.arm64.exe -OutFile vc_redist.arm64.exe
-          Start-Process -FilePath .\vc_redist.arm64.exe -ArgumentList '/install','/quiet','/norestart' -Wait
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Save vcpkg ARM64 static OpenSSL cache (cache miss)
+        if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Cleanup test PATs
         if: always()
         continue-on-error: true
         shell: bash
+        env:
+          OPENSSL_DIR: C:\vcpkg\installed\arm64-windows-static-md
+          OPENSSL_LIB_DIR: C:\vcpkg\installed\arm64-windows-static-md\lib
+          OPENSSL_STATIC: "1"
         run: |
-          python -m pip install snowflake-connector-python -q
+          python -m pip install --no-binary cryptography snowflake-connector-python -q
           python scripts/cleanup_test_pats.py \
             --parameter-path "${{ github.workspace }}/parameters.json"
 
