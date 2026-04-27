@@ -50,37 +50,31 @@ jobs:
           - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
           # macOS x86_64 (Intel) — test env
-          - { os: macos-15-intel,        py: "3.10", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-15-intel,        py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: macos-15-intel,        py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-15-intel,        py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-15-intel,        py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
           # macOS x86_64 (Intel) — test-pandas env
-          - { os: macos-15-intel,        py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-15-intel,        py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: macos-15-intel,        py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-15-intel,        py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-15-intel,        py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           # macOS ARM64 (Apple Silicon) — test env
-          - { os: macos-latest,    py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-latest,    py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
           # macOS ARM64 (Apple Silicon) — test-pandas env
-          - { os: macos-latest,    py: "3.10", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.11", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.12", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.13", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: macos-latest,    py: "3.14", hatch_env: "test-pandas", cloud_provider: "azure" }
           # Windows x86_64 — test env
-          - { os: windows-latest,  py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: windows-latest,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: windows-latest,  py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
           # Windows x86_64 — test-pandas env
-          - { os: windows-latest,  py: "3.10", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: windows-latest,  py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: windows-latest,  py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
@@ -129,14 +123,14 @@ jobs:
           path: python/dist
 
       - name: Download wheel (macOS)
-        if: runner.os == 'macOS' && matrix.py != '3.10'
+        if: runner.os == 'macOS'
         uses: actions/download-artifact@v4
         with:
           name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || 'macosx_arm64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows'
         uses: actions/download-artifact@v4
         with:
           name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'win_amd64') }}_py${{ matrix.py }}
@@ -199,7 +193,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows'
         working-directory: python
         shell: pwsh
         run: |
@@ -210,8 +204,8 @@ jobs:
           $env:WHEEL_PATH = $wheels[0].FullName
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
-      - name: Install snowflake ud driver from sdist (Linux/macOS)
-        if: runner.os != 'Windows' && matrix.py == '3.10'
+      - name: Install snowflake ud driver from sdist
+        if: matrix.py == '3.10'
         working-directory: python
         run: |
           SDISTS=(dist/*.tar.gz)
@@ -220,21 +214,6 @@ jobs:
           fi
           export WHEEL_PATH="${SDISTS[0]}"
           echo "Installing sdist: $WHEEL_PATH"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-        env:
-          SKIP_CORE_BUILD: "false"
-
-      - name: Install snowflake ud driver from sdist (Windows)
-        if: runner.os == 'Windows' && matrix.py == '3.10'
-        working-directory: python
-        shell: pwsh
-        run: |
-          $sdists = @(Get-ChildItem dist/*.tar.gz)
-          if ($sdists.Count -ne 1) {
-            Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
-          }
-          $env:WHEEL_PATH = $sdists[0].FullName
-          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
         env:
           SKIP_CORE_BUILD: "false"
