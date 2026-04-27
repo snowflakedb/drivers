@@ -10,8 +10,6 @@ Input via WKT strings or GeoJSON through TO_GEOGRAPHY().
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 """
 
-from __future__ import annotations
-
 import pytest
 
 from ...conftest import with_paramstyle
