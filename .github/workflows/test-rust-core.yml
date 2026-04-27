@@ -342,6 +342,19 @@ jobs:
           name: windows-arm64-diagnostics
           path: windows-arm64-diagnostics/
           if-no-files-found: warn
+
+      # The cryptography wheel for Windows ARM64 dynamically links against the
+      # Visual C++ runtime, but the windows-11-arm runner image does not always
+      # ship with the ARM64 redistributable. Without it, `import cryptography`
+      # fails with "DLL load failed while importing _rust", which breaks the
+      # cleanup script (and any other Python tooling that touches cryptography).
+      - name: Install Visual C++ ARM64 runtime
+        if: always()
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.arm64.exe -OutFile vc_redist.arm64.exe
+          Start-Process -FilePath .\vc_redist.arm64.exe -ArgumentList '/install','/quiet','/norestart' -Wait
+
       - name: Cleanup test PATs
         if: always()
         continue-on-error: true
