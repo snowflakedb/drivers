@@ -477,8 +477,8 @@ impl ReadODBC for SnowflakeReal {
                 let s = read_char_str(binding)?;
                 let trimmed = s.trim();
                 let v = trimmed.parse::<f64>().map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    InvalidNumericLiteralSnafu {
+                        reason: format!("literal {trimmed:?} is not a valid ODBC numeric literal"),
                     }
                     .build()
                 })?;
@@ -489,8 +489,8 @@ impl ReadODBC for SnowflakeReal {
                 let s = read_wchar_str(binding)?;
                 let trimmed = s.trim();
                 let v = trimmed.parse::<f64>().map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    InvalidNumericLiteralSnafu {
+                        reason: format!("literal {trimmed:?} is not a valid ODBC numeric literal"),
                     }
                     .build()
                 })?;
