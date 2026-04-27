@@ -304,7 +304,22 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
-        let arrow_start = current_batch_idx(stmt);
+        // Same invariant as the multi-row path: after a successful
+        // `advance_cursor` the state must be `Fetching`. A bare
+        // `current_batch_idx` would silently fall back to `0` if the
+        // invariant ever broke and `execute_bindings_for_segment` would
+        // happily report success while skipping conversion. Match
+        // explicitly and fail with `InternalError` instead.
+        let arrow_start = match stmt.state.as_ref() {
+            StatementState::Fetching { batch_idx, .. } => *batch_idx,
+            _ => {
+                return InternalSnafu {
+                    message: "advance_cursor returned Ok but state is not Fetching in fast path"
+                        .to_string(),
+                }
+                .fail();
+            }
+        };
         let outputs = execute_bindings_for_segment(stmt, &cache, arrow_start, 1, 0, 0, 0);
         match outputs.into_iter().next().unwrap_or_else(|| Ok(Vec::new())) {
             Ok(row_warnings) => {
@@ -454,13 +469,6 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     }
 
     Ok(())
-}
-
-fn current_batch_idx(stmt: &Statement) -> usize {
-    match stmt.state.as_ref() {
-        StatementState::Fetching { batch_idx, .. } => *batch_idx,
-        _ => 0,
-    }
 }
 
 /// Advance `batch_idx` by `delta` rows within the current `RecordBatch`.
