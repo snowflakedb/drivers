@@ -747,7 +747,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "odbc-msi-${{ matrix.arch }}"
+          shared-key: "odbc"
 
       - name: Install Rust target
         if: matrix.arch == 'x86'
@@ -766,7 +766,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "odbc-msi-${{ matrix.arch }}"
+          shared-key: "odbc"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
