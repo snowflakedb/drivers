@@ -49,6 +49,13 @@ TEST_CASE("should set and get SQL_ATTR_METADATA_ID on statement", "[odbc-api][st
 TEST_CASE("should treat any non-zero value as SQL_TRUE for SQL_ATTR_METADATA_ID on statement",
           "[odbc-api][stmt_attr][metadata_id]") {
   // The old driver enforces strict 0/1 validation; the new driver accepts any non-zero as SQL_TRUE.
+  // The ODBC spec defines SQL_ATTR_METADATA_ID as accepting only SQL_TRUE/SQL_FALSE.
+  // The Microsoft DM returns HY024 for values outside that set (per SQLSetStmtAttr docs:
+  // "The Driver Manager returns this SQLSTATE only for ... attributes that accept a discrete
+  // set of values"). unixODBC/iODBC pass the value through to the driver without validation.
+#ifdef _WIN32
+  SKIP("Windows DM rejects non-standard SQL_ATTR_METADATA_ID values with HY024");
+#endif
   NEW_DRIVER_ONLY() {
     // Given A connected statement handle
     Connection conn;
