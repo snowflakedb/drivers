@@ -716,12 +716,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: x64 Release
+          - name: Windows x64 Release
             arch: x64
             config: release
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: "--release"
-          - name: x64 Debug
+          - name: Windows x64 Debug
             arch: x64
             config: debug
             cargo_target: x86_64-pc-windows-msvc

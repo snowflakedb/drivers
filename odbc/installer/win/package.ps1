@@ -79,8 +79,11 @@ if (-not $Version) {
     } else {
         throw "Could not parse BASE_VERSION from odbc/version.sh"
     }
-    $commitHash = (git -C $SourceDir rev-parse --short HEAD 2>$null)
-    if (-not $commitHash) { $commitHash = "unknown" }
+    $commitHash = "unknown"
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $commitHash = (git -C $SourceDir rev-parse --short HEAD 2>$null)
+        if (-not $commitHash) { $commitHash = "unknown" }
+    }
     $Version = "${baseVersion}-${commitHash}"
 }
 $versionParts = ($Version -replace '-.*', '').Split('.')
@@ -157,6 +160,7 @@ Write-Host "`n--- Linking MSI ---"
     -nologo `
     -ext WixUIExtension `
     -ext WixUtilExtension `
+    -b "$PSScriptRoot" `
     -out "$MsiFile" `
     "$WixObj"
 if ($LASTEXITCODE -ne 0) { throw "light.exe failed with exit code $LASTEXITCODE" }
