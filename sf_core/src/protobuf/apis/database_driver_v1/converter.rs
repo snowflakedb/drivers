@@ -64,8 +64,8 @@ impl<'a> From<BinaryDataPtr> for DataPtr<'a> {
             .as_slice()
             .try_into()
             .expect("Pointer must be 8 bytes");
-        let ptr_value = usize::from_le_bytes(ptr_bytes);
-        let ptr = ptr_value as *const u8;
+        let ptr_value = u64::from_le_bytes(ptr_bytes);
+        let ptr = ptr_value as usize as *const u8;
         DataPtr::new(ptr, proto_ptr.length)
     }
 }
