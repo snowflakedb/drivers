@@ -32,7 +32,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "macos_x86": ["3.11","3.12","3.13","3.14"], "macos_arm": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -151,6 +151,18 @@ jobs:
             py: "3.11"
             hatch_env: "test"
             cloud_provider: aws
+          - os: macos-13
+            py: "3.12"
+            hatch_env: "test"
+            cloud_provider: azure
+          - os: macos-latest
+            py: "3.14"
+            hatch_env: "test"
+            cloud_provider: gcp
+          - os: macos-latest
+            py: "3.11"
+            hatch_env: "test"
+            cloud_provider: aws
           - os: windows-latest
             py: "3.12"
             hatch_env: "test"
@@ -185,6 +197,14 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
             result_format: json
+          - os: macos-13
+            py: "3.13"
+            hatch_env: "test-pandas"
+            cloud_provider: gcp
+          - os: macos-latest
+            py: "3.12"
+            hatch_env: "test-pandas"
+            cloud_provider: azure
           - os: windows-latest
             py: "3.11"
             hatch_env: "test-pandas"
@@ -218,9 +238,9 @@ jobs:
       # dependencies regardless of which cloud provider the E2E tests target, so sharing one
       # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
       # and improves hit rates.
-      - name: Restore uv cache (Linux)
+      - name: Restore uv cache (Linux/macOS)
         id: uv-cache-linux
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
@@ -250,7 +270,7 @@ jobs:
         if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))) }}_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'macos-13' && 'macosx_x86_64' || (matrix.os == 'macos-latest' && 'macosx_arm64' || (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))))) }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
@@ -297,8 +317,8 @@ jobs:
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Install snowflake ud driver from wheel (Linux)
-        if: runner.os == 'Linux' && matrix.py != '3.10'
+      - name: Install snowflake ud driver from wheel (Linux/macOS)
+        if: runner.os != 'Windows' && matrix.py != '3.10'
         working-directory: python
         run: |
           WHEELS=(dist/*.whl)
@@ -311,6 +331,7 @@ jobs:
 
       - name: Install snowflake ud driver from sdist (Linux)
         if: runner.os == 'Linux' && matrix.py == '3.10'
+        # sdist only on Linux — macOS/Windows always use wheels
         working-directory: python
         run: |
           SDISTS=(dist/*.tar.gz)
@@ -350,8 +371,8 @@ jobs:
         env:
           SKIP_CORE_BUILD: "false"
 
-      - name: Run tests with coverage (Linux)
-        if: runner.os == 'Linux'
+      - name: Run tests with coverage (Linux/macOS)
+        if: runner.os != 'Windows'
         id: run_python_tests_linux
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         working-directory: python
@@ -367,7 +388,7 @@ jobs:
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Rerun failed Python tests (Linux)
+      - name: Rerun failed Python tests (Linux/macOS)
         if: steps.run_python_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
         working-directory: python
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
@@ -427,13 +448,8 @@ jobs:
         shell: bash
         run: uv cache prune --ci
 
-      - name: Save uv cache (Linux)
-        # Skip when the exact key was already restored. Note: prefix-key fallbacks
-        # (restore-keys) do not set cache-hit=true, so saves still run after a
-        # partial restore — which is the common case after a uv.lock change.
-        if: always() && runner.os == 'Linux' && steps.uv-cache-linux.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+      - name: Save uv cache (Linux/macOS)
+        if: always() && runner.os != 'Windows' && steps.uv-cache-linux.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 10
         env:
