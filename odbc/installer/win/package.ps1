@@ -64,6 +64,13 @@ if (-not (Test-Path $WxsFile)) {
     throw "WiX source not found: $WxsFile"
 }
 
+# --- WiX Toolset preflight ---
+foreach ($tool in @("candle.exe", "light.exe")) {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "$tool not found on PATH. Install WiX Toolset v3 or add its bin directory to PATH."
+    }
+}
+
 # --- Version ---
 if (-not $Version) {
     $versionLine = Get-Content (Join-Path $SourceDir "odbc\version.sh") -Raw
@@ -149,6 +156,7 @@ Write-Host "`n--- Linking MSI ---"
 & light.exe `
     -nologo `
     -ext WixUIExtension `
+    -ext WixUtilExtension `
     -out "$MsiFile" `
     "$WixObj"
 if ($LASTEXITCODE -ne 0) { throw "light.exe failed with exit code $LASTEXITCODE" }

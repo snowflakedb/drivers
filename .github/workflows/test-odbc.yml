@@ -726,16 +726,6 @@ jobs:
             config: debug
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: ""
-          - name: x86 Release
-            arch: x86
-            config: release
-            cargo_target: i686-pc-windows-msvc
-            cargo_profile: "--release"
-          - name: x86 Debug
-            arch: x86
-            config: debug
-            cargo_target: i686-pc-windows-msvc
-            cargo_profile: ""
     runs-on: windows-latest
     name: build_msi (${{ matrix.name }})
     steps:
@@ -748,13 +738,6 @@ jobs:
         with:
           mode: restore
           shared-key: "odbc"
-
-      - name: Install Rust target
-        if: matrix.arch == 'x86'
-        run: rustup target add ${{ matrix.cargo_target }}
-
-      - name: Install Perl (for vendored OpenSSL build)
-        run: choco install strawberryperl -y --no-progress
 
       - name: Build ODBC driver
         run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl --target ${{ matrix.cargo_target }}

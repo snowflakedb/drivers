@@ -5,7 +5,7 @@
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
-		UpgradeCode="b2d4e6f8-0a1c-4e3b-9d5f-7a8b0c2d4e6f">
+		UpgradeCode="C22845FB-6D0B-45A8-B914-CED965D221B1">
 
 		<Package Id="*"
 			InstallerVersion="405"
@@ -63,7 +63,7 @@
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1">
 			<![CDATA[(NOT VCREDIST2015INSTALLED)]]>
 		</SetProperty>
-		<Property Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x86.exe" />
+		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x86.exe" After="CostFinalize" Sequence="ui" />
 		<CustomAction Id="Install_vc_redist" BinaryKey="WixCA" DllEntry="WixShellExec" />
 		<UI>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
@@ -86,8 +86,8 @@
 			<Directory Id="PersonalFolder">
 				<Directory Id="SnowflakeODBCRSDriverLogs" Name="Snowflake ODBC RS Driver">
 					<Directory Id="LogDir" Name="log">
-						<Component Id="LogDir" Guid="c3d5e7f9-1a2b-4c3d-ae5f-8b0a2c4d6e8f" Win64="no">
-							<CreateFolder />
+						<Component Id="LogDir" Guid="CD48DCFD-56C5-4BAC-AE02-0635C488499E" Win64="no">
+						<CreateFolder />
 							<RemoveFolder Id="LogDir" On="uninstall" />
 							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCRSDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
@@ -102,7 +102,7 @@
 		<!-- Files: driver DLL                                                 -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="BinDir">
-			<Component Id="sfodbc.dll" Guid="e5f7a9b1-2c3d-4e5f-a7b9-0c1d3e5f7a9b" Win64="no">
+			<Component Id="sfodbc.dll" Guid="E487E93A-284A-43C8-A6E9-AB54599C0C3A" Win64="no">
 				<File Id="sfodbc.dll" KeyPath="yes"
 					Source="$(var.DriverBinDir)\sfodbc.dll" />
 			</Component>
@@ -112,7 +112,7 @@
 		<!-- Files: public header                                              -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="IncludeDir">
-			<Component Id="sf_odbc.h" Guid="f6a8b0c2-3d4e-4f6a-b8c0-1d2e4f6a8b0c" Win64="no">
+			<Component Id="sf_odbc.h" Guid="18554A74-79EC-4401-BCFE-06F3DD7EE19F" Win64="no">
 				<File Id="sf_odbc.h" KeyPath="yes"
 					Source="$(var.SourceDir)\odbc\include\sf_odbc.h" />
 			</Component>
@@ -122,8 +122,8 @@
 		<!-- Files: VC++ Redistributable                                       -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="RedistDir">
-			<Component Id="vc_redist.x86.exe" Guid="c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f" Win64="no">
-				<File Id="vc_redist.x86.exe" KeyPath="yes"
+			<Component Id="vc_redist.x86.exe" Guid="A412FAFC-E3C8-4FE9-9DC4-257C303098F2" Win64="no">
+			<File Id="vc_redist.x86.exe" KeyPath="yes"
 					Source="$(var.VCRedistDir)\vc_redist.x86.exe" />
 			</Component>
 		</DirectoryRef>
@@ -132,15 +132,15 @@
 		<!-- ODBC driver registration                                          -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="TARGETDIR">
-			<Component Id="RegistryEntries" Guid="a7b9c1d3-4e5f-4a7b-c9d1-2e3f5a7b9c1d" Win64="no">
+			<Component Id="RegistryEntries" Guid="EFCE448E-AA82-4829-BBFD-2EE34F00B487" Win64="no">
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
-				Action="create">
+				ForceCreateOnInstall="yes">
 				<RegistryValue Type="string" Name="SnowflakeDSIIDriver" Value="Installed" />
 			</RegistryKey>
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\SnowflakeDSIIDriver"
-				Action="createAndRemoveOnUninstall">
+				ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
 				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc.dll" KeyPath="yes" />
 				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc.dll" />
 				<RegistryValue Type="string" Name="Description" Value="Snowflake DSII" />

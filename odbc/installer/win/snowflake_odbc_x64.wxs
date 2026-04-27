@@ -5,7 +5,7 @@
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
-		UpgradeCode="a1e3b5c7-9d2f-4e6a-8b01-3c5d7f9e1a2b">
+		UpgradeCode="053DF3DF-4EB2-44E2-87BE-D3334ABDE4C6">
 
 		<Package Id="*"
 			InstallerVersion="405"
@@ -63,7 +63,7 @@
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1">
 			<![CDATA[(NOT VCREDIST2015INSTALLED)]]>
 		</SetProperty>
-		<Property Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x64.exe" />
+		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x64.exe" After="CostFinalize" Sequence="ui" />
 		<CustomAction Id="Install_vc_redist" BinaryKey="WixCA" DllEntry="WixShellExec" />
 		<UI>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
@@ -86,8 +86,8 @@
 			<Directory Id="PersonalFolder">
 				<Directory Id="SnowflakeODBCRSDriverLogs" Name="Snowflake ODBC RS Driver">
 					<Directory Id="LogDir" Name="log">
-						<Component Id="LogDir" Guid="b2c4d6e8-f0a1-4b3c-8d5e-7f9a1b3c5d7e" Win64="yes">
-							<CreateFolder />
+						<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD" Win64="yes">
+						<CreateFolder />
 							<RemoveFolder Id="LogDir" On="uninstall" />
 							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCRSDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
@@ -102,8 +102,8 @@
 		<!-- Files: driver DLL                                                 -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="BinDir">
-			<Component Id="sfodbc.dll" Win64="yes" Permanent="no">
-				<File Id="sfodbc.dll" KeyPath="yes"
+			<Component Id="sfodbc.dll" Guid="25D9DF06-EB55-469C-8074-4356FD8E281D" Win64="yes" Permanent="no">
+			<File Id="sfodbc.dll" KeyPath="yes"
 					Source="$(var.DriverBinDir)\sfodbc.dll" />
 			</Component>
 		</DirectoryRef>
@@ -112,8 +112,8 @@
 		<!-- Files: public header                                              -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="IncludeDir">
-			<Component Id="sf_odbc.h" Win64="yes" Permanent="no">
-				<File Id="sf_odbc.h" KeyPath="yes"
+			<Component Id="sf_odbc.h" Guid="7E678D91-F506-4CA3-90FA-F7247A2474A4" Win64="yes" Permanent="no">
+			<File Id="sf_odbc.h" KeyPath="yes"
 					Source="$(var.SourceDir)\odbc\include\sf_odbc.h" />
 			</Component>
 		</DirectoryRef>
@@ -122,8 +122,8 @@
 		<!-- Files: VC++ Redistributable                                       -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="RedistDir">
-			<Component Id="vc_redist.x64.exe" Win64="yes" Permanent="no">
-				<File Id="vc_redist.x64.exe" KeyPath="yes"
+			<Component Id="vc_redist.x64.exe" Guid="B55F8416-F349-4EA1-ABBB-46F46AA9E3AA" Win64="yes" Permanent="no">
+			<File Id="vc_redist.x64.exe" KeyPath="yes"
 					Source="$(var.VCRedistDir)\vc_redist.x64.exe" />
 			</Component>
 		</DirectoryRef>
@@ -132,15 +132,15 @@
 		<!-- ODBC driver registration                                          -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="TARGETDIR">
-			<Component Id="RegistryEntries" Guid="d4e6f8a0-b2c4-4d6e-8f0a-1b3c5d7e9f0a" Win64="yes">
+			<Component Id="RegistryEntries" Guid="46CDADA1-59D9-4E4A-9F29-BB1BCD2F3946" Win64="yes">
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
-				Action="create">
+				ForceCreateOnInstall="yes">
 				<RegistryValue Type="string" Name="SnowflakeDSIIDriver" Value="Installed" />
 			</RegistryKey>
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\SnowflakeDSIIDriver"
-				Action="createAndRemoveOnUninstall">
+				ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
 				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc.dll" KeyPath="yes" />
 				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc.dll" />
 				<RegistryValue Type="string" Name="Description" Value="Snowflake DSII" />
