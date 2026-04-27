@@ -297,11 +297,12 @@ jobs:
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            cargo_extra: "--features vendored-openssl"
           - os: windows-latest
             name: Windows x86
             driver_lib: sfodbc32.dll
             cargo_target: i686-pc-windows-msvc
-            cargo_extra: "--no-default-features"
+            cargo_extra: "--no-default-features --features vendored-openssl"
     runs-on: ${{ matrix.os }}
     name: build_odbc_driver (${{ matrix.name }})
     steps:
@@ -325,16 +326,6 @@ jobs:
           brew install unixodbc go
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          if (!(Test-Path "C:\Program Files\OpenSSL\lib\VC\x64\MD")) {
-            choco install openssl -y --no-progress
-          }
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\x64\MD" >> $env:GITHUB_ENV
-
       - name: Install Rust target
         if: matrix.cargo_target
         run: rustup target add ${{ matrix.cargo_target }}
@@ -349,15 +340,9 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo build --package odbc
 
-      - name: Build ODBC driver (Windows x64)
-        if: runner.os == 'Windows' && !matrix.cargo_target
-        run: cargo build --package odbc
-        env:
-          RUSTFLAGS: "-C linker=rust-lld"
-
-      - name: Build ODBC driver (Windows x86)
-        if: runner.os == 'Windows' && matrix.cargo_target
-        run: cargo build --package odbc ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+      - name: Build ODBC driver (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --package odbc ${{ matrix.cargo_extra }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
         env:
           RUSTFLAGS: "-C linker=rust-lld"
 
