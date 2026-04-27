@@ -519,7 +519,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          # cmake is pre-installed on windows-latest (4.2+); no need to pip install it
+          # Save the runner's cmake path before vcvarsall.bat prepends VS's bundled 3.x
+          $cmakePath = (Get-Command cmake.exe).Source | Split-Path
+          echo "CMAKE_DIR=$cmakePath" >> $env:GITHUB_ENV
           cmake --version
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
@@ -527,12 +529,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
-
-          # The pre-built ODBC driver links OpenSSL dynamically — ensure DLLs are available at runtime
-          if (!(Test-Path "C:\Program Files\OpenSSL\lib\VC\x64\MD")) {
-            Invoke-Checked "choco install openssl" { choco install openssl -y --no-progress }
-          }
-          echo "C:\Program Files\OpenSSL\bin" >> $env:GITHUB_PATH
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -579,6 +575,12 @@ jobs:
           }
           if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
             throw "MSVC environment setup completed but link.exe is not on PATH"
+          }
+
+          # vcvarsall.bat prepends VS's cmake 3.x to PATH; re-prepend the runner's 4.x
+          if ($env:CMAKE_DIR) {
+            $env:PATH = "$env:CMAKE_DIR;$env:PATH"
+            echo "PATH=$env:PATH" >> $env:GITHUB_ENV
           }
 
       - name: Decode secrets
