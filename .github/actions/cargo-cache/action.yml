@@ -160,9 +160,14 @@ runs:
           exit 0
         fi
         size_before=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
-        # -prune skips descending into matched dirs, exec rm -rf removes them.
-        find "$target_dir" -type d -name 'incremental' -prune -exec rm -rf {} + 2>/dev/null || true
-        find "$target_dir" -type d -name '.fingerprint' -prune -exec rm -rf {} + 2>/dev/null || true
+        # Use a while/read loop with find, which is portable across GNU find (Linux),
+        # BSD find (macOS), and Git Bash find (Windows). The find ... -prune -exec rm
+        # pattern has subtle implementation differences between these and is unreliable
+        # for directory deletion in CI; this loop is explicit and predictable.
+        while IFS= read -r dir; do
+          [ -n "$dir" ] && rm -rf "$dir"
+        done < <(find "$target_dir" -type d \( -name 'incremental' -o -name '.fingerprint' \) 2>/dev/null)
+        # .d files are dependency-tracking outputs; cargo regenerates them automatically.
         find "$target_dir" -type f -name '*.d' -delete 2>/dev/null || true
         size_after=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
         echo "Slimmed ${target_dir}: ${size_before} -> ${size_after}"
