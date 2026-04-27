@@ -297,6 +297,11 @@ jobs:
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+          - os: windows-latest
+            name: Windows x86
+            driver_lib: sfodbc32.dll
+            cargo_target: i686-pc-windows-msvc
+            cargo_extra: "--no-default-features"
     runs-on: ${{ matrix.os }}
     name: build_odbc_driver (${{ matrix.name }})
     steps:
@@ -330,6 +335,10 @@ jobs:
           echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\x64\MD" >> $env:GITHUB_ENV
 
+      - name: Install Rust target
+        if: matrix.cargo_target
+        run: rustup target add ${{ matrix.cargo_target }}
+
       - name: Build ODBC driver (Linux)
         if: runner.os == 'Linux'
         run: cargo build --package odbc
@@ -340,11 +349,25 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo build --package odbc
 
-      - name: Build ODBC driver (Windows)
-        if: runner.os == 'Windows'
+      - name: Build ODBC driver (Windows x64)
+        if: runner.os == 'Windows' && !matrix.cargo_target
         run: cargo build --package odbc
         env:
           RUSTFLAGS: "-C linker=rust-lld"
+
+      - name: Build ODBC driver (Windows x86)
+        if: runner.os == 'Windows' && matrix.cargo_target
+        run: cargo build --package odbc ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+        env:
+          RUSTFLAGS: "-C linker=rust-lld"
+
+      - name: Rename x86 driver DLL
+        if: matrix.cargo_target == 'i686-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $dir = "target/${{ matrix.cargo_target }}/debug"
+          Rename-Item "$dir/sfodbc.dll" "sfodbc32.dll"
+          if (Test-Path "$dir/sfodbc.pdb") { Rename-Item "$dir/sfodbc.pdb" "sfodbc32.pdb" }
 
       - name: Save Rust cache
         if: always()
@@ -361,8 +384,8 @@ jobs:
       - name: Upload ODBC driver
         uses: actions/upload-artifact@v4
         with:
-          name: odbc-driver-${{ matrix.os }}
-          path: target/debug/${{ matrix.driver_lib }}
+          name: odbc-driver-${{ matrix.name }}
+          path: ${{ matrix.cargo_target && format('target/{0}/debug', matrix.cargo_target) || 'target/debug' }}/${{ matrix.driver_lib }}
 
   odbc_tests:
     needs: [detect-changes, build_odbc_driver]
@@ -374,44 +397,81 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            driver_artifact: Linux x64
             cloud_provider: aws
           - os: ubuntu-latest
             name: Linux x64 (JSON)
             driver_lib: libsfodbc.so
+            driver_artifact: Linux x64
             cloud_provider: aws
             result_format: json
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
+            driver_artifact: macOS ARM64
             cloud_provider: aws
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            driver_artifact: Windows x64
             cloud_provider: aws
+            msvc_arch: amd64
+            vcpkg_triplet: x64-windows
+          - os: windows-latest
+            name: Windows x86
+            driver_lib: sfodbc32.dll
+            driver_artifact: Windows x86
+            cloud_provider: aws
+            msvc_arch: x86
+            vcpkg_triplet: x86-windows
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            driver_artifact: Linux x64
             cloud_provider: gcp
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
+            driver_artifact: macOS ARM64
             cloud_provider: gcp
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            driver_artifact: Windows x64
             cloud_provider: gcp
+            msvc_arch: amd64
+            vcpkg_triplet: x64-windows
+          - os: windows-latest
+            name: Windows x86
+            driver_lib: sfodbc32.dll
+            driver_artifact: Windows x86
+            cloud_provider: gcp
+            msvc_arch: x86
+            vcpkg_triplet: x86-windows
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            driver_artifact: Linux x64
             cloud_provider: azure
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
+            driver_artifact: macOS ARM64
             cloud_provider: azure
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            driver_artifact: Windows x64
             cloud_provider: azure
+            msvc_arch: amd64
+            vcpkg_triplet: x64-windows
+          - os: windows-latest
+            name: Windows x86
+            driver_lib: sfodbc32.dll
+            driver_artifact: Windows x86
+            cloud_provider: azure
+            msvc_arch: x86
+            vcpkg_triplet: x86-windows
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     steps:
@@ -421,7 +481,7 @@ jobs:
       - name: Download pre-built ODBC driver
         uses: actions/download-artifact@v4
         with:
-          name: odbc-driver-${{ matrix.os }}
+          name: odbc-driver-${{ matrix.driver_artifact }}
           path: target/debug
 
       - name: Make driver executable (Unix)
@@ -452,9 +512,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-zlib-v1
+          key: ${{ runner.os }}-vcpkg-zlib-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v1
           restore-keys: |
-            ${{ runner.os }}-vcpkg-
+            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-
 
       # Cache Homebrew bottle downloads to avoid re-fetching unixodbc/ccache on every run
       # (brew install on GHA macOS runners is ~2-3 min uncached, <15s with bottles cached).
@@ -529,7 +589,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
-          Invoke-Checked "vcpkg install zlib:${{ matrix.vcpkg_triplet || 'x64-windows' }}" { vcpkg install zlib:${{ matrix.vcpkg_triplet || 'x64-windows' }} }
+          Invoke-Checked "vcpkg install zlib:${{ matrix.vcpkg_triplet }}" { vcpkg install zlib:${{ matrix.vcpkg_triplet }} }
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -546,11 +606,12 @@ jobs:
           # inspect $LASTEXITCODE before any pipeline resets it: piping `cmd /c ... | ForEach-Object`
           # would succeed as a pipeline even if vcvarsall.bat failed, leaving later steps running
           # without cl.exe / link.exe on PATH.
-          $vcvarsOutput = cmd /c "`"$vcvars`" amd64 && set" 2>&1
+          $msvcArch = "${{ matrix.msvc_arch || 'amd64' }}"
+          $vcvarsOutput = cmd /c "`"$vcvars`" $msvcArch && set" 2>&1
           if ($LASTEXITCODE -ne 0) {
             Write-Host "vcvarsall.bat output:"
             $vcvarsOutput | ForEach-Object { Write-Host $_ }
-            throw "vcvarsall.bat amd64 failed with exit code $LASTEXITCODE"
+            throw "vcvarsall.bat $msvcArch failed with exit code $LASTEXITCODE"
           }
           # Propagate env vars to BOTH:
           #   - $env:GITHUB_ENV: visible to subsequent steps in the job (the point of this step)
@@ -697,7 +758,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-zlib-v1
+          key: ${{ runner.os }}-vcpkg-zlib-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v1
 
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
@@ -796,6 +857,14 @@ jobs:
         with:
           path: .cargo-target-msi
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Rename x86 driver DLL
+        if: matrix.arch == 'x86'
+        shell: pwsh
+        run: |
+          $dir = ".cargo-target-msi/${{ matrix.cargo_target }}/${{ matrix.config }}"
+          Rename-Item "$dir/sfodbc.dll" "sfodbc32.dll"
+          if (Test-Path "$dir/sfodbc.pdb") { Rename-Item "$dir/sfodbc.pdb" "sfodbc32.pdb" }
 
       - name: Compute ODBC version
         id: odbc-version
