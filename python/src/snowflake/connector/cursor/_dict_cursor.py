@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from .._internal.decorators import with_errorhandler
 from ._base import DictRow, SnowflakeCursorBase
 
 
-@with_errorhandler
 class DictCursor(SnowflakeCursorBase):
     """Cursor returning results as dictionaries with column names as keys.
 

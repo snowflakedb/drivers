@@ -1,8 +1,9 @@
-"""PEP 249 error-handler routing for ``@with_errorhandler``-decorated classes.
+"""PEP 249 error-handler routing via ``ErrorHandlerMixin``.
 
 How to raise errors in the driver:
-- Classes (Connection, Cursor, ResultBatch): decorate with ``@with_errorhandler``
-  and inherit ``ErrorHandlerMixin``.  Then use plain ``raise``.
+- Classes (Connection, Cursor, ResultBatch): inherit ``ErrorHandlerMixin``.
+  Public methods are wrapped automatically via ``__init_subclass__``.
+  Then use plain ``raise``.
 - Free functions with a ``conn`` argument (e.g. ``write_pandas``): wrap the body
   in ``try/except Error`` and call ``route_exception(conn, None, exc)``.
 """
@@ -22,12 +23,6 @@ if TYPE_CHECKING:
     from ..connection import Connection
     from ..cursor import SnowflakeCursorBase
 
-# Prevents double-routing when a wrapped public method calls another.
-# Global (not per-object): if conn A's method triggers a callback into conn B
-# in the same thread, conn B's errors won't be routed.  Acceptable trade-off
-# vs. per-object thread-local stacks.
-_errorhandler_active: ContextVar[bool] = ContextVar("_errorhandler_active", default=False)
-
 
 def route_exception(
     connection: Connection | None,
@@ -44,7 +39,28 @@ def route_exception(
     raise exc
 
 
-def apply_errorhandler(cls: type) -> type:
+class ErrorHandlerMixin:
+    """Mixin that routes ``Error`` exceptions from public methods through PEP 249 errorhandler.
+
+    Inherit this class and override ``_errorhandler_connection`` and/or
+    ``_errorhandler_cursor`` to supply context.  Public methods are wrapped
+    automatically at class creation time via ``__init_subclass__``.
+    """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _apply_errorhandler(cls)
+
+    @property
+    def _errorhandler_connection(self) -> Connection | None:
+        return None
+
+    @property
+    def _errorhandler_cursor(self) -> SnowflakeCursorBase | None:
+        return None
+
+
+def _apply_errorhandler(cls: type) -> None:
     """Wrap public methods of *cls* with error-handler routing."""
     for name in list(vars(cls)):
         # private/dunder — not part of the public API surface
@@ -61,7 +77,14 @@ def apply_errorhandler(cls: type) -> type:
         if inspect.isgeneratorfunction(attr):
             continue
         setattr(cls, name, _wrap_method(attr))
-    return cls
+
+
+# Prevents double-routing when a wrapped public method calls another.
+# Global (not per-object):
+# if conn A's method somehow triggers conn B's method in the same context, conn B's errors won't be routed.
+# This is acceptable because a connection method should never call into another connection
+# and per-object tracking would add overhead on every call for a scenario that should not occur.
+_errorhandler_active: ContextVar[bool] = ContextVar("_errorhandler_active", default=False)
 
 
 def _wrap_method(method: Callable) -> Callable:
@@ -95,19 +118,3 @@ def _error_to_value(exc: Error) -> dict[str, Any]:
         "sfqid": exc.sfqid,
         "query": exc.query,
     }
-
-
-class ErrorHandlerMixin:
-    """Mixin that provides the routing context for ``@with_errorhandler``.
-
-    Subclasses override ``_errorhandler_connection`` and/or
-    ``_errorhandler_cursor`` to supply their context.  Defaults to ``None``.
-    """
-
-    @property
-    def _errorhandler_connection(self) -> Connection | None:
-        return None
-
-    @property
-    def _errorhandler_cursor(self) -> SnowflakeCursorBase | None:
-        return None

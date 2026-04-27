@@ -122,7 +122,7 @@ def write_pandas(
         )
         return WritePandasOperation(cfg).execute()
     except Error as exc:
-        # TODO: consider a function-level @with_errorhandler decorator
+        # TODO: consider a function-level errorhandler decorator
         #  if more free functions need this pattern in the future.
         route_exception(conn, None, exc)
 

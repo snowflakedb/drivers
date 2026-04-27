@@ -1,20 +1,18 @@
-"""Unit tests for the @with_errorhandler decorator and ErrorHandlerMixin."""
+"""Unit tests for ErrorHandlerMixin and __init_subclass__ wrapping."""
 
 from __future__ import annotations
 
 import pytest
 
-from snowflake.connector._internal.decorators import with_errorhandler
 from snowflake.connector._internal.errorhandler import ErrorHandlerMixin, _errorhandler_active, route_exception
 from snowflake.connector.errors import Error, ErrorValue, InterfaceError, ProgrammingError
 
 
 # ---------------------------------------------------------------------------
-# Test fixtures: minimal decorated classes
+# Test fixtures: minimal ErrorHandlerMixin subclasses
 # ---------------------------------------------------------------------------
 
 
-@with_errorhandler
 class _FakeConnection(ErrorHandlerMixin):
     """Simulates a Connection: _errorhandler_cursor is always None."""
 
@@ -46,7 +44,6 @@ class _FakeConnection(ErrorHandlerMixin):
         self.do_something()
 
 
-@with_errorhandler
 class _FakeCursor(ErrorHandlerMixin):
     """Simulates a Cursor: routes through both connection and cursor."""
 
@@ -78,7 +75,7 @@ class _FakeCursor(ErrorHandlerMixin):
 # ---------------------------------------------------------------------------
 
 
-class TestWithErrorhandlerBasics:
+class TestErrorHandlerMixinBasics:
     def test_successful_method_returns_value(self):
         conn = _FakeConnection()
         assert conn.succeed() == "ok"
@@ -194,11 +191,10 @@ class TestReentrancy:
 
 
 # ---------------------------------------------------------------------------
-# Decorator skips private methods, properties, staticmethods, classmethods
+# Wrapping skips private methods, properties, staticmethods, classmethods
 # ---------------------------------------------------------------------------
 
 
-@with_errorhandler
 class _MixedClass(ErrorHandlerMixin):
     def __init__(self):
         self.messages: list = []
@@ -231,7 +227,7 @@ class _MixedClass(ErrorHandlerMixin):
         raise ProgrammingError(msg="from public")
 
 
-class TestDecoratorScoping:
+class TestWrappingScoping:
     def test_property_not_wrapped(self):
         obj = _MixedClass()
         with pytest.raises(ProgrammingError, match="from property"):
@@ -264,7 +260,6 @@ class TestDecoratorScoping:
 # ---------------------------------------------------------------------------
 
 
-@with_errorhandler
 class _GeneratorClass(ErrorHandlerMixin):
     def __init__(self):
         self.messages: list = []
@@ -294,7 +289,7 @@ class TestGeneratorNotWrapped:
 
 
 # ---------------------------------------------------------------------------
-# _route_exception
+# route_exception
 # ---------------------------------------------------------------------------
 
 

@@ -27,7 +27,7 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
-from .._internal.decorators import pep249, with_errorhandler
+from .._internal.decorators import pep249
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
@@ -179,7 +179,6 @@ def _create_config_setting(value: Any) -> ConfigSetting:
     return config_setting
 
 
-@with_errorhandler
 class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     """
     Base cursor class for database operations (PEP 249).

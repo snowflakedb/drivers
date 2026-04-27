@@ -45,7 +45,7 @@ from snowflake.connector._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXIST
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
-from ._internal.decorators import backward_compatibility, internal_api, pep249, with_errorhandler
+from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
@@ -100,7 +100,6 @@ def _requires_open(func: F) -> F:
     return cast(F, wrapper)
 
 
-@with_errorhandler
 class Connection(ErrorHandlerMixin):
     """Connection objects represent a database connection."""
 
