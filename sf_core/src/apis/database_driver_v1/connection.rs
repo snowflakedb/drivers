@@ -290,6 +290,7 @@ impl DatabaseDriverV1 {
                     .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
                     .map(|v| v.eq_ignore_ascii_case("true"))
                     .unwrap_or(true);
+                // Release connection mutex before spawning telemetry (re-acquires it).
                 drop(conn);
 
                 // Best-effort session_init telemetry — spawned as a background task
