@@ -1024,7 +1024,7 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     runs-on: macos-latest
-    name: build_dmg
+    name: build_dmg (macOS Universal)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -1053,11 +1053,18 @@ jobs:
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
 
+      - name: Create x86_64 ODBC stub for cross-compilation
+        run: |
+          mkdir -p .x86_64-odbc-stub
+          echo "void _odbc_stub(void) {}" | clang -x c -arch x86_64 -dynamiclib \
+            -Wl,-install_name,libodbc.dylib -o .x86_64-odbc-stub/libodbc.dylib -
+
       - name: Build ODBC driver (x86_64)
         run: cargo build --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
         env:
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
           CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          RUSTFLAGS: "-L native=${{ github.workspace }}/.x86_64-odbc-stub"
 
       - name: Build ODBC driver (aarch64)
         run: cargo build --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
