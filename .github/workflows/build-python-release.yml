@@ -226,6 +226,9 @@ jobs:
           }
           $env:WHEEL_PATH = $sdists[0].FullName
           Write-Host "Installing sdist: $($env:WHEEL_PATH)"
+          # Use a short cache path to avoid MSVC MAX_PATH errors when
+          # compiling C/C++ extensions from the unpacked sdist.
+          $env:UV_CACHE_DIR = "D:\uv"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
         env:
           SKIP_CORE_BUILD: "false"
