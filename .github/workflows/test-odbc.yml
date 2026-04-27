@@ -724,11 +724,25 @@ jobs:
             config: release
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: "--release"
+            cargo_extra: ""
           - name: Windows x64 Debug
             arch: x64
             config: debug
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: ""
+            cargo_extra: ""
+          - name: Windows x86 Release
+            arch: x86
+            config: release
+            cargo_target: i686-pc-windows-msvc
+            cargo_profile: "--release"
+            cargo_extra: "--no-default-features"
+          - name: Windows x86 Debug
+            arch: x86
+            config: debug
+            cargo_target: i686-pc-windows-msvc
+            cargo_profile: ""
+            cargo_extra: "--no-default-features"
     runs-on: windows-latest
     name: build_msi (${{ matrix.name }})
     steps:
@@ -758,8 +772,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path .cargo-cache/git | Out-Null
           New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
 
+      - name: Install Rust target
+        if: matrix.cargo_target != 'x86_64-pc-windows-msvc'
+        run: rustup target add ${{ matrix.cargo_target }}
+
       - name: Build ODBC driver
-        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl --target ${{ matrix.cargo_target }}
+        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
         env:
           RUSTFLAGS: "-C linker=rust-lld"
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
