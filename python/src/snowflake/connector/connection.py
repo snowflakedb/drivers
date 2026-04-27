@@ -15,7 +15,7 @@ import threading
 from collections.abc import Generator, Iterable
 from functools import cached_property
 from io import StringIO
-from typing import Any, Callable, NoReturn, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, Union, cast
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -46,6 +46,7 @@ from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.text_utils import split_statements
@@ -89,9 +90,8 @@ def _requires_open(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: Connection, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():
-            self._handle_error(
-                DatabaseError,
-                "Connection is closed.",
+            raise DatabaseError(
+                msg="Connection is closed.",
                 errno=ER_CONNECTION_IS_CLOSED,
                 sqlstate=SQLSTATE_CONNECTION_NOT_EXISTS,
             )
@@ -100,7 +100,7 @@ def _requires_open(func: F) -> F:
     return cast(F, wrapper)
 
 
-class Connection:
+class Connection(ErrorHandlerMixin):
     """Connection objects represent a database connection."""
 
     def __init__(
@@ -164,12 +164,10 @@ class Connection:
             self._application = _APPLICATION_NAME
         elif isinstance(application, str):
             if not APPLICATION_RE.match(application):
-                self._handle_error(ProgrammingError, f"Invalid application name: {application!r}")
+                raise ProgrammingError(msg=f"Invalid application name: {application!r}")
             self._application = application
         else:
-            self._handle_error(
-                ProgrammingError, f"Invalid application parameter (must be a non-empty string): {application!r}"
-            )
+            raise ProgrammingError(msg=f"Invalid application parameter (must be a non-empty string): {application!r}")
         kwargs["client_app_id"] = self._application
 
         # Extract Python-only params before processing kwargs for Rust core
@@ -185,7 +183,7 @@ class Connection:
 
         if autocommit is not None:
             if not isinstance(autocommit, bool):
-                self._handle_error(ProgrammingError, f"Invalid autocommit parameter: {autocommit!r}")
+                raise ProgrammingError(msg=f"Invalid autocommit parameter: {autocommit!r}")
 
         if session_params is None:
             session_params = {}
@@ -369,7 +367,7 @@ class Connection:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
         # FIXME: set autocommit via core
         if not isinstance(autocommit, bool):
-            self._handle_error(ProgrammingError, f"Invalid autocommit parameter: {autocommit!r}", ER_INVALID_VALUE)
+            raise ProgrammingError(msg=f"Invalid autocommit parameter: {autocommit!r}", errno=ER_INVALID_VALUE)
         cur = self.cursor()
         try:
             cur.execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")
@@ -432,7 +430,7 @@ class Connection:
         elif isinstance(value, str):
             self.__paramstyle = ParamStyle.from_string(value)
         else:
-            self._handle_error(ProgrammingError, f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+            raise ProgrammingError(msg=f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
 
     @property
     @backward_compatibility
@@ -590,7 +588,7 @@ class Connection:
         """The Snowflake session ID for this connection."""
         info = self._get_connection_info()
         if not info.HasField("session_id"):
-            self._handle_error(InterfaceError, "Session ID is not available; connection may not be initialized")
+            raise InterfaceError(msg="Session ID is not available; connection may not be initialized")
         return info.session_id
 
     @property
@@ -653,23 +651,9 @@ class Connection:
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
 
-    def _handle_error(
-        self, error_class: type[Error], msg: str, errno: int = -1, sqlstate: str | None = None, sfqid: str | None = None
-    ) -> NoReturn:
-        Error.errorhandler_wrapper(
-            connection=self,
-            cursor=None,
-            error_class=error_class,
-            error_value={
-                "errno": errno,
-                "msg": msg,
-                "sqlstate": sqlstate,
-                "sfqid": sfqid,
-            },
-        )
-        # Safety net: the default handler always raises, but a user-installed handler might not.
-        # The bare raise ensures NoReturn is honored.
-        raise
+    @property
+    def _errorhandler_connection(self) -> Connection:
+        return self
 
     @property
     def is_pyformat(self) -> bool:
@@ -775,7 +759,7 @@ class Connection:
         if self.is_an_error(status):
             message = response.error_message if response.HasField("error_message") else f"Query {sf_qid} failed"
             errno = response.error_code if response.HasField("error_code") else -1
-            self._handle_error(ProgrammingError, msg=message, errno=errno, sfqid=sf_qid)
+            raise ProgrammingError(msg=message, errno=errno, sfqid=sf_qid)
         return status
 
     def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:

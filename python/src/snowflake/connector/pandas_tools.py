@@ -13,13 +13,14 @@ from collections.abc import Iterable
 from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar, cast
 
+from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy
 from ._internal.write_pandas_operation import (
     WritePandasConfig,
     WritePandasOperation,
     WritePandasResult,
 )
-from .errors import ProgrammingError
+from .errors import Error, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -97,28 +98,33 @@ def write_pandas(
     Returns a WritePandasResult named tuple (success, nchunks, nrows, copy_results).
     Backward-compatible with plain tuple unpacking and indexing.
     """
-    cfg = WritePandasConfig(
-        conn,
-        df,
-        table_name,
-        database=database,
-        schema=schema,
-        chunk_size=chunk_size,
-        compression=compression,
-        on_error=on_error,
-        parallel=parallel,
-        quote_identifiers=quote_identifiers,
-        infer_schema=infer_schema,
-        auto_create_table=auto_create_table,
-        overwrite=overwrite,
-        table_type=table_type,
-        use_logical_type=use_logical_type,
-        iceberg_config=iceberg_config,
-        bulk_upload_chunks=bulk_upload_chunks,
-        use_vectorized_scanner=use_vectorized_scanner,
-        **kwargs,
-    )
-    return WritePandasOperation(cfg).execute()
+    try:
+        cfg = WritePandasConfig(
+            conn,
+            df,
+            table_name,
+            database=database,
+            schema=schema,
+            chunk_size=chunk_size,
+            compression=compression,
+            on_error=on_error,
+            parallel=parallel,
+            quote_identifiers=quote_identifiers,
+            infer_schema=infer_schema,
+            auto_create_table=auto_create_table,
+            overwrite=overwrite,
+            table_type=table_type,
+            use_logical_type=use_logical_type,
+            iceberg_config=iceberg_config,
+            bulk_upload_chunks=bulk_upload_chunks,
+            use_vectorized_scanner=use_vectorized_scanner,
+            **kwargs,
+        )
+        return WritePandasOperation(cfg).execute()
+    except Error as exc:
+        # TODO: consider a function-level errorhandler decorator
+        #  if more free functions need this pattern in the future.
+        route_exception(conn, None, exc)
 
 
 @requires_dependency(pandas, sqlalchemy)
