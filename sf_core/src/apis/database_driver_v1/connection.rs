@@ -281,8 +281,7 @@ impl DatabaseDriverV1 {
                     )
                     .await;
                     conn.logout_config = logout_config;
-                    *conn.state.lock().expect("ConnectionState mutex poisoned") =
-                        ConnectionState::Connected;
+                    conn.state = ConnectionState::Connected;
 
                     // Snowflake server defaults CLIENT_TELEMETRY_ENABLED to true; it only
                     // sends "false" when the account or user has opted out. If the parameter
@@ -595,9 +594,9 @@ pub struct Connection {
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
     /// Connection lifecycle state (Pristine → Connected → Closing → Closed).
-    /// `std::sync::Mutex` (not tokio) because state checks happen in sync contexts
-    /// (query guards, Drop). Lock held only for reads/transitions, never across I/O.
-    pub state: std::sync::Mutex<ConnectionState>,
+    /// Plain field — the outer `tokio::sync::Mutex<Connection>` already provides
+    /// exclusive access. No inner lock needed.
+    pub(crate) state: ConnectionState,
 
     /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
     pub logout_config: LogoutConfig,
@@ -630,7 +629,7 @@ impl Connection {
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
-            state: std::sync::Mutex::new(ConnectionState::Pristine),
+            state: ConnectionState::Pristine,
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
@@ -644,9 +643,8 @@ impl Connection {
 
     /// `true` if `connection_close()` is in progress or has completed.
     pub(crate) fn is_closed_or_closing(&self) -> bool {
-        let state = self.state.lock().expect("ConnectionState mutex poisoned");
         matches!(
-            &*state,
+            &self.state,
             ConnectionState::Closing { .. } | ConnectionState::Closed(_)
         )
     }
@@ -1584,10 +1582,9 @@ impl DatabaseDriverV1 {
         }
 
         let role = {
-            let conn = conn_ptr.lock().await;
-            let mut state = conn.state.lock().expect("ConnectionState mutex poisoned");
+            let mut conn = conn_ptr.lock().await;
 
-            match &*state {
+            match &conn.state {
                 ConnectionState::Closed(result) => CloseRole::AlreadyClosed(result.clone()),
                 ConnectionState::Closing { rx, error_strategy } => CloseRole::Waiter {
                     rx: rx.clone(),
@@ -1605,7 +1602,7 @@ impl DatabaseDriverV1 {
                     let logout_data = logout::prepare_logout_from_conn(&conn, &config)?;
 
                     let (tx, rx) = tokio::sync::watch::channel(None);
-                    *state = ConnectionState::Closing { rx, error_strategy };
+                    conn.state = ConnectionState::Closing { rx, error_strategy };
 
                     CloseRole::Owner {
                         logout_data: Box::new(logout_data),
@@ -1655,9 +1652,8 @@ impl DatabaseDriverV1 {
                 // If cleanup panics, waiters must still be unblocked.
                 let _ = tx.send(Some(outcome));
                 {
-                    let conn = conn_ptr.lock().await;
-                    *conn.state.lock().expect("ConnectionState mutex poisoned") =
-                        ConnectionState::Closed(close_result.clone());
+                    let mut conn = conn_ptr.lock().await;
+                    conn.state = ConnectionState::Closed(close_result.clone());
                 }
 
                 // Cleanup resources. State is already Closed — waiters are unblocked.
