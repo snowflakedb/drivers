@@ -115,6 +115,23 @@ impl ParamConverter for DecimalParamConverter {
 // Factory
 // =============================================================================
 
+// `odbc_sys::SqlDataType` does not expose the SQL_INTERVAL_* concise type
+// constants (codes 101..=113), so we declare them locally for use in the
+// match below. Values come directly from the ODBC spec / sql.h.
+const SQL_INTERVAL_YEAR: sql::SqlDataType = sql::SqlDataType(101);
+const SQL_INTERVAL_MONTH: sql::SqlDataType = sql::SqlDataType(102);
+const SQL_INTERVAL_DAY: sql::SqlDataType = sql::SqlDataType(103);
+const SQL_INTERVAL_HOUR: sql::SqlDataType = sql::SqlDataType(104);
+const SQL_INTERVAL_MINUTE: sql::SqlDataType = sql::SqlDataType(105);
+const SQL_INTERVAL_SECOND: sql::SqlDataType = sql::SqlDataType(106);
+const SQL_INTERVAL_YEAR_TO_MONTH: sql::SqlDataType = sql::SqlDataType(107);
+const SQL_INTERVAL_DAY_TO_HOUR: sql::SqlDataType = sql::SqlDataType(108);
+const SQL_INTERVAL_DAY_TO_MINUTE: sql::SqlDataType = sql::SqlDataType(109);
+const SQL_INTERVAL_DAY_TO_SECOND: sql::SqlDataType = sql::SqlDataType(110);
+const SQL_INTERVAL_HOUR_TO_MINUTE: sql::SqlDataType = sql::SqlDataType(111);
+const SQL_INTERVAL_HOUR_TO_SECOND: sql::SqlDataType = sql::SqlDataType(112);
+const SQL_INTERVAL_MINUTE_TO_SECOND: sql::SqlDataType = sql::SqlDataType(113);
+
 /// Select the appropriate `ParamConverter` for the given SQL data type.
 /// The SQL type determines the Snowflake logical type, which in turn knows
 /// how to read various C data types from the ODBC buffer.
@@ -178,6 +195,31 @@ fn make_converter(
                 snowflake_type: SnowflakeTimestampNtz { scale: 9 },
             }))
         }
+
+        // Snowflake has no native INTERVAL column type, so SQL_INTERVAL_*
+        // parameter types are routed through the VARCHAR converter and sent
+        // to the server as TEXT (ANSI interval literal). This matches what
+        // the legacy 3.16.0 driver does for INTERVAL parameters and lets
+        // applications round-trip intervals through Snowflake VARCHAR
+        // columns unchanged.
+        SQL_INTERVAL_YEAR
+        | SQL_INTERVAL_MONTH
+        | SQL_INTERVAL_DAY
+        | SQL_INTERVAL_HOUR
+        | SQL_INTERVAL_MINUTE
+        | SQL_INTERVAL_SECOND
+        | SQL_INTERVAL_YEAR_TO_MONTH
+        | SQL_INTERVAL_DAY_TO_HOUR
+        | SQL_INTERVAL_DAY_TO_MINUTE
+        | SQL_INTERVAL_DAY_TO_SECOND
+        | SQL_INTERVAL_HOUR_TO_MINUTE
+        | SQL_INTERVAL_HOUR_TO_SECOND
+        | SQL_INTERVAL_MINUTE_TO_SECOND => Ok(Box::new(JsonParamConverter {
+            snowflake_type: SnowflakeVarchar {
+                len: 0,
+                is_semi_structured: false,
+            },
+        })),
 
         _ => {
             tracing::error!("Unsupported SQL data type for JSON binding: {:?}", sql_type);
@@ -2532,6 +2574,170 @@ mod tests {
         assert!(
             matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
             "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    // -- SQL_INTERVAL_* parameter targets -------------------------------------
+    //
+    // Snowflake has no native INTERVAL column type, so SQL_INTERVAL_* parameter
+    // types are routed through the VARCHAR converter. These tests verify both
+    // ends of the pipeline:
+    //   - the factory (make_converter) accepts every SQL_INTERVAL_* concise
+    //     code (101..=113) and dispatches to SnowflakeVarchar (TEXT logical
+    //     type),
+    //   - SnowflakeVarchar::read_odbc formats SQL_C_INTERVAL_* structs into
+    //     the ANSI literal text the spec defines for each subtype, including
+    //     sign and fractional seconds.
+
+    fn ym_interval(sign: sql::SmallInt, year: u32, month: u32) -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0, // ignored: we trust the C value type, not the struct field
+            interval_sign: sign,
+            interval_value: sql::IntervalUnion {
+                year_month: sql::YearMonth { year, month },
+            },
+        }
+    }
+
+    fn ds_interval(
+        sign: sql::SmallInt,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        fraction: u32,
+    ) -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: sign,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond {
+                    day,
+                    hour,
+                    minute,
+                    second,
+                    fraction,
+                },
+            },
+        }
+    }
+
+    /// Bind an interval struct to a SQL_INTERVAL_* parameter (raw concise
+    /// type code 101..=113, since odbc-sys lacks named constants for these).
+    fn convert_interval(
+        c_type: CDataType,
+        sql_code: i16,
+        iv: &sql::IntervalStruct,
+    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+        let binding = make_binding(
+            c_type,
+            sql::SqlDataType(sql_code),
+            iv as *const sql::IntervalStruct as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        convert_binding(&binding)
+    }
+
+    #[test]
+    fn convert_interval_year_basic() -> TestResult {
+        let iv = ym_interval(0, 5, 0);
+        let (ty, v) = convert_interval(CDataType::IntervalYear, 101, &iv)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("5".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_month_negative() -> TestResult {
+        let iv = ym_interval(1, 0, 11);
+        let (ty, v) = convert_interval(CDataType::IntervalMonth, 102, &iv)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-11".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_year_to_month() -> TestResult {
+        let iv = ym_interval(0, 5, 11);
+        let (_, v) = convert_interval(CDataType::IntervalYearToMonth, 107, &iv)?;
+        assert_eq!(v, Value::String("5-11".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_day_to_second_with_fraction() -> TestResult {
+        // 10 days, 12 hours, 30 minutes, 59.5 seconds.
+        let iv = ds_interval(0, 10, 12, 30, 59, 500_000_000);
+        let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
+        assert_eq!(v, Value::String("10 12:30:59.5".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_second_full_precision() -> TestResult {
+        // 1.000000001s — verify nanosecond precision is preserved.
+        let iv = ds_interval(0, 0, 0, 0, 1, 1);
+        let (_, v) = convert_interval(CDataType::IntervalSecond, 106, &iv)?;
+        assert_eq!(v, Value::String("1.000000001".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_negative_day_to_second() -> TestResult {
+        let iv = ds_interval(1, 1, 2, 3, 4, 0);
+        let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
+        assert_eq!(v, Value::String("-1 2:03:04".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_hour_to_minute() -> TestResult {
+        let iv = ds_interval(0, 0, 14, 7, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalHourToMinute, 111, &iv)?;
+        assert_eq!(v, Value::String("14:07".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_minute_to_second_no_fraction() -> TestResult {
+        // Sub-field seconds are zero-padded to 2 digits per ODBC spec
+        // (matches the formatting of HH:MM in HOUR_TO_MINUTE).
+        let iv = ds_interval(0, 0, 0, 30, 7, 0);
+        let (_, v) = convert_interval(CDataType::IntervalMinuteToSecond, 113, &iv)?;
+        assert_eq!(v, Value::String("30:07".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_text_value_to_interval_target_passes_through() -> TestResult {
+        // Applications routinely send the interval as a text literal even
+        // when the SQL parameter type is SQL_INTERVAL_* — verify the factory
+        // wires SQL_INTERVAL_* to the VARCHAR converter so SQL_C_CHAR works.
+        let s = b"5-11\0";
+        let mut len: sql::Len = 4;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType(107), // SQL_INTERVAL_YEAR_TO_MONTH
+            s.as_ptr() as sql::Pointer,
+            5,
+            &mut len,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("5-11".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_factory_rejects_unknown_codes() {
+        // Code 100 sits just below SQL_INTERVAL_YEAR (101); make sure we
+        // didn't accidentally widen the range.
+        let iv = ym_interval(0, 1, 0);
+        let err = convert_interval(CDataType::IntervalYear, 100, &iv);
+        assert!(
+            err.is_err(),
+            "code 100 should not be a valid INTERVAL target"
         );
     }
 

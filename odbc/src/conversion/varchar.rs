@@ -462,6 +462,19 @@ impl ReadODBC for SnowflakeVarchar {
                 };
                 hex_encode_lowercase(bytes)
             }
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => format_interval(binding),
             _ => {
                 return UnsupportedCDataTypeSnafu {
                     c_type: binding.value_type,
@@ -470,6 +483,80 @@ impl ReadODBC for SnowflakeVarchar {
             }
         };
         Ok(Cow::Owned(s))
+    }
+}
+
+/// Format a `SQL_INTERVAL_STRUCT` as the ANSI SQL interval literal text the
+/// ODBC spec specifies for each `SQL_C_INTERVAL_*` subtype. The chosen
+/// fields come from `binding.value_type`, not the struct's
+/// `interval_type` field — drivers MUST trust the C type set on the binding
+/// (some applications never bother filling in `interval_type`).
+fn format_interval(binding: &ParameterBinding) -> String {
+    let iv = read_unaligned::<sql::IntervalStruct>(binding);
+    let sign = if iv.interval_sign != 0 { "-" } else { "" };
+    // SAFETY: `IntervalUnion` is `#[repr(C)]` over `Copy` POD; both fields are
+    // valid to read regardless of which one was last written. We only consume
+    // the fields appropriate to the active C type below.
+    let ym = unsafe { iv.interval_value.year_month };
+    let ds = unsafe { iv.interval_value.day_second };
+
+    /// Render `<seconds>` or `<seconds>.<fraction>` with the fraction
+    /// zero-padded to 9 digits and trailing zeros trimmed (e.g.
+    /// 1.500_000_000 → "1.5"). When `pad_int` is true the integer part is
+    /// also zero-padded to 2 digits — used when seconds appears as a sub-field
+    /// after a `:` (e.g. `12:30:05`), per the ODBC spec.
+    fn fmt_seconds(second: u32, fraction: u32, pad_int: bool) -> String {
+        let int_part = if pad_int {
+            format!("{second:02}")
+        } else {
+            second.to_string()
+        };
+        if fraction == 0 {
+            int_part
+        } else {
+            let frac = format!("{fraction:09}");
+            let frac_trimmed = frac.trim_end_matches('0');
+            format!("{int_part}.{frac_trimmed}")
+        }
+    }
+
+    match binding.value_type {
+        CDataType::IntervalYear => format!("{sign}{}", ym.year),
+        CDataType::IntervalMonth => format!("{sign}{}", ym.month),
+        CDataType::IntervalDay => format!("{sign}{}", ds.day),
+        CDataType::IntervalHour => format!("{sign}{}", ds.hour),
+        CDataType::IntervalMinute => format!("{sign}{}", ds.minute),
+        // `second` is the leading field here, so no zero-padding.
+        CDataType::IntervalSecond => {
+            format!("{sign}{}", fmt_seconds(ds.second, ds.fraction, false))
+        }
+        CDataType::IntervalYearToMonth => format!("{sign}{}-{}", ym.year, ym.month),
+        CDataType::IntervalDayToHour => format!("{sign}{} {}", ds.day, ds.hour),
+        CDataType::IntervalDayToMinute => {
+            format!("{sign}{} {}:{:02}", ds.day, ds.hour, ds.minute)
+        }
+        CDataType::IntervalDayToSecond => format!(
+            "{sign}{} {}:{:02}:{}",
+            ds.day,
+            ds.hour,
+            ds.minute,
+            fmt_seconds(ds.second, ds.fraction, true),
+        ),
+        CDataType::IntervalHourToMinute => format!("{sign}{}:{:02}", ds.hour, ds.minute),
+        CDataType::IntervalHourToSecond => format!(
+            "{sign}{}:{:02}:{}",
+            ds.hour,
+            ds.minute,
+            fmt_seconds(ds.second, ds.fraction, true),
+        ),
+        CDataType::IntervalMinuteToSecond => format!(
+            "{sign}{}:{}",
+            ds.minute,
+            fmt_seconds(ds.second, ds.fraction, true),
+        ),
+        // The caller's match guarantees we only land here for an interval C
+        // type, so any other value indicates a programmer error.
+        other => unreachable!("format_interval called with non-interval C type {other:?}"),
     }
 }
 
