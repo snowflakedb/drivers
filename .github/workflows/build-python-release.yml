@@ -14,7 +14,7 @@ jobs:
   build_wheels:
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # ── Test wheels and sdist against cloud providers ───────────────────
   # Each Python version tested once per env, cloud providers distributed evenly.
@@ -49,6 +49,16 @@ jobs:
           - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          # Windows x86_64 — test env
+          - { os: windows-latest,  py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: windows-latest,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: windows-latest,  py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: windows-latest,  py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
+          # Windows x86_64 — test-pandas env
+          - { os: windows-latest,  py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: windows-latest,  py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: windows-latest,  py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: windows-latest,  py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           # Windows ARM64 (no test-pandas — pyarrow has no win_arm64 wheel)
           - { os: windows-11-arm,  py: "3.11", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-11-arm,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
@@ -92,11 +102,11 @@ jobs:
           name: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
-      - name: Download wheel (Windows ARM64)
+      - name: Download wheel (Windows)
         if: runner.os == 'Windows'
         uses: actions/download-artifact@v4
         with:
-          name: win_arm64_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'win_amd64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
@@ -123,11 +133,11 @@ jobs:
 
       # ── Windows ARM64 OpenSSL (needed by cryptography dependency) ──
       - name: Capture vcpkg version for cache key (Windows ARM64)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         uses: ./.github/actions/vcpkg-version
 
       - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         id: vcpkg-cache-test
         uses: actions/cache/restore@v5
         with:
@@ -135,7 +145,7 @@ jobs:
           key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: runner.os == 'Windows' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
@@ -143,8 +153,6 @@ jobs:
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
         if: runner.os == 'Windows' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
         timeout-minutes: 10
         env:
@@ -155,7 +163,7 @@ jobs:
           key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Configure ARM64 build environment
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         shell: pwsh
         run: |
           echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV

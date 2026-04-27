@@ -8,8 +8,8 @@ on:
         required: true
         description: >
           JSON object mapping platform keys to Python version arrays.
-          Example: {"linux_x86": ["3.10","3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
-          Supported platforms: linux_x86, linux_aarch, windows_arm.
+          Example: {"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12"], "windows_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
+          Supported platforms: linux_x86, linux_aarch, windows_x86, windows_arm.
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,6 +49,16 @@ jobs:
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_aarch64",
                   "artifact_id": "manylinux_aarch64",
+              },
+              "windows_x86": {
+                  "target": "windows-x86_64",
+                  "os": "windows-latest",
+                  "container": "",
+                  "lib_name": "sf_core.dll",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "win_amd64",
+                  "artifact_id": "win_amd64",
               },
               "windows_arm": {
                   "target": "windows-arm64",
@@ -141,11 +151,11 @@ jobs:
 
       # ── Windows ARM64 OpenSSL setup ──
       - name: Capture vcpkg version for cache key
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         uses: ./.github/actions/vcpkg-version
 
       - name: Cache vcpkg packages
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         id: vcpkg-cache
         uses: actions/cache@v5
         with:
@@ -153,14 +163,14 @@ jobs:
           key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Configure ARM64 OpenSSL (static)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         shell: pwsh
         run: |
           echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
@@ -179,8 +189,12 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
 
+      - name: Build sf_core (Windows x86_64)
+        if: matrix.os == 'windows-latest'
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
       - name: Build sf_core (Windows ARM64)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-11-arm'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
@@ -311,6 +325,7 @@ jobs:
           path: python/src/snowflake/connector/_core
 
       - name: Ensure sf_core is executable
+        if: runner.os == 'Linux'
         run: chmod +x python/src/snowflake/connector/_core/*
 
       - name: Download pre-built protobuf code
@@ -331,8 +346,12 @@ jobs:
           CIBW_ENVIRONMENT_LINUX: >-
             SKIP_CORE_BUILD=true
             SKIP_PROTO_GENERATION=true
+          CIBW_ENVIRONMENT_WINDOWS: >-
+            SKIP_CORE_BUILD=true
+            SKIP_PROTO_GENERATION=true
 
       - name: Check wheels with auditwheel
+        if: runner.os == 'Linux'
         run: |
           pip install auditwheel
           for whl in python/dist/*.whl; do

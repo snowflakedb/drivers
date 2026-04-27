@@ -32,7 +32,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -151,6 +151,14 @@ jobs:
             py: "3.11"
             hatch_env: "test"
             cloud_provider: aws
+          - os: windows-latest
+            py: "3.12"
+            hatch_env: "test"
+            cloud_provider: gcp
+          - os: windows-latest
+            py: "3.14"
+            hatch_env: "test"
+            cloud_provider: azure
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
@@ -177,6 +185,10 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
             result_format: json
+          - os: windows-latest
+            py: "3.11"
+            hatch_env: "test-pandas"
+            cloud_provider: aws
           - os: ubuntu-24.04-arm
             py: "3.12"
             hatch_env: "test-pandas"
@@ -238,7 +250,7 @@ jobs:
         if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64')) }}_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))) }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
