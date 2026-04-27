@@ -106,11 +106,10 @@ where
         // Only process "connection" spans (which carry snowflake.session.id)
         // and events within them, so the extra provider does minimal work for
         // non-telemetry code paths.
-        let layer = OpenTelemetryLayer::new(tracer).with_filter(
-            tracing_subscriber::filter::filter_fn(|metadata| {
-                metadata.name() == "connection" || metadata.is_event()
-            }),
-        );
+        let layer =
+            OpenTelemetryLayer::new(tracer).with_filter(tracing_subscriber::filter::filter_fn(
+                |metadata| metadata.name() == "connection" || metadata.is_event(),
+            ));
         (Some(layer), Some(provider))
     } else {
         (None, None)

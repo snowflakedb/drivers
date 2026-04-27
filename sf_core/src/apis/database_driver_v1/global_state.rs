@@ -70,17 +70,9 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Returns the session registry, checking DriverProviders first then
-    /// falling back to the C API telemetry init state (which may be populated
-    /// after CApiState initialization).
+    /// Returns the session registry if telemetry was configured via `DriverProviders`.
     pub(super) fn telemetry_sessions(&self) -> Option<&SessionRegistry> {
-        self.telemetry_sessions
-            .as_ref()
-            .or_else(|| {
-                crate::logging::c_api::TELEMETRY_INIT
-                    .get()
-                    .map(|init| &init.sessions)
-            })
+        self.telemetry_sessions.as_ref()
     }
 
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {

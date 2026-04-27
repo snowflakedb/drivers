@@ -115,8 +115,6 @@ async fn span_exporter_sends_span_attributes_in_snowflake_format() {
     let exporter = SnowflakeInBandExporter::new(registry);
     let result = SpanExporter::export(&exporter, vec![span]).await;
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
@@ -147,8 +145,6 @@ async fn span_exporter_sends_multiple_spans_in_single_batch() {
     let exporter = SnowflakeInBandExporter::new(registry);
     let result = SpanExporter::export(&exporter, spans).await;
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
@@ -180,7 +176,6 @@ async fn span_exporter_handles_token_revoked_between_calls() {
     let exporter = SnowflakeInBandExporter::new(registry);
     let result = SpanExporter::export(&exporter, vec![make_tagged_span("span1", vec![])]).await;
     assert!(result.is_ok());
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Clear the token — simulating session expiry
     *token_store.write().await = None;
@@ -188,8 +183,6 @@ async fn span_exporter_handles_token_revoked_between_calls() {
     // Second export should silently succeed (no POST, no error)
     let result = SpanExporter::export(&exporter, vec![make_tagged_span("span2", vec![])]).await;
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
@@ -231,8 +224,6 @@ async fn span_exporter_uses_refreshed_token() {
     let exporter = SnowflakeInBandExporter::new(registry);
     let result = SpanExporter::export(&exporter, vec![make_tagged_span("test", vec![])]).await;
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
@@ -273,8 +264,6 @@ async fn span_exporter_shutdown_is_clean() {
     let mut exporter = SnowflakeInBandExporter::new(registry);
     let result = SpanExporter::shutdown(&mut exporter);
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
@@ -293,8 +282,6 @@ async fn span_exporter_drops_spans_without_session_id() {
     let exporter = SnowflakeInBandExporter::new(registry);
     let result = SpanExporter::export(&exporter, vec![make_span("test", vec![])]).await;
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 #[tokio::test]
@@ -316,7 +303,6 @@ async fn span_exporter_drops_spans_after_session_deregistered() {
     let result =
         SpanExporter::export(&exporter, vec![make_tagged_span("before_close", vec![])]).await;
     assert!(result.is_ok());
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Simulate connection close: remove the session from the registry.
     registry.write().unwrap().remove(&SESSION_ID);
@@ -325,8 +311,6 @@ async fn span_exporter_drops_spans_after_session_deregistered() {
     let result =
         SpanExporter::export(&exporter, vec![make_tagged_span("after_close", vec![])]).await;
     assert!(result.is_ok());
-    // Export is fire-and-forget; yield to let it complete.
-    tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
 fn server_url_placeholder() -> String {

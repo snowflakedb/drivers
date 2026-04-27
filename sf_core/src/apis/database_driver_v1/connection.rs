@@ -366,12 +366,11 @@ impl DatabaseDriverV1 {
             let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
 
             // Drop the tracing span — this ends the underlying OTel span.
-            // SimpleSpanProcessor calls the exporter synchronously, which
-            // spawns the HTTP POST on the tokio runtime (fire-and-forget).
+            // SimpleSpanProcessor calls the exporter synchronously via
+            // futures_executor::block_on.  The exporter spawns the HTTP
+            // POST on the tokio runtime and awaits the JoinHandle, so by
+            // the time drop() returns the telemetry has been sent.
             drop(span);
-            // Yield to let the spawned export task run before we deregister
-            // the session from the registry.
-            tokio::task::yield_now().await;
             if let Some(id) = session_id
                 && let Some(sessions) = self.telemetry_sessions()
             {

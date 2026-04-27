@@ -152,11 +152,14 @@ impl SpanExporter for SnowflakeInBandExporter {
                 }
             };
 
-            // Spawn on the tokio runtime so reqwest I/O works. Best-effort:
-            // we don't block on completion since that would deadlock with
-            // the single-worker runtime used by the C API bridge.
+            // Spawn on the tokio runtime so reqwest can perform async HTTP
+            // I/O (futures_executor::block_on, used by SimpleSpanProcessor,
+            // lacks tokio I/O drivers).  We await the JoinHandle so the
+            // export completes before on_end returns — this is safe because
+            // Runtime::block_on drives the handler on the calling thread
+            // while the spawned task runs on a separate worker thread.
             if let Some(handle) = rt_handle {
-                handle.spawn(do_export());
+                let _ = handle.spawn(do_export()).await;
             }
 
             Ok(())
@@ -268,8 +271,6 @@ mod tests {
         let exporter = SnowflakeInBandExporter::new(registry);
         let result = SpanExporter::export(&exporter, vec![make_test_span(Some(1))]).await;
         assert!(result.is_ok());
-        // Export is fire-and-forget via tokio::spawn; yield to let it complete.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     #[tokio::test]
@@ -404,7 +405,5 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
-        // Export is fire-and-forget via tokio::spawn; yield to let it complete.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
