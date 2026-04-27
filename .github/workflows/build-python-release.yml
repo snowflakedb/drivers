@@ -77,7 +77,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: manylinux_x86_64_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (Windows ARM64)

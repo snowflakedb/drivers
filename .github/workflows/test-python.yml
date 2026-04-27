@@ -217,7 +217,7 @@ jobs:
         if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64')) }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
