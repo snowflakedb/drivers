@@ -519,7 +519,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          # Save the runner's cmake path before vcvarsall.bat prepends VS's bundled 3.x
+          # install 4.0+ via pip (official Kitware wheel)
+          Invoke-Checked "pip install cmake" { python -m pip install "cmake>=4.0.3" }
           $cmakePath = (Get-Command cmake.exe).Source | Split-Path
           echo "CMAKE_DIR=$cmakePath" >> $env:GITHUB_ENV
           cmake --version
@@ -528,7 +529,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
-          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+          Invoke-Checked "vcpkg install zlib:${{ matrix.vcpkg_triplet || 'x64-windows' }}" { vcpkg install zlib:${{ matrix.vcpkg_triplet || 'x64-windows' }} }
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
