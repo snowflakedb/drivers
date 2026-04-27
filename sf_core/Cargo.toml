@@ -99,7 +99,7 @@ proto_generator = { path = "../proto_generator" }
 libc = "0.2"
 
 [dev-dependencies]
-sf_core = { path = ".", features = ["test-utils"] }
+sf_core = { path = ".", default-features = false, features = ["test-utils"] }
 tokio = { version = "1.47.1", features = ["fs", "test-util"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 tempfile = "3.21.0"
