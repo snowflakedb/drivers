@@ -709,6 +709,81 @@ jobs:
           path: ~/Library/Caches/Homebrew
           key: macos-brew-odbc-tests-v1
 
+  build_msi:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x64 Release
+            arch: x64
+            config: release
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: "--release"
+          - name: x64 Debug
+            arch: x64
+            config: debug
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: ""
+          - name: x86 Release
+            arch: x86
+            config: release
+            cargo_target: i686-pc-windows-msvc
+            cargo_profile: "--release"
+          - name: x86 Debug
+            arch: x86
+            config: debug
+            cargo_target: i686-pc-windows-msvc
+            cargo_profile: ""
+    runs-on: windows-latest
+    name: build_msi (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "odbc-msi-${{ matrix.arch }}"
+
+      - name: Install Rust target
+        if: matrix.arch == 'x86'
+        run: rustup target add ${{ matrix.cargo_target }}
+
+      - name: Install Perl (for vendored OpenSSL build)
+        run: choco install strawberryperl -y --no-progress
+
+      - name: Build ODBC driver
+        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl --target ${{ matrix.cargo_target }}
+        env:
+          RUSTFLAGS: "-C linker=rust-lld"
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "odbc-msi-${{ matrix.arch }}"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          .\odbc\installer\win\package.ps1 `
+            -DriverBinDir "target\${{ matrix.cargo_target }}\${{ matrix.config }}" `
+            -Arch ${{ matrix.arch }} `
+            -BuildConfig ${{ matrix.config }}
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-rs-msi-${{ matrix.arch }}-${{ matrix.config }}
+          path: build/snowflake_odbc_rs-*.msi
+
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image
     # and does not consume artifacts from the test jobs. Running in parallel shaves ~10-15 minutes
@@ -768,9 +843,10 @@ jobs:
             -v ${{ github.workspace }}/.cargo-target-rpm:/workspace/target \
             -w /workspace \
             -e PLATFORM=${{ matrix.platform }} \
+            -e COMMIT_HASH=$(git rev-parse --short HEAD) \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             rpm-build \
-            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
+            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
 
       - name: Save Cargo registry cache (RPM build)
         # Skip when the exact key was already restored.
@@ -807,7 +883,7 @@ jobs:
           path: build/snowflake-odbc-*.rpm
 
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -826,12 +902,14 @@ jobs:
           if [[ "${{ needs.odbc_unit_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.build_odbc_driver.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build_msi.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ ODBC tests were RUN and FAILED or CANCELLED"
             echo "  - odbc_unit_tests: ${{ needs.odbc_unit_tests.result }}"
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
             echo "  - build_odbc_driver: ${{ needs.build_odbc_driver.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
+            echo "  - build_msi: ${{ needs.build_msi.result }}"
             exit 1
           fi
           
