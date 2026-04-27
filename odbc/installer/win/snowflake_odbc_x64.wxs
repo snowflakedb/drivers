@@ -69,7 +69,7 @@
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
 				Value="Install_vc_redist"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1"]]></Publish>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog"
-				Value="ReturnI"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "0"]]></Publish>
+				Value="Return"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "0"]]></Publish>
 		</UI>
 
 		<!-- ================================================================ -->
