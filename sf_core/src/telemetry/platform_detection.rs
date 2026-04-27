@@ -14,7 +14,7 @@ const GCP_METADATA_FLAVOR_VALUE: &str = "Google";
 #[derive(Clone)]
 pub struct DetectionConfig {
     pub(crate) caller_identity_provider: Arc<dyn CallerIdentityProvider>,
-    pub(crate) ec2_metadata_url: String,
+    pub(crate) aws_metadata_base_url: String,
     pub(crate) azure_metadata_base_url: String,
     pub(crate) gce_metadata_root_url: String,
     pub(crate) gce_metadata_base_url: String,
@@ -24,8 +24,7 @@ impl Default for DetectionConfig {
     fn default() -> Self {
         Self {
             caller_identity_provider: Arc::new(StsCallerIdentityProvider),
-            ec2_metadata_url: "http://169.254.169.254/latest/dynamic/instance-identity/document"
-                .to_string(),
+            aws_metadata_base_url: "http://169.254.169.254".to_string(),
             azure_metadata_base_url: "http://169.254.169.254".to_string(),
             gce_metadata_root_url: "http://metadata.google.internal".to_string(),
             gce_metadata_base_url: "http://metadata.google.internal/computeMetadata/v1".to_string(),
@@ -128,11 +127,36 @@ fn is_github_action() -> bool {
 }
 
 async fn is_ec2_instance(http: &reqwest::Client, config: &DetectionConfig) -> bool {
-    http.get(&config.ec2_metadata_url)
-        .send()
-        .await
-        .map(|response| response.status().is_success())
-        .unwrap_or(false)
+    let token = async {
+        let response = http
+            .put(format!("{}/latest/api/token", config.aws_metadata_base_url))
+            .header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let body = response.text().await.ok()?;
+        Some(body.trim().to_string()).filter(|t| !t.is_empty())
+    }
+    .await;
+
+    let document: reqwest::Result<serde_json::Value> = async {
+        let mut request = http.get(format!(
+            "{}/latest/dynamic/instance-identity/document",
+            config.aws_metadata_base_url,
+        ));
+        if let Some(token) = token {
+            request = request.header("X-aws-ec2-metadata-token", token);
+        }
+        request.send().await?.error_for_status()?.json().await
+    }
+    .await;
+
+    document
+        .ok()
+        .and_then(|doc| doc.get("instanceId")?.as_str().map(str::to_owned))
+        .is_some_and(|id| !id.is_empty())
 }
 
 async fn is_azure_vm(http: &reqwest::Client, config: &DetectionConfig) -> bool {
@@ -267,7 +291,7 @@ mod tests {
         let unreachable_url = "http://127.0.0.1:1".to_string();
         DetectionConfig {
             caller_identity_provider: Arc::new(FakeCallerIdentityProvider::new(None)),
-            ec2_metadata_url: unreachable_url.clone(),
+            aws_metadata_base_url: unreachable_url.clone(),
             azure_metadata_base_url: unreachable_url.clone(),
             gce_metadata_root_url: unreachable_url.clone(),
             gce_metadata_base_url: unreachable_url,
@@ -500,7 +524,7 @@ mod tests {
 
         let mut cfg = test_detection_config();
         cfg.caller_identity_provider = Arc::new(slow_sts);
-        cfg.ec2_metadata_url = format!("{}/ec2", server.uri());
+        cfg.aws_metadata_base_url = server.uri();
         cfg.azure_metadata_base_url = server.uri();
         cfg.gce_metadata_root_url = server.uri();
         cfg.gce_metadata_base_url = server.uri();
@@ -559,8 +583,47 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn detects_is_ec2_instance_via_imds() {
+        async fn detects_is_ec2_instance_via_imdsv2() {
             let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .and(header("X-aws-ec2-metadata-token-ttl-seconds", "21600"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .and(header("X-aws-ec2-metadata-token", "imds-token"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(r#"{"instanceId":"i-12345"}"#),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.aws_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["is_ec2_instance".to_string()],
+                    "expected is_ec2_instance, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn detects_is_ec2_instance_via_imdsv1_when_token_request_fails() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .respond_with(ResponseTemplate::new(403))
+                .mount(&server)
+                .await;
             Mock::given(method("GET"))
                 .and(path("/latest/dynamic/instance-identity/document"))
                 .respond_with(
@@ -571,15 +634,70 @@ mod tests {
                 .await;
 
             let mut cfg = test_detection_config();
-            cfg.ec2_metadata_url =
-                format!("{}/latest/dynamic/instance-identity/document", server.uri());
+            cfg.aws_metadata_base_url = server.uri();
 
             temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
                 let platforms = detect_platforms(&cfg).await;
                 assert_eq!(
                     platforms,
                     vec!["is_ec2_instance".to_string()],
-                    "expected is_ec2_instance, got {platforms:?}"
+                    "expected is_ec2_instance via IMDSv1 fallback, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn rejects_is_ec2_instance_when_document_lacks_instance_id() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(r#"{"region":"us-east-1"}"#),
+                )
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.aws_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert!(
+                    platforms.is_empty(),
+                    "missing instanceId must not trigger is_ec2_instance, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn rejects_is_ec2_instance_when_document_returns_non_2xx() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .respond_with(ResponseTemplate::new(401))
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.aws_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert!(
+                    platforms.is_empty(),
+                    "non-2xx document response must not trigger is_ec2_instance, got {platforms:?}"
                 );
             })
             .await;
