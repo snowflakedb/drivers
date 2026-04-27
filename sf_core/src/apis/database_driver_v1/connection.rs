@@ -265,42 +265,40 @@ impl DatabaseDriverV1 {
                 let logout_config =
                     LogoutConfig::from_settings(&resolved_snapshot).context(ConfigurationSnafu)?;
 
-                {
-                    let mut conn = conn_ptr.lock().await;
-                    conn.initialize(
-                        login_result.tokens,
-                        http_client,
-                        host,
-                        port,
-                        login_parameters.server_url.clone(),
-                        login_parameters.client_info.clone(),
-                        merged_params,
-                        login_final_names,
-                        resolved_snapshot,
-                    )
-                    .await;
-                    conn.logout_config = logout_config;
+                let mut conn = conn_ptr.lock().await;
+                conn.initialize(
+                    login_result.tokens,
+                    http_client,
+                    host,
+                    port,
+                    login_parameters.server_url.clone(),
+                    login_parameters.client_info.clone(),
+                    merged_params,
+                    login_final_names,
+                    resolved_snapshot,
+                    logout_config,
+                )
+                .await;
 
-                    // Snowflake server defaults CLIENT_TELEMETRY_ENABLED to true; it only
-                    // sends "false" when the account or user has opted out. If the parameter
-                    // is absent (e.g. older server), we default to enabled to match server behavior.
-                    let telemetry_enabled = conn
-                        .session_parameters
-                        .read()
-                        .await
-                        .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
-                        .map(|v| v.eq_ignore_ascii_case("true"))
-                        .unwrap_or(true);
-                    drop(conn);
+                // Snowflake server defaults CLIENT_TELEMETRY_ENABLED to true; it only
+                // sends "false" when the account or user has opted out. If the parameter
+                // is absent (e.g. older server), we default to enabled to match server behavior.
+                let telemetry_enabled = conn
+                    .session_parameters
+                    .read()
+                    .await
+                    .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
+                    .map(|v| v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(true);
+                drop(conn);
 
-                    // Best-effort session_init telemetry — spawned as a background task
-                    // so connection open never blocks on telemetry latency.
-                    if telemetry_enabled {
-                        let conn_ptr_clone = conn_ptr.clone();
-                        tokio::spawn(async move {
-                            Self::send_session_init_telemetry(&conn_ptr_clone).await;
-                        });
-                    }
+                // Best-effort session_init telemetry — spawned as a background task
+                // so connection open never blocks on telemetry latency.
+                if telemetry_enabled {
+                    let conn_ptr_clone = conn_ptr.clone();
+                    tokio::spawn(async move {
+                        Self::send_session_init_telemetry(&conn_ptr_clone).await;
+                    });
                 }
                 Ok(())
             }
@@ -664,6 +662,7 @@ impl Connection {
         session_params: HashMap<String, String>,
         final_names: FinalSessionNames,
         resolved_connect: ParamStore,
+        logout_config: LogoutConfig,
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
@@ -673,6 +672,7 @@ impl Connection {
         self.client_info = Some(client_info);
         self.resolved_connect = Some(resolved_connect);
         self.session_overrides = ParamStore::new();
+        self.logout_config = logout_config;
 
         let mut cache = self.session_parameters.write().await;
         *cache = session_params;

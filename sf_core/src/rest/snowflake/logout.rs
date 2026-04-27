@@ -63,7 +63,6 @@ pub async fn logout_session(
     );
 
     let user_agent = build_user_agent(client_info);
-    let auth_header = format!("Snowflake Token=\"{}\"", session_token.reveal());
 
     // Logout is POST but idempotent server-side (safe to retry)
     let ctx = HttpContext::new(Method::POST, "/session")
@@ -81,7 +80,10 @@ pub async fn logout_session(
                 ("requestId", &request_id.to_string()),
                 ("request_guid", &retry_request_guid.to_string()),
             ])
-            .header(header::AUTHORIZATION, &auth_header)
+            .header(
+                header::AUTHORIZATION,
+                format!("Snowflake Token=\"{}\"", session_token.reveal()),
+            )
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/snowflake")
             .header(header::USER_AGENT, &user_agent)
