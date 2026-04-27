@@ -776,18 +776,29 @@ jobs:
           path: .cargo-target-msi
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Compute ODBC version
+        id: odbc-version
+        shell: pwsh
+        run: |
+          $versionLine = Get-Content "odbc\version.sh" -Raw
+          if ($versionLine -match 'BASE_VERSION=(\S+)') { $base = $Matches[1] } else { throw "Could not parse BASE_VERSION" }
+          $hash = (git rev-parse --short HEAD)
+          $version = "${base}-${hash}"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Build MSI installer
         shell: pwsh
         run: |
           .\odbc\installer\win\package.ps1 `
             -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
             -Arch ${{ matrix.arch }} `
-            -BuildConfig ${{ matrix.config }}
+            -BuildConfig ${{ matrix.config }} `
+            -Version "${{ steps.odbc-version.outputs.version }}"
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-rs-msi-${{ matrix.arch }}-${{ matrix.config }}
+          name: snowflake_odbc_rs-${{ steps.odbc-version.outputs.version }}-${{ matrix.config }}-${{ matrix.arch }}
           path: build/snowflake_odbc_rs-*.msi
 
   build_rpm:
