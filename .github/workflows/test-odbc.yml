@@ -732,32 +732,55 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        id: rust-cache
-        uses: ./.github/actions/cargo-cache
+      - name: Restore Cargo registry cache (MSI build)
+        uses: actions/cache/restore@v5
         with:
-          mode: restore
-          shared-key: "odbc"
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-
+
+      - name: Restore Rust target cache (MSI build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-msi
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-
+
+      - name: Prepare cache directories
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .cargo-cache/registry | Out-Null
+          New-Item -ItemType Directory -Force -Path .cargo-cache/git | Out-Null
+          New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
 
       - name: Build ODBC driver
         run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl --target ${{ matrix.cargo_target }}
         env:
           RUSTFLAGS: "-C linker=rust-lld"
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-msi
 
-      - name: Save Rust cache
+      - name: Save Cargo registry cache (MSI build)
         if: always()
-        uses: ./.github/actions/cargo-cache
+        uses: actions/cache/save@v5
         with:
-          mode: save
-          shared-key: "odbc"
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (MSI build)
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-msi
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build MSI installer
         shell: pwsh
         run: |
           .\odbc\installer\win\package.ps1 `
-            -DriverBinDir "target\${{ matrix.cargo_target }}\${{ matrix.config }}" `
+            -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
             -Arch ${{ matrix.arch }} `
             -BuildConfig ${{ matrix.config }}
 
