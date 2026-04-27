@@ -93,8 +93,7 @@ impl ParseChunk for JsonChunkParser {
 
 /// Scans JSON chunk bytes line-by-line, dispatching each cell directly to
 /// column builders. Each line is a JSON array ending with `,\n`, e.g.
-/// `["v1","v2",null],\n`. Uses `sonic_rs::to_array_iter` for SIMD-accelerated
-/// lazy JSON parsing.
+/// `["v1","v2",null],\n`.
 fn parse_json_rows(data: &[u8], builders: &mut [ColumnBuilder]) -> Result<usize, ArrowError> {
     let mut row_count: usize = 0;
 
@@ -114,9 +113,21 @@ fn parse_json_rows(data: &[u8], builders: &mut [ColumnBuilder]) -> Result<usize,
     Ok(row_count)
 }
 
-/// Parses a single JSON row `["v1","v2",null]` from raw bytes using sonic-rs
-/// lazy array iteration. Each element is either a JSON string or `null`.
+/// Parses a single JSON row `["v1","v2",null]` from raw bytes.
+/// Uses sonic-rs SIMD-accelerated parsing when available, falls back to serde_json.
 fn scan_json_row(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
+    #[cfg(feature = "sonic-json")]
+    {
+        scan_json_row_sonic(line, builders)
+    }
+    #[cfg(not(feature = "sonic-json"))]
+    {
+        scan_json_row_serde(line, builders)
+    }
+}
+
+#[cfg(feature = "sonic-json")]
+fn scan_json_row_sonic(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
     use sonic_rs::JsonValueTrait;
 
     let expected_cols = builders.len();
@@ -144,6 +155,34 @@ fn scan_json_row(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), Arro
         return Err(ArrowError::InvalidArgumentError(format!(
             "Expected {expected_cols} columns but got {col_idx}",
         )));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "sonic-json"))]
+fn scan_json_row_serde(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
+    let arr: Vec<Option<String>> =
+        serde_json::from_slice(line).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+
+    let expected_cols = builders.len();
+    if arr.len() > expected_cols {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "Row has more columns than expected ({expected_cols})",
+        )));
+    }
+    if arr.len() < expected_cols {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "Expected {expected_cols} columns but got {}",
+            arr.len(),
+        )));
+    }
+
+    for (col_idx, cell) in arr.iter().enumerate() {
+        match cell {
+            None => builders[col_idx].push_null(),
+            Some(s) => builders[col_idx].push_value(s.as_bytes())?,
+        }
     }
 
     Ok(())

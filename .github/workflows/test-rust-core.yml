@@ -390,8 +390,93 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
+  test_windows_x86:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    runs-on: windows-latest
+    name: test (Windows x86)
+    env:
+      E2E_TLS_SERVER: https://snowflakecomputing.com
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add i686 target
+        run: rustup target add i686-pc-windows-msvc
+
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "x86-core-test"
+
+      - name: Setup MSVC x86 environment
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          if not "%VSCMD_ARG_TGT_ARCH%"=="x86" (
+            echo ERROR: VSCMD_ARG_TGT_ARCH is '%VSCMD_ARG_TGT_ARCH%', expected 'x86'
+            exit /b 1
+          )
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Build sf_core (x86)
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          cargo build --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          :: Verify the DLL is 32-bit (machine type 14C = x86)
+          dumpbin /headers target\i686-pc-windows-msvc\debug\sf_core.dll | findstr "14C" >nul
+          if %ERRORLEVEL% neq 0 (
+            echo ERROR: sf_core.dll is not x86
+            dumpbin /headers target\i686-pc-windows-msvc\debug\sf_core.dll | findstr "machine"
+            exit /b 1
+          )
+
+      - name: Run sf_core tests (x86)
+        id: run_rust_tests_x86
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+          cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
+
+      - name: Rerun tests (Windows x86)
+        if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+          cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
+
+      - name: Cleanup test PATs
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_test_pats.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "x86-core-test"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   rust-core-status:
-    needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64_nonfips]
+    needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -411,13 +496,15 @@ jobs:
              [[ "${{ needs.clippy.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.build-without-protobuf.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.test_windows_arm64_nonfips.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.test_windows_arm64_nonfips.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test_windows_x86.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Rust Core tests were RUN and FAILED or CANCELLED"
             echo "  - format: ${{ needs.format.result }}"
             echo "  - clippy: ${{ needs.clippy.result }}"
             echo "  - build-without-protobuf: ${{ needs.build-without-protobuf.result }}"
             echo "  - test: ${{ needs.test.result }}"
             echo "  - test_windows_arm64_nonfips: ${{ needs.test_windows_arm64_nonfips.result }}"
+            echo "  - test_windows_x86: ${{ needs.test_windows_x86.result }}"
             exit 1
           fi
           
