@@ -1,12 +1,10 @@
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-use parking_lot::{ArcMutexGuard, Mutex, RawMutex, RwLock};
+use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, Mutex, RawRwLock, RwLock};
 
+use crate::api::OdbcResult;
 use crate::api::error::InvalidHandleSnafu;
-use crate::api::{Env, OdbcResult};
 use odbc_sys as sql;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,106 +26,111 @@ impl From<sql::Handle> for HandleId {
     }
 }
 
-pub struct RemovalGuard<T: Send + Sync + Clone> {
-    value: Option<T>,
-    guard: ArcMutexGuard<RawMutex, Option<T>>,
+struct AllocState {
+    free_ids: Vec<usize>,
+    next_id: usize,
 }
 
-impl<T: Send + Sync + Clone> RemovalGuard<T> {
-    pub fn complete(mut self) -> T {
-        self.value
-            .take()
-            .expect("complete called on already-completed RemovalGuard")
-    }
+pub struct HandleManager<T> {
+    slots: Mutex<Vec<Arc<RwLock<Option<T>>>>>,
+    alloc: Arc<Mutex<AllocState>>,
 }
 
-impl<T: Send + Sync + Clone> Drop for RemovalGuard<T> {
-    fn drop(&mut self) {
-        if let Some(value) = self.value.take() {
-            *self.guard = Some(value);
-        }
-    }
-}
-
-impl<T: Send + Sync + Clone> Deref for RemovalGuard<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.value
-            .as_ref()
-            .expect("deref on completed RemovalGuard")
-    }
-}
-
-// TODO Reclaim ids when handles are removed
-pub struct HandleRegistry<T: Send + Sync + Clone> {
-    handles: RwLock<HashMap<HandleId, Arc<Mutex<Option<T>>>>>,
-    next_id: AtomicUsize,
-}
-
-impl<T: Send + Sync + Clone> HandleRegistry<T> {
-    fn next_id(&self) -> HandleId {
-        HandleId {
-            id: self.next_id.fetch_add(1, Ordering::Relaxed),
-        }
-    }
-
+impl<T> HandleManager<T> {
     pub fn new() -> Self {
         Self {
-            handles: RwLock::new(HashMap::new()),
-            next_id: AtomicUsize::new(1),
+            slots: Mutex::new(Vec::new()),
+            alloc: Arc::new(Mutex::new(AllocState {
+                free_ids: Vec::new(),
+                next_id: 1,
+            })),
         }
     }
 
-    pub fn add(&self, handle: T) -> OdbcResult<HandleId> {
-        let mut handles = self.handles.write();
-        let id = self.next_id();
-        handles.insert(id, Arc::new(Mutex::new(Some(handle))));
-        Ok(id)
-    }
+    pub fn add(&self, value: T) -> OdbcResult<HandleId> {
+        let mut alloc = self.alloc.lock();
+        let id = alloc.free_ids.pop().unwrap_or_else(|| {
+            let id = alloc.next_id;
+            alloc.next_id += 1;
+            id
+        });
+        drop(alloc);
 
-    pub fn get(&self, id: HandleId) -> OdbcResult<T> {
-        let mutex = self
-            .handles
-            .read()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| InvalidHandleSnafu.build())?;
-        let value = mutex.lock();
-        value
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| InvalidHandleSnafu.build())
-    }
-
-    pub fn remove(&self, id: HandleId) -> OdbcResult<RemovalGuard<T>> {
-        let handle = self
-            .handles
-            .read()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| InvalidHandleSnafu.build())?;
-        let mut guard = handle.lock_arc();
-        let value_opt = guard.take();
-        if value_opt.is_some() {
-            return Ok(RemovalGuard {
-                value: value_opt,
-                guard,
-            });
+        let mut slots = self.slots.lock();
+        let idx = id - 1; // IDs are 1-based
+        if idx >= slots.len() {
+            slots.resize_with(idx + 1, || Arc::new(RwLock::new(None)));
         }
-        InvalidHandleSnafu.fail()
+        slots[idx] = Arc::new(RwLock::new(Some(value)));
+        Ok(HandleId { id })
     }
 
-    #[allow(dead_code)]
-    pub fn cleanup(&self, ids: &[HandleId]) -> OdbcResult<()> {
-        let mut handles = self.handles.write();
-        for id in ids {
-            handles.remove(id);
+    pub fn get(&self, id: HandleId) -> OdbcResult<HandleGuard<T>> {
+        let slot = {
+            let slots = self.slots.lock();
+            let idx = id.id.wrapping_sub(1);
+            slots
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| InvalidHandleSnafu.build())?
+        };
+        let guard = slot.read_arc();
+        if guard.is_none() {
+            return Err(InvalidHandleSnafu.build());
         }
-        Ok(())
+        Ok(HandleGuard { guard })
+    }
+
+    pub fn get_for_delete(&self, id: HandleId) -> OdbcResult<DeleteGuard<T>> {
+        let slot = {
+            let slots = self.slots.lock();
+            let idx = id.id.wrapping_sub(1);
+            slots
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| InvalidHandleSnafu.build())?
+        };
+        let guard = slot.write_arc();
+        if guard.is_none() {
+            return Err(InvalidHandleSnafu.build());
+        }
+        Ok(DeleteGuard {
+            guard,
+            id,
+            alloc: Arc::clone(&self.alloc),
+        })
     }
 }
 
-pub type EnvironmentHandleRegistry = HandleRegistry<Arc<Env>>;
+pub struct HandleGuard<T> {
+    guard: ArcRwLockReadGuard<RawRwLock, Option<T>>,
+}
+
+impl<T> Deref for HandleGuard<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: Read lock guarantees no concurrent write can set this to None.
+        // Only get_for_delete (write lock) can set None, and our read lock prevents that.
+        self.guard.as_ref().unwrap()
+    }
+}
+
+pub struct DeleteGuard<T> {
+    guard: ArcRwLockWriteGuard<RawRwLock, Option<T>>,
+    id: HandleId,
+    alloc: Arc<Mutex<AllocState>>,
+}
+
+impl<T> DeleteGuard<T> {
+    pub fn value(&self) -> &T {
+        self.guard.as_ref().unwrap()
+    }
+
+    pub fn delete(mut self) {
+        *self.guard = None;
+        self.alloc.lock().free_ids.push(self.id.id);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -142,30 +145,50 @@ mod tests {
     }
 
     #[test]
-    fn registry_add_get_remove() {
-        let registry: HandleRegistry<i32> = HandleRegistry::new();
-        let id = registry.add(42).unwrap();
-        assert_eq!(registry.get(id).unwrap(), 42);
-        assert_eq!(registry.remove(id).unwrap().complete(), 42);
-        assert!(registry.get(id).is_err());
+    fn manager_add_get() {
+        let mgr: HandleManager<i32> = HandleManager::new();
+        let id = mgr.add(42).unwrap();
+        assert_eq!(*mgr.get(id).unwrap(), 42);
     }
 
     #[test]
-    fn registry_cleanup() {
-        let registry: HandleRegistry<i32> = HandleRegistry::new();
-        let id1 = registry.add(1).unwrap();
-        let id2 = registry.add(2).unwrap();
-        let id3 = registry.add(3).unwrap();
-        registry.cleanup(&[id1, id3]).unwrap();
-        assert!(registry.get(id1).is_err());
-        assert_eq!(registry.get(id2).unwrap(), 2);
-        assert!(registry.get(id3).is_err());
+    fn manager_get_for_delete_and_delete() {
+        let mgr: HandleManager<i32> = HandleManager::new();
+        let id = mgr.add(42).unwrap();
+        let guard = mgr.get_for_delete(id).unwrap();
+        assert_eq!(*guard.value(), 42);
+        guard.delete();
+        assert!(mgr.get(id).is_err());
     }
 
     #[test]
-    fn registry_ids_start_at_one() {
-        let registry: HandleRegistry<i32> = HandleRegistry::new();
-        let id = registry.add(1).unwrap();
+    fn manager_delete_guard_drop_restores() {
+        let mgr: HandleManager<i32> = HandleManager::new();
+        let id = mgr.add(42).unwrap();
+        {
+            let _guard = mgr.get_for_delete(id).unwrap();
+            // drop without calling delete()
+        }
+        assert_eq!(*mgr.get(id).unwrap(), 42);
+    }
+
+    #[test]
+    fn manager_id_recycling() {
+        let mgr: HandleManager<i32> = HandleManager::new();
+        let id1 = mgr.add(1).unwrap();
+        let id2 = mgr.add(2).unwrap();
+        mgr.get_for_delete(id1).unwrap().delete();
+        // Next add should reuse id1's slot
+        let id3 = mgr.add(3).unwrap();
+        assert_eq!(id3, id1);
+        assert_eq!(*mgr.get(id3).unwrap(), 3);
+        assert_eq!(*mgr.get(id2).unwrap(), 2);
+    }
+
+    #[test]
+    fn manager_ids_start_at_one() {
+        let mgr: HandleManager<i32> = HandleManager::new();
+        let id = mgr.add(1).unwrap();
         assert_eq!(id, HandleId { id: 1 });
     }
 }
