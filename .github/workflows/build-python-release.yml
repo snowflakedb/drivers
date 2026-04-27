@@ -50,21 +50,25 @@ jobs:
           - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
           # macOS x86_64 (Intel) — test env
-          - { os: macos-13,        py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
-          - { os: macos-13,        py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
-          - { os: macos-13,        py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
-          - { os: macos-13,        py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: macos-15-intel,        py: "3.10", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: macos-15-intel,        py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: macos-15-intel,        py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
           # macOS x86_64 (Intel) — test-pandas env
-          - { os: macos-13,        py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
-          - { os: macos-13,        py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
-          - { os: macos-13,        py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
-          - { os: macos-13,        py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: macos-15-intel,        py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: macos-15-intel,        py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: macos-15-intel,        py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           # macOS ARM64 (Apple Silicon) — test env
+          - { os: macos-latest,    py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
           - { os: macos-latest,    py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
           # macOS ARM64 (Apple Silicon) — test-pandas env
+          - { os: macos-latest,    py: "3.10", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.11", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: macos-latest,    py: "3.12", hatch_env: "test-pandas", cloud_provider: "aws"   }
           - { os: macos-latest,    py: "3.13", hatch_env: "test-pandas", cloud_provider: "gcp"   }
@@ -125,10 +129,10 @@ jobs:
           path: python/dist
 
       - name: Download wheel (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'macos-13' && 'macosx_x86_64' || 'macosx_arm64') }}_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || 'macosx_arm64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (Windows)
@@ -206,8 +210,8 @@ jobs:
           $env:WHEEL_PATH = $wheels[0].FullName
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
-      - name: Install snowflake ud driver from sdist (Linux)
-        if: runner.os == 'Linux' && matrix.py == '3.10'
+      - name: Install snowflake ud driver from sdist (Linux/macOS)
+        if: runner.os != 'Windows' && matrix.py == '3.10'
         working-directory: python
         run: |
           SDISTS=(dist/*.tar.gz)

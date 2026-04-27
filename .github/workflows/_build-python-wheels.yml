@@ -52,7 +52,7 @@ jobs:
               },
               "macos_x86": {
                   "target": "macos-x86_64",
-                  "os": "macos-13",
+                  "os": "macos-15-intel",
                   "container": "",
                   "lib_name": "libsf_core.dylib",
                   "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",

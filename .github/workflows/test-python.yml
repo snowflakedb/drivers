@@ -151,7 +151,7 @@ jobs:
             py: "3.11"
             hatch_env: "test"
             cloud_provider: aws
-          - os: macos-13
+          - os: macos-15-intel
             py: "3.12"
             hatch_env: "test"
             cloud_provider: azure
@@ -197,7 +197,7 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
             result_format: json
-          - os: macos-13
+          - os: macos-15-intel
             py: "3.13"
             hatch_env: "test-pandas"
             cloud_provider: gcp
@@ -270,7 +270,7 @@ jobs:
         if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'macos-13' && 'macosx_x86_64' || (matrix.os == 'macos-latest' && 'macosx_arm64' || (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))))) }}_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || (matrix.os == 'macos-latest' && 'macosx_arm64' || (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))))) }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
