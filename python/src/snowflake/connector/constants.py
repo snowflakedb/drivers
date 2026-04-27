@@ -2,7 +2,6 @@
 
 from enum import Enum, unique
 
-from ._internal.type_codes import FIELD_ID_TO_NAME  # noqa: F401 - backward compatibility re-exports
 from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa: F401 - backward compatibility re-exports
 
 
@@ -23,5 +22,13 @@ class QueryStatus(Enum):
     NO_DATA = 12
 
 
-# backward compatibility constant
-UTF8 = "utf-8"
+class StatementParameterName:
+    """Known statement-level parameter names.
+
+    These correspond to the statement-scoped entries in sf_core's
+    ``param_registry``.  Pass them via the ``parameters`` dict when
+    executing a statement.
+    """
+
+    MULTI_STATEMENT_COUNT = "MULTI_STATEMENT_COUNT"
+    ASYNC_EXECUTION = "ASYNC_EXECUTION"
