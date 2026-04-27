@@ -323,6 +323,38 @@ jobs:
           echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
           echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
 
+      # ── Windows x86_64 OpenSSL (needed for sdist builds that compile sf_core from source) ──
+      - name: Capture vcpkg version for cache key (Windows x64)
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Restore vcpkg x64 static OpenSSL cache (Windows x64)
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
+        id: vcpkg-cache-x64
+        uses: actions/cache/restore@v5
+        with:
+          path: C:\vcpkg\installed\x64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
+      - name: Install x64 OpenSSL (static) via vcpkg
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10' && steps.vcpkg-cache-x64.outputs.cache-hit != 'true'
+        run: vcpkg install openssl:x64-windows-static-md
+
+      - name: Save vcpkg x64 static OpenSSL cache (Windows x64)
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10' && steps.vcpkg-cache-x64.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed\x64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
+      - name: Configure x64 OpenSSL environment
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\x64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\x64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
@@ -373,15 +405,8 @@ jobs:
           if ($sdists.Count -ne 1) {
             Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
           }
-          # Build wheel from sdist in a short directory to avoid MSVC MAX_PATH.
-          # MSVC mirrors absolute source paths inside build temp directories,
-          # doubling UV cache's deeply nested hash paths and exceeding 260 chars.
-          New-Item -ItemType Directory -Force D:\s | Out-Null
-          tar xzf $sdists[0].FullName -C D:\s
-          $srcDir = (Get-ChildItem D:\s -Directory)[0].FullName
-          uv build --wheel $srcDir --out-dir D:\s\out
-          $env:WHEEL_PATH = (Get-ChildItem D:\s\out\*.whl)[0].FullName
-          Write-Host "Installing wheel built from sdist: $($env:WHEEL_PATH)"
+          $env:WHEEL_PATH = $sdists[0].FullName
+          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
         env:
           SKIP_CORE_BUILD: "false"
