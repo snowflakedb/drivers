@@ -376,11 +376,32 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 ..
             } = stmt.state.as_ref()
             else {
-                unreachable!("advance_cursor must leave state in Fetching");
+                return InternalSnafu {
+                    message: "advance_cursor returned Ok but state is not Fetching".to_string(),
+                }
+                .fail();
             };
-            let in_batch_remaining = record_batch.num_rows().saturating_sub(*batch_idx);
+            let num_rows = record_batch.num_rows();
+            let in_batch_remaining = num_rows.saturating_sub(*batch_idx);
+            if in_batch_remaining == 0 {
+                // Invariant: after a successful `advance_cursor`,
+                // `batch_idx` must point at a valid row.
+                // `next_non_empty_batch` guarantees `num_rows >= 1` and
+                // `batch_idx == 0` for fresh batches; the in-batch branch
+                // only stays in `Fetching` when `new_idx < num_rows`. If we
+                // ever observe `batch_idx >= num_rows` here it's a driver
+                // bug — fail loudly with `InternalError` rather than
+                // silently producing an out-of-bounds Arrow index.
+                return InternalSnafu {
+                    message: format!(
+                        "advance_cursor left batch_idx ({}) >= num_rows ({}) in fetch_impl",
+                        *batch_idx, num_rows,
+                    ),
+                }
+                .fail();
+            }
             let wanted = array_size - rows_fetched;
-            (*batch_idx, in_batch_remaining.min(wanted).max(1))
+            (*batch_idx, in_batch_remaining.min(wanted))
         };
 
         let outputs = execute_bindings_for_segment(
