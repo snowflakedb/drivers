@@ -2,6 +2,7 @@
 
 from enum import Enum, unique
 
+from ._internal.type_codes import FIELD_ID_TO_NAME  # noqa: F401 - backward compatibility re-exports
 from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa: F401 - backward compatibility re-exports
 
 
@@ -20,6 +21,10 @@ class QueryStatus(Enum):
     RESTARTED = 10
     BLOCKED = 11
     NO_DATA = 12
+
+
+# backward compatibility constant
+UTF8 = "utf-8"
 
 
 class StatementParameterName:
