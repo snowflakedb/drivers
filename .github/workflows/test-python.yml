@@ -86,6 +86,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -95,6 +98,12 @@ jobs:
 
       - name: Save core-target cache
         if: always() && steps.core-target-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: core-target
@@ -102,6 +111,12 @@ jobs:
 
       - name: Save proto-target cache
         if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: proto-target
@@ -188,6 +203,7 @@ jobs:
       # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
       # and improves hit rates.
       - name: Restore uv cache (Linux)
+        id: uv-cache-linux
         if: runner.os == 'Linux'
         uses: actions/cache/restore@v5
         with:
@@ -199,6 +215,7 @@ jobs:
             uv-${{ matrix.os }}-
 
       - name: Restore uv cache (Windows)
+        id: uv-cache-windows
         if: runner.os == 'Windows'
         uses: actions/cache/restore@v5
         with:
@@ -269,6 +286,12 @@ jobs:
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
         if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -403,14 +426,30 @@ jobs:
         run: uv cache prune --ci
 
       - name: Save uv cache (Linux)
-        if: always() && runner.os == 'Linux'
+        # Skip when the exact key was already restored. Note: prefix-key fallbacks
+        # (restore-keys) do not set cache-hit=true, so saves still run after a
+        # partial restore — which is the common case after a uv.lock change.
+        if: always() && runner.os == 'Linux' && steps.uv-cache-linux.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: /tmp/.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
       - name: Save uv cache (Windows)
-        if: always() && runner.os == 'Windows'
+        # Skip when the exact key was already restored.
+        if: always() && runner.os == 'Windows' && steps.uv-cache-windows.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
@@ -418,6 +457,9 @@ jobs:
 
       - name: Save Rust cache (sdist)
         if: always() && matrix.py == '3.10'
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

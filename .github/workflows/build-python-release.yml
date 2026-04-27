@@ -131,6 +131,12 @@ jobs:
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
         if: runner.os == 'Windows' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -210,6 +216,9 @@ jobs:
 
       - name: Save Rust cache (sdist)
         if: always() && matrix.py == '3.10'
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

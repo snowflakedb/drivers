@@ -69,6 +69,17 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Save pre-commit hooks cache
+        # Skip when the exact key was already restored — saving would just
+        # repackage the same data and fail to reserve an existing key.
+        if: steps.pre-commit-cache.outputs.cache-hit != 'true'
+        # continue-on-error: cache save is best-effort. ENOSPC, throttling, or
+        # cache-key races shouldn't fail an otherwise-green build; the next run
+        # rebuilds from scratch. timeout-minutes + ZSTD_NBTHREADS guard against
+        # tar+zstdmt hangs that have caused 30+ minute stalls.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: ~/.cache/pre-commit
@@ -76,6 +87,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

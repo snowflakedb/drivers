@@ -71,6 +71,10 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save
+        # (~13 min normal, 20 min hard ceiling for outliers).
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -109,6 +113,10 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save
+        # (~13 min normal, 20 min hard ceiling for outliers).
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
