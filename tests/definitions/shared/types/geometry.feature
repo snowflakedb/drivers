@@ -30,10 +30,10 @@ Feature: GEOMETRY type support
     Then Result should contain a GeoJSON <shape> value
 
     Examples:
-      | shape      | query_value                                              |
-      | Point      | TO_GEOMETRY('POINT(0 0)')                                |
-      | LineString | TO_GEOMETRY('LINESTRING(1 1, 2 2, 3 3)')                 |
-      | Polygon    | TO_GEOMETRY('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))')       |
+      | shape      | query_value                                                    |
+      | Point      | TO_GEOMETRY('POINT(1820.12 890.56)')                           |
+      | LineString | TO_GEOMETRY('LINESTRING(0 0, 1 1, 2 2)')                       |
+      | Polygon    | TO_GEOMETRY('POLYGON((0 0, 4 0, 4 3, 0 3, 0 0))')             |
 
   # =========================================================================== #
   #                          Output format handling                             #
@@ -61,7 +61,7 @@ Feature: GEOMETRY type support
   @python_e2e
   Scenario: should handle NULL geometry values from literals
     Given Snowflake client is logged in
-    When Query "SELECT TO_GEOMETRY('POINT(0 0)'), TO_GEOMETRY(NULL)" is executed
+    When Query "SELECT TO_GEOMETRY('POINT(1820.12 890.56)'), TO_GEOMETRY(NULL)" is executed
     Then Result should contain [GeoJSON Point, NULL]
 
   # =========================================================================== #

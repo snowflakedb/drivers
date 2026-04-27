@@ -10,8 +10,6 @@ Input via WKT strings through TO_GEOMETRY().
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 """
 
-from __future__ import annotations
-
 import pytest
 
 from ...conftest import with_paramstyle
@@ -32,18 +30,6 @@ LINESTRING_GEOJSON_COORDS = [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]
 # Simple rectangle polygon (ring must be closed)
 POLYGON_WKT = "POLYGON((0 0, 4 0, 4 3, 0 3, 0 0))"
 POLYGON_GEOJSON_COORDS = [[[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0], [0.0, 0.0]]]
-
-# =============================================================================
-# LITERAL TEST SHAPES (used in parametrized literal select tests)
-# =============================================================================
-LITERAL_POINT_WKT = "POINT(0 0)"
-LITERAL_POINT_GEOJSON_COORDS = [0.0, 0.0]
-
-LITERAL_LINESTRING_WKT = "LINESTRING(1 1, 2 2, 3 3)"
-LITERAL_LINESTRING_GEOJSON_COORDS = [[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]
-
-LITERAL_POLYGON_WKT = "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"
-LITERAL_POLYGON_GEOJSON_COORDS = [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]]
 
 # =============================================================================
 # LARGE RESULT SET SIZE
@@ -73,9 +59,9 @@ class TestGeometryLiteral:
     """Tests for GEOMETRY type using SELECT with literals (no tables)."""
 
     LITERAL_TEST_CASES = [
-        ("Point", f"TO_GEOMETRY('{LITERAL_POINT_WKT}')", "Point", LITERAL_POINT_GEOJSON_COORDS),
-        ("LineString", f"TO_GEOMETRY('{LITERAL_LINESTRING_WKT}')", "LineString", LITERAL_LINESTRING_GEOJSON_COORDS),
-        ("Polygon", f"TO_GEOMETRY('{LITERAL_POLYGON_WKT}')", "Polygon", LITERAL_POLYGON_GEOJSON_COORDS),
+        ("Point", f"TO_GEOMETRY('{POINT_WKT}')", "Point", POINT_GEOJSON_COORDS),
+        ("LineString", f"TO_GEOMETRY('{LINESTRING_WKT}')", "LineString", LINESTRING_GEOJSON_COORDS),
+        ("Polygon", f"TO_GEOMETRY('{POLYGON_WKT}')", "Polygon", POLYGON_GEOJSON_COORDS),
     ]
 
     @pytest.mark.parametrize(
@@ -103,15 +89,15 @@ class TestGeometryLiteral:
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT TO_GEOMETRY('POINT(0 0)'), TO_GEOMETRY(NULL)" is executed
-        sql = f"SELECT TO_GEOMETRY('{LITERAL_POINT_WKT}'), TO_GEOMETRY(NULL)"
+        # When Query "SELECT TO_GEOMETRY('POINT(1820.12 890.56)'), TO_GEOMETRY(NULL)" is executed
+        sql = f"SELECT TO_GEOMETRY('{POINT_WKT}'), TO_GEOMETRY(NULL)"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain [GeoJSON Point, NULL]
         assert isinstance(result[0], str)
         point = parse_geojson(result[0])
         assert point["type"] == "Point"
-        assert point["coordinates"] == LITERAL_POINT_GEOJSON_COORDS
+        assert point["coordinates"] == POINT_GEOJSON_COORDS
         assert result[1] is None
 
 
@@ -185,7 +171,7 @@ class TestGeometryTable:
         # And Table with GEOMETRY column exists containing NULLs and values
         table_name = f"{tmp_schema}.geometry_null_table"
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id INT, geo GEOMETRY)")
-        execute_query(f"INSERT INTO {table_name} SELECT 1, TO_GEOMETRY('{LITERAL_POINT_WKT}') UNION ALL SELECT 2, NULL")
+        execute_query(f"INSERT INTO {table_name} SELECT 1, TO_GEOMETRY('{POINT_WKT}') UNION ALL SELECT 2, NULL")
 
         # When Query "SELECT * FROM <table> ORDER BY id" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY id")
