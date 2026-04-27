@@ -729,13 +729,15 @@ class Connection:
     def arrow_number_to_decimal(self, value: bool) -> None:
         self._arrow_number_to_decimal = bool(value)
 
-    @backward_compatibility
     @arrow_number_to_decimal.setter  # type: ignore[attr-defined, untyped-decorator]
+    @backward_compatibility
     def arrow_number_to_decimal_setter(self, value: bool) -> None:
         """Set arrow_number_to_decimal field. Deprecated.
 
-        Allows setting this field through `cursor.connection.arrow_number_to_decimal_setter = True`.
-        Added only because of backwards compatibility, correct setter should be used.
+        Kept so legacy code that writes
+        ``cursor.connection.arrow_number_to_decimal_setter = True`` keeps
+        working; new code should assign to ``arrow_number_to_decimal``
+        directly.
         """
         self.arrow_number_to_decimal = value
 

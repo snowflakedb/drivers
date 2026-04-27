@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ._internal.backward_compatibility import install_backward_compatibility_getattr
 from ._internal.decorators import backward_compatibility
 
 
@@ -391,3 +392,7 @@ class RequestExceedMaxRetryError(Error):
 @backward_compatibility
 class PresignedUrlExpiredError(Error):
     """Old-driver exception for expired cloud storage presigned URLs."""
+
+
+# Must be the last statement; see ``install_backward_compatibility_getattr``.
+install_backward_compatibility_getattr(__name__)
