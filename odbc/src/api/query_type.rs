@@ -7,10 +7,20 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueryType(i64);
 
-impl QueryType {
-    // Full taxonomy is public API; not every id is referenced internally.
-    #![allow(dead_code)]
+/// Result-set behavior that the ODBC layer should produce for a statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResultKind {
+    /// Opens a cursor. `SQLNumResultCols > 0`, `SQLFetch` yields rows.
+    Cursor,
+    /// No cursor; `SQLRowCount` reports an update count. DML only.
+    UpdateCount,
+    /// No cursor, no update count (`SQLRowCount` returns -1). DDL/TCL/acks.
+    NoResult,
+}
 
+// Full taxonomy is public API; not every id is referenced internally.
+#[allow(dead_code)]
+impl QueryType {
     pub const UNKNOWN: Self = Self(0x0000);
     pub const SELECT: Self = Self(0x1000);
     pub const EXPLAIN: Self = Self(0x2000);
@@ -21,6 +31,9 @@ impl QueryType {
     pub const DESCRIBE: Self = Self(0x4500);
     pub const LIST_FILES: Self = Self(0x4701);
     pub const DDL: Self = Self(0x6000);
+    /// `MANAGE_PATS` — DDL-family statement that returns a browsable result set.
+    /// Preserved as an explicit exception because it doesn't fit the DDL default.
+    pub const MANAGE_PATS: Self = Self(0x6244);
     pub const STAGE_FILE_OPERATIONS: Self = Self(0x7000);
     pub const GET_FILES: Self = Self(0x7101);
     pub const PUT_FILES: Self = Self(0x7102);
@@ -64,8 +77,37 @@ impl QueryType {
             || self == Self::EXPLAIN
             || self == Self::CALL
             || self == Self::COPY
+            || self == Self::MANAGE_PATS
             || self.is_syscmd_with_result_set()
             || self.is_stage_operation()
+    }
+
+    /// Families we explicitly know produce no cursor and no update count.
+    /// Used as the middle step in [`Self::result_kind`] so that ids the driver
+    /// hasn't catalogued yet default to `Cursor` rather than silently dropping
+    /// result data.
+    fn is_known_no_result(self) -> bool {
+        self.belongs_to(Self::DDL)
+            || self.belongs_to(Self::MISC_QUERY_TYPES)
+            || self.belongs_to(Self::MULTI_STMT)
+    }
+
+    /// Which ODBC state should the driver produce for a statement of this type.
+    ///
+    /// Precedence: `has_result_set` → `is_dml` → `is_known_no_result`.  Any id
+    /// that falls out the bottom (including `UNKNOWN` and ids the driver
+    /// doesn't recognise yet) defaults to `Cursor` so new Snowflake statement
+    /// types don't silently lose their result data.
+    pub fn result_kind(self) -> ResultKind {
+        if self.has_result_set() {
+            ResultKind::Cursor
+        } else if self.is_dml() {
+            ResultKind::UpdateCount
+        } else if self.is_known_no_result() {
+            ResultKind::NoResult
+        } else {
+            ResultKind::Cursor
+        }
     }
 }
 
@@ -148,5 +190,63 @@ mod tests {
         let future = QueryType::from_raw(Some(0xBEEF));
         assert!(!future.is_dml());
         assert!(!future.has_result_set());
+    }
+
+    #[test]
+    fn manage_pats_has_result_set() {
+        // 0x6244 belongs to the DDL family via the level-3 mask but produces a
+        // browsable result set (e.g. SHOW PATS).  Verified as an explicit
+        // exception in `has_result_set()`.
+        assert!(QueryType::MANAGE_PATS.belongs_to(QueryType::DDL));
+        assert!(QueryType::MANAGE_PATS.has_result_set());
+        assert_eq!(QueryType::MANAGE_PATS.result_kind(), ResultKind::Cursor);
+    }
+
+    #[test]
+    fn result_kind_update_count_for_plain_dml() {
+        // DML family excluding COPY — plain INSERT/UPDATE/DELETE/MERGE land
+        // on the `UpdateCount` branch.
+        assert_eq!(QueryType::DML.result_kind(), ResultKind::UpdateCount);
+    }
+
+    #[test]
+    fn result_kind_cursor_for_copy_even_though_its_dml() {
+        // COPY belongs to DML but also opens a cursor; `Cursor` must win.
+        assert_eq!(QueryType::COPY.result_kind(), ResultKind::Cursor);
+    }
+
+    #[test]
+    fn result_kind_cursor_for_select_and_friends() {
+        assert_eq!(QueryType::SELECT.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::EXPLAIN.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::CALL.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::SHOW.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::DESCRIBE.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::LIST_FILES.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::GET_FILES.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::PUT_FILES.result_kind(), ResultKind::Cursor);
+    }
+
+    #[test]
+    fn result_kind_no_result_for_ddl_and_tcl() {
+        assert_eq!(QueryType::DDL.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::BEGIN.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::COMMIT.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::END.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::SET.result_kind(), ResultKind::NoResult);
+        assert_eq!(QueryType::MULTI_STMT.result_kind(), ResultKind::NoResult);
+    }
+
+    #[test]
+    fn result_kind_cursor_for_unknown_or_absent_id() {
+        // Defensive default: an id the driver doesn't recognise yet (or a
+        // missing `statementTypeId` on the wire) should open a cursor so
+        // future statement types don't silently drop their result data.
+        assert_eq!(QueryType::UNKNOWN.result_kind(), ResultKind::Cursor);
+        assert_eq!(QueryType::from_raw(None).result_kind(), ResultKind::Cursor);
+        assert_eq!(
+            QueryType::from_raw(Some(0xBEEF)).result_kind(),
+            ResultKind::Cursor
+        );
     }
 }

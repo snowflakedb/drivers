@@ -7,7 +7,7 @@ use crate::api::error::{
     JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu,
     Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
 };
-use crate::api::query_type::QueryType;
+use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::{
     ApdRecord, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord, OdbcResult,
@@ -527,22 +527,19 @@ fn create_execute_state_from_result_set(
     let stream = rs.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
     let schema = reader.schema();
-    let qt = QueryType::from_raw(statement_type_id);
 
-    let state = if qt.is_dml() && !qt.has_result_set() {
-        StatementState::DmlExecuted {
+    let state = match QueryType::from_raw(statement_type_id).result_kind() {
+        ResultKind::UpdateCount => StatementState::DmlExecuted {
             rows_affected: rows_affected.unwrap_or(0),
             schema,
             origin,
-        }
-    } else if qt.has_result_set() {
-        StatementState::QueryExecuted {
+        },
+        ResultKind::Cursor => StatementState::QueryExecuted {
             reader,
             rows_affected,
             origin,
-        }
-    } else {
-        StatementState::DdlExecuted { schema, origin }
+        },
+        ResultKind::NoResult => StatementState::DdlExecuted { schema, origin },
     };
     Ok(state)
 }
