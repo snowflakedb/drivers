@@ -2730,6 +2730,58 @@ mod tests {
     }
 
     #[test]
+    fn convert_guid_to_text() -> TestResult {
+        // SQLGUID is d1:u32, d2:u16, d3:u16, d4:[u8;8]; canonical text form
+        // is `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` with uppercase hex,
+        // matching the Windows COM/ODBC convention.
+        let g = sql::Guid {
+            d1: 0x1234_5678,
+            d2: 0x1234,
+            d3: 0x1234,
+            d4: [0xAB, 0xCD, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+        };
+        let binding = make_binding(
+            CDataType::Guid,
+            sql::SqlDataType::VARCHAR,
+            &g as *const sql::Guid as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(
+            v,
+            Value::String("12345678-1234-1234-ABCD-010203040506".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_guid_zero_pads_components() -> TestResult {
+        // Each component must be zero-padded to its full hex width even when
+        // the numeric value is small (e.g. d1=1 must render as "00000001").
+        let g = sql::Guid {
+            d1: 1,
+            d2: 2,
+            d3: 3,
+            d4: [0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        let binding = make_binding(
+            CDataType::Guid,
+            sql::SqlDataType::VARCHAR,
+            &g as *const sql::Guid as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (_, v) = convert_binding(&binding)?;
+        assert_eq!(
+            v,
+            Value::String("00000001-0002-0003-0000-000000000000".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn convert_interval_factory_rejects_unknown_codes() {
         // Code 100 sits just below SQL_INTERVAL_YEAR (101); make sure we
         // didn't accidentally widen the range.

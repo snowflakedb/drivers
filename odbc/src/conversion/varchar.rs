@@ -475,6 +475,23 @@ impl ReadODBC for SnowflakeVarchar {
             | CDataType::IntervalHourToMinute
             | CDataType::IntervalHourToSecond
             | CDataType::IntervalMinuteToSecond => format_interval(binding),
+            CDataType::Guid => {
+                let g = read_unaligned::<sql::Guid>(binding);
+                format!(
+                    "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                    g.d1,
+                    g.d2,
+                    g.d3,
+                    g.d4[0],
+                    g.d4[1],
+                    g.d4[2],
+                    g.d4[3],
+                    g.d4[4],
+                    g.d4[5],
+                    g.d4[6],
+                    g.d4[7],
+                )
+            }
             _ => {
                 return UnsupportedCDataTypeSnafu {
                     c_type: binding.value_type,
