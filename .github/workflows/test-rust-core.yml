@@ -60,6 +60,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -98,6 +101,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -187,6 +193,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -246,7 +255,11 @@ jobs:
       - name: Save vcpkg ARM64 OpenSSL cache
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows
@@ -355,6 +368,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

@@ -118,9 +118,24 @@ runs:
     # fail the build punishes a green test run for an infra hiccup. The next CI
     # run rebuilds from scratch (worst case) and the warning is still surfaced
     # in the job log via actions/cache/save's own `core.warning` calls.
+    # ZSTD_NBTHREADS: defend against tar+zstdmt hangs.
+    # We have observed cache saves stalling for 30+ minutes on the
+    # `tar --use-compress-program zstdmt` step — most often when zstdmt
+    # contends on its worker pool against many small files (cargo's target/
+    # has tens of thousands), or when the runner is memory-pressured. Capping
+    # zstd worker threads to 2 (default uses all cores) reduces the contention
+    # window dramatically.
+    #
+    # NOTE: timeout-minutes is not supported on composite action steps (GHA
+    # limitation), so the wall-clock kill-switch lives on the workflow-level
+    # callers of this action — they wrap the whole composite invocation with
+    # `timeout-minutes`. continue-on-error here turns any timeout into a
+    # warning rather than a hard failure.
     - name: Save Cargo registry cache
       if: inputs.mode == 'save' && inputs.registry-cache-hit != 'true' && steps.precheck-registry.outputs.cache-hit != 'true'
       continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
       uses: actions/cache/save@v5
       with:
         path: |
@@ -139,16 +154,22 @@ runs:
         lookup-only: true
 
     # Slim the target/ tree before save: cargo accumulates regenerable artifacts
-    # (incremental compilation data, fingerprint metadata, dependency-tracking .d
-    # files) that bloat the cache without speeding up cross-runner builds. Across
-    # CI runs the workspace is fresh anyway, so incremental data is rebuilt from
-    # scratch — caching it is pure overhead. Without this cleanup, target caches
-    # routinely grow to 5-9 GB, producing 3-5 minute cache download/extract steps
-    # that often cancel any speedup the cache was meant to provide.
+    # that bloat the cache without speeding up cross-runner builds. Without this
+    # cleanup, target caches routinely grow to 5-9 GB, producing 3-5 minute cache
+    # download/extract steps that often cancel any speedup the cache was meant to
+    # provide.
     #
-    # What we keep: deps/*.rlib, deps/*.rmeta, build/*/output (compiled deps and
-    # build script outputs that are expensive to regenerate).
-    # What we remove: incremental/, .fingerprint/, *.d (regenerable, large).
+    # What we remove:
+    # - incremental/: per-build incremental-compilation state. Useful for repeated
+    #   builds in the same workspace, useless across fresh CI runners. This is the
+    #   single biggest contributor (often multi-GB).
+    # - *.d: dependency-tracking files cargo rewrites on every build.
+    #
+    # What we keep:
+    # - deps/*.rlib, deps/*.rmeta: compiled dependency artifacts (the cache value).
+    # - .fingerprint/: cargo uses these to decide which restored artifacts are
+    #   fresh. Without them cargo conservatively recompiles, defeating the cache.
+    # - build/*/output: build script outputs (some are expensive, e.g. bindgen).
     - name: Slim target dir before cache save
       if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
       shell: bash
@@ -166,16 +187,20 @@ runs:
         # for directory deletion in CI; this loop is explicit and predictable.
         while IFS= read -r dir; do
           [ -n "$dir" ] && rm -rf "$dir"
-        done < <(find "$target_dir" -type d \( -name 'incremental' -o -name '.fingerprint' \) 2>/dev/null)
-        # .d files are dependency-tracking outputs; cargo regenerates them automatically.
+        done < <(find "$target_dir" -type d -name 'incremental' 2>/dev/null)
         find "$target_dir" -type f -name '*.d' -delete 2>/dev/null || true
         size_after=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
         echo "Slimmed ${target_dir}: ${size_before} -> ${size_after}"
 
-    # See comment above on Save Cargo registry cache: cache save is best-effort.
+    # See comment above on Save Cargo registry cache: cache save is best-effort,
+    # ZSTD_NBTHREADS prevents zstdmt thread thrash, and the wall-clock timeout
+    # is enforced by the workflow-level callers (composite steps don't support
+    # timeout-minutes).
     - name: Save Rust target cache
       if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
       continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
       uses: actions/cache/save@v5
       with:
         path: ${{ inputs.target-dir }}

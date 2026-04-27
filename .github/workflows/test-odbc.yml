@@ -65,6 +65,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -249,18 +252,28 @@ jobs:
           DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
 
       - name: Save test dependencies cache
-        if: always()
+        # Skip when the exact key was already restored.
+        if: always() && steps.test-deps-cache-ref.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
           key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save ccache
-        if: always()
+        # Skip when the exact key was already restored.
+        if: always() && steps.ccache-ref.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -335,6 +348,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -644,7 +660,11 @@ jobs:
       - name: Save test dependencies cache
         if: always() && steps.test-deps-cache.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
@@ -653,7 +673,11 @@ jobs:
       - name: Save ccache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -662,7 +686,11 @@ jobs:
       - name: Save vcpkg binary cache (Windows)
         if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: .vcpkg-binary-cache
@@ -671,7 +699,11 @@ jobs:
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: ~/Library/Caches/Homebrew
@@ -704,6 +736,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Restore Cargo registry cache (RPM build)
+        id: rpm-cargo-registry
         uses: actions/cache/restore@v5
         with:
           path: .cargo-cache
@@ -712,6 +745,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-
 
       - name: Restore Rust target cache (RPM build)
+        id: rpm-cargo-target
         uses: actions/cache/restore@v5
         with:
           path: .cargo-target-rpm
@@ -739,16 +773,28 @@ jobs:
             bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
 
       - name: Save Cargo registry cache (RPM build)
+        # Skip when the exact key was already restored.
+        if: steps.rpm-cargo-registry.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (RPM build)
+        # Skip when the exact key was already restored.
+        if: steps.rpm-cargo-target.outputs.cache-hit != 'true'
         # Cache save is best-effort — see cargo-cache action for rationale.
+        # Target dirs can be multi-GB; give 15 min instead of the 10 min default.
         continue-on-error: true
+        timeout-minutes: 15
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: .cargo-target-rpm
