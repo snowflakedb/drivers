@@ -25,7 +25,7 @@ use crate::config::retry::RetryPolicy;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
     self, QueryExecutionMode, QueryInput, RestError, SessionTokens, SnowflakeResponseError,
-    snowflake_query_with_client,
+    heartbeat, snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
@@ -1442,6 +1442,58 @@ impl DatabaseDriverV1 {
         })
     }
 
+    /// Send a heartbeat to validate that the connection and session are still alive.
+    ///
+    /// Returns `true` if the session is valid, `false` otherwise.
+    /// Automatically attempts one token refresh on 401 (session expired).
+    pub async fn connection_heartbeat(&self, conn_handle: Handle) -> Result<bool, ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        let mut ctx = match RefreshContext::from_arc(&conn_ptr).await {
+            Ok(ctx) => ctx,
+            Err(_) => return Ok(false),
+        };
+
+        let server_url = match url::Url::parse(&ctx.server_url) {
+            Ok(u) => u,
+            Err(_) => return Ok(false),
+        };
+
+        let mut last_error: Option<RestError> = None;
+
+        loop {
+            let token = match ctx.refresh_token(last_error.take()).await {
+                Ok(t) => t,
+                Err(_) => return Ok(false),
+            };
+
+            match heartbeat::send_heartbeat(
+                &ctx.http_client,
+                &server_url,
+                &ctx.client_info,
+                token.reveal(),
+            )
+            .await
+            {
+                Ok(()) => return Ok(true),
+                Err(
+                    e @ RestError::InvalidSnowflakeResponse {
+                        source: SnowflakeResponseError::SessionExpired { .. },
+                        ..
+                    },
+                ) => {
+                    last_error = Some(e);
+                }
+                Err(_) => return Ok(false),
+            }
+        }
+    }
+
     /// Execute a token request (ISSUE/RENEW) using the connection's master token.
     pub async fn connection_token_request(
         &self,
@@ -2023,6 +2075,108 @@ mod tests {
             err.to_string().contains("must be 'ISSUE' or 'RENEW'"),
             "unexpected error: {err}"
         );
+        ds.connection_release(handle).unwrap();
+    }
+
+    async fn setup_connection_for_heartbeat_tests(
+        ds: &DatabaseDriverV1,
+        server_url: &str,
+    ) -> Handle {
+        let handle = ds.connection_new();
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            conn.server_url = Some(server_url.to_string());
+            conn.client_info =
+                Some(crate::config::rest_parameters::test_fixtures::test_client_info());
+            let tokens = SessionTokens {
+                session_token: "test-session-token".into(),
+                master_token: "test-master-token".into(),
+                session_id: 1,
+                session_expires_at: None,
+                master_expires_at: Some(
+                    std::time::Instant::now() + std::time::Duration::from_secs(14400),
+                ),
+            };
+            *conn.tokens.write().await = Some(tokens);
+        }
+        handle
+    }
+
+    #[tokio::test]
+    async fn heartbeat_returns_true_on_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
+            )
+            .mount(&server)
+            .await;
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
+
+        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        assert!(valid, "heartbeat should return true on success");
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn heartbeat_returns_false_on_failure_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"success": false, "message": "Session gone", "code": "390112"}),
+            ))
+            .mount(&server)
+            .await;
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
+
+        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        assert!(!valid, "heartbeat should return false on failure response");
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn heartbeat_returns_false_on_network_error() {
+        // Bind to an ephemeral port, capture the address, then close the listener
+        // so the port is guaranteed to refuse connections.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &format!("http://{addr}")).await;
+
+        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        assert!(!valid, "heartbeat should return false on network error");
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn heartbeat_returns_false_when_not_initialized() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        assert!(
+            !valid,
+            "heartbeat should return false on uninitialized connection"
+        );
+
         ds.connection_release(handle).unwrap();
     }
 }
