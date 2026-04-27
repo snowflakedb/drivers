@@ -1167,6 +1167,26 @@ pub fn get_info<E: OdbcEncoding>(
             }
             Ok(())
         }
+        InfoType::DbmsName | InfoType::ServerName => {
+            write_string_bytes::<E>(
+                "Snowflake",
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
+        InfoType::DbmsVer => {
+            write_string_bytes::<E>(
+                "1.0.0", // TODO: Actual version
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
         InfoType::DriverOdbcVer => {
             write_string_bytes::<E>(
                 "03.00",

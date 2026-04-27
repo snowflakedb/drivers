@@ -172,6 +172,12 @@ impl ConnectionAttribute {
 #[repr(u16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfoType {
+    /// `SQL_DBMS_NAME` (17) — name of the DBMS product (string).
+    DbmsName = 17,
+    /// `SQL_DBMS_VER` (18) — version of the DBMS product (string).
+    DbmsVer = 18,
+    /// `SQL_SERVER_NAME` (13) — data-source-specific server name (string).
+    ServerName = 13,
     /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
     CursorCommitBehavior = 23,
     /// `SQL_CURSOR_ROLLBACK_BEHAVIOR` (24) — cursor behavior on rollback.
@@ -187,6 +193,9 @@ impl TryFrom<u16> for InfoType {
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
+            13 => Ok(InfoType::ServerName),
+            17 => Ok(InfoType::DbmsName),
+            18 => Ok(InfoType::DbmsVer),
             23 => Ok(InfoType::CursorCommitBehavior),
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
@@ -199,6 +208,31 @@ impl TryFrom<u16> for InfoType {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod info_type_tests {
+    use super::InfoType;
+
+    #[test]
+    fn parses_dbms_name() {
+        assert_eq!(InfoType::try_from(17u16).unwrap(), InfoType::DbmsName);
+    }
+
+    #[test]
+    fn parses_dbms_ver() {
+        assert_eq!(InfoType::try_from(18u16).unwrap(), InfoType::DbmsVer);
+    }
+
+    #[test]
+    fn parses_server_name() {
+        assert_eq!(InfoType::try_from(13u16).unwrap(), InfoType::ServerName);
+    }
+
+    #[test]
+    fn rejects_unknown_info_type() {
+        assert!(InfoType::try_from(9999u16).is_err());
     }
 }
 
