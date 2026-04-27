@@ -224,11 +224,15 @@ jobs:
           if ($sdists.Count -ne 1) {
             Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
           }
-          $env:WHEEL_PATH = $sdists[0].FullName
-          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
-          # Use a short cache path to avoid MSVC MAX_PATH errors when
-          # compiling C/C++ extensions from the unpacked sdist.
-          $env:UV_CACHE_DIR = "D:\uv"
+          # Build wheel from sdist in a short directory to avoid MSVC MAX_PATH.
+          # MSVC mirrors absolute source paths inside build temp directories,
+          # doubling UV cache's deeply nested hash paths and exceeding 260 chars.
+          New-Item -ItemType Directory -Force D:\s | Out-Null
+          tar xzf $sdists[0].FullName -C D:\s
+          $srcDir = (Get-ChildItem D:\s -Directory)[0].FullName
+          uv build --wheel $srcDir --out-dir D:\s\out
+          $env:WHEEL_PATH = (Get-ChildItem D:\s\out\*.whl)[0].FullName
+          Write-Host "Installing wheel built from sdist: $($env:WHEEL_PATH)"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
         env:
           SKIP_CORE_BUILD: "false"
