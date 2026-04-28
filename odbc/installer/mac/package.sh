@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Package the Snowflake ODBC RS driver as a macOS DMG (universal binary).
+# Package the Snowflake ODBC UD driver as a macOS DMG (universal binary).
 #
 # Builds or accepts pre-built dylibs for x86_64 and aarch64, merges them
 # with lipo into a universal binary, creates a .pkg installer, and wraps
@@ -16,8 +16,8 @@ set -euxo pipefail
 
 source ./odbc/version.sh
 
-INSTALL_DIR="/opt/snowflake/snowflakeodbcrs"
-PKG_IDENTIFIER="net.snowflake.odbc-rs"
+INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
+PKG_IDENTIFIER="net.snowflake.odbc-ud"
 BUILD_DIR=build
 SCRIPTS_DIR=odbc/installer/mac
 
@@ -45,8 +45,8 @@ cp odbc/include/sf_odbc.h "$STAGE_DIR$INSTALL_DIR/include/"
 
 mkdir -p "$BUILD_DIR"
 
-PKG_NAME="snowflake_odbc_rs-${VERSION}-universal.pkg"
-DMG_NAME="snowflake_odbc_rs-${VERSION}-universal.dmg"
+PKG_NAME="snowflake_odbc_ud-${VERSION}-universal.pkg"
+DMG_NAME="snowflake_odbc_ud-${VERSION}-universal.dmg"
 
 echo "=== Building pkg: $PKG_NAME ==="
 pkgbuild \
@@ -59,7 +59,7 @@ pkgbuild \
 
 echo "=== Creating DMG: $DMG_NAME ==="
 hdiutil create \
-    -volname "Snowflake ODBC RS Driver" \
+    -volname "Snowflake ODBC UD" \
     -srcfolder "$BUILD_DIR/$PKG_NAME" \
     -ov \
     -format UDZO \

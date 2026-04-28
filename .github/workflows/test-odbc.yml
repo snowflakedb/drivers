@@ -1102,8 +1102,8 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake_odbc_rs-${{ steps.odbc-version.outputs.version }}-universal-macos
-          path: build/snowflake_odbc_rs-*.dmg
+          name: snowflake_odbc_ud-${{ steps.odbc-version.outputs.version }}-universal-macos
+          path: build/snowflake_odbc_ud-*.dmg
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi, build_dmg]

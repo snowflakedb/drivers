@@ -1,31 +1,31 @@
 #!/bin/bash
 #
-# Post-install script for the Snowflake ODBC RS Driver macOS pkg.
+# Post-install script for the Snowflake ODBC UD macOS pkg.
 # Registers the driver with the iODBC Driver Manager.
 #
 
-INSTALL_DIR="/opt/snowflake/snowflakeodbcrs"
+INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
 DRIVER_PATH="$INSTALL_DIR/lib/libsfodbc.dylib"
 ODBC_DIR="$HOME/Library/ODBC"
 ODBCINST_FILE="$ODBC_DIR/odbcinst.ini"
 
 mkdir -p "$ODBC_DIR"
 
-DRIVER_ENTRY="[SnowflakeDSIIDriver]
+DRIVER_ENTRY="[SnowflakeODBCUDDriver]
 Driver=$DRIVER_PATH
-Description=Snowflake DSII"
+Description=Snowflake ODBC UD"
 
 if [ -f "$ODBCINST_FILE" ]; then
-    if grep -q "\[SnowflakeDSIIDriver\]" "$ODBCINST_FILE"; then
-        echo "SnowflakeDSIIDriver already registered in $ODBCINST_FILE, updating..."
-        sed -i '' '/\[SnowflakeDSIIDriver\]/,/^\[/{/^\[SnowflakeDSIIDriver\]/d;/^Driver=/d;/^Description=/d;/^$/d;}' "$ODBCINST_FILE"
+    if grep -q "\[SnowflakeODBCUDDriver\]" "$ODBCINST_FILE"; then
+        echo "SnowflakeODBCUDDriver already registered in $ODBCINST_FILE, updating..."
+        sed -i '' '/\[SnowflakeODBCUDDriver\]/,/^\[/{/^\[SnowflakeODBCUDDriver\]/d;/^Driver=/d;/^Description=/d;/^$/d;}' "$ODBCINST_FILE"
     fi
 fi
 
 echo "" >> "$ODBCINST_FILE"
 echo "$DRIVER_ENTRY" >> "$ODBCINST_FILE"
 
-echo "Snowflake ODBC RS Driver registered in $ODBCINST_FILE"
+echo "Snowflake ODBC UD registered in $ODBCINST_FILE"
 
 if [ -n "$SUDO_UID" ]; then
     chown -R "$SUDO_UID":"$SUDO_GID" "$ODBC_DIR"
