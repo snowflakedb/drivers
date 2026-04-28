@@ -13,18 +13,23 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import Co
 from snowflake.connector.errors import ProgrammingError
 
 
-def create_config_setting(value: Any) -> ConfigSetting:
+def create_config_setting(value: Any, *, allow_none: bool = True) -> ConfigSetting | None:
     """Create a ConfigSetting protobuf from a Python value.
 
     Args:
         value: Python value (bool, int, str, float, or bytes).
+        allow_none: If True (default), return None for None values — they mean
+            "not set" in Python kwargs and have no ConfigSetting representation.
+            If False, None raises TypeError like any other unsupported type.
 
     Returns:
-        ConfigSetting protobuf message.
+        ConfigSetting protobuf message, or None if value is None and allow_none is True.
 
     Raises:
         TypeError: If value type is not supported.
     """
+    if value is None and allow_none:
+        return None
     # Check bool before int (bool is a subclass of int in Python)
     if isinstance(value, bool):
         return ConfigSetting(bool_value=value)
@@ -42,8 +47,11 @@ def create_config_setting(value: Any) -> ConfigSetting:
 
 
 def create_config_settings_from_dict(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
-    """Wrap a dict of Python values into ConfigSetting protobuf messages for Core."""
-    return {key: create_config_setting(value) for key, value in kwargs.items()}
+    """Wrap a dict of Python values into ConfigSetting protobuf messages for Core.
+
+    None values are silently skipped (they mean "not set" in Python kwargs).
+    """
+    return {key: setting for key, value in kwargs.items() if (setting := create_config_setting(value)) is not None}
 
 
 def pop_typed_kwarg(kwargs: dict[str, Any], key: str, expected_type: type, default: Any = None) -> Any:
