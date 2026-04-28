@@ -9,7 +9,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidDatetimeValueSnafu, JsonBindingError,
+    UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -222,8 +223,12 @@ impl ReadODBC for SnowflakeDate {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
                 NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32).ok_or_else(
                     || {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                                 year={}, month={}, day={}",
+                                ts.year, ts.month, ts.day
+                            ),
                         }
                         .build()
                     },

@@ -220,6 +220,21 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    /// Maps to SQLSTATE 22007 ("Invalid datetime format"). Use this when a
+    /// SQL_DATE_STRUCT / SQL_TIME_STRUCT / SQL_TIMESTAMP_STRUCT bound to a
+    /// temporal SQL target contains field values that don't form a valid
+    /// date/time (e.g. month = 13, hour = 25). Per ODBC Appendix D ("C to
+    /// SQL: Date / Time / Timestamp"), the spec-mandated SQLSTATE for
+    /// "Data value does not contain a valid date/time" is 22007 — distinct
+    /// from 22003 (numeric out of range) and 07006 (restricted data type
+    /// attribute violation, i.e. unsupported conversion).
+    #[snafu(display("Invalid datetime value: {reason}"))]
+    InvalidDatetimeValue {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid boolean value: {value}"))]
     InvalidBooleanValue {
         value: String,

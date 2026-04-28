@@ -1983,10 +1983,19 @@ mod tests {
 
     // -- Cross-temporal binds (DATE↔TIMESTAMP, TIME↔TIMESTAMP) ----------------
     //
-    // These mirror the legacy 3.16.0 behavior:
+    // These mirror the legacy 3.16.0 behavior, which itself implements the
+    // ODBC spec (Appendix D, "C to SQL: Date / Time / Timestamp"):
     //   - SQL_C_TYPE_TIMESTAMP → SQL_DATE: extract the date portion.
     //   - SQL_C_TYPE_TIMESTAMP → SQL_TIME: extract the time portion (incl. nanos).
     //   - SQL_C_TYPE_DATE → SQL_TIMESTAMP*: combine the date with 00:00:00.
+    //   - SQL_C_TYPE_TIME → SQL_TIMESTAMP*: pair the time with the current
+    //     local date and zero fractional seconds.
+    //
+    // Invalid struct fields (e.g. month = 13, hour = 25) are reported via
+    // JsonBindingError::InvalidDatetimeValue, which maps to SQLSTATE 22007
+    // ("Invalid datetime format") per the ODBC spec — distinct from 07006
+    // ("Restricted data type attribute violation") which would incorrectly
+    // signal that the conversion itself is unsupported.
 
     #[test]
     fn convert_timestamp_as_date_extracts_date_part() -> TestResult {
@@ -2082,7 +2091,15 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(convert_binding(&binding).is_err());
+        // Per ODBC Appendix D ("C to SQL: Date"), an invalid date in a
+        // SQL_C_TYPE_DATE bound to a SQL_TYPE_TIMESTAMP target must surface
+        // as SQLSTATE 22007 (Invalid datetime format), not 07006 (restricted
+        // data type attribute violation).
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
     }
 
     #[test]
@@ -2114,7 +2131,10 @@ mod tests {
         let dt = chrono::DateTime::from_timestamp_nanos(nanos).naive_utc();
 
         // The time component is preserved exactly with a zero fractional part.
-        assert_eq!(dt.time(), chrono::NaiveTime::from_hms_opt(14, 30, 45).unwrap());
+        assert_eq!(
+            dt.time(),
+            chrono::NaiveTime::from_hms_opt(14, 30, 45).unwrap()
+        );
         // The date component is "current date" — anywhere in the window the
         // call took to execute (handles midnight rollover gracefully).
         assert!(
@@ -2141,7 +2161,70 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(convert_binding(&binding).is_err());
+        // Per ODBC Appendix D ("C to SQL: Time"), an invalid time in a
+        // SQL_C_TYPE_TIME bound to a SQL_TYPE_TIMESTAMP target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_invalid_date() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Timestamp"), an invalid date in a
+        // SQL_C_TYPE_TIMESTAMP bound to a SQL_TYPE_DATE target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_rejects_invalid_time() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Timestamp"), an invalid time in a
+        // SQL_C_TYPE_TIMESTAMP bound to a SQL_TYPE_TIME target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
     }
 
     #[test]

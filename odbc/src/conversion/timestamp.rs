@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericValueOutOfRangeSnafu,
-    UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidDatetimeValueSnafu, JsonBindingError,
+    NumericValueOutOfRangeSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -437,15 +437,18 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
         // with midnight (matches the legacy 3.16.0 driver, which auto-promotes
         // a DATE source to a TIMESTAMP at 00:00:00.000000000).
         CDataType::Date | CDataType::TypeDate => {
-            let date = read_unaligned::<sql::Date>(binding);
-            let date =
-                NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
-                    .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
-                        }
-                        .build()
-                    })?;
+            let d = read_unaligned::<sql::Date>(binding);
+            let date = NaiveDate::from_ymd_opt(d.year as i32, d.month as u32, d.day as u32)
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_DATE for TIMESTAMP target: \
+                             year={}, month={}, day={}",
+                            d.year, d.month, d.day
+                        ),
+                    }
+                    .build()
+                })?;
             Ok(NaiveDateTime::new(date, NaiveTime::MIN))
         }
         // Bind SQL_C_TYPE_TIME into a TIMESTAMP column by pairing the time
@@ -456,14 +459,17 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
         // SnowflakeTime → SQL_C_TYPE_TIMESTAMP path in `time.rs`.
         CDataType::Time | CDataType::TypeTime => {
             let t = read_unaligned::<sql::Time>(binding);
-            let time =
-                NaiveTime::from_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
-                    .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
-                        }
-                        .build()
-                    })?;
+            let time = NaiveTime::from_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIME for TIMESTAMP target: \
+                             hour={}, minute={}, second={}",
+                            t.hour, t.minute, t.second
+                        ),
+                    }
+                    .build()
+                })?;
             Ok(NaiveDateTime::new(chrono::Local::now().date_naive(), time))
         }
         CDataType::Binary => {

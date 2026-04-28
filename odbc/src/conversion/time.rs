@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, InvalidArrowValueSnafu, JsonBindingError,
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidArrowValueSnafu, InvalidDatetimeValueSnafu,
+    JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedCDataTypeSnafu,
     UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
@@ -277,8 +277,12 @@ impl ReadODBC for SnowflakeTime {
                     ts.fraction,
                 )
                 .ok_or_else(|| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                             hour={}, minute={}, second={}, fraction={}",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
                     }
                     .build()
                 })
