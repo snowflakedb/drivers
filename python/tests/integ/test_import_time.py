@@ -24,7 +24,7 @@ elapsed = time.monotonic() - start
 print(f"{elapsed:.6f}")
 """
 
-_NUM_RUNS = 5
+_NUM_RUNS = 10
 _MAX_IMPORT_TIME_SECONDS = 0.4 if IS_UNIVERSAL_DRIVER else 0.6
 
 
@@ -37,7 +37,8 @@ class TestImportTime:
 
         The import is executed in fresh subprocesses so that any modules
         already loaded by the test runner have no effect on the measurement.
-        The mean of multiple runs is used to reduce noise.
+        The 90th percentile of multiple runs is used to reduce noise while
+        still catching slower outlier behavior.
         """
         times = []
         for _ in range(_NUM_RUNS):
@@ -60,9 +61,10 @@ class TestImportTime:
                 ) from None
             times.append(elapsed)
 
-        mean_elapsed = sum(times) / len(times)
-        assert mean_elapsed < _MAX_IMPORT_TIME_SECONDS, (
-            f"Importing snowflake.connector.connect took {mean_elapsed:.3f}s on average "
+        sorted_times = sorted(times)
+        p90_elapsed = sorted_times[int(0.9 * len(sorted_times)) - 1]
+        assert p90_elapsed < _MAX_IMPORT_TIME_SECONDS, (
+            f"Importing snowflake.connector.connect had p90 {p90_elapsed:.3f}s "
             f"(runs: {', '.join(f'{t:.3f}s' for t in times)}), "
             f"which exceeds the {_MAX_IMPORT_TIME_SECONDS}s budget"
         )
