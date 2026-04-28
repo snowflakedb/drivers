@@ -8,7 +8,7 @@ from snowflake.connector._internal.decorators import _TRACKING
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
-    ExecuteResult,
+    ExecuteQueryResponse,
     StatementHandle,
 )
 
@@ -22,7 +22,7 @@ def mock_db_api():
     db_api.connection_get_parameter.return_value = MagicMock(value="")
     # Provide a real StatementHandle so protobuf field validation passes
     db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
-    db_api.statement_execute_query.return_value = MagicMock(result=ExecuteResult())
+    db_api.statement_execute_query.return_value = ExecuteQueryResponse()
     db_api.statement_result_chunks.return_value = MagicMock(HasField=MagicMock(return_value=False))
     return db_api
 
@@ -197,7 +197,7 @@ class TestApiTelemetryResetBehavior:
 
         # Tracking should be re-enabled
         mock_db_api.statement_execute_query.side_effect = None
-        mock_db_api.statement_execute_query.return_value = MagicMock(result=ExecuteResult())
+        mock_db_api.statement_execute_query.return_value = ExecuteQueryResponse()
         mock_db_api.telemetry_send_api_usage.reset_mock()
         cursor.execute("SELECT 2")
 

@@ -135,7 +135,11 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
             "code.namespace": "sf_core::apis::database_driver_v1::connection",
         }
         for key, expected in expected_exact.items():
-            assert message.get(key) == expected, (
+            actual = message.get(key)
+            # Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+            if key == "code.filepath" and isinstance(actual, str):
+                actual = actual.replace("\\", "/")
+            assert actual == expected, (
                 f"api_call message[{key!r}] expected {expected!r}, got {message.get(key)!r}. Full message: {message}"
             )
 
