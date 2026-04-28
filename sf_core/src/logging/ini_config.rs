@@ -17,12 +17,12 @@ use crate::config::settings::Setting;
 /// Checks file permissions before reading (rejects group/world-writable files
 /// on Unix).
 pub fn parse_ini_file(path: &Path) -> Result<LoggingConfig, LogError> {
-    crate::config::toml_loader::check_file_permissions(path).map_err(|e| {
-        InsecurePermissionsSnafu {
-            path: path.display().to_string(),
-            reason: e.to_string(),
+    crate::config::toml_loader::check_file_permissions(path).map_err(|e| match e {
+        crate::config::ConfigError::InsecurePermissions { path, reason, .. } => {
+            InsecurePermissionsSnafu { path, reason }.build()
         }
-        .build()
+        crate::config::ConfigError::ConfigFileRead { source, .. } => IoSnafu.into_error(source),
+        other => IoSnafu.into_error(std::io::Error::other(other.to_string())),
     })?;
 
     let ini = Ini::load_from_file_noescape(path).map_err(|e| match e {
@@ -58,7 +58,7 @@ fn apply_ini_section(props: &ini::Properties) -> Result<LoggingConfig, LogError>
             "logmaxcount" => config.max_file_count = Some(parse_u32(value)?),
             "logrotation" => config.rotation = parse_rotation(value)?,
             "logenabled" => config.enabled = parse_bool(value)?,
-            _ => {}
+            other => eprintln!("ignoring unknown INI key: {other}"),
         }
     }
     Ok(config)
@@ -462,7 +462,7 @@ LOGENABLED=false
     #[test]
     fn parse_ini_file_missing_file() {
         let err = parse_ini_file(Path::new("/nonexistent/sf.odbc.ini")).unwrap_err();
-        matches!(err, LogError::Io { .. });
+        assert!(matches!(err, LogError::Io { .. }));
     }
 
     // ---- TOML section loading ----
@@ -475,6 +475,7 @@ LOGENABLED=false
         section.insert("file".into(), Setting::String("app.log".into()));
         section.insert("max_size".into(), Setting::Int(2_000_000));
         section.insert("max_count".into(), Setting::Int(3));
+        section.insert("rotation".into(), Setting::String("DAILY".into()));
         section.insert("enabled".into(), Setting::Bool(false));
         section.insert("opentelemetry".into(), Setting::Bool(true));
 
@@ -484,6 +485,7 @@ LOGENABLED=false
         assert_eq!(config.log_file_name.unwrap(), "app.log");
         assert_eq!(config.max_file_size.unwrap(), 2_000_000);
         assert_eq!(config.max_file_count.unwrap(), 3);
+        assert_eq!(config.rotation, LogRotation::Daily);
         assert!(!config.enabled);
         assert!(config.open_telemetry);
     }

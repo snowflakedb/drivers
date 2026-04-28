@@ -1,9 +1,8 @@
-use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use sf_core::logging::LogManager;
 use sf_core::logging::ini_config::{find_odbc_ini, parse_ini_file};
-use sf_core::logging::{LogManager, LoggingConfig};
 use tracing::level_filters::LevelFilter;
 
 /// Single-init happy path: parse a temp INI, init `LogManager`, emit events,
@@ -81,7 +80,9 @@ fn find_odbc_ini_resolves_env_var() {
 /// Verify that a non-existent INI path returns an IO error.
 #[test]
 fn parse_nonexistent_ini_returns_io_error() {
-    let result = parse_ini_file(Path::new("/nonexistent/path/sf.odbc.ini"));
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("sf.odbc.ini");
+    let result = parse_ini_file(&missing);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(

@@ -36,6 +36,7 @@ static std::string read_all_files_in(const fs::path& dir) {
 }
 
 TEST_CASE("should create log file when sf.odbc.ini configures file logging", "[logging]") {
+  SKIP_OLD_DRIVER("BD#000", "Old driver does not support file logging setup via sf.odbc.ini");
   // Given a temp directory for logs and an sf.odbc.ini pointing there
   auto log_dir = create_temp_log_dir();
   auto ini_path = log_dir / "sf.odbc.ini";

@@ -66,7 +66,12 @@ impl LogManager {
     pub fn init(config: LoggingConfig) -> Result<Self, LogError> {
         let sessions = SessionRegistry::default();
         let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
-            .expect("provider is always Some when sessions are provided");
+            .ok_or_else(|| {
+                InitSnafu {
+                    message: "provider is always Some when sessions are provided",
+                }
+                .build()
+            })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: sessions,
@@ -86,8 +91,13 @@ impl LogManager {
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
-        let provider = Self::try_init(config, Some(app_sink), Some(registry.clone()))?
-            .expect("provider is always Some when registry is Some");
+        let provider =
+            Self::try_init(config, Some(app_sink), Some(registry.clone()))?.ok_or_else(|| {
+                InitSnafu {
+                    message: "provider is always Some when registry is Some",
+                }
+                .build()
+            })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: registry,
