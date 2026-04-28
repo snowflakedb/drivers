@@ -4,7 +4,7 @@
 //! adding or modifying a DSN for the Snowflake ODBC RS driver.
 
 #![cfg(target_os = "windows")]
-#![allow(non_snake_case)]
+#![allow(non_snake_case, non_camel_case_types)]
 
 use std::ptr;
 use std::sync::atomic::Ordering;
@@ -51,7 +51,7 @@ const SQL_DRIVER_NOPROMPT: u16 = 0;
 const SQL_NULL_HANDLE: *mut core::ffi::c_void = ptr::null_mut();
 
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     fn DialogBoxParamW(
         hInstance: HINSTANCE,
         lpTemplate: *const u16,
@@ -82,7 +82,7 @@ extern "system" {
 }
 
 #[link(name = "odbccp32")]
-extern "system" {
+unsafe extern "system" {
     fn SQLGetPrivateProfileStringW(
         lpszSection: *const u16,
         lpszEntry: *const u16,
@@ -103,7 +103,7 @@ extern "system" {
 }
 
 #[link(name = "odbc32")]
-extern "system" {
+unsafe extern "system" {
     fn SQLAllocHandle(
         HandleType: i16,
         InputHandle: *mut core::ffi::c_void,
@@ -480,14 +480,14 @@ const GWLP_USERDATA: i32 = -21;
 
 #[cfg(target_pointer_width = "64")]
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
     fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
 }
 
 #[cfg(target_pointer_width = "32")]
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     fn SetWindowLongW(hWnd: HWND, nIndex: i32, dwNewLong: i32) -> i32;
     fn GetWindowLongW(hWnd: HWND, nIndex: i32) -> i32;
 }
