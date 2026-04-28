@@ -135,7 +135,7 @@ TEST_CASE("ConfigDSNW: add and remove a DSN", "[odbc-api][setup-dll][config-dsn]
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
   std::string dsn = random_dsn_name();
-  std::wstring driver = L"SnowflakeDSIIDriver";
+  std::wstring driver = L"Snowflake ODBC UD";
 
   auto attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "test.snowflake.com"}});
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), attrs.data());
@@ -153,7 +153,7 @@ TEST_CASE("ConfigDSNW: modify an existing DSN", "[odbc-api][setup-dll][config-ds
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
   std::string dsn = random_dsn_name();
-  std::wstring driver = L"SnowflakeDSIIDriver";
+  std::wstring driver = L"Snowflake ODBC UD";
 
   auto add_attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "old.snowflake.com"}, {"UID", "user1"}});
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), add_attrs.data());
@@ -173,7 +173,7 @@ TEST_CASE("ConfigDSNW: modify an existing DSN", "[odbc-api][setup-dll][config-ds
 TEST_CASE("ConfigDSNW: returns FALSE with missing DSN attribute", "[odbc-api][setup-dll][config-dsn]") {
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
-  std::wstring driver = L"SnowflakeDSIIDriver";
+  std::wstring driver = L"Snowflake ODBC UD";
 
   auto attrs = build_attrs_w({{"SERVER", "test.snowflake.com"}});
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), attrs.data());
@@ -183,7 +183,7 @@ TEST_CASE("ConfigDSNW: returns FALSE with missing DSN attribute", "[odbc-api][se
 TEST_CASE("ConfigDSNW: returns FALSE with NULL attributes", "[odbc-api][setup-dll][config-dsn]") {
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
-  std::wstring driver = L"SnowflakeDSIIDriver";
+  std::wstring driver = L"Snowflake ODBC UD";
 
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), nullptr);
   REQUIRE(ret == 0);
@@ -192,7 +192,7 @@ TEST_CASE("ConfigDSNW: returns FALSE with NULL attributes", "[odbc-api][setup-dl
 TEST_CASE("ConfigDSNW: returns FALSE for invalid request code", "[odbc-api][setup-dll][config-dsn]") {
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
-  std::wstring driver = L"SnowflakeDSIIDriver";
+  std::wstring driver = L"Snowflake ODBC UD";
 
   auto attrs = build_attrs_w({{"DSN", "SomeDSN"}});
   int ret = config_dsn_w(nullptr, 99, driver.c_str(), attrs.data());
@@ -209,13 +209,13 @@ TEST_CASE("ConfigDSN (ANSI): add and remove a DSN", "[odbc-api][setup-dll][confi
   std::string dsn = random_dsn_name();
 
   auto attrs = build_attrs_a({{"DSN", dsn}, {"SERVER", "ansi.snowflake.com"}});
-  int ret = config_dsn(nullptr, ODBC_ADD_DSN, "SnowflakeDSIIDriver", attrs.data());
+  int ret = config_dsn(nullptr, ODBC_ADD_DSN, "Snowflake ODBC UD", attrs.data());
   REQUIRE(ret == 1);
   REQUIRE(dsn_exists(dsn));
   REQUIRE(read_dsn_value(dsn, "SERVER") == "ansi.snowflake.com");
 
   auto rm_attrs = build_attrs_a({{"DSN", dsn}});
-  ret = config_dsn(nullptr, ODBC_REMOVE_DSN, "SnowflakeDSIIDriver", rm_attrs.data());
+  ret = config_dsn(nullptr, ODBC_REMOVE_DSN, "Snowflake ODBC UD", rm_attrs.data());
   REQUIRE(ret == 1);
   REQUIRE_FALSE(dsn_exists(dsn));
 }
@@ -224,7 +224,7 @@ TEST_CASE("ConfigDSN (ANSI): returns FALSE with NULL attributes", "[odbc-api][se
   DriverDll dll;
   auto config_dsn = dll.get<ConfigDSNFn>("ConfigDSN");
 
-  int ret = config_dsn(nullptr, ODBC_ADD_DSN, "SnowflakeDSIIDriver", nullptr);
+  int ret = config_dsn(nullptr, ODBC_ADD_DSN, "Snowflake ODBC UD", nullptr);
   REQUIRE(ret == 0);
 }
 
