@@ -33,7 +33,7 @@ if (WIN32)
     # Windows ODBC headers (sqltypes.h etc.) require windows.h to be included first.
     # Force-include it before every source file.
     if (MSVC)
-        target_compile_options(common PUBLIC /FI"windows.h")
+        target_compile_options(common PUBLIC /FIwindows.h)
     else()
         target_compile_options(common PUBLIC -include windows.h)
     endif()

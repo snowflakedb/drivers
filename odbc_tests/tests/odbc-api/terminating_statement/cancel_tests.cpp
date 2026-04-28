@@ -749,7 +749,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrup
   // leaving nothing to cancel and causing the query to run to completion.
   ctx.run(stmt, "SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 60))", std::chrono::seconds(5));
 
-  REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  OLD_DRIVER_ONLY("BD#47") {
+    REQUIRE((ctx.cancel_result == SQL_SUCCESS || ctx.cancel_result == SQL_ERROR));
+    if (ctx.cancel_result == SQL_ERROR) {
+      REQUIRE(!ctx.cancel_diag_records.empty());
+      REQUIRE(ctx.cancel_diag_records[0].sqlState == "HY008");
+    }
+  }
+  NEW_DRIVER_ONLY("BD#47") {
+    REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  }
 
   SQLRETURN exec_ret = ctx.exec_result.load();
   REQUIRE_EXPECTED_ERROR(exec_ret, "HY008", stmt, SQL_HANDLE_STMT);

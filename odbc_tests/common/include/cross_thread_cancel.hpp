@@ -7,7 +7,9 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <vector>
 
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 
 namespace odbc_test {
@@ -24,6 +26,7 @@ struct JoinGuard {
 struct CrossThreadCancel {
   std::atomic<SQLRETURN> exec_result{SQL_NO_DATA};
   SQLRETURN cancel_result = SQL_ERROR;
+  std::vector<DiagRec> cancel_diag_records;
 
   void run(const SQLHSTMT stmt, const char* query, const std::chrono::seconds pre_cancel_delay) {
     run(stmt, query, pre_cancel_delay, [](const SQLHSTMT s) { return SQLCancel(s); });
@@ -55,6 +58,7 @@ struct CrossThreadCancel {
     }
 
     cancel_result = cancel_fn(stmt);
+    cancel_diag_records = get_diag_rec(SQL_HANDLE_STMT, stmt);
   }
 };
 

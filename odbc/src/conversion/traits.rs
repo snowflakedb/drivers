@@ -4,7 +4,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    IndicatorRequiredSnafu, JsonBindingError, ReadArrowError, WriteOdbcError,
+    BindingStrideOverflowSnafu, ConversionError, IndicatorRequiredSnafu, JsonBindingError,
+    ReadArrowError, WriteOdbcError,
 };
 use crate::conversion::warning::{Warning, Warnings};
 
@@ -76,7 +77,106 @@ pub enum LengthOrNull {
     Length(sql::Len),
 }
 
-#[derive(Debug, Default)]
+/// ARD stride parameters that decide how a base [`Binding`] is laid out
+/// across the rows of a block-cursor fetch. `bind_type` is
+/// `SQL_ATTR_ROW_BIND_TYPE` (0 ⇒ column-wise; non-zero ⇒ row-wise byte
+/// stride); `bind_offset` is the value of `*SQL_ATTR_ROW_BIND_OFFSET_PTR`
+/// at fetch entry. `Copy` so it can be passed by value into the per-row
+/// hot path with no indirection.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BindingStrides {
+    pub bind_type: usize,
+    pub bind_offset: isize,
+}
+
+impl BindingStrides {
+    /// Materialise the [`Binding`] that targets row `row_idx` within the
+    /// application's bound buffers, given the column's `base` binding.
+    /// `#[inline]` so callers in `convert_arrow_range` monomorphise and
+    /// LLVM can hoist the stride math.
+    ///
+    /// Returns `ConversionError::BindingStrideOverflow` if the address
+    /// arithmetic for any of the three per-row pointers would overflow
+    /// `usize`. This can only happen with a pathological combination of
+    /// caller-supplied `bind_type` and `array_size` values, but a row
+    /// error is still preferable to a panic across the FFI boundary.
+    #[inline]
+    pub fn for_row(self, base: &Binding, row_idx: usize) -> Result<Binding, ConversionError> {
+        let value_stride = if self.bind_type == 0 {
+            base.target_type
+                .fixed_size()
+                .unwrap_or(base.buffer_length as usize)
+        } else {
+            self.bind_type
+        };
+        let indicator_stride = if self.bind_type == 0 {
+            size_of::<sql::Len>()
+        } else {
+            self.bind_type
+        };
+        let overflow_err = || {
+            BindingStrideOverflowSnafu {
+                row_idx,
+                value_stride,
+                indicator_stride,
+                bind_offset: self.bind_offset,
+            }
+            .build()
+        };
+        let target_value_ptr = advance_ptr(
+            base.target_value_ptr,
+            row_idx,
+            value_stride,
+            self.bind_offset,
+        )
+        .ok_or_else(overflow_err)?;
+        let octet_length_ptr = advance_ptr(
+            base.octet_length_ptr,
+            row_idx,
+            indicator_stride,
+            self.bind_offset,
+        )
+        .ok_or_else(overflow_err)?;
+        let indicator_ptr = advance_ptr(
+            base.indicator_ptr,
+            row_idx,
+            indicator_stride,
+            self.bind_offset,
+        )
+        .ok_or_else(overflow_err)?;
+        Ok(Binding {
+            target_type: base.target_type,
+            target_value_ptr,
+            buffer_length: base.buffer_length,
+            octet_length_ptr,
+            indicator_ptr,
+            precision: base.precision,
+            scale: base.scale,
+            datetime_interval_precision: base.datetime_interval_precision,
+        })
+    }
+}
+
+/// Returns `None` if `row_idx * element_stride` overflows `usize`. The
+/// raw pointer arithmetic is unchanged; the caller is responsible for
+/// ensuring the resulting address stays inside the bound allocation
+/// (the same guarantee the application makes via `SQLBindCol`).
+#[inline]
+fn advance_ptr<T>(
+    ptr: *mut T,
+    row_idx: usize,
+    element_stride: usize,
+    bind_offset: isize,
+) -> Option<*mut T> {
+    if ptr.is_null() {
+        return Some(std::ptr::null_mut());
+    }
+    let stride = row_idx.checked_mul(element_stride)?;
+    let byte_ptr = ptr as *mut u8;
+    Some(unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T })
+}
+
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Binding {
     pub target_type: CDataType,
     pub target_value_ptr: sql::Pointer,
@@ -445,4 +545,207 @@ pub(crate) trait ReadODBC: SnowflakeType {
 pub(crate) trait WriteJson: SnowflakeType {
     fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError>;
     fn sf_type(&self) -> SnowflakeLogicalType;
+}
+
+#[cfg(test)]
+mod binding_strides_tests {
+    use super::*;
+
+    /// Backing buffers for the synthetic `Binding` pointers. Pointer
+    /// arithmetic in `advance_ptr` (`offset` / `add`) requires the result
+    /// to stay in-bounds of the same allocated object the pointer was
+    /// derived from, so the tests must operate on real allocations
+    /// (rather than integer-cast sentinel addresses) to be well-defined.
+    ///
+    /// Each "logical" base is positioned `PREFIX` bytes into the
+    /// allocation so tests with a negative `bind_offset` still produce
+    /// in-bounds pointers. Buffers are large enough for all stride/row
+    /// combinations exercised by the tests below.
+    struct Fixture {
+        value_buf: Vec<u8>,
+        octet_buf: Vec<u8>,
+        indicator_buf: Vec<u8>,
+    }
+
+    impl Fixture {
+        const PREFIX: usize = 64;
+        const SIZE: usize = 4096;
+
+        fn new() -> Self {
+            Self {
+                value_buf: vec![0u8; Self::SIZE],
+                octet_buf: vec![0u8; Self::SIZE],
+                indicator_buf: vec![0u8; Self::SIZE],
+            }
+        }
+
+        fn value_base(&mut self) -> *mut u8 {
+            unsafe { self.value_buf.as_mut_ptr().add(Self::PREFIX) }
+        }
+
+        fn octet_base(&mut self) -> *mut sql::Len {
+            unsafe { self.octet_buf.as_mut_ptr().add(Self::PREFIX) as *mut sql::Len }
+        }
+
+        fn indicator_base(&mut self) -> *mut sql::Len {
+            unsafe { self.indicator_buf.as_mut_ptr().add(Self::PREFIX) as *mut sql::Len }
+        }
+
+        fn binding(&mut self, target_type: CDataType, buffer_length: sql::Len) -> Binding {
+            Binding {
+                target_type,
+                target_value_ptr: self.value_base() as sql::Pointer,
+                buffer_length,
+                octet_length_ptr: self.octet_base(),
+                indicator_ptr: self.indicator_base(),
+                ..Default::default()
+            }
+        }
+    }
+
+    #[test]
+    fn column_wise_uses_fixed_size_for_value_stride() {
+        let mut fx = Fixture::new();
+        let value_base = fx.value_base() as usize;
+        let octet_base = fx.octet_base() as usize;
+        let indicator_base = fx.indicator_base() as usize;
+        let base = fx.binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let row3 = strides
+            .for_row(&base, 3)
+            .expect("for_row must not overflow in tests");
+        assert_eq!(row3.target_value_ptr as usize - value_base, 3 * 8);
+        let len_size = size_of::<sql::Len>();
+        assert_eq!(row3.octet_length_ptr as usize - octet_base, 3 * len_size);
+        assert_eq!(row3.indicator_ptr as usize - indicator_base, 3 * len_size);
+    }
+
+    #[test]
+    fn column_wise_falls_back_to_buffer_length_for_variable_size_type() {
+        let mut fx = Fixture::new();
+        let value_base = fx.value_base() as usize;
+        let base = fx.binding(CDataType::Char, 64);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let row5 = strides
+            .for_row(&base, 5)
+            .expect("for_row must not overflow in tests");
+        assert_eq!(row5.target_value_ptr as usize - value_base, 5 * 64);
+    }
+
+    #[test]
+    fn row_wise_uses_bind_type_for_every_pointer_stride() {
+        let mut fx = Fixture::new();
+        let value_base = fx.value_base() as usize;
+        let octet_base = fx.octet_base() as usize;
+        let indicator_base = fx.indicator_base() as usize;
+        let base = fx.binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 64,
+            bind_offset: 0,
+        };
+        let row2 = strides
+            .for_row(&base, 2)
+            .expect("for_row must not overflow in tests");
+        assert_eq!(row2.target_value_ptr as usize - value_base, 2 * 64);
+        assert_eq!(row2.octet_length_ptr as usize - octet_base, 2 * 64);
+        assert_eq!(row2.indicator_ptr as usize - indicator_base, 2 * 64);
+    }
+
+    #[test]
+    fn bind_offset_is_applied_before_striding() {
+        let mut fx = Fixture::new();
+        let value_base = fx.value_base() as usize;
+        let octet_base = fx.octet_base() as usize;
+        let indicator_base = fx.indicator_base() as usize;
+        let base = fx.binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 32,
+        };
+        let row1 = strides
+            .for_row(&base, 1)
+            .expect("for_row must not overflow in tests");
+        assert_eq!(row1.target_value_ptr as usize - value_base, 32 + 8);
+        let len_size = size_of::<sql::Len>();
+        assert_eq!(row1.octet_length_ptr as usize - octet_base, 32 + len_size);
+        assert_eq!(row1.indicator_ptr as usize - indicator_base, 32 + len_size);
+    }
+
+    #[test]
+    fn negative_bind_offset_walks_pointer_back() {
+        let mut fx = Fixture::new();
+        let value_base = fx.value_base() as isize;
+        let base = fx.binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: -16,
+        };
+        let row0 = strides
+            .for_row(&base, 0)
+            .expect("for_row must not overflow in tests");
+        assert_eq!(row0.target_value_ptr as isize - value_base, -16);
+    }
+
+    #[test]
+    fn null_pointers_remain_null_after_adjustment() {
+        let mut fx = Fixture::new();
+        let value_base = fx.value_base() as usize;
+        let mut base = fx.binding(CDataType::SBigInt, 0);
+        base.octet_length_ptr = std::ptr::null_mut();
+        base.indicator_ptr = std::ptr::null_mut();
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 64,
+        };
+        let row7 = strides
+            .for_row(&base, 7)
+            .expect("for_row must not overflow in tests");
+        assert!(row7.octet_length_ptr.is_null());
+        assert!(row7.indicator_ptr.is_null());
+        assert_eq!(row7.target_value_ptr as usize - value_base, 64 + 7 * 8);
+    }
+
+    #[test]
+    fn for_row_returns_err_on_stride_overflow() {
+        let mut fx = Fixture::new();
+        let base = fx.binding(CDataType::SBigInt, 0);
+        let strides = BindingStrides {
+            bind_type: usize::MAX / 2,
+            bind_offset: 0,
+        };
+        let err = strides
+            .for_row(&base, 4)
+            .expect_err("expected BindingStrideOverflow on pathological stride");
+        assert!(
+            matches!(err, ConversionError::BindingStrideOverflow { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn metadata_fields_are_propagated_unchanged() {
+        let mut fx = Fixture::new();
+        let mut base = fx.binding(CDataType::Numeric, size_of::<sql::Numeric>() as sql::Len);
+        base.precision = Some(10);
+        base.scale = Some(2);
+        base.datetime_interval_precision = Some(6);
+        let strides = BindingStrides {
+            bind_type: 0,
+            bind_offset: 0,
+        };
+        let row4 = strides
+            .for_row(&base, 4)
+            .expect("for_row must not overflow in tests");
+        assert_eq!(row4.precision, Some(10));
+        assert_eq!(row4.scale, Some(2));
+        assert_eq!(row4.datetime_interval_precision, Some(6));
+        assert_eq!(row4.target_type, CDataType::Numeric);
+        assert_eq!(row4.buffer_length, base.buffer_length);
+    }
 }

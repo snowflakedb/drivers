@@ -87,17 +87,19 @@ fn multiple_spans_produce_multiple_log_entries() {
 }
 
 #[test]
-fn exception_span_event_attributes_are_flattened_into_message() {
+fn span_events_produce_separate_log_entries() {
     use opentelemetry::trace::Event;
 
-    let mut span = make_span("driver_exception", vec![]);
+    let mut span = make_span(
+        "connection",
+        vec![KeyValue::new("snowflake.session.id", 42i64)],
+    );
     let event = Event::new(
         "exception",
         UNIX_EPOCH + Duration::from_millis(1700000000500),
         vec![
             KeyValue::new("exception.type", "ConnectionError"),
             KeyValue::new("exception.message", "timeout after 30s"),
-            KeyValue::new("exception.stacktrace", "at line 42"),
         ],
         0,
     );
@@ -106,33 +108,49 @@ fn exception_span_event_attributes_are_flattened_into_message() {
     span.events = events;
 
     let payload = spans_to_snowflake_payload(&[span]);
-    let msg = &payload["logs"][0]["message"];
+    let logs = payload["logs"].as_array().unwrap();
 
-    assert_eq!(msg["type"], "driver_exception");
+    // Event becomes its own log entry, inheriting span attributes.
+    assert_eq!(logs.len(), 1);
+    let msg = &logs[0]["message"];
+    assert_eq!(msg["type"], "exception");
     assert_eq!(msg["exception.type"], "ConnectionError");
     assert_eq!(msg["exception.message"], "timeout after 30s");
-    assert_eq!(msg["exception.stacktrace"], "at line 42");
+    assert_eq!(msg["snowflake.session.id"], 42);
+    assert_eq!(logs[0]["timestamp"], "1700000000500");
 }
 
 #[test]
-fn non_exception_span_events_are_not_flattened() {
+fn span_with_multiple_events_produces_multiple_entries() {
     use opentelemetry::trace::Event;
 
-    let mut span = make_span("some_span", vec![]);
-    let event = Event::new(
-        "custom_event",
-        UNIX_EPOCH + Duration::from_millis(1700000000500),
-        vec![KeyValue::new("custom.key", "custom_value")],
-        0,
+    let mut span = make_span(
+        "connection",
+        vec![KeyValue::new("snowflake.session.id", 1i64)],
     );
     let mut events = opentelemetry_sdk::trace::SpanEvents::default();
-    events.events.push(event);
+    events.events.push(Event::new(
+        "session_init",
+        UNIX_EPOCH + Duration::from_millis(1700000000000),
+        vec![KeyValue::new("service.name", "python")],
+        0,
+    ));
+    events.events.push(Event::new(
+        "api_call",
+        UNIX_EPOCH + Duration::from_millis(1700000000100),
+        vec![KeyValue::new("api_method", "cursor.execute")],
+        0,
+    ));
     span.events = events;
 
     let payload = spans_to_snowflake_payload(&[span]);
-    let msg = &payload["logs"][0]["message"];
+    let logs = payload["logs"].as_array().unwrap();
 
-    // Only "type" should be present — custom event attrs should NOT be flattened
-    assert_eq!(msg["type"], "some_span");
-    assert!(msg.get("custom.key").is_none());
+    assert_eq!(logs.len(), 2);
+    assert_eq!(logs[0]["message"]["type"], "session_init");
+    assert_eq!(logs[0]["message"]["service.name"], "python");
+    assert_eq!(logs[0]["message"]["snowflake.session.id"], 1);
+    assert_eq!(logs[1]["message"]["type"], "api_call");
+    assert_eq!(logs[1]["message"]["api_method"], "cursor.execute");
+    assert_eq!(logs[1]["message"]["snowflake.session.id"], 1);
 }

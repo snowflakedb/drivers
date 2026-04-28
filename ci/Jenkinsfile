@@ -253,6 +253,210 @@ pipeline {
   }
   stages {
 
+        stage('Tests') {
+          parallel {
+            stage('Rust Core VPN E2E Tests') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    }
+                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+
+                    try {
+                      sh label: 'Rust Core VPN E2E tests', script: '''
+                        set +x
+                        export PARAMETER_PATH=$(pwd)/parameters.json
+                        cargo test --package sf_core -- --ignored
+                      '''
+                    } finally {
+                      sh label: 'Cleanup test PATs', script: '''
+                        set +x
+                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                        python3 scripts/cleanup_env.py \
+                          --parameter-path $(pwd)/parameters.json \
+                          --build-tag "JNK_${BUILD_NUMBER}" || true
+                      '''
+                    }
+                  }
+                }
+              }
+            }
+
+            stage('ODBC VPN E2E Tests') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    }
+                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+
+                    try {
+                      sh label: 'ODBC VPN E2E tests', script: '''
+                        set +x
+                        cargo build
+                        source /opt/rh/gcc-toolset-11/enable
+                        cd odbc_tests
+                        mkdir -p cmake-build
+                        cmake -B cmake-build \
+                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                            -D ODBC_INCLUDE_DIR="/usr/include" \
+                            -D DRIVER_TYPE=NEW \
+                            .
+                        cmake --build cmake-build -- -j $(nproc)
+
+                        WORKSPACE_ROOT=$(pwd)/..
+                        export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                        export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                        ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
+                      '''
+                    } finally {
+                      sh label: 'Cleanup test PATs', script: '''
+                        set +x
+                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                        python3 scripts/cleanup_env.py \
+                          --parameter-path $(pwd)/parameters.json \
+                          --build-tag "JNK_${BUILD_NUMBER}" || true
+                      '''
+                    }
+                  }
+                }
+              }
+            }
+
+            stage('Python VPN E2E Tests') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                    }
+                    sh label: 'Install system dependencies', script: '''
+                      yum install -y unzip \
+                        libffi-devel openssl-devel zlib-devel bzip2-devel \
+                        readline-devel sqlite-devel xz-devel
+                    '''
+
+                    try {
+                      sh label: 'Setup Python 3.13', script: '''
+                        set +x
+                        source /opt/rh/gcc-toolset-11/enable
+                        export CC=gcc CXX=g++
+                        curl -fsSL https://pyenv.run | bash
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
+                        pyenv install 3.13 -s
+                        pyenv global 3.13
+                        pip install hatch
+                      '''
+
+                      sh label: 'Build Python wheel', script: '''
+                        set +x
+                        source /opt/rh/gcc-toolset-11/enable
+                        export CC=gcc CXX=g++
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
+                        cd python
+                        hatch build -t wheel
+                      '''
+
+                      sh label: 'Python VPN E2E tests (test.py3.13)', script: '''
+                        set +x
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
+                        export PARAMETER_PATH=$(pwd)/parameters.json
+                        cd python
+                        hatch run test.py3.13:install-wheel
+                        hatch run test.py3.13:pytest tests/e2e/authentication/test_native_okta.py -m require_vpn
+                        hatch env remove test.py3.13
+                      '''
+
+                      sh label: 'Python VPN E2E tests (reference)', script: '''
+                        set +x
+                        export PYENV_ROOT="$HOME/.pyenv"
+                        export PATH="$PYENV_ROOT/bin:$PATH"
+                        eval "$(pyenv init -)"
+                        export PARAMETER_PATH=$(pwd)/parameters.json
+                        cd python
+                        hatch run reference:test -- -m require_vpn
+                        hatch env remove reference
+                      '''
+                    } finally {
+                      sh label: 'Cleanup test PATs', script: '''
+                        set +x
+                        pip3 install snowflake-connector-python -q 2>/dev/null || true
+                        python3 scripts/cleanup_env.py \
+                          --parameter-path $(pwd)/parameters.json \
+                          --build-tag "JNK_${BUILD_NUMBER}" || true
+                      '''
+                    }
+                  }
+                }
+              }
+            }
+
+            stage('Revocation Validation') {
+              agent { label 'build-node-extra-large' }
+              environment {
+                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+              }
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    withCredentials([
+                      usernamePassword(credentialsId: 'jenkins-snowflakedb-github-app',
+                        usernameVariable: 'GITHUB_USER',
+                        passwordVariable: 'GITHUB_TOKEN')
+                    ]) {
+                      sh '''\
+                        |#!/bin/bash -e
+                        |chmod +x "$WORKSPACE/ci/test_revocation.sh"
+                        |"$WORKSPACE/ci/test_revocation.sh"
+                      '''.stripMargin()
+                    }
+                  }
+                }
+              }
+              post {
+                always {
+                  archiveArtifacts artifacts: 'revocation-results.json,revocation-report.html', allowEmptyArchive: true
+                  publishHTML(target: [
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: '.',
+                    reportFiles: 'revocation-report.html',
+                    reportName: 'Revocation Validation Report'
+                  ])
+                }
+              }
+            }
+          }
+        }
         stage('Build Matrix') {
           matrix {
             axes {
@@ -436,101 +640,6 @@ pipeline {
                   always {
                     cleanup()
                   }
-                }
-              }
-            }
-          }
-        }
-        stage('Tests') {
-          parallel {
-            stage('VPN E2E Tests') {
-              agent { label 'build-node-extra-large' }
-              environment {
-                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
-                PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
-              }
-              steps {
-                script {
-                  e2eDockerSetup(E2E_DOCKER_IMAGE)
-                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
-                    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
-                      sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                    }
-                    sh label: 'Install system dependencies', script: 'yum install -y unzip'
-
-                    try {
-                      sh label: 'Rust Core VPN E2E tests', script: '''
-                        set +x
-                        export PARAMETER_PATH=$(pwd)/parameters.json
-                        cargo test --package sf_core -- --ignored
-                      '''
-
-                      sh label: 'ODBC VPN E2E tests', script: '''
-                        set +x
-                        cargo build
-                        source /opt/rh/gcc-toolset-11/enable
-                        cd odbc_tests
-                        mkdir -p cmake-build
-                        cmake -B cmake-build \
-                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                            -D ODBC_INCLUDE_DIR="/usr/include" \
-                            -D DRIVER_TYPE=NEW \
-                            .
-                        cmake --build cmake-build -- -j $(nproc)
-
-                        WORKSPACE_ROOT=$(pwd)/..
-                        export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-                        export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
-                        ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
-                      '''
-                    } finally {
-                      sh label: 'Cleanup test PATs', script: '''
-                        set +x
-                        pip3 install snowflake-connector-python -q 2>/dev/null || true
-                        python3 scripts/cleanup_test_pats.py \
-                          --parameter-path $(pwd)/parameters.json \
-                          --build-tag "JNK_${BUILD_NUMBER}" || true
-                      '''
-                    }
-                  }
-                }
-              }
-            }
-
-            stage('Revocation Validation') {
-              agent { label 'build-node-extra-large' }
-              environment {
-                E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
-              }
-              steps {
-                script {
-                  e2eDockerSetup(E2E_DOCKER_IMAGE)
-                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
-                    withCredentials([
-                      usernamePassword(credentialsId: 'jenkins-snowflakedb-github-app',
-                        usernameVariable: 'GITHUB_USER',
-                        passwordVariable: 'GITHUB_TOKEN')
-                    ]) {
-                      sh '''\
-                        |#!/bin/bash -e
-                        |chmod +x "$WORKSPACE/ci/test_revocation.sh"
-                        |"$WORKSPACE/ci/test_revocation.sh"
-                      '''.stripMargin()
-                    }
-                  }
-                }
-              }
-              post {
-                always {
-                  archiveArtifacts artifacts: 'revocation-results.json,revocation-report.html', allowEmptyArchive: true
-                  publishHTML(target: [
-                    allowMissing: true,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: '.',
-                    reportFiles: 'revocation-report.html',
-                    reportName: 'Revocation Validation Report'
-                  ])
                 }
               }
             }

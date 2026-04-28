@@ -1,4 +1,4 @@
-@odbc @python @jdbc
+@odbc @python @jdbc @core_not_needed
 Feature: String LOB (Large Object) handling
   # Snowflake LOB feature supports large VARCHAR values:
   #   - Historical limit: 16 MB (16,777,216 bytes) per value

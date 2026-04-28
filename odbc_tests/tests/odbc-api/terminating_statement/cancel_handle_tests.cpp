@@ -747,7 +747,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cross-thread cancel in
   ctx.run(stmt, "SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 60))", std::chrono::seconds(5),
           [](SQLHSTMT s) { return SQLCancelHandle(SQL_HANDLE_STMT, s); });
 
-  REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  OLD_DRIVER_ONLY("BD#47") {
+    REQUIRE((ctx.cancel_result == SQL_SUCCESS || ctx.cancel_result == SQL_ERROR));
+    if (ctx.cancel_result == SQL_ERROR) {
+      REQUIRE(!ctx.cancel_diag_records.empty());
+      REQUIRE(ctx.cancel_diag_records[0].sqlState == "HY008");
+    }
+  }
+  NEW_DRIVER_ONLY("BD#47") {
+    REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  }
 
   SQLRETURN exec_ret = ctx.exec_result.load();
   REQUIRE_EXPECTED_ERROR(exec_ret, "HY008", stmt, SQL_HANDLE_STMT);
@@ -891,7 +900,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: SQL_ERROR with HY092 f
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(ard != SQL_NULL_HDESC);
 
-  ret = SQLCancelHandle(SQL_HANDLE_DESC, static_cast<SQLHANDLE>(ard));
+  ret = SQLCancelHandle(SQL_HANDLE_DESC, ard);
   // The DM typically intercepts this before reaching the driver.
   // Windows DM returns SQL_ERROR with HY092 (per spec).
   // Unix DM (unixODBC) may return SQL_INVALID_HANDLE instead.
