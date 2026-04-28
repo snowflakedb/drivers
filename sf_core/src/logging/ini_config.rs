@@ -4,15 +4,26 @@ use std::path::{Path, PathBuf};
 use ini::Ini;
 use tracing::level_filters::LevelFilter;
 
-use super::LoggingConfig;
-use super::error::{ConfigParseSnafu, LogError};
+use super::error::{ConfigParseSnafu, InsecurePermissionsSnafu, LogError};
+use super::{LogRotation, LoggingConfig};
 use crate::config::settings::Setting;
 
 /// Parse an `sf.odbc.ini`-style INI file into a [`LoggingConfig`].
 ///
 /// Supported keys (case-sensitive):
 /// `LogLevel`, `LogPath`, `LogFile`, `LogMaxSize`, `LogMaxCount`, `LogEnabled`.
+///
+/// Checks file permissions before reading (rejects group/world-writable files
+/// on Unix).
 pub fn parse_ini_file(path: &Path) -> Result<LoggingConfig, LogError> {
+    crate::config::toml_loader::check_file_permissions(path).map_err(|e| {
+        InsecurePermissionsSnafu {
+            path: path.display().to_string(),
+            reason: e.to_string(),
+        }
+        .build()
+    })?;
+
     let ini = Ini::load_from_file_noescape(path).map_err(|e| {
         ConfigParseSnafu {
             message: format!("failed to load {}: {e}", path.display()),
@@ -43,6 +54,7 @@ fn apply_ini_section(props: &ini::Properties) -> Result<LoggingConfig, LogError>
             "LogFile" => config.log_file_name = Some(value.to_string()),
             "LogMaxSize" => config.max_file_size = Some(parse_u64(value)?),
             "LogMaxCount" => config.max_file_count = Some(parse_u32(value)?),
+            "LogRotation" => config.rotation = parse_rotation(value)?,
             "LogEnabled" => config.enabled = parse_bool(value)?,
             _ => {}
         }
@@ -75,6 +87,11 @@ pub fn load_from_toml_section(section: &HashMap<String, Setting>) -> LoggingConf
         && *count > 0
     {
         config.max_file_count = Some(*count as u32);
+    }
+    if let Some(Setting::String(rotation)) = section.get("rotation")
+        && let Ok(r) = parse_rotation(rotation)
+    {
+        config.rotation = r;
     }
     if let Some(Setting::Bool(enabled)) = section.get("enabled") {
         config.enabled = *enabled;
@@ -150,6 +167,19 @@ fn parse_u32(s: &str) -> Result<u32, LogError> {
     })
 }
 
+fn parse_rotation(s: &str) -> Result<LogRotation, LogError> {
+    match s.to_uppercase().as_str() {
+        "NEVER" | "NONE" => Ok(LogRotation::Never),
+        "DAILY" => Ok(LogRotation::Daily),
+        "HOURLY" => Ok(LogRotation::Hourly),
+        "MINUTELY" => Ok(LogRotation::Minutely),
+        _ => ConfigParseSnafu {
+            message: format!("Unknown rotation: {s}"),
+        }
+        .fail(),
+    }
+}
+
 fn parse_bool(s: &str) -> Result<bool, LogError> {
     match s.to_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
@@ -158,5 +188,75 @@ fn parse_bool(s: &str) -> Result<bool, LogError> {
             message: format!("Invalid boolean: {s}"),
         }
         .fail(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_parse_ini_content_basic() {
+        let content = "LogLevel=DEBUG\nLogEnabled=true\n";
+        let config = parse_ini_content(content).unwrap();
+        assert_eq!(config.level, LevelFilter::DEBUG);
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_parse_ini_file_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("sf.odbc.ini");
+        fs::write(&file_path, "LogLevel=WARN\nLogEnabled=true\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        let config = parse_ini_file(&file_path).unwrap();
+        assert_eq!(config.level, LevelFilter::WARN);
+        assert!(config.enabled);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_ini_file_rejects_world_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("insecure.ini");
+        fs::write(&file_path, "LogLevel=INFO\n").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o666)).unwrap();
+
+        let result = parse_ini_file(&file_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Insecure file permissions"),
+            "expected InsecurePermissions error, got: {err_msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parse_ini_file_rejects_group_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("group_writable.ini");
+        fs::write(&file_path, "LogLevel=INFO\n").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o620)).unwrap();
+
+        let result = parse_ini_file(&file_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Insecure file permissions"),
+            "expected InsecurePermissions error, got: {err_msg}"
+        );
     }
 }

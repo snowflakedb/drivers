@@ -172,6 +172,7 @@ impl LogManager {
         let subscriber = Registry::default().with(layers);
 
         tracing::subscriber::set_global_default(subscriber).map_err(|e| {
+            eprintln!("Failed to set global default subscriber: {e:?}");
             InitSnafu {
                 message: e.to_string(),
             }
@@ -189,16 +190,38 @@ impl LogManager {
         if let Some(ref log_path) = config.log_path {
             let file_name = config.log_file_name.as_deref().unwrap_or("sf_driver.log");
 
-            let appender = tracing_appender::rolling::RollingFileAppender::builder()
-                .rotation(tracing_appender::rolling::Rotation::NEVER)
-                .filename_prefix(file_name)
-                .build(log_path)
-                .map_err(|e| {
-                    InitSnafu {
-                        message: format!("Failed to create log appender: {e}"),
-                    }
-                    .build()
-                })?;
+            // When max_file_count is set but rotation is Never, default to
+            // Daily so that file pruning actually takes effect (rotation is a
+            // prerequisite for max_log_files in tracing-appender).
+            let effective_rotation = if config.max_file_count.is_some()
+                && config.rotation == super::LogRotation::Never
+            {
+                super::LogRotation::Daily
+            } else {
+                config.rotation
+            };
+
+            let mut builder = tracing_appender::rolling::RollingFileAppender::builder()
+                .rotation(effective_rotation.to_appender_rotation())
+                .filename_prefix(file_name);
+
+            if let Some(count) = config.max_file_count {
+                builder = builder.max_log_files(count as usize);
+            }
+
+            let appender = builder.build(log_path).map_err(|e| {
+                InitSnafu {
+                    message: format!("Failed to create log appender: {e}"),
+                }
+                .build()
+            })?;
+
+            if config.max_file_size.is_some() {
+                eprintln!(
+                    "WARNING: max_file_size is configured but size-based log rotation is not \
+                     yet supported; the setting will be ignored"
+                );
+            }
 
             Ok(tracing_subscriber::fmt::layer()
                 .with_ansi(false)
