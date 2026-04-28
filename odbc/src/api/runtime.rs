@@ -86,9 +86,9 @@ pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     if guard.globals.is_none() {
-        let providers = match sf_core::logging::LogManager::for_odbc() {
-            Some(telemetry) => telemetry.into_providers(),
-            None => DriverProviders::default(),
+        let providers = DriverProviders {
+            log_manager: sf_core::logging::LogManager::for_odbc(),
+            ..Default::default()
         };
 
         let runtime = tokio::runtime::Builder::new_multi_thread()

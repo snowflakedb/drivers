@@ -1,14 +1,15 @@
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, Mutex};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jobject};
 use proto_utils::{ProtoError, Transport};
+use sf_core::logging::LogManager;
 use sf_core::protobuf::apis::RustTransport;
-use sf_core::telemetry::TelemetryInit;
+use sf_core::protobuf::apis::database_driver_v1::DriverProviders;
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
 
-static JDBC_TELEMETRY: OnceLock<TelemetryInit> = OnceLock::new();
+static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
 
 struct JdbcBridge {
     runtime: tokio::runtime::Runtime,
@@ -17,14 +18,14 @@ struct JdbcBridge {
 
 impl JdbcBridge {
     pub fn new() -> Self {
-        let providers = match JDBC_TELEMETRY.get() {
-            Some(init) => init.to_providers(),
-            None => Default::default(),
+        let providers = DriverProviders {
+            log_manager: JDBC_LOG_MANAGER
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take(),
+            ..Default::default()
         };
         Self {
-            // Single worker thread is intentional: keeps contention minimal and
-            // makes deadlocks easier to detect. Will be increased during
-            // performance optimization.
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
@@ -57,16 +58,9 @@ mod sflogger_layer;
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
     let layer = sflogger_layer::SFLoggerLayer::new(jvm);
     let sessions = SessionRegistry::default();
-    // TODO: with_app_sink + sessions, why clone?
-    match sf_core::logging::LogManager::with_app_sink(
-        sf_core::logging::LoggingConfig::default(),
-        layer,
-        sessions.clone(),
-    ) {
-        Ok(provider) => {
-            JDBC_TELEMETRY
-                .set(TelemetryInit { provider, sessions })
-                .ok();
+    match LogManager::with_app_sink(sf_core::logging::LoggingConfig::default(), layer, sessions) {
+        Ok(lm) => {
+            *JDBC_LOG_MANAGER.lock().unwrap_or_else(|e| e.into_inner()) = Some(lm);
             jni::sys::JNI_VERSION_1_2
         }
         Err(e) => {
