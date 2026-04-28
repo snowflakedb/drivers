@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Snowflake test resource cleanup using parameters.json.
 
-**PAT cleanup** — remove orphaned programmatic access tokens for one CI build
-(when in-process teardown does not run, e.g. aborted job):
+**PAT cleanup (per-build)** — remove orphaned programmatic access tokens for
+one CI build (when in-process teardown does not run, e.g. aborted job):
 
     python3 scripts/cleanup_env.py \\
         --parameter-path ./parameters.json --build-tag JNK_988
@@ -13,6 +13,16 @@ are older than ``--age-days`` and owned by the test login or ``SNOWFLAKE_TEST_RO
 
     python3 scripts/cleanup_env.py \\
         --cleanup-stale-schemas --parameter-path ./parameters.json --age-days 2
+
+**Stale PAT cleanup** — remove ``UD_*``-prefixed programmatic access tokens for
+the test user that are older than ``--age-days`` (defense-in-depth for builds
+whose per-build cleanup did not run):
+
+    python3 scripts/cleanup_env.py \\
+        --cleanup-stale-pats --parameter-path ./parameters.json --age-days 2
+
+The two stale modes can be combined in a single invocation; ``--age-days`` and
+``--dry-run`` apply to both.
 """
 
 import argparse
@@ -21,6 +31,7 @@ import logging
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("pat-cleanup")
@@ -107,6 +118,23 @@ def _sanitize(s):
     return re.sub(r"[^a-zA-Z0-9]", "", s)
 
 
+def _show_user_pats(cur, user):
+    """Run ``SHOW USER PROGRAMMATIC ACCESS TOKENS FOR USER`` and return rows
+    as a list of dicts keyed by lowercased column name."""
+    cur.execute(f"SHOW USER PROGRAMMATIC ACCESS TOKENS FOR USER {user}")
+    rows = cur.fetchall()
+    col_names = [desc[0].lower() for desc in cur.description]
+    return [dict(zip(col_names, r)) for r in rows]
+
+
+def _remove_user_pat(cur, user, pat_name):
+    """Issue ``ALTER USER IF EXISTS {user} REMOVE PROGRAMMATIC ACCESS TOKEN``."""
+    cur.execute(
+        f"ALTER USER IF EXISTS {user} "
+        f"REMOVE PROGRAMMATIC ACCESS TOKEN {pat_name}"
+    )
+
+
 def cleanup_pats(conn_kwargs, build_tag):
     import snowflake.connector
 
@@ -117,22 +145,16 @@ def cleanup_pats(conn_kwargs, build_tag):
         cur = conn.cursor()
 
         log.info("Listing PATs for user %s matching build tag '%s'...", user, build_tag)
-        cur.execute(f"SHOW USER PROGRAMMATIC ACCESS TOKENS FOR USER {user}")
-        rows = cur.fetchall()
-        col_names = [desc[0].lower() for desc in cur.description]
-        name_idx = col_names.index("name")
+        rows = _show_user_pats(cur, user)
 
         removed = 0
         for row in rows:
-            pat_name = row[name_idx]
+            pat_name = row["name"]
             if not _matches_build_tag(pat_name, build_tag):
                 continue
             log.info("  Removing PAT: %s", pat_name)
             try:
-                cur.execute(
-                    f"ALTER USER IF EXISTS {user} "
-                    f"REMOVE PROGRAMMATIC ACCESS TOKEN {pat_name}"
-                )
+                _remove_user_pat(cur, user, pat_name)
                 removed += 1
             except Exception as e:
                 log.warning("  Failed to remove %s: %s", pat_name, e)
@@ -230,6 +252,78 @@ def cleanup_stale_owned_schemas(conn_kwargs, params, age_days, dry_run):
         log.info("Schema cleanup done: dropped %d schema(s)", dropped)
 
 
+def cleanup_stale_pats(conn_kwargs, age_days, dry_run):
+    """Remove ``UD_*`` PATs for the test user older than ``age_days``.
+
+    Defense-in-depth complement to per-build PAT cleanup: catches PATs left
+    behind by builds whose teardown did not run (timeouts, aborts, killed
+    workers). Only PATs whose name starts with ``UD_`` are eligible — same
+    safety convention as :func:`_matches_build_tag`.
+    """
+    import snowflake.connector
+
+    user = conn_kwargs["user"]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=age_days)
+
+    log.info(
+        "Listing UD_* PATs for user %s older than %s day(s) (cutoff: %s)...",
+        user,
+        age_days,
+        cutoff.isoformat(),
+    )
+
+    with snowflake.connector.connect(**conn_kwargs) as conn:
+        cur = conn.cursor()
+        rows = _show_user_pats(cur, user)
+
+        candidates = []
+        skipped_non_ud = 0
+        for row in rows:
+            pat_name = row.get("name")
+            if not pat_name or not pat_name.upper().startswith("UD_"):
+                skipped_non_ud += 1
+                continue
+            created = row.get("created_on")
+            if created is None:
+                log.warning("  Skipping %s: no created_on value", pat_name)
+                continue
+            # Snowflake usually returns tz-aware datetimes; normalize defensively.
+            if isinstance(created, datetime) and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created >= cutoff:
+                continue
+            candidates.append((pat_name, created))
+
+        if skipped_non_ud:
+            log.info(
+                "Ignored %d non-UD_* PAT(s) (only UD_* tokens are managed here)",
+                skipped_non_ud,
+            )
+
+        if not candidates:
+            log.info("No stale UD_* PATs found")
+            return
+
+        log.info("Found %d stale PAT(s)", len(candidates))
+
+        removed = 0
+        for pat_name, created in candidates:
+            if dry_run:
+                log.info("Would remove: %s (created %s)", pat_name, created)
+                continue
+            try:
+                _remove_user_pat(cur, user, pat_name)
+                removed += 1
+                log.info("Removed %s (created %s)", pat_name, created)
+            except Exception as e:
+                log.warning("Failed to remove %s: %s", pat_name, e)
+
+    if dry_run:
+        log.info("Dry run complete (%d PAT(s) in list)", len(candidates))
+    else:
+        log.info("Stale PAT cleanup done: removed %d PAT(s)", removed)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Clean up Snowflake test PATs and/or stale owned schemas (parameters.json)"
@@ -244,7 +338,16 @@ def main():
         action="store_true",
         help=(
             "Drop schemas in the session database older than --age-days that are "
-            "owned by the test user or role (not PAT cleanup)"
+            "owned by the test user or role (not per-build PAT cleanup)"
+        ),
+    )
+    parser.add_argument(
+        "--cleanup-stale-pats",
+        action="store_true",
+        help=(
+            "Remove UD_* programmatic access tokens for the test user older "
+            "than --age-days (not per-build PAT cleanup). Can be combined "
+            "with --cleanup-stale-schemas."
         ),
     )
     parser.add_argument(
@@ -252,27 +355,45 @@ def main():
         type=int,
         default=None,
         metavar="N",
-        help="With --cleanup-stale-schemas: drop schemas older than N days (default: 2)",
+        help=(
+            "With --cleanup-stale-schemas / --cleanup-stale-pats: act on items "
+            "older than N days (default: 2)"
+        ),
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="With --cleanup-stale-schemas: list schemas only, do not drop",
+        help=(
+            "With --cleanup-stale-schemas / --cleanup-stale-pats: list items "
+            "only, do not drop or remove"
+        ),
     )
     parser.add_argument(
         "--build-tag",
         help=(
-            "For PAT cleanup: CI build tag, e.g. JNK_988 or BK_1234. "
-            "Auto-detected from environment if not provided."
+            "For per-build PAT cleanup: CI build tag, e.g. JNK_988 or BK_1234. "
+            "Auto-detected from environment if not provided. Not compatible "
+            "with --cleanup-stale-* flags."
         ),
     )
     args = parser.parse_args()
 
-    if args.dry_run and not args.cleanup_stale_schemas:
-        parser.error("--dry-run is only valid with --cleanup-stale-schemas")
+    stale_mode = args.cleanup_stale_schemas or args.cleanup_stale_pats
 
-    if args.age_days is not None and not args.cleanup_stale_schemas:
-        parser.error("--age-days requires --cleanup-stale-schemas")
+    if args.dry_run and not stale_mode:
+        parser.error(
+            "--dry-run is only valid with --cleanup-stale-schemas "
+            "and/or --cleanup-stale-pats"
+        )
+
+    if args.age_days is not None and not stale_mode:
+        parser.error(
+            "--age-days requires --cleanup-stale-schemas "
+            "and/or --cleanup-stale-pats"
+        )
+
+    if args.build_tag and stale_mode:
+        parser.error("--build-tag is not compatible with --cleanup-stale-* flags")
 
     if not os.path.exists(args.parameter_path):
         log.error("Parameters file not found: %s", args.parameter_path)
@@ -283,12 +404,15 @@ def main():
     params = load_parameters(args.parameter_path)
     conn_kwargs = build_connection_kwargs(params)
 
-    if args.cleanup_stale_schemas:
+    if stale_mode:
         age_days = 2 if args.age_days is None else args.age_days
         if age_days < 0:
             log.error("--age-days must be non-negative")
             sys.exit(1)
-        cleanup_stale_owned_schemas(conn_kwargs, params, age_days, args.dry_run)
+        if args.cleanup_stale_schemas:
+            cleanup_stale_owned_schemas(conn_kwargs, params, age_days, args.dry_run)
+        if args.cleanup_stale_pats:
+            cleanup_stale_pats(conn_kwargs, age_days, args.dry_run)
         return
 
     build_tag = args.build_tag
