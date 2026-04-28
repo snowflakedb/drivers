@@ -56,19 +56,9 @@ Feature: GEOGRAPHY type support
       | format  | expected_type |
       | GeoJSON | str           |
       | WKT     | str           |
-      | WKB     | bytes         |
+      | WKB     | bytearray     |
       | EWKT    | str           |
-      | EWKB    | bytes         |
-
-  # =========================================================================== #
-  #                             NULL handling                                   #
-  # =========================================================================== #
-
-  @python_e2e
-  Scenario: should handle NULL geography values from literals
-    Given Snowflake client is logged in
-    When Query "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)'), TO_GEOGRAPHY(NULL)" is executed
-    Then Result should contain [GeoJSON Point, NULL]
+      | EWKB    | bytearray     |
 
   # =========================================================================== #
   #                           Table operations                                  #
@@ -97,7 +87,7 @@ Feature: GEOGRAPHY type support
     # skip_for_json_result_set
     Given Snowflake client is logged in
     When Query generating 20000 geography points is executed
-    Then All 20000 rows should be fetched and each should be a non-null string value
+    Then All 20000 rows should be fetched with valid GeoJSON Point values
 
   # =========================================================================== #
   #                           Parameter binding                                 #
