@@ -273,6 +273,26 @@ fn make_int_resource(id: u16) -> *const u16 {
     id as usize as *const u16
 }
 
+/// Escape a value for use in an ODBC connection string.
+/// Values containing `;`, `{`, `}`, or `=` are wrapped in `{}` with any
+/// internal `}` doubled, per the ODBC connection-string grammar.
+fn odbc_escape(val: &str) -> String {
+    if val.contains(';') || val.contains('{') || val.contains('}') || val.contains('=') {
+        let mut out = String::with_capacity(val.len() + 2);
+        out.push('{');
+        for ch in val.chars() {
+            if ch == '}' {
+                out.push('}');
+            }
+            out.push(ch);
+        }
+        out.push('}');
+        out
+    } else {
+        val.to_string()
+    }
+}
+
 unsafe fn get_dlg_text(dlg: HWND, id: i32) -> String {
     let len = unsafe { SendDlgItemMessageW(dlg, id, WM_GETTEXTLENGTH, 0, 0) } as usize;
     if len == 0 {
@@ -581,11 +601,11 @@ unsafe fn do_test_connection(dlg: HWND) {
     for &(ctl_id, key) in FIELD_MAP {
         let val = unsafe { get_dlg_text(dlg, ctl_id) };
         if !val.is_empty() {
-            conn_str.push_str(&format!(";{key}={val}"));
+            conn_str.push_str(&format!(";{key}={}", odbc_escape(&val)));
         }
     }
     if !pwd.is_empty() {
-        conn_str.push_str(&format!(";PWD={pwd}"));
+        conn_str.push_str(&format!(";PWD={}", odbc_escape(&pwd)));
     }
 
     let result = unsafe { attempt_odbc_connection(&conn_str) };
