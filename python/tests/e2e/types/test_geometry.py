@@ -13,7 +13,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_type, parse_geojson
+from .utils import assert_sequential_values, assert_type, parse_geojson
 
 
 # =============================================================================
@@ -187,22 +187,25 @@ class TestGeometryMultipleChunks:
 
         # When Query generating 20000 geometry points is executed
         sql = (
-            "SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
-            "TO_GEOMETRY('POINT(' || (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) "
-            "|| ' ' || (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) || ')') AS geo "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            "SELECT id, TO_GEOMETRY('POINT(' || id || ' ' || id || ')') AS geo "
+            "FROM (SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))) "
             f"ORDER BY id"
         )
         rows = execute_query(sql)
 
         # Then All 20000 rows should be fetched with valid GeoJSON Point values
         assert len(rows) == LARGE_RESULT_SET_SIZE
-        geo_values = [row[1] for row in rows]
-        assert_type(geo_values, str)
-        for val in geo_values:
-            geo = parse_geojson(val)
-            assert geo["type"] == "Point"
-            assert len(geo["coordinates"]) == 2
+        assert_type([row[1] for row in rows], str)
+
+        def expected_row(i):
+            return (i, [float(i), float(i)])
+
+        def compare_row(actual, expected):
+            geo = parse_geojson(actual[1])
+            return actual[0] == expected[0] and geo["type"] == "Point" and geo["coordinates"] == expected[1]
+
+        assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=expected_row, compare=compare_row)
 
 
 @with_paramstyle("qmark")

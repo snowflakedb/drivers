@@ -9,7 +9,7 @@ from datetime import datetime
 from math import isinf, isnan
 
 
-def parse_geojson(value):
+def parse_geojson(value: str | None) -> dict | list | None:
     """Parse a GeoJSON string value returned by Snowflake, returning None for SQL NULLs."""
     if value is None:
         return None
