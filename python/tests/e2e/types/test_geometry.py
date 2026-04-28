@@ -4,7 +4,7 @@ This module tests the GEOMETRY type which represents geospatial data in a planar
 Values are returned as strings by default (GeoJSON format).
 The output format is controlled by the GEOMETRY_OUTPUT_FORMAT session parameter:
   GeoJSON (default), WKT, EWKT -> VARCHAR (str in Python)
-  WKB, EWKB -> BINARY (bytes in Python)
+  WKB, EWKB -> BINARY (bytearray in Python)
 Input via WKT strings through TO_GEOMETRY().
 
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
@@ -106,7 +106,7 @@ class TestGeometryOutputFormat:
 
     The driver must correctly handle all 5 output formats controlled by
     the GEOMETRY_OUTPUT_FORMAT session parameter. Text formats (GeoJSON,
-    WKT, EWKT) are returned as str; binary formats (WKB, EWKB) as bytes.
+    WKT, EWKT) are returned as str; binary formats (WKB, EWKB) as bytearray.
     """
 
     @pytest.mark.parametrize(
@@ -114,9 +114,9 @@ class TestGeometryOutputFormat:
         [
             ("GeoJSON", str),
             ("WKT", str),
-            ("WKB", bytes),
+            ("WKB", bytearray),
             ("EWKT", str),
-            ("EWKB", bytes),
+            ("EWKB", bytearray),
         ],
         ids=["GeoJSON", "WKT", "WKB", "EWKT", "EWKB"],
     )

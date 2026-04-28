@@ -4,7 +4,7 @@ Feature: GEOMETRY type support
   # Values are returned as strings by default (GeoJSON format).
   # The output format is controlled by the GEOMETRY_OUTPUT_FORMAT session parameter:
   #   GeoJSON (default), WKT, EWKT -> VARCHAR (str in Python)
-  #   WKB, EWKB -> BINARY (bytes in Python)
+  #   WKB, EWKB -> BINARY (bytearray in Python)
   # Input via WKT strings through TO_GEOMETRY().
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 
