@@ -76,7 +76,7 @@ Feature: VECTOR type support
     # skip_for_json_result_set
     Given Snowflake client is logged in
     When Query generating 20000 integer vectors is executed
-    Then All 20000 rows should be fetched and each should be a non-null list value
+    Then All 20000 rows should be fetched with valid 3-element integer vectors
 
   # =========================================================================== #
   #                           Parameter binding                                 #

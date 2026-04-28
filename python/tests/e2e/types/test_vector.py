@@ -182,15 +182,20 @@ class TestVectorMultipleChunks:
 
         # When Query generating 20000 integer vectors is executed
         sql = (
-            f"SELECT [seq8(), seq8() * 2, seq8() * 3]::VECTOR(INT, 3) AS vec "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v"
+            "SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
+            "[seq8(), seq8() * 2, seq8() * 3]::VECTOR(INT, 3) AS vec "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY id"
         )
         rows = execute_query(sql)
 
-        # Then All 20000 rows should be fetched and each should be a non-null list value
+        # Then All 20000 rows should be fetched with valid 3-element integer vectors
         assert len(rows) == LARGE_RESULT_SET_SIZE
-        for row in rows:
-            assert isinstance(row[0], list)
+        vec_values = [row[1] for row in rows]
+        assert_type(vec_values, list)
+        for val in vec_values:
+            assert len(val) == 3
+            assert all(isinstance(v, int) for v in val)
 
 
 @with_paramstyle("qmark")
