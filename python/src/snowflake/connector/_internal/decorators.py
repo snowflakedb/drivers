@@ -9,6 +9,7 @@ to just the decorator façade.
 from __future__ import annotations
 
 import functools
+import inspect
 
 from contextvars import ContextVar
 from typing import Any, Callable, TypeVar, cast
@@ -88,9 +89,14 @@ def api_telemetry(func: F) -> F:
     therefore suppressed automatically, ensuring only the outermost
     user-initiated call is recorded.
 
+    For generator functions, tracking stays suppressed for the entire lifetime
+    of the generator (including iteration), so that nested decorated calls
+    during ``yield`` are also suppressed.
+
     The ``api_method`` string is derived at runtime as
     ``"{ClassName}.{method_name}"``.
     """
+    _is_generator = inspect.isgeneratorfunction(func)
 
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -104,6 +110,9 @@ def api_telemetry(func: F) -> F:
             elif isinstance(self, SnowflakeCursorBase):
                 self._connection._telemetry_client.send_api_usage(api_name)
 
+            if _is_generator:
+                return _suppress_tracking_generator(func(self, *args, **kwargs))
+
             token = _TRACKING.set(False)
             try:
                 return func(self, *args, **kwargs)
@@ -112,3 +121,12 @@ def api_telemetry(func: F) -> F:
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
+
+
+def _suppress_tracking_generator(gen: Any) -> Any:
+    """Wrap a generator so _TRACKING is False during each iteration step."""
+    token = _TRACKING.set(False)
+    try:
+        yield from gen
+    finally:
+        _TRACKING.reset(token)
