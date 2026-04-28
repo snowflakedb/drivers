@@ -621,6 +621,17 @@ message StatementResultChunksResponse {
   ResultChunksResult result = 1;
 }
 
+// Fetch raw result chunks by query_id using the connection (no statement handle required).
+// Useful for multi-statement children after the batch statement handle has been released.
+message ConnectionResultChunksRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionResultChunksResponse {
+  ResultChunksResult result = 1;
+}
+
 message DatabaseFetchChunkRequest {
   DatabaseHandle db_handle = 1;
   ResultChunk chunk = 2;
@@ -805,6 +816,7 @@ service DatabaseDriver {
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
+  rpc ConnectionResultChunks(ConnectionResultChunksRequest) returns (ConnectionResultChunksResponse);
   rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
 
   // Config operations

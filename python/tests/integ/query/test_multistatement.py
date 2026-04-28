@@ -89,3 +89,36 @@ class TestNextsetBehavior:
         assert result is cursor
         cursor.fetchone()
         assert cursor.nextset() is None
+
+
+class TestResultBatchesWithMultiStatement:
+    """Tests for get_result_batches() across multi-statement child results."""
+
+    def test_should_return_batches_for_each_child_after_nextset(self, cursor):
+        # Given Snowflake client is logged in
+        pass
+
+        # When A multi-statement query with two large SELECTs is executed
+        first_stmt_row_count = 200_001
+        second_stmt_row_count = 200_002
+        cursor.execute(
+            f"SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => {first_stmt_row_count})) v; "
+            f"SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => {second_stmt_row_count})) v",
+            num_statements=2,
+        )
+
+        # Then get_result_batches returns multiple batches for the first child
+        first_batches = cursor.get_result_batches()
+        assert first_batches is not None
+        assert len(first_batches) >= 2, "Expected at least an inline batch and one remote batch"
+        assert sum(b.rowcount for b in first_batches) == first_stmt_row_count
+
+        # When Advancing to the second result set
+        result = cursor.nextset()
+        assert result is not None
+
+        # Then get_result_batches returns multiple batches for the second child
+        second_batches = cursor.get_result_batches()
+        assert second_batches is not None
+        assert len(second_batches) >= 2, "Expected at least an inline batch and one remote batch"
+        assert sum(b.rowcount for b in second_batches) == second_stmt_row_count
