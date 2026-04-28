@@ -942,6 +942,16 @@ pub fn bind_col(
         tracing::debug!("bind_col: unbinding column {}", column_number);
         stmt.ard.bindings.remove(&column_number);
     } else {
+        // ODBC: BufferLength < 0 is invalid (HY090). Reject at bind time so
+        // downstream stride/copy code paths can safely treat `buffer_length`
+        // as a non-negative byte count and use unchecked `as usize` casts on
+        // the hot SQLFetch path.
+        if buffer_length < 0 {
+            return InvalidBufferLengthSnafu {
+                length: buffer_length as i64,
+            }
+            .fail();
+        }
         stmt.ard.bindings.insert(
             column_number,
             Binding {
