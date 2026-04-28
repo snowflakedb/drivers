@@ -130,89 +130,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            py: "3.10"
-            hatch_env: "test"
-            cloud_provider: azure
-          - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
-            py: "3.13"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: ubuntu-latest # JSON result format test
-            py: "3.13"
-            hatch_env: "test"
-            cloud_provider: aws
-            result_format: json
-          - os: ubuntu-24.04-arm
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: ubuntu-24.04-arm
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: macos-15-intel
-            py: "3.12"
-            hatch_env: "test"
-            cloud_provider: azure
-          - os: macos-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: macos-latest
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: windows-latest
-            py: "3.12"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: windows-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: azure
-          - os: windows-11-arm
-            py: "3.12"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: windows-11-arm
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: windows-11-arm
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: azure
+          # sdist tests (Python 3.10 — builds sf_core from source; no wheel_artifact needed)
+          - { os: ubuntu-latest,     py: "3.10", hatch_env: "test",    cloud_provider: "azure" }
+          # wheel tests
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64" } # Reference combination — keep in sync with REFERENCE_* env vars above
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64", result_format: "json" }
+          - { os: ubuntu-24.04-arm,  py: "3.14", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "manylinux_aarch64" }
+          - { os: ubuntu-24.04-arm,  py: "3.11", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "manylinux_aarch64" }
+          - { os: macos-15-intel,    py: "3.12", hatch_env: "test",    cloud_provider: "azure", wheel_artifact: "macosx_x86_64" }
+          - { os: macos-latest,      py: "3.14", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "macosx_arm64" }
+          - { os: macos-latest,      py: "3.11", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "macosx_arm64" }
+          - { os: windows-latest,    py: "3.12", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "win_amd64" }
+          - { os: windows-latest,    py: "3.14", hatch_env: "test",    cloud_provider: "azure", wheel_artifact: "win_amd64" }
+          - { os: windows-11-arm,    py: "3.12", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "win_arm64" }
+          - { os: windows-11-arm,    py: "3.11", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "win_arm64" }
+          - { os: windows-11-arm,    py: "3.11", hatch_env: "test",    cloud_provider: "azure", wheel_artifact: "win_arm64" }
           # test integration with Pandas
-          - os: ubuntu-latest
-            py: "3.14"
-            hatch_env: "test-pandas"
-            cloud_provider: gcp
-          - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
-            py: "3.13"
-            hatch_env: "test-pandas"
-            cloud_provider: aws
-          - os: ubuntu-latest
-            py: "3.13"
-            hatch_env: "test-pandas"
-            cloud_provider: aws
-            result_format: json
-          - os: macos-15-intel
-            py: "3.13"
-            hatch_env: "test-pandas"
-            cloud_provider: gcp
-          - os: macos-latest
-            py: "3.12"
-            hatch_env: "test-pandas"
-            cloud_provider: azure
-          - os: windows-latest
-            py: "3.11"
-            hatch_env: "test-pandas"
-            cloud_provider: aws
-          - os: ubuntu-24.04-arm
-            py: "3.12"
-            hatch_env: "test-pandas"
-            cloud_provider: azure
+          - { os: ubuntu-latest,     py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp",   wheel_artifact: "manylinux_x86_64" }
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64" } # Reference combination — keep in sync with REFERENCE_* env vars above
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64", result_format: "json" }
+          - { os: macos-15-intel,    py: "3.13", hatch_env: "test-pandas", cloud_provider: "gcp",   wheel_artifact: "macosx_x86_64" }
+          - { os: macos-latest,      py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure", wheel_artifact: "macosx_arm64" }
+          - { os: windows-latest,    py: "3.11", hatch_env: "test-pandas", cloud_provider: "aws",   wheel_artifact: "win_amd64" }
+          - { os: ubuntu-24.04-arm,  py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure", wheel_artifact: "manylinux_aarch64" }
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     env:
@@ -267,10 +207,10 @@ jobs:
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download wheel
-        if: matrix.py != '3.10'
+        if: matrix.wheel_artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || (matrix.os == 'macos-latest' && 'macosx_arm64' || (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))))) }}_py${{ matrix.py }}
+          name: ${{ matrix.wheel_artifact }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist

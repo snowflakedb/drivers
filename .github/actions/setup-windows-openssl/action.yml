@@ -33,6 +33,8 @@ runs:
       with:
         path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}
         key: vcpkg-openssl-${{ steps.triplet.outputs.value }}-${{ env.VCPKG_VER }}
+        restore-keys: |
+          vcpkg-openssl-${{ steps.triplet.outputs.value }}-
 
     - name: Install OpenSSL via vcpkg (ARM64)
       if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'arm64'
@@ -48,6 +50,10 @@ runs:
 
     - name: Save vcpkg OpenSSL cache
       if: steps.cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      timeout-minutes: 10
+      env:
+        ZSTD_NBTHREADS: '2'
       uses: actions/cache/save@v5
       with:
         path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}

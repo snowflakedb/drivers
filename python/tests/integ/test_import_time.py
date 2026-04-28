@@ -7,6 +7,7 @@ from the test process do not affect the measurement.
 
 from __future__ import annotations
 
+import functools
 import platform
 import subprocess
 import sys
@@ -16,6 +17,7 @@ import pytest
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
+@functools.lru_cache(maxsize=1)
 def _is_rosetta() -> bool:
     """Detect if running x86_64 under Rosetta 2 on Apple Silicon."""
     if platform.system() != "Darwin" or platform.machine() != "x86_64":
