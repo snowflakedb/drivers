@@ -2086,6 +2086,65 @@ mod tests {
     }
 
     #[test]
+    fn convert_time_as_timestamp_uses_current_date_and_zero_fraction() -> TestResult {
+        let t = sql::Time {
+            hour: 14,
+            minute: 30,
+            second: 45,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIMESTAMP,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+
+        let today_before = chrono::Local::now().date_naive();
+        let (ty, v) = convert_binding(&binding)?;
+        let today_after = chrono::Local::now().date_naive();
+
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+
+        let nanos_str = match v {
+            Value::String(s) => s,
+            other => panic!("expected Value::String, got {other:?}"),
+        };
+        let nanos: i64 = nanos_str.parse().expect("nanos must parse as i64");
+        let dt = chrono::DateTime::from_timestamp_nanos(nanos).naive_utc();
+
+        // The time component is preserved exactly with a zero fractional part.
+        assert_eq!(dt.time(), chrono::NaiveTime::from_hms_opt(14, 30, 45).unwrap());
+        // The date component is "current date" — anywhere in the window the
+        // call took to execute (handles midnight rollover gracefully).
+        assert!(
+            dt.date() >= today_before && dt.date() <= today_after,
+            "date {} not within [{}, {}]",
+            dt.date(),
+            today_before,
+            today_after
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_time_as_timestamp_rejects_invalid_time() {
+        let t = sql::Time {
+            hour: 25,
+            minute: 0,
+            second: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIMESTAMP,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(convert_binding(&binding).is_err());
+    }
+
+    #[test]
     fn convert_numeric_as_varchar() -> TestResult {
         let n = sql::Numeric {
             precision: 10,

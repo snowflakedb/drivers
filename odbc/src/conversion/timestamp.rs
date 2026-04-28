@@ -448,6 +448,24 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                     })?;
             Ok(NaiveDateTime::new(date, NaiveTime::MIN))
         }
+        // Bind SQL_C_TYPE_TIME into a TIMESTAMP column by pairing the time
+        // with the current local date and a zero fractional-seconds field.
+        // Per ODBC C-to-SQL spec (Appendix D, "C to SQL: Time"): "the date
+        // fields of the timestamp structure are set to the current date and
+        // the fractional seconds field is set to zero." This mirrors the
+        // SnowflakeTime → SQL_C_TYPE_TIMESTAMP path in `time.rs`.
+        CDataType::Time | CDataType::TypeTime => {
+            let t = read_unaligned::<sql::Time>(binding);
+            let time =
+                NaiveTime::from_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
+                    .ok_or_else(|| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })?;
+            Ok(NaiveDateTime::new(chrono::Local::now().date_naive(), time))
+        }
         CDataType::Binary => {
             let ts = read_binary_struct::<sql::Timestamp>(binding, "SQL_TIMESTAMP_STRUCT")?;
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
