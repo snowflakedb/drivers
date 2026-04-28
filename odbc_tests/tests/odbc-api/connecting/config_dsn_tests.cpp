@@ -14,9 +14,7 @@ using ConfigDriverFn = int(__stdcall*)(HWND, WORD, LPCSTR, LPCSTR, LPSTR, WORD, 
 using ConfigDSNWFn = int(__stdcall*)(HWND, WORD, LPCWSTR, LPCWSTR);
 using ConfigDSNFn = int(__stdcall*)(HWND, WORD, LPCSTR, LPCSTR);
 
-constexpr WORD ODBC_ADD_DSN = 1;
-constexpr WORD ODBC_CONFIG_DSN = 2;
-constexpr WORD ODBC_REMOVE_DSN = 3;
+// ODBC_ADD_DSN, ODBC_CONFIG_DSN, ODBC_REMOVE_DSN are defined in <odbcinst.h>
 
 static std::string get_driver_path() {
   const char* path = std::getenv("DRIVER_PATH");
@@ -66,14 +64,14 @@ static std::vector<char> build_attrs_a(const std::vector<std::pair<std::string, 
 /// Read a DSN entry value from ODBC.INI via the installer API.
 static std::string read_dsn_value(const std::string& dsn, const std::string& key) {
   char buf[512] = {};
-  SQLGetPrivateProfileStringA(dsn.c_str(), key.c_str(), "", buf, sizeof(buf), "odbc.ini");
+  SQLGetPrivateProfileString(dsn.c_str(), key.c_str(), "", buf, sizeof(buf), "odbc.ini");
   return buf;
 }
 
 /// Check if a DSN exists in ODBC.INI.
 static bool dsn_exists(const std::string& dsn) {
   char buf[4096] = {};
-  int len = SQLGetPrivateProfileStringA(nullptr, nullptr, "", buf, sizeof(buf), "odbc.ini");
+  int len = SQLGetPrivateProfileString(nullptr, nullptr, "", buf, sizeof(buf), "odbc.ini");
   const char* p = buf;
   while (p < buf + len && *p != '\0') {
     if (dsn == p) return true;
@@ -114,7 +112,7 @@ class DsnGuard {
 
  public:
   explicit DsnGuard(const std::string& dsn) : dsn_(dsn) {}
-  ~DsnGuard() { SQLRemoveDSNFromIniA(dsn_.c_str()); }
+  ~DsnGuard() { SQLRemoveDSNFromIni(dsn_.c_str()); }
 
   DsnGuard(const DsnGuard&) = delete;
   DsnGuard& operator=(const DsnGuard&) = delete;
