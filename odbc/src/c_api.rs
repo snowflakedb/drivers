@@ -475,6 +475,7 @@ pub unsafe extern "system" fn SQLDriverConnect(
     in_connection_string: *const sql::Char,
     in_string_length: sql::SmallInt,
     _out_connection_string: *mut sql::Char,
+    _buffer_length: sql::SmallInt,
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
@@ -497,6 +498,7 @@ pub unsafe extern "system" fn SQLDriverConnectW(
     in_connection_string: *const sql::WChar,
     in_string_length: sql::SmallInt,
     _out_connection_string: *mut sql::WChar,
+    _buffer_length: sql::SmallInt,
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
