@@ -362,33 +362,34 @@ impl DatabaseDriverV1 {
     }
 
     /// End the connection span and deregister from the shared telemetry
-    /// session registry, then release the connection handle.
-    pub async fn flush_telemetry_on_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
-        if let Some(conn_ptr) = self.connections.get_obj(conn_handle) {
-            let (span, tokens_arc) = {
-                let mut conn = conn_ptr.lock().await;
-                (conn.telemetry_span.take(), conn.tokens.clone())
-            };
-            // Mutex dropped before reading the tokens RwLock to avoid deadlock.
-            let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
+    /// session registry. Must be called while session tokens are still alive
+    /// (before logout/cleanup) so the exporter can authenticate the POST.
+    /// Idempotent: no-op if the span was already taken.
+    pub async fn flush_connection_telemetry(&self, conn_handle: Handle) {
+        let Some(conn_ptr) = self.connections.get_obj(conn_handle) else {
+            return;
+        };
+        let (span, tokens_arc) = {
+            let mut conn = conn_ptr.lock().await;
+            (conn.telemetry_span.take(), conn.tokens.clone())
+        };
+        // Mutex dropped before reading the tokens RwLock to avoid deadlock.
+        let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
 
-            // Drop the tracing span — this ends the underlying OTel span.
-            // SimpleSpanProcessor calls the exporter synchronously via
-            // futures_executor::block_on.  The exporter spawns the HTTP
-            // POST on the tokio runtime and awaits the JoinHandle, so by
-            // the time drop() returns the telemetry has been sent.
-            drop(span);
-            if let Some(id) = session_id
-                && let Some(sessions) = self.telemetry_sessions()
-            {
-                sessions
-                    .write()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&id);
-            }
+        // Drop the tracing span — this ends the underlying OTel span.
+        // SimpleSpanProcessor calls the exporter synchronously via
+        // futures_executor::block_on.  The exporter spawns the HTTP
+        // POST on the tokio runtime and awaits the JoinHandle, so by
+        // the time drop() returns the telemetry has been sent.
+        drop(span);
+        if let Some(id) = session_id
+            && let Some(sessions) = self.telemetry_sessions()
+        {
+            sessions
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
         }
-
-        self.connection_release(conn_handle)
     }
 
     pub async fn connection_set_option(
@@ -1689,6 +1690,10 @@ impl DatabaseDriverV1 {
             return Ok(());
         };
 
+        // Flush telemetry before logout — session tokens are still alive and
+        // telemetry records the connection's lifetime events (session_init, api_usage).
+        self.flush_connection_telemetry(conn_handle).await;
+
         // Execute logout — network I/O, lock must not be held
         let logout_result = logout::execute_logout_with_strategy(logout_data, error_strategy).await;
 
@@ -1710,7 +1715,7 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
     tracing::debug!("Cleared session tokens and HTTP client");
 
     // TODO: SNOW-2881763 - Stop heartbeat thread
-    // TODO: SNOW-2912513 - Flush telemetry cache
+    // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
 
     Ok(())

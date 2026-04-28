@@ -221,8 +221,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         self.driver
-            .flush_telemetry_on_release(conn_handle.into())
-            .await
+            .connection_release(conn_handle.into())
             .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
     }

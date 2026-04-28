@@ -713,15 +713,6 @@ impl GherkinValidator {
             .into_iter()
             .collect();
 
-        // Methods with inline When/Then step comments are language-specific tests
-        // following the new convention — they don't need a matching shared scenario.
-        let step_finder = StepFinder::new(language.clone());
-        let methods_missing_steps = step_finder.find_methods_missing_when_then(file_path)?;
-        let methods_missing_steps_set: std::collections::HashSet<&str> = methods_missing_steps
-            .iter()
-            .map(|(name, _, _)| name.as_str())
-            .collect();
-
         for method_name in all_methods {
             // Check if method matches a scenario in ANY of the matching features that requires this language
             let method_matches_valid_scenario = matching_feature_ids.iter().any(|feature_id| {
@@ -742,12 +733,7 @@ impl GherkinValidator {
             });
 
             if !method_matches_valid_scenario {
-                // If the method has inline When/Then comments, it's a language-specific
-                // test using Gherkin steps directly — not orphaned.
-                let has_inline_steps = !methods_missing_steps_set.contains(method_name.as_str());
-                if !has_inline_steps {
-                    orphaned_methods.push(method_name);
-                }
+                orphaned_methods.push(method_name);
             }
         }
 
