@@ -132,7 +132,7 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   // Read QUERY_RESULT_FORMAT from environment
   const char* result_format = std::getenv("QUERY_RESULT_FORMAT");
   if (result_format != nullptr && std::strlen(result_format) > 0) {
-    config.parameters_["PYTHON_CONNECTOR_QUERY_RESULT_FORMAT"] = result_format;
+    config.parameters_["ODBC_QUERY_RESULT_FORMAT"] = result_format;
   }
 
   return config;

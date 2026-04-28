@@ -220,6 +220,10 @@ inline std::string get_connection_string() {
   ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
 #endif
+  const char* result_format = std::getenv("QUERY_RESULT_FORMAT");
+  if (result_format != nullptr && std::strlen(result_format) > 0) {
+    ss << "ODBC_QUERY_RESULT_FORMAT=" << result_format << ";";
+  }
   return ss.str();
 }
 

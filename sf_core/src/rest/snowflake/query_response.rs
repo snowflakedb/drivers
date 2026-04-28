@@ -646,7 +646,10 @@ impl TryFrom<&RowType> for query_types::RowType {
                     byte_length,
                 ))
             }
-            "DECFLOAT" => Ok(query_types::RowType::decfloat(&name, nullable)),
+            "DECFLOAT" => {
+                let precision = value.precision.unwrap_or(38);
+                Ok(query_types::RowType::decfloat(&name, nullable, precision))
+            }
             "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
             "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
             "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),

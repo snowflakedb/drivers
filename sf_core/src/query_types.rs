@@ -53,6 +53,7 @@ pub enum RowType {
     Decfloat {
         name: String,
         nullable: bool,
+        precision: u64,
     },
     Variant {
         name: String,
@@ -182,10 +183,11 @@ impl RowType {
         }
     }
 
-    pub fn decfloat(name: &str, nullable: bool) -> Self {
+    pub fn decfloat(name: &str, nullable: bool, precision: u64) -> Self {
         RowType::Decfloat {
             name: name.to_string(),
             nullable,
+            precision,
         }
     }
 
