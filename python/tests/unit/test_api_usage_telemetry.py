@@ -9,8 +9,14 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
     ExecuteQueryResponse,
+    ResultSetDescriptor,
     StatementHandle,
 )
+
+
+def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
+    """Return an ExecuteQueryResponse with a single-statement descriptor."""
+    return ExecuteQueryResponse(single=ResultSetDescriptor(query_id=query_id))
 
 
 @pytest.fixture
@@ -22,7 +28,12 @@ def mock_db_api():
     db_api.connection_get_parameter.return_value = MagicMock(value="")
     # Provide a real StatementHandle so protobuf field validation passes
     db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
-    db_api.statement_execute_query.return_value = ExecuteQueryResponse()
+    # Mock the two-step execute flow: execute_query returns a descriptor,
+    # then get_result_set returns the result set (get_stream_ptr is patched).
+    db_api.statement_execute_query.return_value = _make_execute_response()
+    db_api.statement_get_result_set.return_value = MagicMock(
+        result_descriptor=ResultSetDescriptor(query_id="fake-qid"),
+    )
     db_api.statement_result_chunks.return_value = MagicMock(HasField=MagicMock(return_value=False))
     return db_api
 
@@ -32,9 +43,13 @@ def connection(mock_db_api):
     """Create a Connection with a mocked db_api."""
     from snowflake.connector.connection import Connection
 
-    with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+    # Return stream_ptr=0 so release_arrow_stream (called in __del__) is a no-op.
+    with (
+        patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api),
+        patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
+    ):
         conn = Connection(user="test_user", account="test_account")
-    return conn
+        yield conn
 
 
 @pytest.fixture
@@ -113,6 +128,20 @@ class TestConnectionApiTelemetry:
         assert "Connection.cursor" not in methods
         assert "SnowflakeCursor.execute" not in methods
 
+    def test_execute_stream_suppresses_during_iteration(self, connection, mock_db_api):
+        """execute_stream is a generator — nested calls during iteration must be suppressed."""
+        from io import StringIO
+
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        # Iterate the generator so the body actually runs
+        cursors = list(connection.execute_stream(StringIO("SELECT 1; SELECT 2")))
+        assert len(cursors) == 2
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.cursor" not in methods
+        assert "SnowflakeCursor.execute" not in methods
+
     def test_api_method_uses_runtime_class_name(self, connection, mock_db_api):
         """api_method should be derived from type(self).__name__, not hardcoded."""
         mock_db_api.telemetry_send_api_usage.reset_mock()
@@ -147,16 +176,17 @@ class TestCursorApiTelemetry:
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.fetchone" in methods
 
-    def test_fetchmany_suppresses_fetchone(self, cursor, mock_db_api):
-        """fetchmany() calls fetchone() internally — only fetchmany should be tracked."""
+    def test_fetchmany_sends_telemetry(self, cursor, mock_db_api):
+        """fetchmany() should send its own telemetry event."""
+        mock_iterator = MagicMock()
+        mock_iterator.fetch_many.return_value = [(1,), (2,)]
         cursor._execute_result = MagicMock()
-        cursor._iterator = iter([(1,), (2,)])
+        cursor._iterator = mock_iterator
         cursor._fetch_mode = None
         cursor.fetchmany(2)
 
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.fetchmany" in methods
-        assert "SnowflakeCursor.fetchone" not in methods
 
     def test_dict_cursor_fetchone_uses_correct_class_name(self, connection, mock_db_api):
         from snowflake.connector.cursor import DictCursor
@@ -197,7 +227,7 @@ class TestApiTelemetryResetBehavior:
 
         # Tracking should be re-enabled
         mock_db_api.statement_execute_query.side_effect = None
-        mock_db_api.statement_execute_query.return_value = ExecuteQueryResponse()
+        mock_db_api.statement_execute_query.return_value = _make_execute_response()
         mock_db_api.telemetry_send_api_usage.reset_mock()
         cursor.execute("SELECT 2")
 
