@@ -38,7 +38,6 @@ const BN_CLICKED: u16 = 0;
 
 const MB_OK: u32 = 0x0000;
 const MB_ICONEXCLAMATION: u32 = 0x0030;
-const MB_ICONINFORMATION: u32 = 0x0040;
 
 const SQL_HANDLE_ENV: i16 = 1;
 const SQL_HANDLE_DBC: i16 = 2;
@@ -81,11 +80,15 @@ unsafe extern "system" {
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> *mut core::ffi::c_void;
 }
 
-#[link(
-    name = "odbccp32",
-    kind = "raw-dylib",
-    import_name_type = "undecorated"
+#[cfg_attr(
+    target_arch = "x86",
+    link(
+        name = "odbccp32",
+        kind = "raw-dylib",
+        import_name_type = "undecorated"
+    )
 )]
+#[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
 unsafe extern "system" {
     fn SQLGetPrivateProfileStringW(
         lpszSection: *const u16,
@@ -96,7 +99,6 @@ unsafe extern "system" {
         lpszFilename: *const u16,
     ) -> i32;
     fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> BOOL;
-    fn SQLRemoveDSNFromIniW(lpszDSN: *const u16) -> BOOL;
     fn SQLWritePrivateProfileStringW(
         lpszSection: *const u16,
         lpszEntry: *const u16,
