@@ -199,10 +199,10 @@ class TestGeographyMultipleChunks:
 
         # When Query generating 20000 geography points is executed
         sql = (
-            "SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
-            "TO_GEOGRAPHY('POINT(' || (MOD(ROW_NUMBER() OVER (ORDER BY seq8()) - 1, 360) - 180) "
-            "|| ' ' || (MOD(ROW_NUMBER() OVER (ORDER BY seq8()) - 1, 180) - 90) || ')') AS geo "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            "SELECT id, TO_GEOGRAPHY('POINT(' || (MOD(id, 360) - 180) "
+            "|| ' ' || (MOD(id, 180) - 90) || ')') AS geo "
+            "FROM (SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))) "
             f"ORDER BY id"
         )
         rows = execute_query(sql)
