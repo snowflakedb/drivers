@@ -181,7 +181,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
         return version;
       }
     }
-    return "unknown";
+    return "4.0.0";
   }
 
   @Override
