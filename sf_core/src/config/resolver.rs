@@ -6,7 +6,7 @@ use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 
-/// If `account` is not explicitly set but `host` (or `server_url`) is available,
+/// If `account` is not explicitly set but `host` is available,
 /// derive the account identifier from the hostname — matching the legacy
 /// `snowflake-odbc` driver behavior.
 ///
