@@ -1,5 +1,5 @@
 use std::ffi::c_char;
-use std::sync::{LazyLock, Mutex};
+use std::sync::OnceLock;
 
 use crate::apis::database_driver_v1::DriverProviders;
 use crate::logging::LogManager;
@@ -11,34 +11,27 @@ struct CApiState {
     transport: RustTransport,
 }
 
-/// Process-global `LogManager` set by `sf_core_init_logger` and consumed
-/// by the `LazyLock<CApiState>` when it first initialises the transport.
-static LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
+static STATE: OnceLock<CApiState> = OnceLock::new();
 
-/// Store the `LogManager` so it is available to the transport when
-/// `CApiState` is first accessed.  Called by `sf_core_init_logger`.
-pub(crate) fn set_log_manager(lm: LogManager) {
-    *LOG_MANAGER.lock().unwrap_or_else(|e| e.into_inner()) = Some(lm);
+/// Eagerly build the entire core state (tokio runtime + transport) using the
+/// given `LogManager`.  Called once from `sf_core_init`.
+pub(crate) fn init_core_state(lm: LogManager) {
+    STATE.get_or_init(|| {
+        let providers = DriverProviders {
+            log_manager: Some(lm),
+            ..Default::default()
+        };
+
+        CApiState {
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime"),
+            transport: RustTransport::new_with(providers),
+        }
+    });
 }
-
-static STATE: LazyLock<CApiState> = LazyLock::new(|| {
-    let providers = DriverProviders {
-        log_manager: LOG_MANAGER.lock().unwrap_or_else(|e| e.into_inner()).take(),
-        ..Default::default()
-    };
-
-    CApiState {
-        // Single worker thread is intentional: keeps contention minimal and
-        // makes deadlocks easier to detect. Will be increased during
-        // performance optimization.
-        runtime: tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime"),
-        transport: RustTransport::new_with(providers),
-    }
-});
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
     let boxed = vec.into_boxed_slice();
@@ -82,13 +75,14 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
 ) -> usize {
     // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
     let result = std::panic::catch_unwind(|| unsafe {
+        let state = STATE.get().expect("sf_core_init was not called");
         let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
         let method = std::ffi::CStr::from_ptr(method)
             .to_string_lossy()
             .to_string();
         let message = std::slice::from_raw_parts(request, request_len);
-        STATE.runtime.block_on(
-            STATE
+        state.runtime.block_on(
+            state
                 .transport
                 .handle_message(&api, &method, message.to_vec()),
         )
