@@ -221,7 +221,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         self.driver
-            .connection_release(conn_handle.into())
+            .flush_telemetry_on_release(conn_handle.into())
+            .await
             .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
     }
@@ -833,6 +834,43 @@ impl DatabaseDriver for DatabaseDriverImpl {
             config_file: config_file.to_string_lossy().into_owned(),
             connections_file: connections_file.to_string_lossy().into_owned(),
         })
+    }
+
+    // -- Telemetry operations --
+
+    #[instrument(name = "DatabaseDriverV1::telemetry_send_api_usage", skip(self, input))]
+    async fn telemetry_send_api_usage(
+        &self,
+        input: TelemetrySendApiUsageRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+
+        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
+            let _guard = conn_span.enter();
+            crate::telemetry::record_api_call(&input.api_method);
+        }
+
+        Ok(TelemetrySendResponse {})
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::telemetry_send_wrapper_error",
+        skip(self, input)
+    )]
+    async fn telemetry_send_wrapper_error(
+        &self,
+        input: TelemetrySendWrapperErrorRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+
+        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
+            let _guard = conn_span.enter();
+            crate::telemetry::record_exception(&input.exception_type, &input.error_source);
+        }
+
+        Ok(TelemetrySendResponse {})
     }
 }
 

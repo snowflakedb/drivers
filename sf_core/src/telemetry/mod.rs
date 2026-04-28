@@ -11,57 +11,92 @@ pub(crate) mod aws_identity;
 pub mod os_details;
 pub mod platform_detection;
 
-use environment::EnvironmentInfo;
-use opentelemetry::InstrumentationScope;
-use opentelemetry::KeyValue;
-use opentelemetry::trace::{
-    SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
-};
-use opentelemetry_sdk::trace::SpanData;
-use rand::Rng;
+use crate::apis::database_driver_v1::DriverProviders;
 
-/// Build a `session_init` OTel span carrying environment and session metadata.
+/// Telemetry state created during logging initialization.
 ///
-/// The span is serialized by [`serialization::spans_to_snowflake_payload`] and
-/// exported via [`snowflake_exporter::SnowflakeInBandExporter`] to the
-/// `/telemetry/send` endpoint.
-pub fn build_session_init_span(env: &EnvironmentInfo, session_id: i64) -> SpanData {
-    let now = std::time::SystemTime::now();
-    let mut rng = rand::rng();
+/// Bridges (C API, JDBC, ODBC) should store this between `init_logging` and
+/// `DatabaseDriverV1` creation, then pass it to [`DriverProviders`] via
+/// [`into_providers`](TelemetryInit::into_providers).
+pub struct TelemetryInit {
+    pub provider: opentelemetry_sdk::trace::SdkTracerProvider,
+    pub sessions: snowflake_exporter::SessionRegistry,
+}
 
-    let mut attributes = vec![
-        KeyValue::new("service.name", env.driver_name.clone()),
-        KeyValue::new("service.version", env.driver_version.clone()),
-        KeyValue::new("process.runtime.name", env.language_runtime.clone()),
-        KeyValue::new("process.runtime.version", env.language_version.clone()),
-        KeyValue::new("os.type", env.os_name.clone()),
-        KeyValue::new("os.version", env.os_version.clone()),
-        KeyValue::new("host.arch", env.os_architecture.clone()),
-        KeyValue::new("snowflake.session.id", session_id),
+impl TelemetryInit {
+    /// Convert into `DriverProviders` fields for `DatabaseDriverV1`.
+    pub fn into_providers(self) -> DriverProviders {
+        DriverProviders {
+            telemetry_sessions: Some(self.sessions),
+            telemetry_provider: Some(self.provider),
+            ..Default::default()
+        }
+    }
+
+    /// Create `DriverProviders` by cloning (provider uses `Arc` internally).
+    pub fn to_providers(&self) -> DriverProviders {
+        DriverProviders {
+            telemetry_sessions: Some(self.sessions.clone()),
+            telemetry_provider: Some(self.provider.clone()),
+            ..Default::default()
+        }
+    }
+}
+
+use opentelemetry::trace::TraceContextExt;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+/// Record a session_init event on the **current** tracing span.
+///
+/// The caller must have entered the connection span before calling this.
+/// Uses the OTel API directly because `tracing::event!` does not support
+/// dotted field names (e.g. `service.name`).
+pub fn record_session_init(env: &environment::EnvironmentInfo) {
+    let span = tracing::Span::current();
+    let otel_ctx = span.context();
+    let otel_span = otel_ctx.span();
+    let mut attrs = vec![
+        opentelemetry::KeyValue::new("service.name", env.driver_name.clone()),
+        opentelemetry::KeyValue::new("service.version", env.driver_version.clone()),
+        opentelemetry::KeyValue::new("process.runtime.name", env.language_runtime.clone()),
+        opentelemetry::KeyValue::new("process.runtime.version", env.language_version.clone()),
+        opentelemetry::KeyValue::new("os.type", env.os_name.clone()),
+        opentelemetry::KeyValue::new("os.version", env.os_version.clone()),
+        opentelemetry::KeyValue::new("host.arch", env.os_architecture.clone()),
     ];
-
     if let Some(ref compiler) = env.language_compiler {
-        attributes.push(KeyValue::new("process.runtime.compiler", compiler.clone()));
+        attrs.push(opentelemetry::KeyValue::new(
+            "process.runtime.compiler",
+            compiler.clone(),
+        ));
     }
+    otel_span.add_event("session_init", attrs);
+}
 
-    SpanData {
-        span_context: SpanContext::new(
-            TraceId::from_bytes(rng.random()),
-            SpanId::from_bytes(rng.random()),
-            TraceFlags::default(),
-            false,
-            TraceState::default(),
-        ),
-        parent_span_id: SpanId::INVALID,
-        span_kind: SpanKind::Internal,
-        name: "session_init".into(),
-        start_time: now,
-        end_time: now,
-        attributes,
-        dropped_attributes_count: 0,
-        events: Default::default(),
-        links: Default::default(),
-        status: Status::Ok,
-        instrumentation_scope: InstrumentationScope::builder("snowflake.telemetry").build(),
-    }
+/// Record an api_call event on the **current** tracing span.
+pub fn record_api_call(api_method: &str) {
+    let span = tracing::Span::current();
+    let otel_ctx = span.context();
+    let otel_span = otel_ctx.span();
+    otel_span.add_event(
+        "api_call",
+        vec![opentelemetry::KeyValue::new(
+            "api_method",
+            api_method.to_string(),
+        )],
+    );
+}
+
+/// Record an exception event on the **current** tracing span.
+pub fn record_exception(exception_type: &str, error_source: &str) {
+    let span = tracing::Span::current();
+    let otel_ctx = span.context();
+    let otel_span = otel_ctx.span();
+    otel_span.add_event(
+        "exception",
+        vec![
+            opentelemetry::KeyValue::new("exception.type", exception_type.to_string()),
+            opentelemetry::KeyValue::new("exception.source", error_source.to_string()),
+        ],
+    );
 }

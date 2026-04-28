@@ -28,7 +28,10 @@ fn should_include_os_details_on_linux() {
     let mock = MockServerWithTls::start();
     let client = SnowflakeTestClient::with_int_tests_params_using(
         Some(&mock.http_url()),
-        DriverProviders { fs: Some(fs) },
+        DriverProviders {
+            fs: Some(fs),
+            ..Default::default()
+        },
     );
     client.set_connection_option("password", "test_password"); // pragma: allowlist secret
 

@@ -191,6 +191,18 @@ jobs:
           python scripts/cleanup_test_pats.py \
             --parameter-path $(pwd)/parameters.json
 
+      - name: Trim tarpaulin artifacts before cache save
+        if: always()
+        shell: bash
+        run: |
+          # Tarpaulin instruments every build artifact which roughly doubles
+          # the target/ size (~14 GB).  These instrumented binaries are not
+          # reusable across runs, so strip them to keep the cache under the
+          # GitHub Actions runner disk budget (~14 GB free).
+          rm -rf target/tarpaulin || true
+          # Also remove profraw files left by coverage runs
+          find target -name '*.profraw' -delete 2>/dev/null || true
+
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
