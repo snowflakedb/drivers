@@ -191,7 +191,7 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
         env:
-          MACOSX_DEPLOYMENT_TARGET: "10.14"
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-arm64' && '11.0' || '10.14' }}
 
       - name: Build sf_core (Windows x86_64)
         if: matrix.os == 'windows-latest'
@@ -356,7 +356,7 @@ jobs:
           CIBW_ENVIRONMENT_MACOS: >-
             SKIP_CORE_BUILD=true
             SKIP_PROTO_GENERATION=true
-            MACOSX_DEPLOYMENT_TARGET=10.14
+            MACOSX_DEPLOYMENT_TARGET=${{ contains(matrix.cibw_build, 'x86_64') && '10.14' || '11.0' }}
 
       - name: Check wheels with auditwheel (Linux)
         if: runner.os == 'Linux'
@@ -379,7 +379,7 @@ jobs:
           for whl in python/dist/*.whl; do
             echo "=== $(basename $whl) ==="
             delocate-listdeps "$whl"
-            delocate-wheel --require-archs ${{ contains(matrix.cibw_build, 'x86_64') && 'x86_64' || 'arm64' }} --check-archs "$whl"
+            delocate-wheel --require-archs ${{ contains(matrix.cibw_build, 'x86_64') && 'x86_64' || 'arm64' }} --check-archs "$whl" && echo "✓ arch check passed"
           done
 
       - name: Upload wheel
