@@ -224,8 +224,12 @@ impl ReadODBC for SnowflakeTime {
                 let time = read_unaligned::<sql::Time>(binding);
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
                     .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid time in SQL_C_TYPE_TIME for TIME target: \
+                                 hour={}, minute={}, second={}",
+                                time.hour, time.minute, time.second
+                            ),
                         }
                         .build()
                     })

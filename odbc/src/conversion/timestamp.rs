@@ -392,8 +392,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
             let ts = read_unaligned::<sql::Timestamp>(binding);
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
                 .ok_or_else(|| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
+                             year={}, month={}, day={}",
+                            ts.year, ts.month, ts.day
+                        ),
                     }
                     .build()
                 })?;
@@ -404,8 +408,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                 ts.fraction,
             )
             .ok_or_else(|| {
-                UnsupportedCDataTypeSnafu {
-                    c_type: binding.value_type,
+                InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid time in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
+                         hour={}, minute={}, second={}, fraction={}",
+                        ts.hour, ts.minute, ts.second, ts.fraction
+                    ),
                 }
                 .build()
             })?;

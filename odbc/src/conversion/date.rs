@@ -178,8 +178,12 @@ impl ReadODBC for SnowflakeDate {
                 let date = read_unaligned::<sql::Date>(binding);
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_DATE for DATE target: \
+                                 year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
                         }
                         .build()
                     })

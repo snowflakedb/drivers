@@ -2227,6 +2227,102 @@ mod tests {
         );
     }
 
+    // The same-type pass-through arms (DATE→DATE, TIME→TIME, TIMESTAMP→
+    // TIMESTAMP) must also report invalid struct fields as 22007 — not as
+    // 07006 — so the SQLSTATE is consistent with the cross-temporal arms.
+
+    #[test]
+    fn convert_date_as_date_rejects_invalid_date() {
+        let d = sql::Date {
+            year: 2024,
+            month: 13,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::DATE,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_time_as_time_rejects_invalid_time() {
+        let t = sql::Time {
+            hour: 25,
+            minute: 0,
+            second: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIME,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_timestamp_rejects_invalid_date() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_timestamp_rejects_invalid_time() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
     #[test]
     fn convert_numeric_as_varchar() -> TestResult {
         let n = sql::Numeric {
