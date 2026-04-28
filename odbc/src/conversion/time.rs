@@ -2,7 +2,7 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Int64Type;
-use chrono::{Datelike, NaiveTime, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
 
@@ -276,13 +276,26 @@ impl ReadODBC for SnowflakeTime {
             // field overflow") is returned. The whole-second time fields are
             // always preserved; the date portion is silently discarded.
             //
-            // Error precedence: validate the *struct* first (22007 — also
-            // catches fraction > 999_999_999, hour > 23, …) and only then
-            // enforce the 22008 fractional-seconds rule. Otherwise an input
-            // like {fraction = 3_000_000_000} would surface as "datetime
-            // field overflow" when in fact the struct itself is malformed.
+            // Error precedence: validate the *whole struct* first (22007 —
+            // also catches fraction > 999_999_999, hour > 23, month=13, …)
+            // and only then enforce the 22008 fractional-seconds rule. Even
+            // though the date portion is silently dropped, it must still be
+            // a syntactically valid Y/M/D — otherwise an input like
+            // {year=2024, month=13, day=1, hour=14, ...} would silently
+            // succeed despite the struct being malformed.
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
+                NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                    .ok_or_else(|| {
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                                 year={}, month={}, day={}",
+                                ts.year, ts.month, ts.day
+                            ),
+                        }
+                        .build()
+                    })?;
                 let time = NaiveTime::from_hms_nano_opt(
                     ts.hour as u32,
                     ts.minute as u32,

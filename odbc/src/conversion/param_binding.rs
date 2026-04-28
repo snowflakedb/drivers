@@ -2442,6 +2442,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn convert_timestamp_as_time_invalid_date_returns_22007() {
+        // The date portion is going to be silently discarded, but it must
+        // still be a syntactically valid Y/M/D — otherwise the *struct*
+        // itself is malformed and we must surface 22007. month=13 with an
+        // otherwise valid time would have silently succeeded before the
+        // date-validation step was added to this arm.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date in TS → TIME must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
     // The same-type pass-through arms (DATE→DATE, TIME→TIME, TIMESTAMP→
     // TIMESTAMP) must also report invalid struct fields as 22007 — not as
     // 07006 — so the SQLSTATE is consistent with the cross-temporal arms.
