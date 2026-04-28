@@ -10,6 +10,7 @@ use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
 use crate::telemetry::os_details::detect_os_details;
 use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
+use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
 /// Injection points for `DatabaseDriverV1`.
@@ -21,6 +22,13 @@ use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 #[derive(Default)]
 pub struct DriverProviders {
     pub fs: Option<Arc<dyn FsAdapter>>,
+    /// Session registry shared with the Snowflake telemetry exporter layer.
+    /// Created by the initialization code that calls `init_logging` and passed
+    /// here so `DatabaseDriverV1` can register/deregister sessions.
+    pub telemetry_sessions: Option<SessionRegistry>,
+    /// The `SdkTracerProvider` returned by `init_logging`. Must be kept alive
+    /// for the process lifetime to prevent the exporter from shutting down.
+    pub telemetry_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -30,6 +38,10 @@ pub struct DatabaseDriverV1 {
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
+    telemetry_sessions: Option<SessionRegistry>,
+    /// Kept alive so the Snowflake exporter is not shut down.
+    #[allow(dead_code)]
+    telemetry_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
 }
 
@@ -52,8 +64,15 @@ impl DatabaseDriverV1 {
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
+            telemetry_sessions: providers.telemetry_sessions,
+            telemetry_provider: providers.telemetry_provider,
             os_details: once_cell::sync::OnceCell::new(),
         }
+    }
+
+    /// Returns the session registry if telemetry was configured via `DriverProviders`.
+    pub(super) fn telemetry_sessions(&self) -> Option<&SessionRegistry> {
+        self.telemetry_sessions.as_ref()
     }
 
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {

@@ -299,7 +299,7 @@ pub struct EncryptionMaterial {
     #[serde(rename = "queryId")]
     query_id: String,
     #[serde(rename = "smkId")]
-    smk_id: i64,
+    smk_id: String,
 }
 
 impl Data {
@@ -837,8 +837,7 @@ impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
         Self {
             query_stage_master_key: value.query_stage_master_key.clone().into(),
             query_id: value.query_id.clone(),
-            // Snowflake sends smk_id as i64, but later expects it as a string
-            smk_id: value.smk_id.to_string(),
+            smk_id: value.smk_id.clone(),
         }
     }
 }
@@ -1150,7 +1149,7 @@ mod tests {
     #[test]
     fn upload_encryption_material_single_returns_some() {
         let json = make_upload_json(
-            r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42},"#,
+            r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"},"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data.to_file_upload_data().unwrap();
@@ -1160,7 +1159,7 @@ mod tests {
     #[test]
     fn upload_encryption_material_array_of_one_returns_some() {
         let json = make_upload_json(
-            r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42}],"#,
+            r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"}],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data.to_file_upload_data().unwrap();
@@ -1171,8 +1170,8 @@ mod tests {
     fn upload_encryption_material_array_of_many_returns_error() {
         let json = make_upload_json(
             r#""encryptionMaterial": [
-                {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 1},
-                {"queryStageMasterKey": "b3l6","queryId": "qid-2","smkId": 2}
+                {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "1"},
+                {"queryStageMasterKey": "b3l6","queryId": "qid-2","smkId": "2"}
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();

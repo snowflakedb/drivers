@@ -336,6 +336,6 @@ steps:
           set -euo pipefail
           ./scripts/decode_secrets.sh
           python3 -m pip install snowflake-connector-python -q
-          python3 scripts/cleanup_test_pats.py \
+          python3 scripts/cleanup_env.py \
             --parameter-path /workdir/parameters.json
         '

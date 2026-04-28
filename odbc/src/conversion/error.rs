@@ -155,6 +155,24 @@ pub enum ConversionError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    /// Address arithmetic for a per-row binding overflowed `usize`. This
+    /// can only happen with a pathological `SQL_ATTR_ROW_BIND_TYPE` /
+    /// large rowset combination, but we surface it as a row-level error
+    /// instead of panicking across the FFI boundary.
+    #[snafu(display(
+        "Binding stride overflow at row_idx={row_idx} \
+         (value_stride={value_stride}, indicator_stride={indicator_stride}, \
+         bind_offset={bind_offset})"
+    ))]
+    BindingStrideOverflow {
+        row_idx: usize,
+        value_stride: usize,
+        indicator_stride: usize,
+        bind_offset: isize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Debug, Snafu, ErrorTrace)]

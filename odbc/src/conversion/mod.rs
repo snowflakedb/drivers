@@ -43,7 +43,9 @@ use arrow::datatypes::{
     Int64Type,
 };
 use snafu::ResultExt;
-pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType};
+pub use traits::{
+    Binding, BindingStrides, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType,
+};
 
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
@@ -58,9 +60,10 @@ use crate::conversion::warning::Warnings;
 
 /// Per-column converter from Arrow values to ODBC buffers.
 ///
-/// `'static` so it can be cached and reused across every cell of a column
-/// within a `RecordBatch`. The array is passed in per call rather than held
-/// by the converter.
+/// `'static` so it can be cached per column per `RecordBatch`. Two entry
+/// points: `convert_arrow_value` for single-cell `SQLGetData`, and
+/// `convert_arrow_range` for `SQLFetch` segments (overridden to amortise the
+/// Arrow downcast across the whole segment).
 ///
 /// This is the type-erased handle stored in the per-batch cache as
 /// `Box<dyn ColumnConverter>`. The single concrete implementation is
@@ -74,6 +77,68 @@ pub trait ColumnConverter {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, ConversionError>;
+
+    /// Convert each row in `arrow_row_range` into `outputs[i]`, skipping
+    /// rows that already hold `Err` (preserving row-major "first error
+    /// aborts the row" semantics). The per-row `Binding` is materialised
+    /// inline via `BindingStrides::for_row`. Default impl is per-cell via
+    /// [`per_cell_convert_range`]; `Converter<A, T>` overrides it to
+    /// downcast once per segment.
+    fn convert_arrow_range(
+        &self,
+        array: &dyn Array,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        per_cell_convert_range(
+            self,
+            array,
+            arrow_row_range,
+            base_binding,
+            out_row_start,
+            strides,
+            outputs,
+        );
+    }
+}
+
+/// Shared per-row loop used by both the default `convert_arrow_range`
+/// impl and the downcast-failure fallback in `Converter`. Extracted so
+/// the row-skip / first-error semantics live in exactly one place.
+fn per_cell_convert_range(
+    converter: &(impl ColumnConverter + ?Sized),
+    array: &dyn Array,
+    arrow_row_range: std::ops::Range<usize>,
+    base_binding: &Binding,
+    out_row_start: usize,
+    strides: BindingStrides,
+    outputs: &mut [Result<Warnings, ConversionError>],
+) {
+    for (i, batch_idx) in arrow_row_range.enumerate() {
+        if outputs[i].is_err() {
+            continue;
+        }
+        let binding = match strides.for_row(base_binding, out_row_start + i) {
+            Ok(b) => b,
+            Err(e) => {
+                outputs[i] = Err(e);
+                continue;
+            }
+        };
+        match converter.convert_arrow_value(array, batch_idx, &binding, &mut None) {
+            Ok(w) => {
+                if let Ok(existing) = &mut outputs[i] {
+                    existing.extend(w);
+                }
+            }
+            Err(e) => {
+                outputs[i] = Err(e);
+            }
+        }
+    }
 }
 
 /// Concrete column converter, parameterised over a single Arrow array type
@@ -111,6 +176,66 @@ impl<
         self.snowflake_type
             .write_odbc_type(value, binding, get_data_offset)
             .context(WriteOdbcValueSnafu)
+    }
+
+    /// Downcasts `array` once for the whole segment, then iterates rows
+    /// through statically-dispatched `read_arrow_type`/`write_odbc_type`
+    /// — no per-cell vtable, closure, or `Any` cost. Falls back to the
+    /// per-cell default impl on downcast failure so each row reports the
+    /// original error.
+    fn convert_arrow_range(
+        &self,
+        array: &dyn Array,
+        arrow_row_range: std::ops::Range<usize>,
+        base_binding: &Binding,
+        out_row_start: usize,
+        strides: BindingStrides,
+        outputs: &mut [Result<Warnings, ConversionError>],
+    ) {
+        let Some(arrow_array) = array.as_any().downcast_ref::<ArrowArrayType>() else {
+            per_cell_convert_range(
+                self,
+                array,
+                arrow_row_range,
+                base_binding,
+                out_row_start,
+                strides,
+                outputs,
+            );
+            return;
+        };
+
+        for (i, batch_idx) in arrow_row_range.enumerate() {
+            if outputs[i].is_err() {
+                continue;
+            }
+            let binding = match strides.for_row(base_binding, out_row_start + i) {
+                Ok(b) => b,
+                Err(e) => {
+                    outputs[i] = Err(e);
+                    continue;
+                }
+            };
+            let result = self
+                .snowflake_type
+                .read_arrow_type(arrow_array, batch_idx)
+                .context(ReadArrowValueSnafu)
+                .and_then(|value| {
+                    self.snowflake_type
+                        .write_odbc_type(value, &binding, &mut None)
+                        .context(WriteOdbcValueSnafu)
+                });
+            match result {
+                Ok(w) => {
+                    if let Ok(existing) = &mut outputs[i] {
+                        existing.extend(w);
+                    }
+                }
+                Err(e) => {
+                    outputs[i] = Err(e);
+                }
+            }
+        }
     }
 }
 

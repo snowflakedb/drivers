@@ -193,3 +193,6 @@ def pytest_runtest_setup(item):
         if result_format and result_format.upper() == "JSON":
             reason = marker.kwargs.get("reason", "Test requires Arrow format precision")
             pytest.skip(f"Skipped for JSON result format: {reason}")
+
+    if item.get_closest_marker("require_vpn") and os.environ.get("JENKINS_URL") is None:
+        pytest.skip("Requires VPN (run on Jenkins)")

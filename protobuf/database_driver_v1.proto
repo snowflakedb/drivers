@@ -432,6 +432,15 @@ message ConnectionTokenResponse {
   optional int64 validity_in_seconds = 2;
 }
 
+// Heartbeat request to validate that the connection and session are still alive.
+message ConnectionHeartbeatRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionHeartbeatResponse {
+  bool valid = 1;
+}
+
 // Fetch the result of a previously executed query by its Snowflake Query ID.
 message ConnectionGetQueryResultRequest {
   ConnectionHandle conn_handle = 1;
@@ -717,6 +726,24 @@ message ConfigGetPathsResponse {
   string connections_file = 2;
 }
 
+// =============================================================================
+// TELEMETRY - In-band telemetry messages sent from wrappers via core
+// =============================================================================
+
+
+message TelemetrySendApiUsageRequest {
+  ConnectionHandle conn_handle = 1;
+  string api_method = 2;
+}
+
+message TelemetrySendWrapperErrorRequest {
+  ConnectionHandle conn_handle = 1;
+  string exception_type = 2;
+  string error_source = 3;
+}
+
+message TelemetrySendResponse {
+}
 
 // Database Driver service definition
 service DatabaseDriver {
@@ -759,6 +786,8 @@ service DatabaseDriver {
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core
   rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
+  // Heartbeat to validate connection and session are still alive
+  rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
@@ -778,4 +807,7 @@ service DatabaseDriver {
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 
+  // Telemetry operations
+  rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
+  rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendResponse);
 }

@@ -83,6 +83,7 @@ try {
     }
     $ctestArgs += $args
     ctest @ctestArgs
+    $ctestExit = $LASTEXITCODE
 }
 finally {
     if ($env:ODBC_TEST_SCHEMA) {
@@ -93,3 +94,4 @@ finally {
     }
     Pop-Location
 }
+if ($ctestExit -ne 0) { exit $ctestExit }

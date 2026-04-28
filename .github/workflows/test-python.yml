@@ -26,241 +26,13 @@ jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
 
-  # Build sf_core once per platform and share via artifact.
-  build_sf_core:
+  # ── Build all wheels via shared reusable workflow ────────────────────
+  build_wheels:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            lib_name: libsf_core.so
-          - os: windows-11-arm
-            lib_name: sf_core.dll
-    runs-on: ${{ matrix.os }}
-    name: build_sf_core (${{ matrix.os }})
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Restore Rust cache
-        id: rust-cache
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "sf-core-release"
-
-      - name: Capture vcpkg version for cache key
-        if: matrix.os == 'windows-11-arm'
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Restore vcpkg cache
-        if: matrix.os == 'windows-11-arm'
-        id: vcpkg-cache-sf-core
-        uses: actions/cache/restore@v5
-        with:
-          path: C:\vcpkg\installed
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
-
-      - name: Save vcpkg cache
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: C:\vcpkg\installed
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Configure ARM64 OpenSSL (static)
-        if: matrix.os == 'windows-11-arm'
-        shell: pwsh
-        run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-
-      - name: Build sf_core (Linux)
-        if: runner.os == 'Linux'
-        run: cargo build --release --package sf_core --config profile.release.opt-level=2
-
-      - name: Build sf_core (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          cargo build --release --package sf_core --config profile.release.strip=false --config profile.release.opt-level=2
-
-      - name: Save Rust cache
-        if: always()
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          shared-key: "sf-core-release"
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
-
-      - name: Upload sf_core library
-        uses: actions/upload-artifact@v4
-        with:
-          name: sf-core-${{ matrix.os }}
-          path: target/release/${{ matrix.lib_name }}
-
-  # Build Python wheel with compiled extensions for each OS/Python version.
-  # sf_core is pre-built by build_sf_core and downloaded as an artifact.
-  # NOTE: All Windows runners in this matrix are ARM64 (windows-11-arm).
-  # Steps conditioned on runner.os=='Windows' assume ARM64 semantics.
-  # If a non-ARM64 Windows runner is added, review all runner.os=='Windows' steps.
-  build_wheel:
-    needs: [detect-changes, build_sf_core]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
-      fail-fast: false
-      # Matrix is an explicit `include:` list of (os, py) pairs that are actually consumed
-      # downstream: each entry here maps 1-to-1 to a wheel downloaded by either python_tests
-      # or python_tests_reference. If you add a new test cell, add a matching build entry.
-      #
-      # Excluded combinations and why:
-      #   - ubuntu × 3.11, 3.12 : not exercised by python_tests
-      #   - windows-11-arm × 3.10, 3.14 : no native ARM64 Windows builds in uv
-      #     (revisit 3.14 once https://github.com/astral-sh/uv/releases ships ARM64 builds)
-      #   - windows-11-arm × 3.13 : not exercised by python_tests
-      matrix:
-        include:
-          - os: ubuntu-latest
-            py: "3.10"
-          - os: ubuntu-latest
-            py: "3.13"  # Reference combination consumed by python_tests_reference
-          - os: ubuntu-latest
-            py: "3.14"
-          - os: windows-11-arm
-            py: "3.11"
-          - os: windows-11-arm
-            py: "3.12"
-    runs-on: ${{ matrix.os }}
-    name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
-    env:
-      # Configure CMake for ARM64 on Windows ARM64 runners
-      CMAKE_GENERATOR_PLATFORM: ${{ matrix.os == 'windows-11-arm' && 'ARM64' || '' }}
-      SKIP_CORE_BUILD: "true"
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download pre-built sf_core
-        uses: actions/download-artifact@v4
-        with:
-          name: sf-core-${{ matrix.os }}
-          path: python/src/snowflake/connector/_core
-
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
-        with:
-          version: "0.9.28"
-
-      - name: Set up Python ${{ matrix.py }}
-        # On ARM64 Windows, uv defaults to x86_64 Python ("support for the native
-        # architecture (aarch64) is not yet mature"). This causes Cython extension
-        # linking to fail with unresolved Python C API symbols. Request ARM64 Python
-        # explicitly as uv suggests: cpython-X.Y-windows-aarch64-none
-        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
-
-      - name: Restore proto generator target cache
-        id: proto-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-proto-target-
-
-      - name: Build python wheel (Linux)
-        if: runner.os == 'Linux'
-        working-directory: ./python
-        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
-        env:
-          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
-
-      # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
-      # source via maturin. OpenSSL is needed for this dependency build.
-
-      - name: Capture vcpkg version for cache key (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        uses: ./.github/actions/vcpkg-version
-
-      # Restore vcpkg OpenSSL: avoids rebuilding from C source (~7 min per run).
-      - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        id: vcpkg-cache-build
-        uses: actions/cache/restore@v5
-        with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
-
-      - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Configure ARM64 OpenSSL (static)
-        if: matrix.os == 'windows-11-arm'
-        shell: pwsh
-        run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-
-      - name: Build python wheel (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        working-directory: ./python
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
-        env:
-          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}\proto-target
-
-      - name: Inspect wheel (Linux)
-        if: runner.os == 'Linux'
-        working-directory: ./python
-        run: uv run --python ${{ matrix.py }} python -m zipfile -l dist/*.whl
-
-      - name: Inspect wheel (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ./python
-        shell: pwsh
-        run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
-
-      - name: Save proto generator target cache
-        if: always() && steps.proto-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
-
-      - name: Upload Python wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
-          path: python/dist/*.whl
+    uses: ./.github/workflows/_build-python-wheels.yml
+    with:
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -314,6 +86,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -323,6 +98,12 @@ jobs:
 
       - name: Save core-target cache
         if: always() && steps.core-target-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: core-target
@@ -330,6 +111,12 @@ jobs:
 
       - name: Save proto-target cache
         if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: proto-target
@@ -337,16 +124,12 @@ jobs:
 
   # Combined unit + integration tests with universal connector
   python_tests:
-    needs: [detect-changes, build_wheel]
+    needs: [detect-changes, build_wheels]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: gcp
           - os: ubuntu-latest
             py: "3.10"
             hatch_env: "test"
@@ -360,6 +143,22 @@ jobs:
             hatch_env: "test"
             cloud_provider: aws
             result_format: json
+          - os: ubuntu-24.04-arm
+            py: "3.14"
+            hatch_env: "test"
+            cloud_provider: gcp
+          - os: ubuntu-24.04-arm
+            py: "3.11"
+            hatch_env: "test"
+            cloud_provider: aws
+          - os: windows-latest
+            py: "3.12"
+            hatch_env: "test"
+            cloud_provider: gcp
+          - os: windows-latest
+            py: "3.14"
+            hatch_env: "test"
+            cloud_provider: azure
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
@@ -374,7 +173,7 @@ jobs:
             cloud_provider: azure
           # test integration with Pandas
           - os: ubuntu-latest
-            py: "3.10"
+            py: "3.14"
             hatch_env: "test-pandas"
             cloud_provider: gcp
           - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
@@ -386,8 +185,12 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
             result_format: json
-          - os: ubuntu-latest
-            py: "3.14"
+          - os: windows-latest
+            py: "3.11"
+            hatch_env: "test-pandas"
+            cloud_provider: aws
+          - os: ubuntu-24.04-arm
+            py: "3.12"
             hatch_env: "test-pandas"
             cloud_provider: azure
     runs-on: ${{ matrix.os }}
@@ -416,6 +219,7 @@ jobs:
       # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
       # and improves hit rates.
       - name: Restore uv cache (Linux)
+        id: uv-cache-linux
         if: runner.os == 'Linux'
         uses: actions/cache/restore@v5
         with:
@@ -427,6 +231,7 @@ jobs:
             uv-${{ matrix.os }}-
 
       - name: Restore uv cache (Windows)
+        id: uv-cache-windows
         if: runner.os == 'Windows'
         uses: actions/cache/restore@v5
         with:
@@ -441,11 +246,28 @@ jobs:
         # See comment in build_wheel job — ARM64 Windows needs explicit arch request
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
-      - name: Download Python wheel
+      - name: Download wheel
+        if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
+          name: ${{ (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))) }}_py${{ matrix.py }}
           path: python/dist
+
+      - name: Download sdist
+        if: matrix.py == '3.10'
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist
+
+      # sdist installs build sf_core from source, so Rust is needed
+      - name: Restore Rust cache (sdist)
+        if: matrix.py == '3.10'
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sdist-test
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -453,66 +275,80 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
-      # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
-      # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
-      # the same reason we use static OpenSSL for sf_core in the build_wheel job.
-
-      - name: Capture vcpkg version for cache key (Windows ARM64)
+      - name: Setup OpenSSL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
-        uses: ./.github/actions/vcpkg-version
-
-      # Share the vcpkg cache with build_wheel so OpenSSL is not rebuilt here either.
-      - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        id: vcpkg-cache-test
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/setup-windows-openssl
         with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
-
-      - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+          arch: arm64
 
       - name: Configure ARM64 build environment
         if: matrix.os == 'windows-11-arm'
         shell: pwsh
         run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
           echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
           echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
+
+      - name: Setup OpenSSL (Windows x86_64)
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: x86_64
 
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.py != '3.10'
         working-directory: python
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        run: |
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
+          echo "Installing wheel: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from sdist (Linux)
+        if: runner.os == 'Linux' && matrix.py == '3.10'
+        working-directory: python
+        run: |
+          SDISTS=(dist/*.tar.gz)
+          if [[ ${#SDISTS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 sdist, found ${#SDISTS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${SDISTS[0]}"
+          echo "Installing sdist: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        env:
+          SKIP_CORE_BUILD: "false"
 
       - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.py != '3.10'
         working-directory: python
         shell: pwsh
         run: |
-          # On Windows, the dist/*.whl glob isn't expanded by the shell.
-          # Resolve the wheel path explicitly and pass via WHEEL_PATH env var.
-          $wheel = (Get-ChildItem dist/*.whl).FullName
-          $env:WHEEL_PATH = $wheel
+          $wheels = @(Get-ChildItem dist/*.whl)
+          if ($wheels.Count -ne 1) {
+            Write-Error "Expected exactly 1 wheel, found $($wheels.Count)"; Get-ChildItem dist/; exit 1
+          }
+          $env:WHEEL_PATH = $wheels[0].FullName
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from sdist (Windows)
+        if: runner.os == 'Windows' && matrix.py == '3.10'
+        working-directory: python
+        shell: pwsh
+        run: |
+          $sdists = @(Get-ChildItem dist/*.tar.gz)
+          if ($sdists.Count -ne 1) {
+            Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
+          }
+          $env:WHEEL_PATH = $sdists[0].FullName
+          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        env:
+          SKIP_CORE_BUILD: "false"
 
       - name: Run tests with coverage (Linux)
         if: runner.os == 'Linux'
@@ -572,7 +408,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_test_pats.py \
+          python scripts/cleanup_env.py \
             --parameter-path "${{ github.workspace }}/parameters.json"
 
       - name: Upload test results as GitHub artifact
@@ -592,22 +428,50 @@ jobs:
         run: uv cache prune --ci
 
       - name: Save uv cache (Linux)
-        if: always() && runner.os == 'Linux'
+        # Skip when the exact key was already restored. Note: prefix-key fallbacks
+        # (restore-keys) do not set cache-hit=true, so saves still run after a
+        # partial restore — which is the common case after a uv.lock change.
+        if: always() && runner.os == 'Linux' && steps.uv-cache-linux.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: /tmp/.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
       - name: Save uv cache (Windows)
-        if: always() && runner.os == 'Windows'
+        # Skip when the exact key was already restored.
+        if: always() && runner.os == 'Windows' && steps.uv-cache-windows.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
           key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
+      - name: Save Rust cache (sdist)
+        if: always() && matrix.py == '3.10'
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sdist-test
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
-    needs: [detect-changes, build_wheel]
+    needs: [detect-changes, build_wheels]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
@@ -644,10 +508,10 @@ jobs:
       - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
         run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
 
-      - name: Download Python wheel
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: python-wheel-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+          name: manylinux_x86_64_py${{ env.REFERENCE_PYTHON_VERSION }}
           path: python/dist
 
       - name: Decode secrets
@@ -731,8 +595,26 @@ jobs:
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
+  # ── Clean up intermediate artifacts ────────────────────────────────
+  cleanup:
+    needs: [build_wheels, python_tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete sf-core artifacts
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
+          | while read id; do
+              echo "Deleting artifact $id"
+              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+            done
+
   python-status:
-    needs: [detect-changes, build_sf_core, build_wheel, packaging_tests, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheels, packaging_tests, python_tests, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -749,14 +631,12 @@ jobs:
 
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
-          if [[ "${{ needs.build_sf_core.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
+          if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
-            echo "  - build_sf_core: ${{ needs.build_sf_core.result }}"
-            echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+            echo "  - build_wheels: ${{ needs.build_wheels.result }}"
             echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
@@ -766,8 +646,7 @@ jobs:
 
           # Tests ran and passed
           echo "✓ Python CI PASSED"
-          echo "  - build_sf_core: ${{ needs.build_sf_core.result }}"
-          echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+          echo "  - build_wheels: ${{ needs.build_wheels.result }}"
           echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"

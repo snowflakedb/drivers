@@ -1,0 +1,66 @@
+name: Setup OpenSSL on Windows
+description: >
+  Installs OpenSSL via vcpkg on Windows with caching.
+  Supports ARM64 and x86_64, static and dynamic linking.
+
+inputs:
+  arch:
+    description: "Target architecture: arm64 or x86_64"
+    required: true
+  linkage:
+    description: "Link mode: static (static-md triplet) or dynamic (shared DLLs)"
+    required: false
+    default: "static"
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve vcpkg triplet
+      id: triplet
+      shell: pwsh
+      run: |
+        $arch = if ("${{ inputs.arch }}" -eq "x86_64") { "x64" } else { "${{ inputs.arch }}" }
+        $triplet = "$arch-windows"
+        if ("${{ inputs.linkage }}" -eq "static") { $triplet += "-static-md" }
+        echo "value=$triplet" >> $env:GITHUB_OUTPUT
+
+    - name: Capture vcpkg version
+      uses: ./.github/actions/vcpkg-version
+
+    - name: Restore vcpkg OpenSSL cache
+      id: cache
+      uses: actions/cache/restore@v5
+      with:
+        path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}
+        key: vcpkg-openssl-${{ steps.triplet.outputs.value }}-${{ env.VCPKG_VER }}
+
+    - name: Install OpenSSL via vcpkg (ARM64)
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'arm64'
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+        vcpkg install openssl:${{ steps.triplet.outputs.value }}
+
+    - name: Install OpenSSL via vcpkg (x86_64)
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'x86_64'
+      shell: pwsh
+      run: vcpkg install openssl:${{ steps.triplet.outputs.value }}
+
+    - name: Save vcpkg OpenSSL cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}
+        key: vcpkg-openssl-${{ steps.triplet.outputs.value }}-${{ env.VCPKG_VER }}
+
+    - name: Configure OpenSSL environment
+      shell: pwsh
+      run: |
+        $dir = "C:\vcpkg\installed\${{ steps.triplet.outputs.value }}"
+        echo "OPENSSL_DIR=$dir" >> $env:GITHUB_ENV
+        echo "OPENSSL_LIB_DIR=$dir\lib" >> $env:GITHUB_ENV
+        if ("${{ inputs.linkage }}" -eq "static") {
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+        } else {
+          echo "$dir\bin" >> $env:GITHUB_PATH
+        }

@@ -13,7 +13,7 @@
 #
 set -euxo pipefail
 
-source ./scripts/version.sh
+source ./odbc/version.sh
 
 echo "=== Platform: $PLATFORM ==="
 
@@ -48,7 +48,7 @@ BUILD_DIR=build
 ODBC_DIR=/usr/lib64/snowflake/odbc
 STAGE_DIR=$(mktemp -d)
 trap 'rm -rf "$STAGE_DIR"' EXIT
-RPM_SCRIPTS_DIR=scripts/odbc/rpm
+RPM_SCRIPTS_DIR=odbc/installer/unix
 
 echo "=== Staging files in $STAGE_DIR ==="
 mkdir -p "$STAGE_DIR$ODBC_DIR/lib"

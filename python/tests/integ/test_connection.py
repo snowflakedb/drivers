@@ -510,3 +510,17 @@ class TestContextManagerAutocommit:
             cur.execute(f"INSERT INTO {table} VALUES (1)")
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             assert cur.fetchone() == (1,)
+
+
+class TestIsValid:
+    """Integration tests for Connection.is_valid()."""
+
+    def test_is_valid_returns_true_on_open_connection(self, connection):
+        """is_valid() should return True on a live connection."""
+        assert connection.is_valid() is True
+
+    def test_is_valid_returns_false_after_close(self, connection_factory):
+        """is_valid() should return False after the connection is closed."""
+        conn = connection_factory()
+        conn.close()
+        assert conn.is_valid() is False

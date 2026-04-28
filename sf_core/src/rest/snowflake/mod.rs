@@ -6,6 +6,7 @@ pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
+pub mod sql_state;
 pub mod telemetry;
 
 use std::collections::HashMap;
@@ -15,7 +16,8 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::auth::{
-    AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
+    AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
+    AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
@@ -182,6 +184,9 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
         client_app_version: login_parameters.client_info.version.clone(),
+        client_capabilities: AuthRequestClientCapabilities {
+            smk_id_as_string: true,
+        },
         client_environment: AuthRequestClientEnvironment {
             application: login_parameters.client_info.application.clone(),
             os: login_parameters.client_info.os.clone(),

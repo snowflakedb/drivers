@@ -72,7 +72,7 @@ class TestPrivateKeyAuthentication:
             )
 
         # Then There is error returned
-        verify_login_error(exception)
+        verify_login_error(exception, keywords=["jwt"])
 
     def test_should_authenticate_using_private_key_as_bytes(self, connection_factory):
         # Given Authentication is set to JWT and private key is provided as bytes
