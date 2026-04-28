@@ -33,8 +33,6 @@ runs:
       with:
         path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}
         key: vcpkg-openssl-${{ steps.triplet.outputs.value }}-${{ env.VCPKG_VER }}
-        restore-keys: |
-          vcpkg-openssl-${{ steps.triplet.outputs.value }}-
 
     - name: Install OpenSSL via vcpkg (ARM64)
       if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'arm64'

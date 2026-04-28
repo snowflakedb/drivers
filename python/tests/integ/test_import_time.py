@@ -7,7 +7,6 @@ from the test process do not affect the measurement.
 
 from __future__ import annotations
 
-import functools
 import platform
 import subprocess
 import sys
@@ -17,21 +16,9 @@ import pytest
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
-@functools.lru_cache(maxsize=1)
-def _is_rosetta() -> bool:
-    """Detect if running x86_64 under Rosetta 2 on Apple Silicon."""
-    if platform.system() != "Darwin" or platform.machine() != "x86_64":
-        return False
-    try:
-        result = subprocess.run(
-            ["sysctl", "-n", "sysctl.proc_translated"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.stdout.strip() == "1"
-    except Exception:
-        return False
+def _is_macos_x86_64() -> bool:
+    """Detect if running on macOS x86_64 (native Intel or Rosetta 2)."""
+    return platform.system() == "Darwin" and platform.machine() == "x86_64"
 
 
 _IMPORT_TIME_SCRIPT = """\
@@ -52,7 +39,7 @@ _MAX_IMPORT_TIME_SECONDS = 0.4 if IS_UNIVERSAL_DRIVER else 0.6
 class TestImportTime:
     """Verify that importing snowflake.connector.connect stays within budget."""
 
-    @pytest.mark.skipif(_is_rosetta(), reason="Import timing unreliable under Rosetta 2 emulation")
+    @pytest.mark.skipif(_is_macos_x86_64(), reason="Import timing unreliable on macOS x86_64 CI runners")
     def test_import_connect_time(self):
         """Importing ``from snowflake.connector import connect`` must complete
         within the allowed time budget.
