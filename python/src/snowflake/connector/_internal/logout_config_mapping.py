@@ -11,15 +11,6 @@ from enum import Enum
 from typing import Optional
 
 
-# Python backward-compat defaults (SNOW-2314152).
-# These mirror the old Python driver's behavior.
-# Core defaults (5s, Strict, no per-request timeout) apply when no wrapper overrides them
-# (see sf_core/src/config/logout.rs::Default for LogoutConfig).
-PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS = 15
-PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS = 3
-PYTHON_DEFAULT_LOGOUT_REQUEST_TIMEOUT_SECONDS = 5
-
-
 class LogoutOptionKeys(str, Enum):
     """Core API option key strings for logout configuration.
 
@@ -64,9 +55,9 @@ class LogoutConfig:
     server_session_keep_alive: Optional[bool]
     enable_server_session_keep_alive_auto_detection: Optional[bool]
     error_strategy: ErrorStrategy = ErrorStrategy.BEST_EFFORT
-    logout_total_timeout_seconds: int = PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS
-    max_attempts: Optional[int] = PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS
-    logout_request_timeout_seconds: Optional[int] = PYTHON_DEFAULT_LOGOUT_REQUEST_TIMEOUT_SECONDS
+    logout_total_timeout_seconds: Optional[int] = None  # Core default: 15s
+    max_attempts: Optional[int] = None  # Core default: 3
+    logout_request_timeout_seconds: Optional[int] = None  # Core default: None (total budget only)
 
     @classmethod
     def from_kwargs(cls, kwargs: dict) -> "LogoutConfig":
@@ -101,7 +92,8 @@ class LogoutConfig:
                 self.enable_server_session_keep_alive_auto_detection
             )
         options[LogoutOptionKeys.LOGOUT_ERROR_STRATEGY] = self.error_strategy.value
-        options[LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS] = self.logout_total_timeout_seconds
+        if self.logout_total_timeout_seconds is not None:
+            options[LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS] = self.logout_total_timeout_seconds
         if self.max_attempts is not None:
             options[LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS] = self.max_attempts
         if self.logout_request_timeout_seconds is not None:

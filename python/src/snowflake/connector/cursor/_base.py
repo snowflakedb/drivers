@@ -637,9 +637,11 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         options = {}
         for key, value in self._statement_parameters.items():
             try:
-                options[key] = create_config_setting(value)
+                setting = create_config_setting(value)
             except TypeError as err:
                 raise TypeError(f"Cannot set parameter '{key}': {err}") from err
+            if setting is not None:
+                options[key] = setting
 
         # Send single RPC with all options
         request = StatementSetOptionsRequest(stmt_handle=stmt_handle, options=options)

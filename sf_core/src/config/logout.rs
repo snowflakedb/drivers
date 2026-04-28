@@ -54,17 +54,16 @@ pub struct LogoutConfig {
 }
 
 impl Default for LogoutConfig {
-    /// Core defaults apply when no language wrapper overrides them.
-    /// Language wrappers typically set their own defaults for backward compat:
-    /// e.g. Python sets BestEffort, 15s timeout, 3 attempts
-    /// (see python/.../logout_config_mapping.py::remap_keep_alive_for_backward_compat).
+    /// Core is the single source of truth for logout defaults.
+    /// Language wrappers override only error_strategy (Python uses BestEffort);
+    /// timeout and attempt defaults are owned by Core.
     fn default() -> Self {
         Self {
             server_session_keep_alive: None,
             enable_server_session_keep_alive_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
-            logout_total_timeout: Duration::from_secs(5),
-            max_attempts: Some(3), // DD-specified default; wrappers may override
+            logout_total_timeout: Duration::from_secs(15),
+            max_attempts: Some(3),
             logout_request_timeout: None,
         }
     }
