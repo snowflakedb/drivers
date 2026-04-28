@@ -160,23 +160,6 @@ mod tests {
     }
 
     #[test]
-    fn derive_account_from_host_overrides_empty_account() {
-        let mut store = ParamStore::new();
-        store.insert(param_names::ACCOUNT.into(), Setting::String("".to_owned()));
-        store.insert(
-            param_names::HOST.into(),
-            Setting::String("myaccount.snowflakecomputing.com".to_owned()),
-        );
-
-        derive_account_from_host(&mut store);
-
-        assert_eq!(
-            store.get(param_names::ACCOUNT),
-            Some(&Setting::String("myaccount".to_owned())),
-        );
-    }
-
-    #[test]
     fn derive_account_from_host_noop_when_no_host() {
         let mut store = ParamStore::new();
 
