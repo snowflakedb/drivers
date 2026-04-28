@@ -6,6 +6,48 @@ use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 
+/// If `account` is not explicitly set but `host` (or `server_url`) is available,
+/// derive the account identifier from the hostname — matching the legacy
+/// `snowflake-odbc` driver behavior.
+///
+/// The algorithm is:
+///   1. Take everything before the first `.` in the host.
+///   2. If the host contains `.global.`, strip the external-ID suffix after the
+///      last `-` in that first token.
+///
+/// Must be called **before** [`normalize_host_underscores`] so that the
+/// underscore normalization can see the derived account.
+pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
+    if store.get(param_names::ACCOUNT).is_some() {
+        return;
+    }
+
+    let host_opt = store.get(param_names::HOST).and_then(|h| h.as_string());
+
+    let Some(host) = host_opt else {
+        return;
+    };
+
+    let first_label = host.split('.').next().unwrap_or(host);
+    if first_label.is_empty() {
+        return;
+    }
+
+    let account = if host.contains(".global.") {
+        first_label
+            .rfind('-')
+            .map_or(first_label, |i| &first_label[..i])
+    } else {
+        first_label
+    };
+
+    tracing::debug!(derived_account = %account, host = %host, "Derived account from host");
+    store.insert(
+        param_names::ACCOUNT.into(),
+        Setting::String(account.to_owned()),
+    );
+}
+
 /// Resolve final settings by merging explicit settings with file-based
 /// config and registry defaults.
 ///
@@ -22,7 +64,9 @@ use crate::config::settings::Setting;
 /// loaded and merged underneath.
 pub fn resolve(explicit: &ParamStore) -> Result<ParamStore, ConfigError> {
     let paths = crate::config::path_resolver::get_config_paths()?;
-    resolve_with_paths(explicit, &paths)
+    let mut resolved = resolve_with_paths(explicit, &paths)?;
+    derive_account_from_host(&mut resolved);
+    Ok(resolved)
 }
 
 /// Same as [`resolve`] but accepts explicit config file paths (for testing).

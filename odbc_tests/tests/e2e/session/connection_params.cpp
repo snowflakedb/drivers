@@ -23,8 +23,6 @@ static std::string get_connection_string_without_account() {
 }
 
 TEST_CASE("Connect with SERVER only, no ACCOUNT parameter", "[session][account]") {
-  SKIP_OLD_DRIVER("", "Legacy driver already supports this");
-
   auto conn_str = get_connection_string_without_account();
 
   // Should succeed — driver extracts account from SERVER hostname
@@ -37,8 +35,6 @@ TEST_CASE("Connect with SERVER only, no ACCOUNT parameter", "[session][account]"
 }
 
 TEST_CASE("Connect with SERVER only derives correct account", "[session][account]") {
-  SKIP_OLD_DRIVER("", "Legacy driver already supports this");
-
   auto conn_str = get_connection_string_without_account();
 
   Connection conn(conn_str);
