@@ -58,7 +58,11 @@ pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jin
     let layer = sflogger_layer::SFLoggerLayer::new(jvm);
     let sessions = SessionRegistry::default();
     // TODO: with_app_sink + sessions, why clone?
-    match sf_core::logging::LogManager::with_app_sink(sf_core::logging::LogConfig::default(), layer, sessions.clone()) {
+    match sf_core::logging::LogManager::with_app_sink(
+        sf_core::logging::LoggingConfig::default(),
+        layer,
+        sessions.clone(),
+    ) {
         Ok(provider) => {
             JDBC_TELEMETRY
                 .set(TelemetryInit { provider, sessions })

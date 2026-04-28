@@ -1,9 +1,14 @@
+use opentelemetry::trace::TracerProvider;
+use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{Layer, Registry};
 
+use crate::telemetry::TelemetryInit;
+use crate::telemetry::snowflake_exporter::SessionRegistry;
+
 use super::error::{InitSnafu, LogError};
-use super::{EmptyLayer, LogConfig};
+use super::{EmptyLayer, LoggingConfig};
 
 type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 
@@ -18,56 +23,73 @@ pub struct LogManager {
 }
 
 impl LogManager {
-    /// Initialise logging with the given config and no application sink.
-    pub fn init(config: LogConfig) {
-        Self::do_init(config, None::<EmptyLayer>);
+    /// Initialise logging with the given config, creating a fresh
+    /// `SessionRegistry` so the Snowflake telemetry layer is always
+    /// installed.
+    pub fn init(config: LoggingConfig) -> Result<TelemetryInit, LogError> {
+        let sessions = SessionRegistry::default();
+        let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
+            .expect("provider is always Some when sessions are provided");
+        Ok(TelemetryInit { provider, sessions })
     }
 
     /// Initialise logging with an application-provided sink (e.g.
     /// `CallbackLayer`, `SFLoggerLayer`) that receives events in parallel
     /// with the core file layer.
-    pub fn with_app_sink<L>(config: LogConfig, app_sink: L)
+    pub fn with_app_sink<L>(
+        config: LoggingConfig,
+        app_sink: L,
+        registry: SessionRegistry,
+    ) -> Result<opentelemetry_sdk::trace::SdkTracerProvider, LogError>
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
-        Self::do_init(config, Some(app_sink));
+        Self::try_init(config, Some(app_sink), Some(registry))
+            .map(|p| p.expect("provider is always Some when registry is Some"))
     }
 
     /// Factory: find and parse `sf.odbc.ini`, falling back to defaults.
-    pub fn for_odbc() {
+    pub fn for_odbc() -> Option<TelemetryInit> {
         let config = match super::ini_config::find_odbc_ini() {
             Some(path) => super::ini_config::parse_ini_file(&path).unwrap_or_else(|e| {
                 eprintln!(
                     "Failed to parse sf.odbc.ini at {}: {e:?}, using defaults",
                     path.display()
                 );
-                LogConfig::default()
+                LoggingConfig::default()
             }),
-            None => LogConfig::default(),
+            None => LoggingConfig::default(),
         };
-        Self::init(config);
+        match Self::init(config) {
+            Ok(telemetry) => Some(telemetry),
+            Err(e) => {
+                eprintln!("Failed to initialize logging: {e:?}");
+                None
+            }
+        }
     }
 
     /// Factory: load `[log]` section from `config.toml`, falling back to
     /// defaults.
-    pub fn for_toml() {
+    pub fn for_toml() -> Option<TelemetryInit> {
         let config = match crate::config::config_manager::load_config_section("log") {
             Ok(Some(section)) => super::ini_config::load_from_toml_section(&section),
-            _ => LogConfig::default(),
+            _ => LoggingConfig::default(),
         };
-        Self::init(config);
-    }
-
-    fn do_init<L>(config: LogConfig, app_sink: Option<L>)
-    where
-        L: Layer<Registry> + Send + Sync + 'static,
-    {
-        if let Err(e) = Self::try_init(config, app_sink) {
-            eprintln!("Failed to initialize logging: {e:?}");
+        match Self::init(config) {
+            Ok(telemetry) => Some(telemetry),
+            Err(e) => {
+                eprintln!("Failed to initialize logging: {e:?}");
+                None
+            }
         }
     }
 
-    fn try_init<L>(config: LogConfig, app_sink: Option<L>) -> Result<(), LogError>
+    fn try_init<L>(
+        config: LoggingConfig,
+        app_sink: Option<L>,
+        registry: Option<SessionRegistry>,
+    ) -> Result<Option<opentelemetry_sdk::trace::SdkTracerProvider>, LogError>
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
@@ -79,8 +101,37 @@ impl LogManager {
             layers.push(sink.boxed());
         }
 
-        if config.opentelemetry {
+        if config.open_telemetry {
             layers.push(OpenTelemetryLayer::new(super::opentelemetry::init_tracer()?).boxed());
+        }
+
+        let (snowflake_layer, provider) = if let Some(sessions) = registry {
+            let exporter =
+                crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
+            let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_simple_exporter(exporter)
+                .build();
+            let tracer = provider.tracer("snowflake.telemetry");
+            let layer =
+                OpenTelemetryLayer::new(tracer).with_filter(tracing_subscriber::filter::filter_fn(
+                    |metadata| metadata.name() == "connection" || metadata.is_event(),
+                ));
+            (Some(layer), Some(provider))
+        } else {
+            (None, None)
+        };
+
+        if let Some(layer) = snowflake_layer {
+            layers.push(layer.boxed());
+        }
+
+        if config.stderr {
+            layers.push(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_filter(LevelFilter::ERROR)
+                    .boxed(),
+            );
         }
 
         #[cfg(feature = "perf_timing")]
@@ -95,10 +146,10 @@ impl LogManager {
             .build()
         })?;
 
-        Ok(())
+        Ok(provider)
     }
 
-    fn build_core_layer(config: &LogConfig) -> Result<BoxedLayer, LogError> {
+    fn build_core_layer(config: &LoggingConfig) -> Result<BoxedLayer, LogError> {
         if !config.enabled {
             return Ok(EmptyLayer.boxed());
         }

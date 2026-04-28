@@ -4,15 +4,15 @@ use std::path::{Path, PathBuf};
 use ini::Ini;
 use tracing::level_filters::LevelFilter;
 
-use super::LogConfig;
+use super::LoggingConfig;
 use super::error::{ConfigParseSnafu, LogError};
 use crate::config::settings::Setting;
 
-/// Parse an `sf.odbc.ini`-style INI file into a [`LogConfig`].
+/// Parse an `sf.odbc.ini`-style INI file into a [`LoggingConfig`].
 ///
 /// Supported keys (case-sensitive):
 /// `LogLevel`, `LogPath`, `LogFile`, `LogMaxSize`, `LogMaxCount`, `LogEnabled`.
-pub fn parse_ini_file(path: &Path) -> Result<LogConfig, LogError> {
+pub fn parse_ini_file(path: &Path) -> Result<LoggingConfig, LogError> {
     let ini = Ini::load_from_file_noescape(path).map_err(|e| {
         ConfigParseSnafu {
             message: format!("failed to load {}: {e}", path.display()),
@@ -22,8 +22,8 @@ pub fn parse_ini_file(path: &Path) -> Result<LogConfig, LogError> {
     apply_ini_section(ini.general_section())
 }
 
-/// Parse INI content (key=value lines) into a [`LogConfig`].
-pub fn parse_ini_content(content: &str) -> Result<LogConfig, LogError> {
+/// Parse INI content (key=value lines) into a [`LoggingConfig`].
+pub fn parse_ini_content(content: &str) -> Result<LoggingConfig, LogError> {
     let ini = Ini::load_from_str_noescape(content).map_err(|e| {
         ConfigParseSnafu {
             message: format!("failed to parse INI content: {e}"),
@@ -33,9 +33,9 @@ pub fn parse_ini_content(content: &str) -> Result<LogConfig, LogError> {
     apply_ini_section(ini.general_section())
 }
 
-/// Map INI properties to a [`LogConfig`].
-fn apply_ini_section(props: &ini::Properties) -> Result<LogConfig, LogError> {
-    let mut config = LogConfig::default();
+/// Map INI properties to a [`LoggingConfig`].
+fn apply_ini_section(props: &ini::Properties) -> Result<LoggingConfig, LogError> {
+    let mut config = LoggingConfig::default();
     for (key, value) in props.iter() {
         match key {
             "LogLevel" => config.level = parse_level(value)?,
@@ -50,10 +50,10 @@ fn apply_ini_section(props: &ini::Properties) -> Result<LogConfig, LogError> {
     Ok(config)
 }
 
-/// Build a [`LogConfig`] from a TOML `[log]` section loaded via
+/// Build a [`LoggingConfig`] from a TOML `[log]` section loaded via
 /// [`crate::config::config_manager::load_config_section`].
-pub fn load_from_toml_section(section: &HashMap<String, Setting>) -> LogConfig {
-    let mut config = LogConfig::default();
+pub fn load_from_toml_section(section: &HashMap<String, Setting>) -> LoggingConfig {
+    let mut config = LoggingConfig::default();
 
     if let Some(Setting::String(level)) = section.get("level")
         && let Ok(l) = parse_level(level)
@@ -80,7 +80,7 @@ pub fn load_from_toml_section(section: &HashMap<String, Setting>) -> LogConfig {
         config.enabled = *enabled;
     }
     if let Some(Setting::Bool(otel)) = section.get("opentelemetry") {
-        config.opentelemetry = *otel;
+        config.open_telemetry = *otel;
     }
 
     config

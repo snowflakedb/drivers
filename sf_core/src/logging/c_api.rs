@@ -1,5 +1,5 @@
 use crate::logging;
-use crate::logging::{LogConfig, LogManager};
+use crate::logging::{LogManager, LoggingConfig};
 
 #[cfg(not(feature = "protobuf"))]
 use crate::telemetry::snowflake_exporter::SessionRegistry;
@@ -22,7 +22,7 @@ pub extern "C" fn sf_core_init_logger(callback: logging::CLogCallback) -> u32 {
     let sessions = SessionRegistry::default();
 
     // TODO: with_app_sink (sessions, returning instance)
-    match LogManager::with_app_sink(LogConfig::default(), layer, sessions) {
+    match LogManager::with_app_sink(LoggingConfig::default(), layer, sessions) {
         Ok(provider) => {
             #[cfg(feature = "protobuf")]
             crate::protobuf::c_api::set_telemetry_provider(provider);
