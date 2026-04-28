@@ -576,36 +576,17 @@ unsafe fn do_test_connection(dlg: HWND) {
     };
 
     let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
-    let server = unsafe { get_dlg_text(dlg, IDC_HOSTEDIT) };
-    let uid = unsafe { get_dlg_text(dlg, IDC_UIDEDIT) };
     let pwd = unsafe { get_dlg_text(dlg, IDC_PWDEDIT) };
-    let db = unsafe { get_dlg_text(dlg, IDC_DBEDIT) };
-    let schema = unsafe { get_dlg_text(dlg, IDC_SCHEMAEDIT) };
-    let warehouse = unsafe { get_dlg_text(dlg, IDC_WAREHOUSEEDIT) };
-    let role = unsafe { get_dlg_text(dlg, IDC_ROLEEDIT) };
-    let authenticator = unsafe { get_dlg_text(dlg, IDC_AUTHENTICATOREDIT) };
 
-    let mut conn_str = format!("DSN={dsn};DRIVER={{{driver_name}}};SERVER={server}");
-    if !uid.is_empty() {
-        conn_str.push_str(&format!(";UID={uid}"));
+    let mut conn_str = format!("DSN={dsn};DRIVER={{{driver_name}}}");
+    for &(ctl_id, key) in FIELD_MAP {
+        let val = unsafe { get_dlg_text(dlg, ctl_id) };
+        if !val.is_empty() {
+            conn_str.push_str(&format!(";{key}={val}"));
+        }
     }
     if !pwd.is_empty() {
         conn_str.push_str(&format!(";PWD={pwd}"));
-    }
-    if !db.is_empty() {
-        conn_str.push_str(&format!(";DATABASE={db}"));
-    }
-    if !schema.is_empty() {
-        conn_str.push_str(&format!(";SCHEMA={schema}"));
-    }
-    if !warehouse.is_empty() {
-        conn_str.push_str(&format!(";WAREHOUSE={warehouse}"));
-    }
-    if !role.is_empty() {
-        conn_str.push_str(&format!(";ROLE={role}"));
-    }
-    if !authenticator.is_empty() {
-        conn_str.push_str(&format!(";AUTHENTICATOR={authenticator}"));
     }
 
     let result = unsafe { attempt_odbc_connection(&conn_str) };
