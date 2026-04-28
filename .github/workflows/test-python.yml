@@ -32,7 +32,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -131,10 +131,6 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: ubuntu-latest
             py: "3.10"
             hatch_env: "test"
             cloud_provider: azure
@@ -147,6 +143,14 @@ jobs:
             hatch_env: "test"
             cloud_provider: aws
             result_format: json
+          - os: ubuntu-24.04-arm
+            py: "3.14"
+            hatch_env: "test"
+            cloud_provider: gcp
+          - os: ubuntu-24.04-arm
+            py: "3.11"
+            hatch_env: "test"
+            cloud_provider: aws
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
@@ -161,7 +165,7 @@ jobs:
             cloud_provider: azure
           # test integration with Pandas
           - os: ubuntu-latest
-            py: "3.10"
+            py: "3.14"
             hatch_env: "test-pandas"
             cloud_provider: gcp
           - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
@@ -173,8 +177,8 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
             result_format: json
-          - os: ubuntu-latest
-            py: "3.14"
+          - os: ubuntu-24.04-arm
+            py: "3.12"
             hatch_env: "test-pandas"
             cloud_provider: azure
     runs-on: ${{ matrix.os }}
@@ -234,7 +238,7 @@ jobs:
         if: matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64')) }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist

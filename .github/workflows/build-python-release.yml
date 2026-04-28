@@ -14,7 +14,7 @@ jobs:
   build_wheels:
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # ── Test wheels and sdist against cloud providers ───────────────────
   # Each Python version tested once per env, cloud providers distributed evenly.
@@ -37,6 +37,18 @@ jobs:
           - { os: ubuntu-latest,   py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: ubuntu-latest,   py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-latest,   py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          # Linux ARM64 — test env
+          - { os: ubuntu-24.04-arm, py: "3.10", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: ubuntu-24.04-arm, py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
+          # Linux ARM64 — test-pandas env
+          - { os: ubuntu-24.04-arm, py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: ubuntu-24.04-arm, py: "3.11", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
           # Windows ARM64 (no test-pandas — pyarrow has no win_arm64 wheel)
           - { os: windows-11-arm,  py: "3.11", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-11-arm,  py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
@@ -77,7 +89,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.py != '3.10'
         uses: actions/download-artifact@v4
         with:
-          name: manylinux_x86_64_py${{ matrix.py }}
+          name: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download wheel (Windows ARM64)
