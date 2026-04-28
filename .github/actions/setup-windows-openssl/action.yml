@@ -49,7 +49,6 @@ runs:
     - name: Save vcpkg OpenSSL cache
       if: steps.cache.outputs.cache-hit != 'true'
       continue-on-error: true
-      timeout-minutes: 10
       env:
         ZSTD_NBTHREADS: '2'
       uses: actions/cache/save@v5
