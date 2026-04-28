@@ -107,6 +107,19 @@ class DriverDll {
   }
 };
 
+/// RAII guard that removes a DSN from the registry on destruction,
+/// ensuring cleanup even when a test assertion fails midway.
+class DsnGuard {
+  std::string dsn_;
+
+ public:
+  explicit DsnGuard(const std::string& dsn) : dsn_(dsn) {}
+  ~DsnGuard() { SQLRemoveDSNFromIniA(dsn_.c_str()); }
+
+  DsnGuard(const DsnGuard&) = delete;
+  DsnGuard& operator=(const DsnGuard&) = delete;
+};
+
 // ============================================================================
 // ConfigDriver tests
 // ============================================================================
@@ -135,6 +148,7 @@ TEST_CASE("ConfigDSNW: add and remove a DSN", "[odbc-api][setup-dll][config-dsn]
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
   std::string dsn = random_dsn_name();
+  DsnGuard guard(dsn);
   std::wstring driver = L"Snowflake ODBC UD";
 
   auto attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "test.snowflake.com"}});
@@ -153,6 +167,7 @@ TEST_CASE("ConfigDSNW: modify an existing DSN", "[odbc-api][setup-dll][config-ds
   DriverDll dll;
   auto config_dsn_w = dll.get<ConfigDSNWFn>("ConfigDSNW");
   std::string dsn = random_dsn_name();
+  DsnGuard guard(dsn);
   std::wstring driver = L"Snowflake ODBC UD";
 
   auto add_attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "old.snowflake.com"}, {"UID", "user1"}});
@@ -165,9 +180,6 @@ TEST_CASE("ConfigDSNW: modify an existing DSN", "[odbc-api][setup-dll][config-ds
   REQUIRE(ret == 1);
   REQUIRE(read_dsn_value(dsn, "SERVER") == "new.snowflake.com");
   REQUIRE(read_dsn_value(dsn, "UID") == "user2");
-
-  auto rm_attrs = build_attrs_w({{"DSN", dsn}});
-  config_dsn_w(nullptr, ODBC_REMOVE_DSN, driver.c_str(), rm_attrs.data());
 }
 
 TEST_CASE("ConfigDSNW: returns FALSE with missing DSN attribute", "[odbc-api][setup-dll][config-dsn]") {
@@ -207,6 +219,7 @@ TEST_CASE("ConfigDSN (ANSI): add and remove a DSN", "[odbc-api][setup-dll][confi
   DriverDll dll;
   auto config_dsn = dll.get<ConfigDSNFn>("ConfigDSN");
   std::string dsn = random_dsn_name();
+  DsnGuard guard(dsn);
 
   auto attrs = build_attrs_a({{"DSN", dsn}, {"SERVER", "ansi.snowflake.com"}});
   int ret = config_dsn(nullptr, ODBC_ADD_DSN, "Snowflake ODBC UD", attrs.data());
