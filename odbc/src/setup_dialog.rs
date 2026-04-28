@@ -80,11 +80,39 @@ unsafe extern "system" {
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> *mut core::ffi::c_void;
 }
 
-// odbccp32.dll and odbc32.dll are loaded dynamically to avoid putting them
-// in the driver DLL's PE import table.  The ODBC Driver Manager (odbc32.dll)
-// normally loads drivers, so a driver must not statically import it.
-// odbccp32.dll is also loaded on-demand to avoid interfering with DLL
-// loader initialization order when the driver is loaded via LoadLibrary.
+// odbccp32.dll (ODBC Installer API) — linked via raw-dylib so the linker
+// generates thin import stubs without requiring an import library.
+#[cfg_attr(
+    target_arch = "x86",
+    link(
+        name = "odbccp32",
+        kind = "raw-dylib",
+        import_name_type = "undecorated"
+    )
+)]
+#[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
+unsafe extern "system" {
+    fn SQLGetPrivateProfileStringW(
+        lpszSection: *const u16,
+        lpszEntry: *const u16,
+        lpszDefault: *const u16,
+        lpszRetBuffer: *mut u16,
+        cchRetBuffer: i32,
+        lpszFilename: *const u16,
+    ) -> i32;
+    fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> BOOL;
+    fn SQLWritePrivateProfileStringW(
+        lpszSection: *const u16,
+        lpszEntry: *const u16,
+        lpszString: *const u16,
+        lpszFilename: *const u16,
+    ) -> BOOL;
+    fn SQLValidDSNW(lpszDSN: *const u16) -> BOOL;
+}
+
+// odbc32.dll (ODBC Driver Manager) is loaded dynamically to avoid putting it
+// in the driver DLL's PE import table.  The Driver Manager loads drivers, so
+// a driver must not statically import it (circular dependency).
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn LoadLibraryW(lpLibFileName: *const u16) -> *mut core::ffi::c_void;
@@ -97,40 +125,6 @@ unsafe extern "system" {
 unsafe fn sym(h: *mut core::ffi::c_void, name: &[u8]) -> Option<*mut core::ffi::c_void> {
     let p = unsafe { GetProcAddress(h, name.as_ptr()) };
     if p.is_null() { None } else { Some(p) }
-}
-
-// --- odbccp32.dll (ODBC Installer API) ---
-
-type SQLGetPrivateProfileStringWFn =
-    unsafe extern "system" fn(*const u16, *const u16, *const u16, *mut u16, i32, *const u16) -> i32;
-type SQLWriteDSNToIniWFn = unsafe extern "system" fn(*const u16, *const u16) -> BOOL;
-type SQLWritePrivateProfileStringWFn =
-    unsafe extern "system" fn(*const u16, *const u16, *const u16, *const u16) -> BOOL;
-type SQLValidDSNWFn = unsafe extern "system" fn(*const u16) -> BOOL;
-
-struct InstallerApi {
-    get_profile: SQLGetPrivateProfileStringWFn,
-    write_dsn: SQLWriteDSNToIniWFn,
-    write_profile: SQLWritePrivateProfileStringWFn,
-    valid_dsn: SQLValidDSNWFn,
-}
-
-impl InstallerApi {
-    unsafe fn load() -> Option<Self> {
-        let name = to_wide("odbccp32.dll");
-        let h = unsafe { LoadLibraryW(name.as_ptr()) };
-        if h.is_null() {
-            return None;
-        }
-        unsafe {
-            Some(Self {
-                get_profile: std::mem::transmute(sym(h, b"SQLGetPrivateProfileStringW\0")?),
-                write_dsn: std::mem::transmute(sym(h, b"SQLWriteDSNToIniW\0")?),
-                write_profile: std::mem::transmute(sym(h, b"SQLWritePrivateProfileStringW\0")?),
-                valid_dsn: std::mem::transmute(sym(h, b"SQLValidDSNW\0")?),
-            })
-        }
-    }
 }
 
 // --- odbc32.dll (ODBC Driver Manager, for Test button only) ---
@@ -331,16 +325,13 @@ fn sql_succeeded(rc: i16) -> bool {
 // ---------------------------------------------------------------------------
 
 unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
-    let Some(api) = (unsafe { InstallerApi::load() }) else {
-        return String::new();
-    };
     let dsn_w = to_wide(dsn);
     let key_w = to_wide(key);
     let default_w = to_wide("");
     let filename_w = to_wide("odbc.ini");
     let mut buf = [0u16; 512];
     unsafe {
-        (api.get_profile)(
+        SQLGetPrivateProfileStringW(
             dsn_w.as_ptr(),
             key_w.as_ptr(),
             default_w.as_ptr(),
@@ -353,12 +344,9 @@ unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
 }
 
 unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)]) -> bool {
-    let Some(api) = (unsafe { InstallerApi::load() }) else {
-        return false;
-    };
     let dsn_w = to_wide(dsn);
     let driver_w = to_wide(driver);
-    if unsafe { (api.write_dsn)(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
+    if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
         return false;
     }
     let odbc_ini = to_wide("odbc.ini");
@@ -369,7 +357,7 @@ unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)])
         let key_w = to_wide(key);
         let val_w = to_wide(value);
         unsafe {
-            (api.write_profile)(
+            SQLWritePrivateProfileStringW(
                 dsn_w.as_ptr(),
                 key_w.as_ptr(),
                 val_w.as_ptr(),
@@ -459,8 +447,7 @@ unsafe extern "system" fn config_dialog_proc(
                         let ctx = unsafe { &mut *ctx_ptr };
                         let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
                         let dsn_w = to_wide(&dsn);
-                        let valid = unsafe { InstallerApi::load() }
-                            .map_or(false, |api| unsafe { (api.valid_dsn)(dsn_w.as_ptr()) } != 0);
+                        let valid = unsafe { SQLValidDSNW(dsn_w.as_ptr()) } != 0;
                         if dsn.is_empty() || !valid {
                             let msg = to_wide("Invalid Data Source Name.");
                             let cap = to_wide("Error");
