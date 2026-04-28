@@ -34,20 +34,11 @@ Feature: VECTOR type support
       | FLOAT-5d  | [1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)      | [1.8, -3.4, 6.7, 0, 2.3]|
 
   @python_e2e
-  Scenario: should select large dimension vector
+  Scenario: should select vector special values
+    # Special values: NULL vectors and max-dimension (4096) vector
     Given Snowflake client is logged in
-    When Query generating a 256-dimension FLOAT vector is executed
-    Then Result should contain a 256-element float vector
-
-  # =========================================================================== #
-  #                             NULL handling                                   #
-  # =========================================================================== #
-
-  @python_e2e
-  Scenario: should handle NULL vector values from literals
-    Given Snowflake client is logged in
-    When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)" is executed
-    Then Result should contain [[1, 2, 3], NULL, NULL]
+    When Query selecting special vector values is executed
+    Then NULL vectors should return None and max-dimension vector should be valid
 
   # =========================================================================== #
   #                           Table operations                                  #
@@ -89,3 +80,10 @@ Feature: VECTOR type support
     When Vector values are inserted using parameter binding
     And Query "SELECT * FROM <table> ORDER BY id" is executed
     Then Result should contain the bound vector values
+
+  @python_e2e
+  Scenario: should insert and select vectors using batch parameter binding
+    Given Snowflake client is logged in
+    And Table with VECTOR columns exists
+    When Vector values are bulk-inserted using multirow binding
+    Then SELECT should return the inserted vector values
