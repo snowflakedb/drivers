@@ -60,6 +60,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -98,6 +101,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -186,11 +192,26 @@ jobs:
         continue-on-error: true
         run: |
           python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_test_pats.py \
+          python scripts/cleanup_env.py \
             --parameter-path $(pwd)/parameters.json
+
+      - name: Trim tarpaulin artifacts before cache save
+        if: always()
+        shell: bash
+        run: |
+          # Tarpaulin instruments every build artifact which roughly doubles
+          # the target/ size (~14 GB).  These instrumented binaries are not
+          # reusable across runs, so strip them to keep the cache under the
+          # GitHub Actions runner disk budget (~14 GB free).
+          rm -rf target/tarpaulin || true
+          # Also remove profraw files left by coverage runs
+          find target -name '*.profraw' -delete 2>/dev/null || true
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -228,39 +249,11 @@ jobs:
           mode: restore
           shared-key: "arm64-nonfips"
 
-      - name: Capture vcpkg version for cache key
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Restore vcpkg ARM64 OpenSSL cache
-        id: vcpkg-cache
-        uses: actions/cache/restore@v5
+      - name: Setup OpenSSL (Windows ARM64)
+        uses: ./.github/actions/setup-windows-openssl
         with:
-          path: C:\vcpkg\installed\arm64-windows
-          key: windows-11-arm-vcpkg-openssl-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL via vcpkg
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          :: Build native ARM64 OpenSSL from source. The pre-installed OpenSSL is
-          :: x64-only (no static libs, DLLs cause error 193 at runtime).
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows
-
-      - name: Save vcpkg ARM64 OpenSSL cache
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: C:\vcpkg\installed\arm64-windows
-          key: windows-11-arm-vcpkg-openssl-${{ env.VCPKG_VER }}
-
-      - name: Configure OpenSSL
-        shell: pwsh
-        run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
-          # Add vcpkg bin to PATH so ARM64 OpenSSL DLLs are found at runtime
-          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
+          arch: arm64
+          linkage: dynamic
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -346,17 +339,54 @@ jobs:
           name: windows-arm64-diagnostics
           path: windows-arm64-diagnostics/
           if-no-files-found: warn
+
+      # snowflake-connector-python pulls in `cryptography`, which has no working
+      # pre-built Windows ARM64 wheel (pyca/cryptography#14216 dropped official
+      # arm64 wheel publishing in early 2026). We follow the same pattern as
+      # test-python.yml and build cryptography from source against vcpkg's
+      # static OpenSSL — Rust toolchain is already on the runner. The cache key
+      # is intentionally identical to the one used in test-python.yml /
+      # build-python-release.yml so we hit their cache when it's warm.
+      - name: Restore vcpkg ARM64 static OpenSSL cache (for cryptography)
+        if: always()
+        id: vcpkg-static-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
+      - name: Install ARM64 static OpenSSL via vcpkg (cache miss)
+        if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Save vcpkg ARM64 static OpenSSL cache (cache miss)
+        if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+
       - name: Cleanup test PATs
         if: always()
         continue-on-error: true
         shell: bash
+        env:
+          OPENSSL_DIR: C:\vcpkg\installed\arm64-windows-static-md
+          OPENSSL_LIB_DIR: C:\vcpkg\installed\arm64-windows-static-md\lib
+          OPENSSL_STATIC: "1"
         run: |
-          python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_test_pats.py \
+          python -m pip install --no-binary cryptography snowflake-connector-python -q
+          python scripts/cleanup_env.py \
             --parameter-path "${{ github.workspace }}/parameters.json"
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

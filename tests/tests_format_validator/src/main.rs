@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
     let results = validator.validate_all_features()?;
     let orphan_results = validator.find_orphaned_tests()?;
     let untagged_features = validator.find_untagged_features()?;
+    let gherkin_violations = validator.validate_gherkin_step_structure()?;
 
     let mut total_features = 0;
     let mut has_failures = false;
@@ -307,6 +308,24 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Display WHEN/THEN Gherkin comment violations
+    let has_gherkin_violations = !gherkin_violations.is_empty();
+    if has_gherkin_violations {
+        println!("\n❌ VALIDATION ERROR - Missing When/Then Gherkin comments:");
+        println!("   Every test method must contain at least one non-empty When and Then step comment.");
+        for file_validation in &gherkin_violations {
+            println!("  {}", file_validation.file_path.display());
+            for violation in &file_validation.violations {
+                println!(
+                    "    ❌ {} (line {}): missing {}",
+                    violation.method_name,
+                    violation.line_number,
+                    violation.missing_keywords.join(", ")
+                );
+            }
+        }
+    }
+
     println!("\n📊 Summary:");
     println!("  Features: {}", total_features);
     if has_orphans {
@@ -316,20 +335,16 @@ fn main() -> anyhow::Result<()> {
             .sum();
         println!("  Orphaned test files: {}", total_orphaned_files);
     }
+    if has_gherkin_violations {
+        let total_violations: usize = gherkin_violations.iter().map(|f| f.violations.len()).sum();
+        println!("  Tests missing When/Then: {}", total_violations);
+    }
     if !untagged_features.is_empty() {
         println!("  Untagged features (TODO): {}", untagged_features.len());
     }
 
-    if has_failures || has_orphans {
-        if has_failures && has_orphans {
-            println!("❌ VALIDATION FAILED - missing implementations and orphaned tests");
-        } else if has_failures {
-            println!("❌ VALIDATION FAILED - some tests are missing or incomplete");
-        } else {
-            println!(
-                "❌ VALIDATION FAILED - orphaned tests found (tests without feature definitions)"
-            );
-        }
+    if has_failures || has_orphans || has_gherkin_violations {
+        println!("❌ VALIDATION FAILED");
         std::process::exit(1);
     } else {
         println!("✅ All validations passed");

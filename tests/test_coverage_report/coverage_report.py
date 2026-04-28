@@ -2349,216 +2349,109 @@ class CoverageReportGenerator:
             {sections_html}
         """).strip()
 
-    def _generate_language_specific_coverage_table_html(self, features: Dict, languages: List[str]) -> str:
-        """Generate the language-specific features table sorted by language."""
+    def _generate_language_specific_coverage_table_html(self, features: Dict, languages: List[str], language_specific_tests: List[Dict] = None) -> str:
+        """Generate the language-specific tests table from validator scan data."""
         from textwrap import dedent
-        from collections import defaultdict
-        
-        if not features:
+        import os
+
+        if not language_specific_tests:
             return dedent("""
-                <h2>🎯 Language-Specific Tests</h2>
+                <h2>Language-Specific Tests</h2>
                 <p>No language-specific tests found.</p>
             """).strip()
-        
-        # Group features by language
-        features_by_language = defaultdict(list)
-        validation_errors = []
-        
-        for feature_name, feature_data in features.items():
-            is_only, only_lang = self.is_language_only_feature(feature_data['path'])
-            if is_only:
-                features_by_language[only_lang].append((feature_name, feature_data))
-        
-        # Build HTML
+
         html_parts = []
-        html_parts.append('<h2>🎯 Language-Specific Tests</h2>')
-        
+        html_parts.append('<h2>Language-Specific Tests</h2>')
+        html_parts.append('<p style="color: #666; margin-bottom: 20px;">Tests in driver directories with no matching shared feature file. These are tracked per-driver and not subject to cross-driver coverage.</p>')
+
         # Add expand/collapse controls
         html_parts.append(dedent("""
             <div class="expand-collapse-controls">
-                <span class="expand-collapse-btn" onclick="expandAll()">📖 Expand All</span>
-                <span class="expand-collapse-btn" onclick="collapseAll()">📕 Collapse All</span>
+                <span class="expand-collapse-btn" onclick="expandAll()">Expand All</span>
+                <span class="expand-collapse-btn" onclick="collapseAll()">Collapse All</span>
             </div>
         """).strip())
-        
-        # Add legend
-        html_parts.append(dedent("""
-            <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; margin: 20px 0;">
-                <div style="font-weight: bold; margin-bottom: 10px;">📖 Legend</div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                    <div>
-                        <span style="font-weight: bold;">✓</span> = Implemented
-                    </div>
-                    <div>
-                        <span style="font-weight: bold;">✓</span><sup style="color: #FFD700; font-weight: bold;">1,2</sup> = Behavior Difference
-                    </div>
-                </div>
-            </div>
-        """).strip())
-        
-        # Show validation errors if any
-        if validation_errors:
-            html_parts.append('<div class="validation-errors" style="background: #fee; border: 1px solid #c33; padding: 15px; margin: 20px 0; border-radius: 5px;">')
-            html_parts.append('<h3 style="color: #c33; margin-top: 0;">⚠️ Validation Errors</h3>')
-            html_parts.append('<ul>')
-            for feature_name, error in validation_errors:
-                html_parts.append(f'<li><strong>{feature_name}</strong>: {error}</li>')
-            html_parts.append('</ul>')
-            html_parts.append('</div>')
-        
-        # Generate sections by language (sorted alphabetically) - with expandable sections
-        for lang_index, lang in enumerate(sorted(features_by_language.keys())):
-            lang_features = features_by_language[lang]
-            
-            # Expandable language section header (similar to category headers in Shared tab)
+
+        for lang_data in language_specific_tests:
+            lang_name = lang_data['language']
+            e2e_files = lang_data.get('e2e_files', [])
+            integration_files = lang_data.get('integration_files', [])
+            all_files = e2e_files + integration_files
+
+            total_methods = sum(len(tf['methods']) for tf in all_files)
+
             html_parts.append('<div class="expandable-section" style="margin-top: 20px;">')
             html_parts.append(f'<div class="expandable-header expanded" onclick="toggleSection(this)" style="background: #f0f0f0; padding: 15px; cursor: pointer; border-left: 4px solid #0066cc; margin-bottom: 0;">')
-            html_parts.append(f'<div class="expandable-title" style="font-weight: bold; font-size: 1.1em; color: #333;">{lang.upper()} ({len(lang_features)} features)</div>')
-            html_parts.append('<div class="expandable-toggle expanded" style="float: right; margin-top: -20px;">▼</div>')
+            html_parts.append(f'<div class="expandable-title" style="font-weight: bold; font-size: 1.1em; color: #333;">{lang_name} ({len(all_files)} files, {total_methods} test methods)</div>')
+            html_parts.append('<div class="expandable-toggle expanded" style="float: right; margin-top: -20px;">&#9660;</div>')
             html_parts.append('</div>')
-            
+
             html_parts.append('<div class="expandable-content expanded">')
             html_parts.append('<div class="expandable-inner">')
-            
-            # Table for this language (same format as Shared tab)
-            html_parts.append('<table class="feature-table" style="margin-bottom: 0;">')
-            html_parts.append('<thead>')
-            html_parts.append('<tr>')
-            html_parts.append('<th>Feature</th>')
-            html_parts.append(f'<th>{lang.capitalize()}</th>')
-            html_parts.append('</tr>')
-            html_parts.append('</thead>')
-            html_parts.append('<tbody>')
-            
-            # Sort features by name within language
-            sorted_lang_features = sorted(lang_features, key=lambda x: x[0])
-            
-            for feature_name, feature_data in sorted_lang_features:
-                formatted_name = self.format_feature_name(feature_name, feature_data['path'])
-                scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
-                
-                # Get status
-                data_key = self.get_language_data_key(lang)
-                if data_key in feature_data['languages']:
-                    lang_data = feature_data['languages'][data_key]
-                    status_icon = lang_data['status']
-                else:
-                    status_icon = '❌'
-                
-                # Count scenarios with Behavior Differences
-                bd_count = 0
-                for scenario_info in scenarios_with_annotations:
-                    behavior_difference_ids = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
-                    if behavior_difference_ids:
-                        bd_count += len(behavior_difference_ids)
-                
-                # Generate unique IDs for links (same as Shared tab)
-                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
-                
-                # Feature header row with collapsible functionality (same as Shared tab)
-                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\', this)">{formatted_name}</div></td>']
-                
-                # Add status cell
-                if status_icon == '✅':
-                    feature_cells.append('<td><div class="test-status"><span class="tick-icon">✓</span></div></td>')
-                elif status_icon == '❌':
-                    feature_cells.append('<td><div class="test-status"><span class="status-fail">✗</span></div></td>')
-                else:
-                    feature_cells.append(f'<td><div class="test-status"><span>{status_icon}</span></div></td>')
-                
-                html_parts.append(f'<tr class="feature-row">{"".join(feature_cells)}</tr>')
-                
-                # Individual test rows - collect in feature content (same as Shared tab)
-                for i, scenario_info in enumerate(scenarios_with_annotations):
-                    scenario = scenario_info['name']
-                    tags = scenario_info['tags']
-                    
-                    is_last_test = i == len(scenarios_with_annotations) - 1
-                    row_class = "test-row" if not is_last_test else "test-row"
-                    
-                    # Test name cell with link to detailed breakdown (same as Shared tab)
-                    # Create unique scenario ID for navigation
-                    scenario_slug = self._slugify_scenario(scenario)
-                    scenario_id = f"scenario-{feature_id}-{scenario_slug}"
-                    scenario_escaped = html.escape(scenario)
-                    
-                    # Determine test level for inline label
-                    has_int_tag = any(tag.endswith('_int') for tag in tags)
-                    test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
-                    
-                    test_name_cell = f'<td><div class="test-name">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario_escaped} {test_level_label}</a></div></td>'
-                    
-                    # Check if implemented
-                    scenario_implemented = False
-                    if data_key in feature_data['languages']:
-                        lang_data = feature_data['languages'][data_key]
-                        if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
-                            scenario_implemented = lang_data['scenarios'][scenario]
-                        elif lang_data['status'] == '✅':
-                            scenario_implemented = True
-                    
-                    # Check for behavior differences
-                    behavior_difference_ids = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
-                    
-                    # Status cell
-                    if scenario_implemented:
-                        if behavior_difference_ids:
-                            # Create clickable Behavior Difference numbers for superscript display (same as Shared tab)
-                            behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
-                            behavior_difference_links = []
-                            for behavior_difference_id in behavior_difference_ids:
-                                # Extract number from BD#1 format
-                                if behavior_difference_id.startswith('BD#'):
-                                    number = behavior_difference_id[3:]  # Remove 'BD#' prefix
-                                    behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
-                                    behavior_difference_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
-                            
-                            superscript_links = ','.join(behavior_difference_links)
-                            status_cell = f'<td><div class="test-status"><span class="tick-icon">✓</span><sup>{superscript_links}</sup></div></td>'
-                        else:
-                            status_cell = '<td><div class="test-status"><span class="tick-icon">✓</span></div></td>'
-                    else:
-                        status_cell = '<td><div class="test-status"><span class="status-fail">-</span></div></td>'
-                    
-                    html_parts.append(f'<tr class="{row_class} feature-content" data-feature="{feature_id}">{test_name_cell}{status_cell}</tr>')
-                    
-                    # Add expandable Test Cases table for Scenario Outlines
-                    examples = scenario_info.get('examples') if isinstance(scenario_info, dict) else None
-                    if examples and examples.get('headers') and examples.get('rows'):
-                        examples_id = f"examples-langspec-{feature_id}-{scenario_slug}"
-                        examples_header_cells = ''.join(f'<th>{html.escape(h)}</th>' for h in examples['headers'])
-                        examples_body_rows = []
-                        for row_data in examples['rows']:
-                            row_cells = ''.join(f'<td>{html.escape(c)}</td>' for c in row_data)
-                            examples_body_rows.append(f'<tr>{row_cells}</tr>')
-                        examples_rows_html = '\n'.join(examples_body_rows)
-                        
-                        html_parts.append(f'''
-                            <tr class="test-row feature-content examples-row" data-feature="{feature_id}">
-                                <td colspan="2">
-                                    <div class="examples-expandable" onclick="toggleExamples('{examples_id}')">
-                                        <span class="examples-toggle" id="{examples_id}-toggle">▶</span>
-                                        <span class="examples-label">Test Cases ({len(examples['rows'])} values)</span>
-                                    </div>
-                                    <div class="examples-table-wrapper" id="{examples_id}" style="display: none;">
-                                        <table class="examples-table">
-                                            <thead><tr>{examples_header_cells}</tr></thead>
-                                            <tbody>{examples_rows_html}</tbody>
-                                        </table>
-                                    </div>
-                                </td>
-                            </tr>''')
-            
-            html_parts.append('</tbody>')
-            html_parts.append('</table>')
-            
-            # Close expandable section
-            html_parts.append('</div>')  # expandable-inner
-            html_parts.append('</div>')  # expandable-content
-            html_parts.append('</div>')  # expandable-section
-        
+
+            lang_key = lang_name.lower()
+            if lang_key == 'rust':
+                lang_key = 'core'
+
+            for section_label, section_files in [('E2E', e2e_files), ('Integration', integration_files)]:
+                if not section_files:
+                    continue
+
+                section_methods = sum(len(tf['methods']) for tf in section_files)
+                html_parts.append(f'<h4 style="margin: 16px 0 8px 0; color: #555; font-size: 0.95em; text-transform: uppercase; letter-spacing: 0.05em;">{section_label} &mdash; {len(section_files)} files, {section_methods} methods</h4>')
+                html_parts.append('<table class="feature-table" style="margin-bottom: 0;">')
+                html_parts.append('<thead><tr><th>Test File</th><th style="text-align: center;">Methods</th></tr></thead>')
+                html_parts.append('<tbody>')
+
+                for tf in section_files:
+                    file_path = tf['file_path']
+                    methods = tf['methods']
+                    bds = tf.get('behavior_differences', [])
+                    display_path = file_path
+
+                    file_id = f"ls-file-{display_path.replace('/', '-').replace('.', '-').replace('_', '-').lower()}"
+
+                    bd_badge = ''
+                    if bds:
+                        bd_links = []
+                        for bd in bds:
+                            if bd.startswith('BD#'):
+                                number = bd[3:]
+                                section_id = f'behavior_difference-{lang_key}-{bd.lower().replace("#", "")}'
+                                bd_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
+                        if bd_links:
+                            bd_badge = f' <sup style="color: #FFD700; font-weight: bold;">{",".join(bd_links)}</sup>'
+
+                    html_parts.append('<tr class="feature-row">')
+                    html_parts.append(f'<td><div class="feature-name collapsed" onclick="toggleFeature(\'{file_id}\', this)" style="cursor: pointer;">{html.escape(display_path)}{bd_badge}</div></td>')
+                    html_parts.append(f'<td style="text-align: center;">{len(methods)}</td>')
+                    html_parts.append('</tr>')
+
+                    for method in methods:
+                        method_name = method['name']
+                        method_bds = method.get('behavior_differences', [])
+                        method_bd_badge = ''
+                        if method_bds:
+                            method_bd_links = []
+                            for bd in method_bds:
+                                if bd.startswith('BD#'):
+                                    number = bd[3:]
+                                    section_id = f'behavior_difference-{lang_key}-{bd.lower().replace("#", "")}'
+                                    method_bd_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
+                            if method_bd_links:
+                                method_bd_badge = f' <sup style="color: #FFD700; font-weight: bold;">{",".join(method_bd_links)}</sup>'
+                        html_parts.append(f'<tr class="test-row feature-content collapsed" data-feature="{file_id}" style="display: none;">')
+                        html_parts.append(f'<td colspan="2"><div class="test-name" style="padding-left: 30px;">&bull; {html.escape(method_name)}{method_bd_badge}</div></td>')
+                        html_parts.append('</tr>')
+
+                html_parts.append('</tbody></table>')
+
+            html_parts.append('</div>')
+            html_parts.append('</div>')
+            html_parts.append('</div>')
+
         return '\n'.join(html_parts)
-    
+
     def _generate_language_specific_tab_html_old(self, features: Dict, languages: List[str]) -> str:
         """Generate the language-specific features tab HTML."""
         from textwrap import dedent
@@ -2643,15 +2536,15 @@ class CoverageReportGenerator:
         
         return '\n'.join(html_parts)
     
-    def generate_html_report(self, features: Dict) -> str:
+    def generate_html_report(self, features: Dict, validator_data: Dict = None) -> str:
         """Generate an HTML coverage report with tabbed interface."""
         from textwrap import dedent
-        
+
         if not features:
             return "<html><body><h1>No features found</h1></body></html>"
-        
+
         languages = self.get_all_languages(features)
-        
+
         # Generate content for each tab
         # Separate features into shared and language-specific
         shared_features = {}
@@ -2662,12 +2555,13 @@ class CoverageReportGenerator:
                 language_specific_features[feature_name] = feature_data
             else:
                 shared_features[feature_name] = feature_data
-        
+
         # Shared tab (renamed from Overview/Shared Features)
         shared_features_content = self._generate_coverage_table_html(shared_features, languages) + '\n\n' + self._generate_language_coverage_html(shared_features, languages)
-        
-        # Language-Specific tab (reuses table structure from shared features)
-        language_specific_content = self._generate_language_specific_coverage_table_html(language_specific_features, languages)
+
+        # Language-Specific tab — use validator data if available
+        language_specific_tests = validator_data.get('language_specific_tests', []) if validator_data else []
+        language_specific_content = self._generate_language_specific_coverage_table_html(language_specific_features, languages, language_specific_tests)
         
         detailed_content = self._generate_detailed_breakdown_html(features)
         missing_impl_html = self._generate_missing_implementations_html(features, languages)
@@ -2755,7 +2649,7 @@ def main():
     if args.format == 'table':
         report = generator.generate_coverage_table(features)
     elif args.format == 'html':
-        report = generator.generate_html_report(features)
+        report = generator.generate_html_report(features, validator_data)
     else:
         raise ValueError(f"Unsupported format: {args.format}")
     

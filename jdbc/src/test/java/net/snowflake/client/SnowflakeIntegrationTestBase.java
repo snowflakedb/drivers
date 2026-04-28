@@ -75,6 +75,13 @@ public abstract class SnowflakeIntegrationTestBase {
 
   protected Connection openConnection() throws Exception {
     Properties props = loadConnectionProperties();
+
+    // Read QUERY_RESULT_FORMAT from environment
+    String resultFormat = System.getenv("QUERY_RESULT_FORMAT");
+    if (resultFormat != null && !resultFormat.isEmpty()) {
+      props.setProperty("PYTHON_CONNECTOR_QUERY_RESULT_FORMAT", resultFormat);
+    }
+
     String url = buildJdbcUrl(props);
     prepareDriver();
     return DriverManager.getConnection(url, props);

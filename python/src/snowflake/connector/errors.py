@@ -36,8 +36,17 @@ All backward-compatibility classes are marked with ``@backward_compatibility``.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+from ._internal.backward_compatibility import install_backward_compatibility_getattr
 from ._internal.decorators import backward_compatibility
 
+
+if TYPE_CHECKING:
+    from .connection import Connection
+    from .cursor import SnowflakeCursorBase
+
+ErrorValue = dict[str, Any]
 
 # ---------------------------------------------------------------------------
 # PEP 249 exception hierarchy (active — raised at runtime)
@@ -51,7 +60,13 @@ class Warning(Warning):  # type: ignore[misc]
 
 
 class Error(Exception):
-    """Exception that is the base class of all other error exceptions."""
+    """Exception that is the base class of all other error exceptions.
+
+    In addition to being a standard PEP 249 exception base, this class provides
+    the **error-handler protocol** used throughout the driver to raise errors in
+    a way that is consistent with PEP 249 and backward-compatible with the old
+    ``snowflake-connector-python`` driver.
+    """
 
     def __init__(
         self,
@@ -60,6 +75,7 @@ class Error(Exception):
         sqlstate: str | None = None,
         sfqid: str | None = None,
         query: str | None = None,
+        **kwargs: Any,  # absorbs extra keys for backward compatibility with old driver code
     ) -> None:
         self.errno = errno
         self.sqlstate = sqlstate
@@ -69,10 +85,100 @@ class Error(Exception):
         self.msg = self._format_message(msg)
         super().__init__(self.msg)
 
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def __str__(self) -> str:
+        return self.msg
+
     def _format_message(self, msg: str) -> str:
         code_str = f"{self.errno:06d}" if isinstance(self.errno, int) and self.errno >= 0 else "------"
         sqlstate_str = f" ({self.sqlstate})" if self.sqlstate else ""
         return f"{code_str}{sqlstate_str}: {msg}" if msg else ""
+
+    # ------------------------------------------------------------------
+    # Error-handler protocol (PEP 249 / backward compatible)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def errorhandler_wrapper(
+        connection: Connection | None,
+        cursor: SnowflakeCursorBase | None,
+        error_class: type[Error] | type[Exception],
+        error_value: ErrorValue,
+    ) -> None:
+        """Raise an error through the error-handler chain.
+
+        This is the **single entry point** that all driver code should use to
+        report errors originating from connection or cursor operations.
+
+        The method first tries to hand the error to a user-supplied handler via
+        :pyfunc:`hand_to_other_handler`.  If no handler was available (both
+        *connection* and *cursor* are ``None``), it falls back to creating and
+        raising the exception directly.
+        """
+        handed_over = Error.hand_to_other_handler(connection, cursor, error_class, error_value)
+        if not handed_over:
+            raise Error.errorhandler_make_exception(error_class, error_value)
+
+    @staticmethod
+    def hand_to_other_handler(
+        connection: Connection | None,
+        cursor: SnowflakeCursorBase | None,
+        error_class: type[Error] | type[Exception],
+        error_value: ErrorValue,
+    ) -> bool:
+        """Try to delegate the error to a connection's or cursor's error handler.
+
+        Records the error in the ``messages`` list of both the connection and
+        the cursor (when present), then invokes the first available handler.
+
+        Returns:
+            ``True`` if a handler was invoked, ``False`` if both *connection*
+            and *cursor* were ``None``.
+        """
+        if connection is not None:
+            connection.messages.append((error_class, error_value))
+        if cursor is not None:
+            cursor.messages.append((error_class, error_value))
+            cursor.errorhandler(connection, cursor, error_class, error_value)
+            return True
+        elif connection is not None:
+            connection.errorhandler(connection, cursor, error_class, error_value)
+            return True
+        return False
+
+    @staticmethod
+    def errorhandler_make_exception(
+        error_class: type[Error] | type[Exception],
+        error_value: ErrorValue,
+    ) -> Error | Exception:
+        """Create an exception instance from *error_class* and *error_value*.
+
+        Used as a fallback when no connection/cursor handler is available.
+        """
+        if issubclass(error_class, Error):
+            return error_class(
+                msg=error_value.get("msg", ""),
+                errno=error_value.get("errno", -1),
+                sqlstate=error_value.get("sqlstate"),
+                sfqid=error_value.get("sfqid"),
+            )
+        return error_class(error_value)
+
+    @staticmethod
+    def default_errorhandler(
+        connection: Connection | None,
+        cursor: SnowflakeCursorBase | None,
+        error_class: type[Error] | type[Exception],
+        error_value: ErrorValue,
+    ) -> None:
+        """Default error handler that simply raises the error.
+
+        This is the handler installed on every new ``Connection`` and ``Cursor``
+        unless the user overrides ``errorhandler``.
+        """
+        raise Error.errorhandler_make_exception(error_class, error_value)
 
 
 class InterfaceError(Error):
@@ -261,3 +367,7 @@ class RequestExceedMaxRetryError(Error):
 @backward_compatibility
 class PresignedUrlExpiredError(Error):
     """Old-driver exception for expired cloud storage presigned URLs."""
+
+
+# Must be the last statement; see ``install_backward_compatibility_getattr``.
+install_backward_compatibility_getattr(__name__)

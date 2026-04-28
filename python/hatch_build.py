@@ -125,6 +125,9 @@ class BuildHook(BuildHookInterface):
 
     def _generate_protobuf(self) -> None:
         """Generate Python protobuf code using the Rust proto_generator binary."""
+        if os.environ.get("SKIP_PROTO_GENERATION", "").lower() in self.POSITIVE_VALUES:
+            return
+
         python_dir = Path(self.root)
         proto_input = (python_dir / self.PROTO_INPUT).resolve()
         protobuf_gen_dir = python_dir / self.PROTOBUF_GEN_DIR
@@ -209,30 +212,36 @@ class BuildHook(BuildHookInterface):
     def _build_extensions(self) -> None:
         """Build the Cython extensions."""
         src_root = Path(self.root) / "src"
-        arrow_iterator_dir = src_root / self.ARROW_ITERATOR_DIR
-        logging_dir = src_root / self.LOGGING_DIR
+
+        # Use paths relative to self.root for Extension sources.
+        # MSVC mirrors source file paths inside build_temp for .obj output;
+        # absolute paths in a deeply nested UV cache push .obj paths past
+        # Windows' 260-char MAX_PATH limit.  Relative paths keep them short.
+        src_rel = Path("src")
+        arrow_rel = src_rel / self.ARROW_ITERATOR_DIR
+        logging_rel = src_rel / self.LOGGING_DIR
 
         # Define the extension
         ext = Extension(
             name=self.EXTENSION_NAME,
-            sources=[str(src_root / self.PYX_SOURCE)],
+            sources=[str(src_rel / self.PYX_SOURCE)],
             language="c++",
         )
 
         # Add C++ source files
         for src in self.CPP_SOURCES:
-            ext.sources.append(str(arrow_iterator_dir / src))
+            ext.sources.append(str(arrow_rel / src))
 
         # Add subdirectory sources
         for subdir, filename in self.SUBDIRECTORY_SOURCES:
-            ext.sources.append(str(arrow_iterator_dir / subdir / filename))
+            ext.sources.append(str(arrow_rel / subdir / filename))
 
         # Add logging source
-        ext.sources.append(str(logging_dir / "logging.cpp"))
+        ext.sources.append(str(logging_rel / "logging.cpp"))
 
         # Add include directories
-        ext.include_dirs.append(str(arrow_iterator_dir))
-        ext.include_dirs.append(str(logging_dir))
+        ext.include_dirs.append(str(arrow_rel))
+        ext.include_dirs.append(str(logging_rel))
 
         # Apply platform-specific flags
         self._apply_compile_flags(ext)
@@ -308,12 +317,21 @@ class BuildHook(BuildHookInterface):
         cmd.ensure_finalized()
         cmd.build_lib = str(src_root)
         cmd.inplace = True
-        cmd.run()
+
+        # Extension sources use relative paths (see _build_extensions) so the
+        # build must run from self.root for both cythonize and compile to find
+        # the source files.
+        saved_cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            cmd.run()
+        finally:
+            os.chdir(saved_cwd)
 
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""
 
-        if os.environ.get("SKIP_CORE_BUILD", "").lower() in ["true", "1"]:
+        if os.environ.get("SKIP_CORE_BUILD", "").lower() in self.POSITIVE_VALUES:
             return
 
         # Get paths relative to the Python wrapper directory

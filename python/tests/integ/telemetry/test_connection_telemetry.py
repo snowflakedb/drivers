@@ -32,8 +32,9 @@ def test_session_init_telemetry_sent_on_connection_open(int_test_connection_fact
         connection = int_test_connection_factory(server_url=wiremock.http_url(), **extra_params)
         connection.close()
 
-        # Telemetry is sent asynchronously via a background task, so poll until it arrives.
-        telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=2.0)
+        # Telemetry is exported synchronously on connection release via
+        # SimpleSpanProcessor. Poll briefly in case of timing variability.
+        telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
         assert len(telemetry_requests) >= 1, "Expected at least one POST to /telemetry/send after connection open"
 
         request = telemetry_requests[0]

@@ -1,10 +1,14 @@
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jobject};
 use proto_utils::{ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
+use sf_core::telemetry::TelemetryInit;
+use sf_core::telemetry::snowflake_exporter::SessionRegistry;
+
+static JDBC_TELEMETRY: OnceLock<TelemetryInit> = OnceLock::new();
 
 struct JdbcBridge {
     runtime: tokio::runtime::Runtime,
@@ -13,6 +17,10 @@ struct JdbcBridge {
 
 impl JdbcBridge {
     pub fn new() -> Self {
+        let providers = match JDBC_TELEMETRY.get() {
+            Some(init) => init.to_providers(),
+            None => Default::default(),
+        };
         Self {
             // Single worker thread is intentional: keeps contention minimal and
             // makes deadlocks easier to detect. Will be increased during
@@ -22,7 +30,7 @@ impl JdbcBridge {
                 .enable_all()
                 .build()
                 .expect("Failed to create tokio runtime"),
-            transport: RustTransport::new(),
+            transport: RustTransport::new_with(providers),
         }
     }
 
@@ -49,8 +57,14 @@ mod sflogger_layer;
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
     let config = sf_core::logging::LoggingConfig::new(None, false, false);
     let layer = sflogger_layer::SFLoggerLayer::new(jvm);
-    match sf_core::logging::init_logging(config, Some(layer)) {
-        Ok(_) => jni::sys::JNI_VERSION_1_2,
+    let sessions = SessionRegistry::default();
+    match sf_core::logging::init_logging(config, Some(layer), sessions.clone()) {
+        Ok(provider) => {
+            JDBC_TELEMETRY
+                .set(TelemetryInit { provider, sessions })
+                .ok();
+            jni::sys::JNI_VERSION_1_2
+        }
         Err(e) => {
             eprintln!("Failed to initialize logging: {e:?}");
             -1

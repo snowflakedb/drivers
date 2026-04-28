@@ -2,6 +2,8 @@
 Unit tests for Connection.
 """
 
+import warnings
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -857,6 +859,33 @@ class TestConnectionArrowProperties:
         connection.arrow_number_to_decimal_setter = True
         assert connection.arrow_number_to_decimal is True
 
+    def test_arrow_number_to_decimal_setter_emits_deprecation_warning_once(self, connection):
+        """The legacy ``arrow_number_to_decimal_setter`` alias is decorated
+        with ``@backward_compatibility``; assigning to it from external code
+        must emit a ``DeprecationWarning`` exactly once per process."""
+        from snowflake.connector._internal.backward_compatibility import _BACKWARD_COMPAT_WARNED
+
+        # Snapshot/restore just this one dedup slot so the test is order-
+        # independent without leaking state across the session.
+        key = ("snowflake.connector.connection", "Connection.arrow_number_to_decimal_setter")
+        was_warned = key in _BACKWARD_COMPAT_WARNED
+        _BACKWARD_COMPAT_WARNED.discard(key)
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                connection.arrow_number_to_decimal_setter = True
+                connection.arrow_number_to_decimal_setter = False  # second set: deduped
+        finally:
+            if was_warned:
+                _BACKWARD_COMPAT_WARNED.add(key)
+
+        bc_warnings = [
+            w
+            for w in caught
+            if issubclass(w.category, DeprecationWarning) and "arrow_number_to_decimal_setter" in str(w.message)
+        ]
+        assert len(bc_warnings) == 1, [str(w.message) for w in caught]
+
     def test_arrow_number_to_decimal_setter_disables(self, connection):
         connection.arrow_number_to_decimal = True
         connection.arrow_number_to_decimal = False
@@ -983,3 +1012,24 @@ class TestGetQueryStatusThrowIfError:
         )
         with pytest.raises(ProgrammingError, match="Query failed-qid-2 failed"):
             connection.get_query_status_throw_if_error("failed-qid-2")
+
+
+class TestIsValid:
+    """Unit tests for Connection.is_valid()."""
+
+    def test_returns_true_when_heartbeat_succeeds(self, connection, mock_db_api):
+        mock_db_api.connection_heartbeat.return_value = MagicMock(valid=True)
+        assert connection.is_valid() is True
+
+    def test_returns_false_when_heartbeat_reports_invalid(self, connection, mock_db_api):
+        mock_db_api.connection_heartbeat.return_value = MagicMock(valid=False)
+        assert connection.is_valid() is False
+
+    def test_returns_false_when_closed(self, connection, mock_db_api):
+        connection.close()
+        assert connection.is_valid() is False
+        mock_db_api.connection_heartbeat.assert_not_called()
+
+    def test_returns_false_on_exception(self, connection, mock_db_api):
+        mock_db_api.connection_heartbeat.side_effect = RuntimeError("transport error")
+        assert connection.is_valid() is False

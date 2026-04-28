@@ -141,6 +141,8 @@ markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
     "skip_universal(reason: str=''): skip when --connector=universal",
     "slow: marks tests as slow (e.g., full sdist install with Rust compilation)",
+    "skip_for_json_result_set(reason: str=''): skip when QUERY_RESULT_FORMAT=JSON (tests requiring Arrow precision)",
+    "require_vpn: test requires VPN access (skipped outside Jenkins CI)",
 ]
 log_cli = true
 log_cli_level = "INFO"

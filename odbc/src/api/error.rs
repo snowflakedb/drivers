@@ -256,6 +256,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Internal driver error: {message}"))]
+    InternalError {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
         #[snafu(implicit)]
@@ -561,6 +568,7 @@ impl OdbcError {
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
+            OdbcError::InternalError { .. } => SqlState::GeneralError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,

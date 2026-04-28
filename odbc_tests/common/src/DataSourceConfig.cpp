@@ -1,5 +1,7 @@
 #include <picojson.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -126,6 +128,12 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
     config.parameters_["ROLE"] = role;
   }
   config.parameters_["TRACING"] = "0";
+
+  // Read QUERY_RESULT_FORMAT from environment
+  const char* result_format = std::getenv("QUERY_RESULT_FORMAT");
+  if (result_format != nullptr && std::strlen(result_format) > 0) {
+    config.parameters_["PYTHON_CONNECTOR_QUERY_RESULT_FORMAT"] = result_format;
+  }
 
   return config;
 }

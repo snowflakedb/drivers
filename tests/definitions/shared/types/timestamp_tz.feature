@@ -1,4 +1,4 @@
-@python
+@python @core_not_needed
 Feature: TIMESTAMP_TZ type support
 
   # =========================================================================== #
@@ -113,3 +113,10 @@ Feature: TIMESTAMP_TZ type support
     When Timestamp values are bulk-inserted using multirow binding
     And Query "SELECT * FROM <table> ORDER BY col NULLS LAST" is executed
     Then SELECT should return the same values in any order
+
+  @python_e2e
+  Scenario: should truncate nanosecond precision to microseconds for timestamp tz
+    Given Snowflake client is logged in
+    When Query "SELECT '<input>'::TIMESTAMP_TZ" is executed
+    Then Result should contain [<expected>]
+    And Values should have timezone info
