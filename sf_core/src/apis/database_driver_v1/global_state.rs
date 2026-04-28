@@ -79,8 +79,10 @@ impl DatabaseDriverV1 {
             .await
     }
 
-    pub fn os_details(&self) -> Option<&Option<HashMap<String, String>>> {
-        self.log_manager.as_ref().map(|lm| lm.os_details())
+    pub fn os_details(&self) -> Option<&HashMap<String, String>> {
+        self.log_manager
+            .as_ref()
+            .and_then(|lm| lm.os_details().as_ref())
     }
 }
 
