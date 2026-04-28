@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Builds a Snowflake ODBC RS Driver MSI installer using the WiX Toolset v3.
+    Builds a Snowflake ODBC Driver MSI installer using the WiX Toolset v3.
 
 .DESCRIPTION
     Invokes candle.exe (compiler) and light.exe (linker) from the WiX Toolset
-    to produce an MSI installer for the Snowflake ODBC RS Driver.
+    to produce an MSI installer for the Snowflake ODBC Driver.
 
 .PARAMETER DriverBinDir
     Directory containing the built sfodbc.dll (e.g. target\release).
@@ -125,7 +125,7 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $OutputDir = (Resolve-Path $OutputDir).Path
 $configSuffix = if ($BuildConfig -eq "debug") { "-debug" } else { "" }
 
-Write-Host "=== Building Snowflake ODBC RS Driver MSI ==="
+Write-Host "=== Building Snowflake ODBC Driver MSI ==="
 Write-Host "  Architecture : $Arch"
 Write-Host "  Config       : $BuildConfig"
 Write-Host "  Version      : $Version (MSI ProductVersion: $WixVersion)"
@@ -138,7 +138,7 @@ $ObjDir = Join-Path $OutputDir "wixobj"
 New-Item -ItemType Directory -Force -Path $ObjDir | Out-Null
 
 $WixObj = Join-Path $ObjDir "snowflake_odbc_${Arch}${configSuffix}.wixobj"
-$MsiFile = Join-Path $OutputDir "snowflake_odbc_rs-${Version}${configSuffix}-${Arch}.msi"
+$MsiFile = Join-Path $OutputDir "snowflake_odbc_ud-${Version}${configSuffix}-${Arch}.msi"
 
 $candleArch = if ($Arch -eq "x64") { "x64" } else { "x86" }
 
