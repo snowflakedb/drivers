@@ -1,5 +1,5 @@
 #include "resource.h"
-#include "WinResrc.h"
+#include <winresrc.h>
 
 #define IDC_STATIC  -1
 
