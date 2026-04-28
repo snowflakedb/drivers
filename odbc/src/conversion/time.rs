@@ -275,8 +275,30 @@ impl ReadODBC for SnowflakeTime {
             // portion is exactly zero; otherwise SQLSTATE 22008 ("Datetime
             // field overflow") is returned. The whole-second time fields are
             // always preserved; the date portion is silently discarded.
+            //
+            // Error precedence: validate the *struct* first (22007 — also
+            // catches fraction > 999_999_999, hour > 23, …) and only then
+            // enforce the 22008 fractional-seconds rule. Otherwise an input
+            // like {fraction = 3_000_000_000} would surface as "datetime
+            // field overflow" when in fact the struct itself is malformed.
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
+                let time = NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                             hour={}, minute={}, second={}, fraction={}",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .build()
+                })?;
                 if ts.fraction != 0 {
                     return DatetimeFieldOverflowSnafu {
                         reason: format!(
@@ -287,17 +309,7 @@ impl ReadODBC for SnowflakeTime {
                     }
                     .fail();
                 }
-                NaiveTime::from_hms_opt(ts.hour as u32, ts.minute as u32, ts.second as u32)
-                    .ok_or_else(|| {
-                        InvalidDatetimeValueSnafu {
-                            reason: format!(
-                                "invalid time in SQL_C_TYPE_TIMESTAMP for TIME target: \
-                                 hour={}, minute={}, second={}",
-                                ts.hour, ts.minute, ts.second
-                            ),
-                        }
-                        .build()
-                    })
+                Ok(time)
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,

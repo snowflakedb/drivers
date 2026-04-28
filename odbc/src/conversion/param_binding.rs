@@ -2250,6 +2250,12 @@ mod tests {
     //     nonzero.
     // This matches the legacy 3.16.0 driver, which surfaces SQL_ERROR with
     // SQLSTATE=22008 and NativeError=40520 in these cases.
+    //
+    // Error precedence: an out-of-range struct field always wins over the
+    // narrowing rule. If a SQL_TIMESTAMP_STRUCT has both an invalid field
+    // (e.g. hour=25, fraction>999_999_999) AND a non-zero discarded portion,
+    // the result must be 22007 (InvalidDatetimeValue), not 22008. The
+    // *_22007_takes_precedence_over_22008 tests below pin this down.
 
     #[test]
     fn convert_timestamp_as_date_rejects_nonzero_hour() {
@@ -2323,6 +2329,116 @@ mod tests {
         assert!(
             matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
             "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    // -- 22007 takes precedence over 22008 (regression for SQLSTATE mapping) -
+
+    #[test]
+    fn convert_timestamp_as_date_invalid_hour_takes_precedence_over_22008() {
+        // hour=25 makes the struct itself malformed (22007), AND the time
+        // portion is non-zero which would also trigger the narrowing rule
+        // (22008). The struct-validity error must win.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid struct must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_invalid_fraction_takes_precedence_over_22008() {
+        // fraction = 3_000_000_000 ns is out of the legal [0, 999_999_999]
+        // range and is also non-zero (would trigger the 22008 narrowing
+        // rule). The struct-validity error must win.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 3_000_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid fraction must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_hour_takes_precedence_over_22008() {
+        // hour=25 + non-zero fraction: 22007 must win over 22008.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 500_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid struct must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_fraction_takes_precedence_over_22008() {
+        // fraction out of [0, 999_999_999] AND non-zero: 22007 wins.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 3_000_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid fraction must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
         );
     }
 
