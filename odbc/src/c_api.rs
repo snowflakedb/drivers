@@ -1331,7 +1331,7 @@ mod setup {
     use std::ptr;
 
     #[link(name = "odbccp32")]
-    extern "system" {
+    unsafe extern "system" {
         fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> i32;
         fn SQLRemoveDSNFromIniW(lpszDSN: *const u16) -> i32;
         fn SQLWritePrivateProfileStringW(
