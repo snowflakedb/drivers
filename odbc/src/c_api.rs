@@ -1425,22 +1425,26 @@ mod setup {
             return false;
         }
         let odbc_ini = to_wide("odbc.ini");
+        let mut ok = true;
         for (key, value) in attrs {
             if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
                 continue;
             }
             let key_w = to_wide(key);
             let val_w = to_wide(value);
-            unsafe {
+            if unsafe {
                 SQLWritePrivateProfileStringW(
                     dsn_w.as_ptr(),
                     key_w.as_ptr(),
                     val_w.as_ptr(),
                     odbc_ini.as_ptr(),
-                );
+                )
+            } == 0
+            {
+                ok = false;
             }
         }
-        true
+        ok
     }
 
     unsafe fn config_dsn_impl(

@@ -350,22 +350,26 @@ unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)])
         return false;
     }
     let odbc_ini = to_wide("odbc.ini");
+    let mut ok = true;
     for (key, value) in fields {
         if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
             continue;
         }
         let key_w = to_wide(key);
         let val_w = to_wide(value);
-        unsafe {
+        if unsafe {
             SQLWritePrivateProfileStringW(
                 dsn_w.as_ptr(),
                 key_w.as_ptr(),
                 val_w.as_ptr(),
                 odbc_ini.as_ptr(),
-            );
+            )
+        } == 0
+        {
+            ok = false;
         }
     }
-    true
+    ok
 }
 
 // ---------------------------------------------------------------------------
@@ -465,9 +469,7 @@ unsafe extern "system" fn config_dialog_proc(
                         let mut fields = Vec::new();
                         for &(ctl_id, key) in FIELD_MAP {
                             let val = unsafe { get_dlg_text(dlg, ctl_id) };
-                            if !val.is_empty() {
-                                fields.push((key.to_string(), val));
-                            }
+                            fields.push((key.to_string(), val));
                         }
 
                         if unsafe { write_dsn_values(&dsn, &ctx.driver, &fields) } {
@@ -511,8 +513,13 @@ unsafe extern "system" fn config_dialog_proc(
 }
 
 unsafe fn check_enable_ok(dlg: HWND) {
+    let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
     let server = unsafe { get_dlg_text(dlg, IDC_HOSTEDIT) };
-    let enable: BOOL = if server.trim().is_empty() { 0 } else { 1 };
+    let enable: BOOL = if dsn.trim().is_empty() || server.trim().is_empty() {
+        0
+    } else {
+        1
+    };
     unsafe {
         EnableWindow(GetDlgItem(dlg, IDOK as i32), enable);
         EnableWindow(GetDlgItem(dlg, IDC_TEST_BUTTON), enable);
@@ -552,7 +559,18 @@ unsafe fn do_test_connection(dlg: HWND) {
         unsafe { SetCursor(cursor) };
     }
 
-    let driver_path = std::env::var("DRIVER_PATH").unwrap_or_default();
+    #[cfg(target_pointer_width = "64")]
+    let ctx_ptr = unsafe { GetWindowLongPtrW(dlg, GWLP_USERDATA) } as *const DialogContext;
+    #[cfg(target_pointer_width = "32")]
+    let ctx_ptr = unsafe { GetWindowLongW(dlg, GWLP_USERDATA) } as *const DialogContext;
+
+    let driver_name = if !ctx_ptr.is_null() {
+        unsafe { &(*ctx_ptr).driver }
+    } else {
+        "Snowflake ODBC UD"
+    };
+
+    let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
     let server = unsafe { get_dlg_text(dlg, IDC_HOSTEDIT) };
     let uid = unsafe { get_dlg_text(dlg, IDC_UIDEDIT) };
     let pwd = unsafe { get_dlg_text(dlg, IDC_PWDEDIT) };
@@ -562,7 +580,7 @@ unsafe fn do_test_connection(dlg: HWND) {
     let role = unsafe { get_dlg_text(dlg, IDC_ROLEEDIT) };
     let authenticator = unsafe { get_dlg_text(dlg, IDC_AUTHENTICATOREDIT) };
 
-    let mut conn_str = format!("DRIVER={{{driver_path}}};SERVER={server}");
+    let mut conn_str = format!("DSN={dsn};DRIVER={{{driver_name}}};SERVER={server}");
     if !uid.is_empty() {
         conn_str.push_str(&format!(";UID={uid}"));
     }
@@ -608,8 +626,10 @@ unsafe fn attempt_odbc_connection(conn_str: &str) -> String {
         return "FAILED!\r\n\r\nCould not allocate ODBC environment handle.".to_string();
     }
 
-    unsafe {
-        (dm.set_env_attr)(henv, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC3 as *mut _, 0);
+    let rc = unsafe { (dm.set_env_attr)(henv, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC3 as *mut _, 0) };
+    if !sql_succeeded(rc) {
+        unsafe { (dm.free_handle)(SQL_HANDLE_ENV, henv) };
+        return "FAILED!\r\n\r\nCould not set ODBC environment version.".to_string();
     }
 
     let rc = unsafe { (dm.alloc_handle)(SQL_HANDLE_DBC, henv, &mut hdbc) };
