@@ -575,10 +575,9 @@ unsafe fn do_test_connection(dlg: HWND) {
         "Snowflake ODBC UD"
     };
 
-    let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
     let pwd = unsafe { get_dlg_text(dlg, IDC_PWDEDIT) };
 
-    let mut conn_str = format!("DSN={dsn};DRIVER={{{driver_name}}}");
+    let mut conn_str = format!("DRIVER={{{driver_name}}}");
     for &(ctl_id, key) in FIELD_MAP {
         let val = unsafe { get_dlg_text(dlg, ctl_id) };
         if !val.is_empty() {
