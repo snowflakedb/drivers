@@ -149,33 +149,11 @@ jobs:
         if: matrix.container != ''
         run: yum install -y perl-IPC-Cmd perl-Time-Piece
 
-      # ── Windows ARM64 OpenSSL setup ──
-      - name: Capture vcpkg version for cache key
+      - name: Setup OpenSSL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Cache vcpkg packages
-        if: matrix.os == 'windows-11-arm'
-        id: vcpkg-cache
-        uses: actions/cache@v5
+        uses: ./.github/actions/setup-windows-openssl
         with:
-          path: C:\vcpkg\installed
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
-
-      - name: Configure ARM64 OpenSSL (static)
-        if: matrix.os == 'windows-11-arm'
-        shell: pwsh
-        run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          arch: arm64
 
       # ── Cargo cache & build ──
       - name: Restore Rust cache
@@ -408,30 +386,10 @@ jobs:
       - name: Set up Python ${{ matrix.py }}
         run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
 
-      # ── Windows ARM64 OpenSSL (needed by cryptography dependency) ──
-      - name: Capture vcpkg version for cache key
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Cache vcpkg ARM64 static OpenSSL
-        id: vcpkg-cache
-        uses: actions/cache@v5
+      - name: Setup OpenSSL (Windows ARM64)
+        uses: ./.github/actions/setup-windows-openssl
         with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
-
-      - name: Configure ARM64 OpenSSL (static)
-        shell: pwsh
-        run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          arch: arm64
 
       # ── Build ──
       - name: Build python wheel

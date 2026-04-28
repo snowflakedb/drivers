@@ -275,85 +275,24 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
-      # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
-      # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
-      # the same reason we use static OpenSSL for sf_core in the build_wheel job.
-
-      - name: Capture vcpkg version for cache key (Windows ARM64)
+      - name: Setup OpenSSL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
-        uses: ./.github/actions/vcpkg-version
-
-      # Share the vcpkg cache with build_wheel so OpenSSL is not rebuilt here either.
-      - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        id: vcpkg-cache-test
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/setup-windows-openssl
         with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
-
-      - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: C:\vcpkg\installed\arm64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
+          arch: arm64
 
       - name: Configure ARM64 build environment
         if: matrix.os == 'windows-11-arm'
         shell: pwsh
         run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
           echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
           echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
 
-      # ── Windows x86_64 OpenSSL (needed for sdist builds that compile sf_core from source) ──
-      - name: Capture vcpkg version for cache key (Windows x64)
+      - name: Setup OpenSSL (Windows x86_64)
         if: matrix.os == 'windows-latest' && matrix.py == '3.10'
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Restore vcpkg x64 static OpenSSL cache (Windows x64)
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
-        id: vcpkg-cache-x64
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/setup-windows-openssl
         with:
-          path: C:\vcpkg\installed\x64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Install x64 OpenSSL (static) via vcpkg
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10' && steps.vcpkg-cache-x64.outputs.cache-hit != 'true'
-        run: vcpkg install openssl:x64-windows-static-md
-
-      - name: Save vcpkg x64 static OpenSSL cache (Windows x64)
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10' && steps.vcpkg-cache-x64.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: C:\vcpkg\installed\x64-windows-static-md
-          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
-
-      - name: Configure x64 OpenSSL environment
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
-        shell: pwsh
-        run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\x64-windows-static-md" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\x64-windows-static-md\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          arch: x86_64
 
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
