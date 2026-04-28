@@ -1330,52 +1330,24 @@ pub unsafe extern "system" fn DllMain(
 mod setup {
     use std::ptr;
 
-    #[link(name = "kernel32")]
+    #[cfg_attr(
+        target_arch = "x86",
+        link(
+            name = "odbccp32",
+            kind = "raw-dylib",
+            import_name_type = "undecorated"
+        )
+    )]
+    #[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
     unsafe extern "system" {
-        fn LoadLibraryW(lpLibFileName: *const u16) -> *mut core::ffi::c_void;
-        fn GetProcAddress(
-            hModule: *mut core::ffi::c_void,
-            lpProcName: *const u8,
-        ) -> *mut core::ffi::c_void;
-    }
-
-    type WriteDSNToIniFn = unsafe extern "system" fn(*const u16, *const u16) -> i32;
-    type RemoveDSNFromIniFn = unsafe extern "system" fn(*const u16) -> i32;
-    type WriteProfileStringFn =
-        unsafe extern "system" fn(*const u16, *const u16, *const u16, *const u16) -> i32;
-
-    struct InstallerApi {
-        write_dsn: WriteDSNToIniFn,
-        remove_dsn: RemoveDSNFromIniFn,
-        write_profile: WriteProfileStringFn,
-    }
-
-    impl InstallerApi {
-        unsafe fn load() -> Option<Self> {
-            let name = to_wide("odbccp32.dll");
-            let h = unsafe { LoadLibraryW(name.as_ptr()) };
-            if h.is_null() {
-                return None;
-            }
-            unsafe fn sym(
-                h: *mut core::ffi::c_void,
-                name: &[u8],
-            ) -> Option<*mut core::ffi::c_void> {
-                let p = unsafe { GetProcAddress(h, name.as_ptr()) };
-                if p.is_null() { None } else { Some(p) }
-            }
-            unsafe {
-                Some(Self {
-                    write_dsn: std::mem::transmute(sym(h, b"SQLWriteDSNToIniW\0")?),
-                    remove_dsn: std::mem::transmute(sym(h, b"SQLRemoveDSNFromIniW\0")?),
-                    write_profile: std::mem::transmute(sym(h, b"SQLWritePrivateProfileStringW\0")?),
-                })
-            }
-        }
-    }
-
-    fn installer() -> Option<InstallerApi> {
-        unsafe { InstallerApi::load() }
+        fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> i32;
+        fn SQLRemoveDSNFromIniW(lpszDSN: *const u16) -> i32;
+        fn SQLWritePrivateProfileStringW(
+            lpszSection: *const u16,
+            lpszEntry: *const u16,
+            lpszString: *const u16,
+            lpszFilename: *const u16,
+        ) -> i32;
     }
 
     const ODBC_ADD_DSN: u16 = 1;
@@ -1447,12 +1419,9 @@ mod setup {
     }
 
     unsafe fn write_dsn_silent(dsn: &str, driver: &str, attrs: &[(String, String)]) -> bool {
-        let Some(api) = installer() else {
-            return false;
-        };
         let dsn_w = to_wide(dsn);
         let driver_w = to_wide(driver);
-        if unsafe { (api.write_dsn)(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
+        if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
             return false;
         }
         let odbc_ini = to_wide("odbc.ini");
@@ -1463,7 +1432,7 @@ mod setup {
             let key_w = to_wide(key);
             let val_w = to_wide(value);
             unsafe {
-                (api.write_profile)(
+                SQLWritePrivateProfileStringW(
                     dsn_w.as_ptr(),
                     key_w.as_ptr(),
                     val_w.as_ptr(),
@@ -1485,11 +1454,8 @@ mod setup {
                 let Some(dsn) = find_dsn(attrs) else {
                     return false;
                 };
-                let Some(api) = installer() else {
-                    return false;
-                };
                 let dsn_w = to_wide(dsn);
-                unsafe { (api.remove_dsn)(dsn_w.as_ptr()) != 0 }
+                unsafe { SQLRemoveDSNFromIniW(dsn_w.as_ptr()) != 0 }
             }
             ODBC_ADD_DSN | ODBC_CONFIG_DSN => {
                 let dsn = find_dsn(attrs).unwrap_or("");
