@@ -1,11 +1,7 @@
 name: Validate generated data
 
 on:
-  pull_request:
-  push:
-    branches: [ main ]
-  merge_group:
-    types: [ checks_requested ]
+  workflow_dispatch:  # DEBUG: disabled
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

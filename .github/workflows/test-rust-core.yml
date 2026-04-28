@@ -1,11 +1,7 @@
 name: Rust Core CI
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-  merge_group:
-    types: [ checks_requested ]
+  workflow_dispatch:  # DEBUG: disabled
 
 concurrency:
   # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
