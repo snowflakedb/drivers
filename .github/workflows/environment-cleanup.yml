@@ -1,4 +1,5 @@
-# Nightly cleanup of stale Snowflake schemas (see scripts/cleanup_env.py).
+# Nightly cleanup of stale Snowflake schemas and UD_* PATs
+# (see scripts/cleanup_env.py).
 # Scheduled runs use the workflow file on the repository default branch only
 # (GitHub does not run schedules from arbitrary branches).
 name: Environment cleanup
@@ -7,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       age_days:
-        description: "Drop schemas older than this many days (owned by test user/role)"
+        description: "Drop schemas / UD_* PATs older than this many days (owned by test user/role)"
         required: false
         default: "2"
       dry_run:
-        description: "If true, only list schemas that would be dropped"
+        description: "If true, only list schemas and PATs that would be removed"
         required: false
         type: boolean
         default: false
@@ -54,10 +55,11 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      - name: Cleanup stale schemas (test user/role)
+      - name: Cleanup stale schemas and PATs (test user/role)
         run: |
           set -euxo pipefail
-          ARGS=(--cleanup-stale-schemas --parameter-path "${GITHUB_WORKSPACE}/parameters.json")
+          ARGS=(--cleanup-stale-schemas --cleanup-stale-pats)
+          ARGS+=(--parameter-path "${GITHUB_WORKSPACE}/parameters.json")
           ARGS+=(--age-days "${AGE_DAYS}")
           if [[ "${DRY_RUN}" == "true" ]]; then
             ARGS+=(--dry-run)
