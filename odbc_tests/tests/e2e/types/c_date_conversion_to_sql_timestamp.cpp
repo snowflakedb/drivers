@@ -120,7 +120,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE to TIMESTAMP_TZ
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE leap day 2024-02-29 to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp]") {
-  // Given a TIMESTAMP_NTZ column
+  // Given a TIMESTAMP_NTZ column with a known session timezone
+  // (TIMEZONE=UTC is required because the legacy 3.16.0 driver routes
+  // DATE → TIMESTAMP through a TZ-aware path; without pinning TZ the
+  // legacy driver would shift the day by the session's UTC offset.)
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When the leap day 2024-02-29 is bound and inserted
@@ -144,7 +148,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE leap day 2024-0
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE epoch 1970-01-01 to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp]") {
-  // Given a TIMESTAMP_NTZ column
+  // Given a TIMESTAMP_NTZ column with a known session timezone (see leap-day
+  // test above for rationale)
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When the Unix epoch date is bound and inserted

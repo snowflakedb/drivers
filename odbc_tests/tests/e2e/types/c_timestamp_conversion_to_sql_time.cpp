@@ -1,10 +1,13 @@
 // ODBC E2E: SQL_C_TYPE_TIMESTAMP bound via SQLBindParameter to ODBC 3.x
 // SQL_TYPE_TIME.
 //
-// Per ODBC Appendix D ("C to SQL: Timestamp"), binding a timestamp to a
-// TIME target silently discards the date fields. The Snowflake TIME type
-// supports nanosecond precision, so the fractional-seconds portion is
-// preserved (mirrors the SnowflakeTime::read_odbc behavior).
+// Per ODBC Appendix D ("Converting Data from C to SQL Data Types"), binding
+// a TIMESTAMP source to a TIME target silently discards the date fields and
+// preserves the whole-second h/m/s, but only when the discarded fractional-
+// seconds portion is exactly zero — otherwise the driver must return
+// SQL_ERROR with SQLSTATE 22008 ("Datetime field overflow"). These tests
+// cover both the happy path (zero fraction) and the spec-mandated overflow
+// case.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -22,6 +25,16 @@ void bind_timestamp_and_execute(StatementHandleWrapper& stmt, SQL_TIMESTAMP_STRU
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+}
+
+// Like bind_timestamp_and_execute but returns the SQLExecute return code so
+// the caller can assert on the diagnostic SQLSTATE instead of REQUIRE'ing
+// success.
+SQLRETURN bind_timestamp_and_try_execute(StatementHandleWrapper& stmt, SQL_TIMESTAMP_STRUCT& val, SQLLEN& ind) {
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIME, 0, 0,
+                                   &val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  return SQLExecute(stmt.getHandle());
 }
 
 }  // namespace
@@ -51,23 +64,23 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYP
   CHECK(result.second == 45);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with nanos to SQL_TYPE_TIME and preserve nanos",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non-zero fraction bound to SQL_TYPE_TIME",
                  "[c_timestamp][conversion][sql_time]") {
-  // Given a TIME column (Snowflake TIME supports nanosecond precision)
+  // Given a TIME column
   conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
-  // When the timestamp carries a half-second fractional component
+  // When the timestamp carries a half-second fractional component, ODBC
+  // Appendix D requires SQL_ERROR / SQLSTATE 22008 (the whole-second h/m/s
+  // would round-trip cleanly, but the fraction would be silently dropped).
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 14, 30, 45, 500000000};
   SQLLEN ind = sizeof(val);
-  bind_timestamp_and_execute(stmt, val, ind);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then the fractional seconds round-trip via the textual representation
-  // (Snowflake TIME -> SQL_C_CHAR trims trailing zeros, so .500000000 -> .5)
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "14:30:45.5");
+  // Then SQLExecute fails with SQLSTATE 22008 (Datetime field overflow)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind midnight SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIME",

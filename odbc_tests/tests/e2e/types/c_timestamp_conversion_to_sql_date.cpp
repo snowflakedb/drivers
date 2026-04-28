@@ -1,10 +1,12 @@
 // ODBC E2E: SQL_C_TYPE_TIMESTAMP bound via SQLBindParameter to ODBC 3.x
 // SQL_TYPE_DATE.
 //
-// Per ODBC Appendix D ("C to SQL: Timestamp"), binding a timestamp to a
-// DATE target silently discards the time fields. These tests verify the
-// round-trip preserves Y/M/D and that a non-zero time portion does NOT
-// cause the date to roll forward.
+// Per ODBC Appendix D ("Converting Data from C to SQL Data Types"), binding
+// a TIMESTAMP source to a DATE target succeeds only when the discarded time
+// portion (hour, minute, second, fraction) is exactly zero — otherwise the
+// driver must return SQL_ERROR with SQLSTATE 22008 ("Datetime field
+// overflow"). These tests cover both the happy path (zero time) and the
+// spec-mandated overflow cases.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -24,39 +26,28 @@ void bind_timestamp_and_execute(StatementHandleWrapper& stmt, SQL_TIMESTAMP_STRU
   REQUIRE_ODBC(ret, stmt);
 }
 
+// Like bind_timestamp_and_execute but returns the SQLExecute return code so
+// the caller can assert on the diagnostic SQLSTATE instead of REQUIRE'ing
+// success.
+SQLRETURN bind_timestamp_and_try_execute(StatementHandleWrapper& stmt, SQL_TIMESTAMP_STRUCT& val, SQLLEN& ind) {
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_DATE, 0, 0,
+                                   &val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  return SQLExecute(stmt.getHandle());
+}
+
 }  // namespace
 
 // ============================================================================
-// SQL_C_TYPE_TIMESTAMP → DATE — happy paths
+// SQL_C_TYPE_TIMESTAMP → DATE — happy paths (time portion = 00:00:00.0)
 // ============================================================================
-
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_DATE and discard time component",
-                 "[c_timestamp][conversion][sql_date]") {
-  // Given a DATE column
-  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
-
-  // When SQL_C_TYPE_TIMESTAMP 2026-04-13 14:30:45 is bound and inserted
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 14, 30, 45, 0};
-  SQLLEN ind = sizeof(val);
-  bind_timestamp_and_execute(stmt, val, ind);
-
-  // Then only the date is preserved (time silently discarded)
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  SQL_DATE_STRUCT result = get_data<SQL_C_TYPE_DATE>(fetch_stmt, 1);
-  CHECK(result.year == 2026);
-  CHECK(result.month == 4);
-  CHECK(result.day == 13);
-}
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind midnight SQL_C_TYPE_TIMESTAMP to SQL_TYPE_DATE without info loss",
                  "[c_timestamp][conversion][sql_date]") {
   // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When the timestamp's time portion is already 00:00:00
+  // When SQL_C_TYPE_TIMESTAMP at exactly midnight is bound to a DATE target
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -72,60 +63,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind midnight SQL_C_TYPE_TIMESTAMP t
   CHECK(result.day == 13);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with nanos to SQL_TYPE_DATE and discard nanos",
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind leap-day SQL_C_TYPE_TIMESTAMP at midnight to SQL_TYPE_DATE",
                  "[c_timestamp][conversion][sql_date]") {
   // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When the timestamp carries a non-zero nanosecond fraction
+  // When the leap day 2024-02-29 at exactly midnight is bound to DATE
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 12, 0, 0, 999999999};
-  SQLLEN ind = sizeof(val);
-  bind_timestamp_and_execute(stmt, val, ind);
-
-  // Then the nanos are silently dropped along with the time
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  SQL_DATE_STRUCT result = get_data<SQL_C_TYPE_DATE>(fetch_stmt, 1);
-  CHECK(result.year == 2026);
-  CHECK(result.month == 4);
-  CHECK(result.day == 13);
-}
-
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should bind end-of-day SQL_C_TYPE_TIMESTAMP to SQL_TYPE_DATE without rolling forward",
-                 "[c_timestamp][conversion][sql_date]") {
-  // Given a DATE column
-  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
-
-  // When 23:59:59 on 2026-04-13 is bound; the spec says we discard the time,
-  // we must NOT round up to 2026-04-14
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 23, 59, 59, 0};
-  SQLLEN ind = sizeof(val);
-  bind_timestamp_and_execute(stmt, val, ind);
-
-  // Then the stored date is the original date, not the next day
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  SQL_DATE_STRUCT result = get_data<SQL_C_TYPE_DATE>(fetch_stmt, 1);
-  CHECK(result.year == 2026);
-  CHECK(result.month == 4);
-  CHECK(result.day == 13);
-}
-
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind leap-day SQL_C_TYPE_TIMESTAMP to SQL_TYPE_DATE",
-                 "[c_timestamp][conversion][sql_date]") {
-  // Given a DATE column
-  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
-
-  // When the leap day 2024-02-29 14:30:00 is bound
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQL_TIMESTAMP_STRUCT val = {2024, 2, 29, 14, 30, 0, 0};
+  SQL_TIMESTAMP_STRUCT val = {2024, 2, 29, 0, 0, 0, 0};
   SQLLEN ind = sizeof(val);
   bind_timestamp_and_execute(stmt, val, ind);
 
@@ -156,4 +103,65 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with NULL 
   // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_TYPE_DATE>(fetch_stmt, 1) == std::nullopt);
+}
+
+// ============================================================================
+// SQL_C_TYPE_TIMESTAMP → DATE — datetime field overflow (SQLSTATE 22008)
+//
+// Per ODBC Appendix D, the conversion must fail when the timestamp's time
+// portion is non-zero. The driver must NOT silently truncate or round.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non-zero time bound to SQL_TYPE_DATE",
+                 "[c_timestamp][conversion][sql_date]") {
+  // Given a DATE column
+  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
+
+  // When SQL_C_TYPE_TIMESTAMP 2026-04-13 14:30:45 is bound (non-zero h/m/s)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 14, 30, 45, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22008 (Datetime field overflow)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non-zero fraction bound to SQL_TYPE_DATE",
+                 "[c_timestamp][conversion][sql_date]") {
+  // Given a DATE column
+  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
+
+  // When the timestamp carries a non-zero nanosecond fraction (whole seconds
+  // are zero, so only `fraction` triggers the overflow)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 0, 0, 0, 1};
+  SQLLEN ind = sizeof(val);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22008
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should reject end-of-day SQL_C_TYPE_TIMESTAMP bound to SQL_TYPE_DATE (no rollover)",
+                 "[c_timestamp][conversion][sql_date]") {
+  // Given a DATE column
+  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
+
+  // When 23:59:59 on 2026-04-13 is bound: per spec the conversion must NOT
+  // silently round up to 2026-04-14, it must error
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIMESTAMP_STRUCT val = {2026, 4, 13, 23, 59, 59, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22008
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
 }
