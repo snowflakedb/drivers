@@ -97,11 +97,11 @@ impl ClientInfo {
             application: settings
                 .get_string("client_app_id")
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "drivers_core".to_string()),
+                .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string()),
             version: settings
                 .get_string("client_app_version")
                 .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "0.0.1dev".to_string()),
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             os: std::env::consts::OS.to_string(),
             os_version: crate::telemetry::environment::detect_os_version(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
@@ -777,8 +777,8 @@ mod tests {
             Setting::String("test.snowflakecomputing.com".to_string()),
         )]);
         let info = ClientInfo::from_settings(&settings).unwrap();
-        assert_eq!(info.application, "drivers_core");
-        assert_eq!(info.version, "0.0.1dev");
+        assert_eq!(info.application, env!("CARGO_PKG_NAME"));
+        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert!(info.runtime_name.is_none());
         assert!(info.runtime_version.is_none());
         assert!(info.compiler.is_none());

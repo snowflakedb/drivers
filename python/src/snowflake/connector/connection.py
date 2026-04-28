@@ -69,6 +69,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIGURATION: dict[str, tuple[Any, tuple[type, ...]]] = {}
 
 _APPLICATION_NAME = "PythonConnector"
+# Kept as a public alias for backward compatibility — external packages
+# (e.g. snowflake-sqlalchemy) may import this symbol.
+CLIENT_NAME = _APPLICATION_NAME
 # The old connector used re.match(r"[\w\d_]+") without anchors, so any string
 # starting with a word character was accepted (dots, hyphens, etc. in the tail
 # were silently ignored).  We keep a start-anchored pattern without $ so that

@@ -568,18 +568,18 @@ impl DatabaseDriverV1 {
                     "client_app_version",
                     &identity.driver_version,
                 );
-                inject_if_nonempty(
+                inject_if_absent(
                     &mut conn.connection_seed,
                     "client_runtime_name",
                     &identity.language_runtime,
                 );
-                inject_if_nonempty(
+                inject_if_absent(
                     &mut conn.connection_seed,
                     "client_runtime_version",
                     &identity.language_version,
                 );
                 if let Some(ref compiler) = identity.language_compiler {
-                    inject_if_nonempty(&mut conn.connection_seed, "client_compiler", compiler);
+                    inject_if_absent(&mut conn.connection_seed, "client_compiler", compiler);
                 }
 
                 conn.wrapper_identity = Some(identity);
@@ -610,17 +610,12 @@ impl DatabaseDriverV1 {
     }
 }
 
-/// Insert a string value into the seed only when the key is absent.
+/// Insert a trimmed string value into the seed only when the key is absent
+/// and the value is non-empty after trimming.
 fn inject_if_absent(seed: &mut ParamStore, key: &str, value: &str) {
-    if seed.get_any(key).is_none() && !value.is_empty() {
-        seed.insert(key.to_owned(), Setting::String(value.to_owned()));
-    }
-}
-
-/// Insert a string value into the seed only when the key is absent and the value is non-empty.
-fn inject_if_nonempty(seed: &mut ParamStore, key: &str, value: &str) {
-    if seed.get_any(key).is_none() && !value.trim().is_empty() {
-        seed.insert(key.to_owned(), Setting::String(value.to_owned()));
+    let trimmed = value.trim();
+    if seed.get_any(key).is_none() && !trimmed.is_empty() {
+        seed.insert(key.to_owned(), Setting::String(trimmed.to_owned()));
     }
 }
 

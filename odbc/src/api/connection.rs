@@ -27,6 +27,9 @@ const SQL_CD_FALSE: sql::UInteger = 0;
 const SQL_CD_TRUE: sql::UInteger = 1;
 const SQL_FALSE: sql::UInteger = 0;
 
+const ODBC_DRIVER_NAME: &str = "ODBC";
+const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
 /// SQLSetConnectAttr provides a value.
@@ -291,8 +294,8 @@ fn connect_with_params(
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
             wrapper_identity: Some(WrapperIdentity {
-                driver_name: Some("ODBC".to_string()),
-                driver_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                driver_name: Some(ODBC_DRIVER_NAME.to_string()),
+                driver_version: Some(ODBC_DRIVER_VERSION.to_string()),
                 language_runtime: None,
                 language_version: None,
                 language_compiler: None,

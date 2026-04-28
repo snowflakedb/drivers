@@ -117,8 +117,8 @@ fn load_parameters(path: &PathBuf) -> Result<Parameters, Box<dyn std::error::Err
 
 fn default_client_info() -> ClientInfo {
     ClientInfo {
-        application: "drivers_core".to_string(),
-        version: "0.0.1dev".to_string(),
+        application: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
         os_version: sf_core::telemetry::environment::detect_os_version(),
         ocsp_mode: Some("FAIL_OPEN".to_string()),
