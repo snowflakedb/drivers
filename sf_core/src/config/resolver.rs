@@ -15,10 +15,10 @@ use crate::config::settings::Setting;
 ///   2. If the host contains `.global.`, strip the external-ID suffix after the
 ///      last `-` in that first token.
 ///
-/// Must be called **before** [`normalize_host_underscores`] so that the
-/// underscore normalization can see the derived account.
+/// Must be called **before** underscore normalization so that
+/// `normalize_host_underscores` can see the derived account.
 pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
-    if store.get(param_names::ACCOUNT).is_some() {
+    if store.get_string(param_names::ACCOUNT).is_some() {
         return;
     }
 
@@ -64,9 +64,7 @@ pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
 /// loaded and merged underneath.
 pub fn resolve(explicit: &ParamStore) -> Result<ParamStore, ConfigError> {
     let paths = crate::config::path_resolver::get_config_paths()?;
-    let mut resolved = resolve_with_paths(explicit, &paths)?;
-    derive_account_from_host(&mut resolved);
-    Ok(resolved)
+    resolve_with_paths(explicit, &paths)
 }
 
 /// Same as [`resolve`] but accepts explicit config file paths (for testing).
@@ -94,6 +92,8 @@ pub fn resolve_with_paths(
     // Layer 1: Explicit programmatic settings (highest priority)
     merged.extend_from(explicit);
 
+    derive_account_from_host(&mut merged);
+
     Ok(merged)
 }
 
@@ -105,6 +105,85 @@ mod tests {
     use crate::config::settings::Setting;
     use std::fs;
     use tempfile::TempDir;
+    use test_case::test_case;
+
+    #[test_case("myaccount.snowflakecomputing.com", "myaccount" ; "standard host")]
+    #[test_case("myaccount.us-east-1.snowflakecomputing.com", "myaccount" ; "host with region")]
+    #[test_case("myaccount.privatelink.snowflakecomputing.com", "myaccount" ; "privatelink host")]
+    #[test_case("myaccount", "myaccount" ; "bare account no dots")]
+    fn derive_account_from_host_extracts_first_label(host: &str, expected: &str) {
+        let mut store = ParamStore::new();
+        store.insert(param_names::HOST.into(), Setting::String(host.to_owned()));
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String(expected.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_strips_global_external_id() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("myaccount-extid.global.snowflake.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("myaccount".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_skips_when_account_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("explicit".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("other.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("explicit".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_overrides_empty_account() {
+        let mut store = ParamStore::new();
+        store.insert(param_names::ACCOUNT.into(), Setting::String("".to_owned()));
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("myaccount.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("myaccount".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_noop_when_no_host() {
+        let mut store = ParamStore::new();
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(store.get(param_names::ACCOUNT), None);
+    }
 
     fn make_paths(dir: &TempDir) -> ConfigPaths {
         ConfigPaths {

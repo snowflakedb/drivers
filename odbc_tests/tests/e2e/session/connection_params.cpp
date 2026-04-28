@@ -1,3 +1,5 @@
+#include <sstream>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
@@ -23,28 +25,29 @@ static std::string get_connection_string_without_account() {
 }
 
 TEST_CASE("Connect with SERVER only, no ACCOUNT parameter", "[session][account]") {
+  // Given a connection string with SERVER but no ACCOUNT
   auto conn_str = get_connection_string_without_account();
 
-  // Should succeed — driver extracts account from SERVER hostname
+  // When connecting with that string
   Connection conn(conn_str);
 
-  // Verify the connection is functional
+  // Then the connection is functional
   auto stmt = conn.execute_fetch("SELECT 1");
   auto value = get_data<SQL_C_CHAR>(stmt, 1);
   CHECK(value == "1");
 }
 
 TEST_CASE("Connect with SERVER only derives correct account", "[session][account]") {
+  // Given a connection string with SERVER but no ACCOUNT
   auto conn_str = get_connection_string_without_account();
 
+  // When connecting and querying the current account
   Connection conn(conn_str);
-
-  // Verify the account was correctly derived from SERVER
   auto stmt = conn.execute_fetch("SELECT CURRENT_ACCOUNT()");
   auto actual_account = get_data<SQL_C_CHAR>(stmt, 1);
   REQUIRE(!actual_account.empty());
 
-  // Also connect with explicit ACCOUNT and compare
+  // Then it matches the account from an explicit ACCOUNT connection
   Connection ref_conn(get_connection_string());
   auto ref_stmt = ref_conn.execute_fetch("SELECT CURRENT_ACCOUNT()");
   auto expected_account = get_data<SQL_C_CHAR>(ref_stmt, 1);

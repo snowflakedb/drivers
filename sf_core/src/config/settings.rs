@@ -10,7 +10,7 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub fn as_string(&self) -> Option<&String> {
+    pub(crate) fn as_string(&self) -> Option<&String> {
         if let Setting::String(value) = self {
             Some(value)
         } else {
@@ -18,7 +18,7 @@ impl Setting {
         }
     }
 
-    pub fn as_int(&self) -> Option<&i64> {
+    pub(crate) fn as_int(&self) -> Option<&i64> {
         if let Setting::Int(value) = self {
             Some(value)
         } else {
@@ -26,7 +26,7 @@ impl Setting {
         }
     }
 
-    pub fn as_double(&self) -> Option<&f64> {
+    pub(crate) fn as_double(&self) -> Option<&f64> {
         if let Setting::Double(value) = self {
             Some(value)
         } else {
@@ -34,7 +34,7 @@ impl Setting {
         }
     }
 
-    pub fn as_bytes(&self) -> Option<&Vec<u8>> {
+    pub(crate) fn as_bytes(&self) -> Option<&Vec<u8>> {
         if let Setting::Bytes(value) = self {
             Some(value)
         } else {
