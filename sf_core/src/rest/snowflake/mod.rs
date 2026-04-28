@@ -181,11 +181,33 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
     }
 }
 
+/// Strip non-numeric suffixes from a version string so the server accepts it.
+///
+/// The Snowflake server validates `CLIENT_APP_VERSION` against
+/// `[0-9]+\.[0-9]+\.[0-9]+` — alphabetic suffixes like "dev" or "rc1"
+/// cause the version to fail validation and disable feature gates.
+/// Example: `"5.0.0dev"` → `"5.0.0"`, `"4.0.0"` → `"4.0.0"`.
+fn strip_version_suffix(version: &str) -> String {
+    version
+        .split('.')
+        .map(|seg| {
+            let numeric: String = seg.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if numeric.is_empty() {
+                "0".to_owned()
+            } else {
+                numeric
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
     AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
-        client_app_version: login_parameters.client_info.version.clone(),
+        client_app_version: strip_version_suffix(&login_parameters.client_info.version),
+        client_app_version_full: login_parameters.client_info.version.clone(),
         client_capabilities: AuthRequestClientCapabilities {
             smk_id_as_string: true,
         },
@@ -2171,6 +2193,30 @@ mod tests {
             };
             // Only appended when both name and version are present
             assert!(!user_agent(&info).contains("CPython"));
+        }
+    }
+
+    mod strip_version_suffix_tests {
+        use super::*;
+
+        #[test]
+        fn clean_version_unchanged() {
+            assert_eq!(strip_version_suffix("5.0.0"), "5.0.0");
+        }
+
+        #[test]
+        fn dev_suffix_stripped() {
+            assert_eq!(strip_version_suffix("5.0.0dev"), "5.0.0");
+        }
+
+        #[test]
+        fn rc_suffix_stripped() {
+            assert_eq!(strip_version_suffix("3.12.1rc2"), "3.12.1");
+        }
+
+        #[test]
+        fn four_segment_preserved() {
+            assert_eq!(strip_version_suffix("2.21.8.1"), "2.21.8.1");
         }
     }
 

@@ -50,6 +50,8 @@ pub struct AuthRequestData {
     pub client_app_id: String,
     #[serde(rename = "CLIENT_APP_VERSION")]
     pub client_app_version: String,
+    #[serde(rename = "CLIENT_APP_VERSION_FULL")]
+    pub client_app_version_full: String,
     #[serde(rename = "SVN_REVISION")]
     pub _svn_revision: Option<String>,
     #[serde(rename = "ACCOUNT_NAME")]
