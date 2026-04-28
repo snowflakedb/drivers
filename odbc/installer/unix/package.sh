@@ -63,7 +63,7 @@ echo "=== Building RPM: $RPM_NAME ==="
 fpm -s dir \
     -t rpm \
     -n snowflake-odbc-ud \
-    -v "$VERSION" \
+    -v "$BASE_VERSION" \
     -C "$STAGE_DIR" \
     -p "$BUILD_DIR/$RPM_NAME" \
     -d unixODBC \
