@@ -482,18 +482,18 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-test-deps-
+            ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-
 
       - name: Restore ccache
         id: ccache
         uses: actions/cache/restore@v5
         with:
           path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-ccache-odbc-
+            ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-
 
       - name: Restore vcpkg binary cache (Windows)
         if: runner.os == 'Windows'
@@ -722,7 +722,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save ccache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
@@ -735,7 +735,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save vcpkg binary cache (Windows)
         if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
