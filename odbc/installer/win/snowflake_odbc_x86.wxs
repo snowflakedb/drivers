@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 	<Product Id="*"
-		Name="Snowflake ODBC RS Driver $(var.FullVersion) PrPr (x86)"
+		Name="Snowflake ODBC UD $(var.FullVersion) PrPr (x86)"
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
@@ -13,8 +13,8 @@
 			InstallScope="perMachine"
 			Manufacturer="Snowflake Computing"
 			Platform="x86"
-			Description="Snowflake ODBC RS Driver $(var.FullVersion) Private Preview (32-bit)"
-			Comments="Installs the Snowflake ODBC RS Driver (Private Preview) built on Universal Driver." />
+			Description="Snowflake ODBC UD $(var.FullVersion) Private Preview (32-bit)"
+			Comments="Installs the Snowflake ODBC Driver (Private Preview) built on Universal Driver." />
 
 		<Media Id="1" Cabinet="odbc32.cab" EmbedCab="yes" />
 		<MajorUpgrade AllowDowngrades="yes" />
@@ -77,19 +77,19 @@
 		<!-- ================================================================ -->
 		<Directory Id="TARGETDIR" Name="SourceDir">
 			<Directory Id="ProgramFilesFolder">
-				<Directory Id="INSTALLDIR" Name="Snowflake ODBC RS Driver">
+				<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
 					<Directory Id="BinDir" Name="Bin" />
 					<Directory Id="IncludeDir" Name="include" />
 					<Directory Id="RedistDir" Name="Redistributable" />
 				</Directory>
 			</Directory>
 			<Directory Id="PersonalFolder">
-				<Directory Id="SnowflakeODBCRSDriverLogs" Name="Snowflake ODBC RS Driver">
+				<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
 					<Directory Id="LogDir" Name="log">
 						<Component Id="LogDir" Guid="CD48DCFD-56C5-4BAC-AE02-0635C488499E" Win64="no">
 						<CreateFolder />
 							<RemoveFolder Id="LogDir" On="uninstall" />
-							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCRSDriverLogs" On="uninstall" />
+							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
 							Name="LogDirectory" Value="true" Type="string" KeyPath="yes" />
 						</Component>
@@ -136,14 +136,14 @@
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
 				ForceCreateOnInstall="yes">
-				<RegistryValue Type="string" Name="SnowflakeDSIIDriver" Value="Installed" />
+				<RegistryValue Type="string" Name="Snowflake ODBC UD" Value="Installed" />
 			</RegistryKey>
 			<RegistryKey Root="HKLM"
-				Key="SOFTWARE\ODBC\ODBCINST.INI\SnowflakeDSIIDriver"
+				Key="SOFTWARE\ODBC\ODBCINST.INI\Snowflake ODBC UD"
 				ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
 				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc32.dll" KeyPath="yes" />
 				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc32.dll" />
-				<RegistryValue Type="string" Name="Description" Value="Snowflake DSII" />
+				<RegistryValue Type="string" Name="Description" Value="Snowflake ODBC UD" />
 			</RegistryKey>
 			</Component>
 		</DirectoryRef>
@@ -151,7 +151,7 @@
 		<!-- ================================================================ -->
 		<!-- Feature tree                                                       -->
 		<!-- ================================================================ -->
-		<Feature Id="MainApplication" Title="Snowflake ODBC RS Driver" Level="1">
+		<Feature Id="MainApplication" Title="Snowflake ODBC UD" Level="1">
 			<ComponentRef Id="sfodbc32.dll" />
 			<ComponentRef Id="sf_odbc.h" />
 			<ComponentRef Id="RegistryEntries" />
