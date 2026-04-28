@@ -180,10 +180,10 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
 /// after a successful `SQLCancel`. We accept this because we currently
 /// cannot distinguish same-thread vs cross-thread callers.
 ///
-/// TODO(SNOW-3258918, SNOW-3258919): When async or DAE cancel is
-/// implemented, add thread-ID tracking to distinguish same-thread vs
-/// cross-thread. Same-thread cancel must clear_diag_info and post its own
-/// diagnostic records per spec. Only cross-thread cancel skips diagnostics.
+/// TODO(SNOW-3258918): When async cancel is implemented, add thread-ID
+/// tracking to distinguish same-thread vs cross-thread. Same-thread cancel
+/// must clear_diag_info and post its own diagnostic records per spec. Only
+/// cross-thread cancel skips diagnostics.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLCancel");

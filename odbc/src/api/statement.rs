@@ -2474,12 +2474,15 @@ fn execute_dae(
 ///   token. The executing thread observes this via `tokio::select!`. Never
 ///   touches the inner Mutex.
 /// - Path 2: If no RPC is in flight (`active_cancel` is `None`), check for
-///   NeedData state and restore it. This is a single-threaded scenario.
+///   NeedData state (S8/S9/S10) and restore the statement to its pre-execute
+///   state (`Prepared` for `SQLExecute` origin, `Created` for `SQLExecDirect`).
+///   Column bindings and parameter bindings are preserved; accumulated
+///   SQLPutData is discarded.
 ///
 /// Per ODBC 3.5 spec, cross-thread `SQLCancel` does not clear or post
 /// diagnostic records.
 pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
-    tracing::debug!("cancel: statement_handle={:?}", statement_handle);
+    tracing::debug!("cancel: statement_handle={statement_handle:?}");
 
     // TODO(SNOW-3258918): Cancel async execution.
     // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
@@ -2506,7 +2509,6 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
         StatementState::AwaitingParamData { origin, .. }
         | StatementState::AwaitingPutData { origin, .. }
         | StatementState::PutDataCalled { origin, .. } => {
-            // TODO(SNOW-3258919): Full cancel testing during NeedData.
             let restored = origin.restore_state();
             inner.state.set(restored);
         }

@@ -406,8 +406,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Parameter bindings preserved
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancels data-at-execution operation",
                  "[odbc-api][cancel][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
@@ -440,8 +438,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancels data-at-execution op
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Re-execute immediately after canceling data-at-execution",
                  "[odbc-api][cancel][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
@@ -463,6 +459,206 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Re-execute immediately after
 
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel in S10 after SQLPutData discards accumulated data",
+                 "[odbc-api][cancel][terminating_statement]") {
+  SKIP_OLD_DRIVER("BD#47", "old driver retains accumulated PutData across DAE cancel");
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLPOINTER vp = nullptr;
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLPutData(stmt_handle(), const_cast<char*>("partial"), 7);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Cancel from S10 (PutDataCalled) — accumulated data should be discarded.
+  ret = SQLCancel(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Statement should be back in Prepared; re-execute enters DAE again.
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  // Complete the DAE flow this time.
+  vp = nullptr;
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLPutData(stmt_handle(), const_cast<char*>("complete"), 8);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLCHAR buf[64] = {};
+  SQLLEN ind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, buf, sizeof(buf), &ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  CHECK(std::string(reinterpret_cast<char*>(buf)) == "complete");
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel DAE from SQLExecDirect restores Created state",
+                 "[odbc-api][cancel][terminating_statement]") {
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                                   reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLCancel(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // State restored to Created — SQLFreeStmt(RESET_PARAMS) and a fresh exec should work.
+  ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLINTEGER val = 0;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  CHECK(val == 42);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Preserves parameter bindings after DAE cancel",
+                 "[odbc-api][cancel][terminating_statement]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLINTEGER param = 99;
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0,
+                         reinterpret_cast<SQLPOINTER>(static_cast<SQLLEN>(1)), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLCancel(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Rebind with an inline value — the binding infrastructure should be intact.
+  SQLLEN ind = 0;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLINTEGER val = 0;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  CHECK(val == 99);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Preserves column bindings after DAE cancel",
+                 "[odbc-api][cancel][terminating_statement]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Pre-bind column 1
+  SQLINTEGER col_val = 0;
+  SQLLEN col_ind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col_val, 0, &col_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0,
+                         reinterpret_cast<SQLPOINTER>(static_cast<SQLLEN>(1)), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLPOINTER vp = nullptr;
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLCancel(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Rebind param with inline value, keep column binding.
+  SQLINTEGER param = 55;
+  SQLLEN ind = 0;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Column binding should have been populated by SQLFetch.
+  CHECK(col_val == 55);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel DAE then complete DAE on retry",
+                 "[odbc-api][cancel][terminating_statement]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // First attempt: enter DAE, advance to S9, then cancel.
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLPOINTER vp = nullptr;
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLCancel(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Second attempt: complete the full DAE flow.
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  vp = nullptr;
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLPutData(stmt_handle(), const_cast<char*>("retry_ok"), 8);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLParamData(stmt_handle(), &vp);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLCHAR buf[64] = {};
+  SQLLEN ind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, buf, sizeof(buf), &ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  CHECK(std::string(reinterpret_cast<char*>(buf)) == "retry_ok");
 }
 
 // ============================================================================

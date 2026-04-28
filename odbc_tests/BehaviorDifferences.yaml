@@ -751,3 +751,15 @@ behavior_differences:
       The new driver sends CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY to the server as a session parameter during login, making it queryable via SHOW PARAMETERS. The value is also used client-side to configure the heartbeat interval.
     impact: |
       Applications that query SHOW PARAMETERS to verify the heartbeat frequency will now see the value they configured in the connection string.
+
+  58:
+    name: "SQLCancel during data-at-execution discards accumulated SQLPutData"
+    status: allowed
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLCancel is called from S10 (PutDataCalled) during a data-at-execution sequence, the old driver retains accumulated SQLPutData data. If the application re-enters DAE and provides new data, the final parameter value is the concatenation of the old and new chunks.
+    new_driver_behavior: |
+      SQLCancel from any DAE state (S8/S9/S10) fully resets the pending operation, discarding all accumulated SQLPutData. On re-entry the parameter starts fresh, matching the ODBC 3.5 spec requirement that cancel aborts the pending operation.
+    impact: |
+      Applications that cancel mid-DAE and retry will get clean parameter values instead of stale concatenated data.
