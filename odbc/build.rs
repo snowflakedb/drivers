@@ -15,7 +15,6 @@ fn main() {
         println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
 
         let rc_path = std::path::Path::new(&manifest_dir).join("src/setup/resource.rc");
-        embed_resource::compile(rc_path, embed_resource::NONE)
-            .expect("failed to compile resource.rc — is the Windows SDK installed?");
+        let _ = embed_resource::compile(rc_path, embed_resource::NONE);
     }
 }
