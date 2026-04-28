@@ -1297,6 +1297,28 @@ pub unsafe extern "C" fn SQLSetDescFieldW(
 }
 
 // ============================================================================
+// DllMain — capture module handle for dialog resources
+// ============================================================================
+
+#[cfg(target_os = "windows")]
+pub(crate) static DLL_HINSTANCE: std::sync::atomic::AtomicPtr<core::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(target_os = "windows")]
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn DllMain(
+    h_instance: *mut core::ffi::c_void,
+    reason: u32,
+    _reserved: *mut core::ffi::c_void,
+) -> i32 {
+    const DLL_PROCESS_ATTACH: u32 = 1;
+    if reason == DLL_PROCESS_ATTACH {
+        DLL_HINSTANCE.store(h_instance, std::sync::atomic::Ordering::Relaxed);
+    }
+    1 // TRUE
+}
+
+// ============================================================================
 // Setup DLL API — ConfigDriver / ConfigDSN
 //
 // These functions are called by the ODBC Installer DLL, not the
@@ -1388,7 +1410,37 @@ mod setup {
             .map(|(_, v)| v.as_str())
     }
 
-    unsafe fn config_dsn_impl(f_request: u16, driver: &str, attrs: &[(String, String)]) -> bool {
+    unsafe fn write_dsn_silent(dsn: &str, driver: &str, attrs: &[(String, String)]) -> bool {
+        let dsn_w = to_wide(dsn);
+        let driver_w = to_wide(driver);
+        if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
+            return false;
+        }
+        let odbc_ini = to_wide("odbc.ini");
+        for (key, value) in attrs {
+            if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
+                continue;
+            }
+            let key_w = to_wide(key);
+            let val_w = to_wide(value);
+            unsafe {
+                SQLWritePrivateProfileStringW(
+                    dsn_w.as_ptr(),
+                    key_w.as_ptr(),
+                    val_w.as_ptr(),
+                    odbc_ini.as_ptr(),
+                );
+            }
+        }
+        true
+    }
+
+    unsafe fn config_dsn_impl(
+        hwnd_parent: *mut core::ffi::c_void,
+        f_request: u16,
+        driver: &str,
+        attrs: &[(String, String)],
+    ) -> bool {
         match f_request {
             ODBC_REMOVE_DSN => {
                 let Some(dsn) = find_dsn(attrs) else {
@@ -1398,31 +1450,26 @@ mod setup {
                 unsafe { SQLRemoveDSNFromIniW(dsn_w.as_ptr()) != 0 }
             }
             ODBC_ADD_DSN | ODBC_CONFIG_DSN => {
-                let Some(dsn) = find_dsn(attrs) else {
-                    return false;
-                };
-                let dsn_w = to_wide(dsn);
-                let driver_w = to_wide(driver);
-                if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
-                    return false;
-                }
-                let odbc_ini = to_wide("odbc.ini");
-                for (key, value) in attrs {
-                    if key.eq_ignore_ascii_case("DSN") {
-                        continue;
-                    }
-                    let key_w = to_wide(key);
-                    let val_w = to_wide(value);
+                let dsn = find_dsn(attrs).unwrap_or("");
+                let is_add = f_request == ODBC_ADD_DSN;
+
+                // Show dialog when a parent window is provided (ODBC Administrator).
+                // Fall back to silent mode for programmatic DSN creation (null hwnd).
+                if !hwnd_parent.is_null() {
                     unsafe {
-                        SQLWritePrivateProfileStringW(
-                            dsn_w.as_ptr(),
-                            key_w.as_ptr(),
-                            val_w.as_ptr(),
-                            odbc_ini.as_ptr(),
-                        );
+                        crate::setup_dialog::show_config_dialog(
+                            hwnd_parent,
+                            is_add,
+                            driver,
+                            dsn,
+                            attrs,
+                        )
                     }
+                } else if !dsn.is_empty() {
+                    unsafe { write_dsn_silent(dsn, driver, attrs) }
+                } else {
+                    false
                 }
-                true
             }
             _ => false,
         }
@@ -1432,7 +1479,7 @@ mod setup {
     /// Called by the ODBC Installer DLL (Unicode variant).
     #[unsafe(no_mangle)]
     pub unsafe extern "system" fn ConfigDSNW(
-        _hwnd_parent: *mut core::ffi::c_void,
+        hwnd_parent: *mut core::ffi::c_void,
         f_request: u16,
         lpsz_driver: *const u16,
         lpsz_attributes: *const u16,
@@ -1449,14 +1496,14 @@ mod setup {
             String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(lpsz_driver, len) })
         };
         let attrs = unsafe { parse_attributes_w(lpsz_attributes) };
-        i32::from(unsafe { config_dsn_impl(f_request, &driver, &attrs) })
+        i32::from(unsafe { config_dsn_impl(hwnd_parent, f_request, &driver, &attrs) })
     }
 
     /// # Safety
     /// Called by the ODBC Installer DLL (ANSI variant).
     #[unsafe(no_mangle)]
     pub unsafe extern "system" fn ConfigDSN(
-        _hwnd_parent: *mut core::ffi::c_void,
+        hwnd_parent: *mut core::ffi::c_void,
         f_request: u16,
         lpsz_driver: *const u8,
         lpsz_attributes: *const u8,
@@ -1474,7 +1521,7 @@ mod setup {
                 .into_owned()
         };
         let attrs = unsafe { parse_attributes_a(lpsz_attributes) };
-        i32::from(unsafe { config_dsn_impl(f_request, &driver, &attrs) })
+        i32::from(unsafe { config_dsn_impl(hwnd_parent, f_request, &driver, &attrs) })
     }
 
     /// # Safety
