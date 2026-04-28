@@ -66,9 +66,9 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
 pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> {
     tracing::info!("Allocating new statement handle");
     let dbc = conn_from_handle(input_handle)?;
+    let mut connection = dbc.connection.lock();
     // Extract needed data under a short-lived lock; release before the async call.
     let (conn_handle, metadata_id) = {
-        let connection = dbc.connection.lock();
         match &connection.state {
             ConnectionState::Connected {
                 db_handle: _,
@@ -86,6 +86,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
         })
         .await
     })?;
+
     let stmt_handle = response
         .stmt_handle
         .required("Statement handle is required")?;
@@ -105,26 +106,23 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
     stmt_mut.apd.stmt = raw_ptr;
     stmt_mut.ipd.stmt = raw_ptr;
 
-    {
-        let mut connection = dbc.connection.lock();
-        // Defensive prune: in correct code free_statement removes each entry before
-        // dropping the Arc, so Weaks here are always upgradeable. This retain is a
-        // safety net against a future bug in the removal logic, not a routine cleanup.
-        connection.child_statements.retain(|(w, raw_ptr)| {
-            if w.upgrade().is_some() {
-                return true;
-            }
-            // A dead Weak means free_statement dropped the Arc without removing the
-            // child_statements entry — this is a bug. Log it so leaks are visible.
-            tracing::error!(
-                "alloc_statement: defensive prune found dead Weak (raw_ptr={raw_ptr:p}); \
-                 server-side statement handle may have leaked"
-            );
-            false
-        });
-        connection.child_statements.push((weak, raw_ptr));
-    }
-    Ok(raw_ptr as *mut Statement)
+    // Defensive prune: in correct code free_statement removes each entry before
+    // dropping the Arc, so Weaks here are always upgradeable. This retain is a
+    // safety net against a future bug in the removal logic, not a routine cleanup.
+    connection.child_statements.retain(|(w, raw_ptr)| {
+        if w.upgrade().is_some() {
+            return true;
+        }
+        // A dead Weak means free_statement dropped the Arc without removing the
+        // child_statements entry — this is a bug. Log it so leaks are visible.
+        tracing::error!(
+            "alloc_statement: defensive prune found dead Weak (raw_ptr={raw_ptr:p}); \
+                server-side statement handle may have leaked"
+        );
+        false
+    });
+    connection.child_statements.push((weak, raw_ptr));
+    return Ok(raw_ptr as *mut Statement);
 }
 
 /// Free an environment handle
