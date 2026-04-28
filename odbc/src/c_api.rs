@@ -1330,7 +1330,7 @@ pub unsafe extern "system" fn DllMain(
 mod setup {
     use std::ptr;
 
-    #[link(name = "odbccp32")]
+    #[link(name = "odbccp32", kind = "raw-dylib")]
     unsafe extern "system" {
         fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> i32;
         fn SQLRemoveDSNFromIniW(lpszDSN: *const u16) -> i32;
