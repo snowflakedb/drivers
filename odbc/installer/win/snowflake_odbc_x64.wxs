@@ -89,7 +89,7 @@
 						<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD" Win64="yes">
 						<CreateFolder />
 							<RemoveFolder Id="LogDir" On="uninstall" />
-							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCRSDriverLogs" On="uninstall" />
+							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
 							Name="LogDirectory" Value="true" Type="string" KeyPath="yes" />
 						</Component>
