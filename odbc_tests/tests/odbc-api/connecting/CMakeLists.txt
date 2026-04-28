@@ -9,6 +9,6 @@ add_odbc_test(odbc_api_stmt_attr_tests stmt_attr_tests.cpp)
 
 if(WIN32)
   add_executable(odbc_api_config_dsn_tests config_dsn_tests.cpp)
-  target_link_libraries(odbc_api_config_dsn_tests PRIVATE Catch2::Catch2WithMain odbccp32)
+  target_link_libraries(odbc_api_config_dsn_tests PRIVATE Catch2::Catch2WithMain)
   catch_discover_tests(odbc_api_config_dsn_tests TEST_PREFIX "odbc_api_config_dsn_tests: ")
 endif()

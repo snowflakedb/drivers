@@ -1,7 +1,6 @@
 #ifdef _WIN32
 
 #include <Windows.h>
-#include <odbcinst.h>
 
 #include <cstdlib>
 #include <random>
@@ -10,11 +9,15 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#define ODBC_ADD_DSN 1
+#define ODBC_CONFIG_DSN 2
+#define ODBC_REMOVE_DSN 3
+
 using ConfigDriverFn = int(__stdcall*)(HWND, WORD, LPCSTR, LPCSTR, LPSTR, WORD, WORD*);
 using ConfigDSNWFn = int(__stdcall*)(HWND, WORD, LPCWSTR, LPCWSTR);
 using ConfigDSNFn = int(__stdcall*)(HWND, WORD, LPCSTR, LPCSTR);
-
-// ODBC_ADD_DSN, ODBC_CONFIG_DSN, ODBC_REMOVE_DSN are defined in <odbcinst.h>
+using SQLGetPrivateProfileStringFn = int(__stdcall*)(LPCSTR, LPCSTR, LPCSTR, LPSTR, int, LPCSTR);
+using SQLRemoveDSNFromIniFn = BOOL(__stdcall*)(LPCSTR);
 
 static std::string get_driver_path() {
   const char* path = std::getenv("DRIVER_PATH");
@@ -61,41 +64,21 @@ static std::vector<char> build_attrs_a(const std::vector<std::pair<std::string, 
   return buf;
 }
 
-/// Read a DSN entry value from ODBC.INI via the installer API.
-static std::string read_dsn_value(const std::string& dsn, const std::string& key) {
-  char buf[512] = {};
-  SQLGetPrivateProfileString(dsn.c_str(), key.c_str(), "", buf, sizeof(buf), "odbc.ini");
-  return buf;
-}
-
-/// Check if a DSN exists in ODBC.INI.
-static bool dsn_exists(const std::string& dsn) {
-  char buf[4096] = {};
-  int len = SQLGetPrivateProfileString(nullptr, nullptr, "", buf, sizeof(buf), "odbc.ini");
-  const char* p = buf;
-  while (p < buf + len && *p != '\0') {
-    if (dsn == p) return true;
-    p += strlen(p) + 1;
-  }
-  return false;
-}
-
-class DriverDll {
+class DynLib {
   HMODULE handle_ = nullptr;
 
  public:
-  DriverDll() {
-    std::string path = get_driver_path();
-    handle_ = LoadLibraryA(path.c_str());
+  DynLib(const char* name) {
+    handle_ = LoadLibraryA(name);
     REQUIRE(handle_ != nullptr);
   }
 
-  ~DriverDll() {
+  ~DynLib() {
     if (handle_) FreeLibrary(handle_);
   }
 
-  DriverDll(const DriverDll&) = delete;
-  DriverDll& operator=(const DriverDll&) = delete;
+  DynLib(const DynLib&) = delete;
+  DynLib& operator=(const DynLib&) = delete;
 
   template <typename T>
   T get(const char* name) {
@@ -105,6 +88,42 @@ class DriverDll {
   }
 };
 
+class DriverDll : public DynLib {
+ public:
+  DriverDll() : DynLib(get_driver_path().c_str()) {}
+};
+
+class InstallerApi {
+  DynLib dll_{"odbccp32.dll"};
+  SQLGetPrivateProfileStringFn get_profile_ = dll_.get<SQLGetPrivateProfileStringFn>("SQLGetPrivateProfileStringA");
+  SQLRemoveDSNFromIniFn remove_dsn_ = dll_.get<SQLRemoveDSNFromIniFn>("SQLRemoveDSNFromIniA");
+
+ public:
+  std::string read_dsn_value(const std::string& dsn, const std::string& key) {
+    char buf[512] = {};
+    get_profile_(dsn.c_str(), key.c_str(), "", buf, sizeof(buf), "odbc.ini");
+    return buf;
+  }
+
+  bool dsn_exists(const std::string& dsn) {
+    char buf[4096] = {};
+    int len = get_profile_(nullptr, nullptr, "", buf, sizeof(buf), "odbc.ini");
+    const char* p = buf;
+    while (p < buf + len && *p != '\0') {
+      if (dsn == p) return true;
+      p += strlen(p) + 1;
+    }
+    return false;
+  }
+
+  void remove_dsn(const std::string& dsn) { remove_dsn_(dsn.c_str()); }
+};
+
+static InstallerApi& installer() {
+  static InstallerApi api;
+  return api;
+}
+
 /// RAII guard that removes a DSN from the registry on destruction,
 /// ensuring cleanup even when a test assertion fails midway.
 class DsnGuard {
@@ -112,7 +131,7 @@ class DsnGuard {
 
  public:
   explicit DsnGuard(const std::string& dsn) : dsn_(dsn) {}
-  ~DsnGuard() { SQLRemoveDSNFromIni(dsn_.c_str()); }
+  ~DsnGuard() { installer().remove_dsn(dsn_); }
 
   DsnGuard(const DsnGuard&) = delete;
   DsnGuard& operator=(const DsnGuard&) = delete;
@@ -152,13 +171,13 @@ TEST_CASE("ConfigDSNW: add and remove a DSN", "[odbc-api][setup-dll][config-dsn]
   auto attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "test.snowflake.com"}});
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), attrs.data());
   REQUIRE(ret == 1);
-  REQUIRE(dsn_exists(dsn));
-  REQUIRE(read_dsn_value(dsn, "SERVER") == "test.snowflake.com");
+  REQUIRE(installer().dsn_exists(dsn));
+  REQUIRE(installer().read_dsn_value(dsn, "SERVER") == "test.snowflake.com");
 
   auto rm_attrs = build_attrs_w({{"DSN", dsn}});
   ret = config_dsn_w(nullptr, ODBC_REMOVE_DSN, driver.c_str(), rm_attrs.data());
   REQUIRE(ret == 1);
-  REQUIRE_FALSE(dsn_exists(dsn));
+  REQUIRE_FALSE(installer().dsn_exists(dsn));
 }
 
 TEST_CASE("ConfigDSNW: modify an existing DSN", "[odbc-api][setup-dll][config-dsn]") {
@@ -171,13 +190,13 @@ TEST_CASE("ConfigDSNW: modify an existing DSN", "[odbc-api][setup-dll][config-ds
   auto add_attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "old.snowflake.com"}, {"UID", "user1"}});
   int ret = config_dsn_w(nullptr, ODBC_ADD_DSN, driver.c_str(), add_attrs.data());
   REQUIRE(ret == 1);
-  REQUIRE(read_dsn_value(dsn, "SERVER") == "old.snowflake.com");
+  REQUIRE(installer().read_dsn_value(dsn, "SERVER") == "old.snowflake.com");
 
   auto mod_attrs = build_attrs_w({{"DSN", dsn}, {"SERVER", "new.snowflake.com"}, {"UID", "user2"}});
   ret = config_dsn_w(nullptr, ODBC_CONFIG_DSN, driver.c_str(), mod_attrs.data());
   REQUIRE(ret == 1);
-  REQUIRE(read_dsn_value(dsn, "SERVER") == "new.snowflake.com");
-  REQUIRE(read_dsn_value(dsn, "UID") == "user2");
+  REQUIRE(installer().read_dsn_value(dsn, "SERVER") == "new.snowflake.com");
+  REQUIRE(installer().read_dsn_value(dsn, "UID") == "user2");
 }
 
 TEST_CASE("ConfigDSNW: returns FALSE with missing DSN attribute", "[odbc-api][setup-dll][config-dsn]") {
@@ -222,13 +241,13 @@ TEST_CASE("ConfigDSN (ANSI): add and remove a DSN", "[odbc-api][setup-dll][confi
   auto attrs = build_attrs_a({{"DSN", dsn}, {"SERVER", "ansi.snowflake.com"}});
   int ret = config_dsn(nullptr, ODBC_ADD_DSN, "Snowflake ODBC UD", attrs.data());
   REQUIRE(ret == 1);
-  REQUIRE(dsn_exists(dsn));
-  REQUIRE(read_dsn_value(dsn, "SERVER") == "ansi.snowflake.com");
+  REQUIRE(installer().dsn_exists(dsn));
+  REQUIRE(installer().read_dsn_value(dsn, "SERVER") == "ansi.snowflake.com");
 
   auto rm_attrs = build_attrs_a({{"DSN", dsn}});
   ret = config_dsn(nullptr, ODBC_REMOVE_DSN, "Snowflake ODBC UD", rm_attrs.data());
   REQUIRE(ret == 1);
-  REQUIRE_FALSE(dsn_exists(dsn));
+  REQUIRE_FALSE(installer().dsn_exists(dsn));
 }
 
 TEST_CASE("ConfigDSN (ANSI): returns FALSE with NULL attributes", "[odbc-api][setup-dll][config-dsn]") {
