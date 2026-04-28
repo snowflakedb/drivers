@@ -2009,7 +2009,8 @@ mod tests {
         // ODBC Appendix D: TIMESTAMP → DATE only succeeds when the discarded
         // time portion is exactly zero. Use midnight so we exercise the
         // happy-path date extraction; the 22008-on-nonzero-time behavior is
-        // covered by `convert_timestamp_as_date_rejects_nonzero_time`.
+        // covered by `convert_timestamp_as_date_rejects_nonzero_hour` and
+        // `convert_timestamp_as_date_rejects_nonzero_fraction`.
         let ts = sql::Timestamp {
             year: 2024,
             month: 12,
