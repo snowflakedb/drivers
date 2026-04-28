@@ -177,7 +177,7 @@ jobs:
       # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
       # and improves hit rates.
       - name: Restore uv cache (Linux/macOS)
-        id: uv-cache-linux
+        id: uv-cache-unix
         if: runner.os != 'Windows'
         uses: actions/cache/restore@v5
         with:
@@ -310,7 +310,7 @@ jobs:
 
       - name: Run tests with coverage (Linux/macOS)
         if: runner.os != 'Windows'
-        id: run_python_tests_linux
+        id: run_python_tests_unix
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         working-directory: python
         run: |
@@ -326,7 +326,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Rerun failed Python tests (Linux/macOS)
-        if: steps.run_python_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
+        if: steps.run_python_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
         working-directory: python
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
@@ -386,7 +386,7 @@ jobs:
         run: uv cache prune --ci
 
       - name: Save uv cache (Linux/macOS)
-        if: always() && runner.os != 'Windows' && steps.uv-cache-linux.outputs.cache-hit != 'true'
+        if: always() && runner.os != 'Windows' && steps.uv-cache-unix.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 10
         env:
