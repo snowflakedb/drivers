@@ -171,12 +171,14 @@ impl<'a> QueryInput<'a> {
 }
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
-    format!(
-        "{}/{} ({}) CPython/3.11.6",
-        client_info.application,
-        client_info.version.clone(),
-        client_info.os.clone()
-    )
+    let base = format!(
+        "{}/{} ({})",
+        client_info.application, client_info.version, client_info.os
+    );
+    match (&client_info.runtime_name, &client_info.runtime_version) {
+        (Some(name), Some(ver)) => format!("{base} {name}/{ver}"),
+        _ => base,
+    }
 }
 
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
@@ -193,9 +195,9 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
             platforms: login_parameters.client_info.platforms.clone(),
-            python_version: Some("3.11.6".to_string()),
-            python_runtime: Some("CPython".to_string()),
-            python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+            runtime_version: login_parameters.client_info.runtime_version.clone(),
+            runtime_name: login_parameters.client_info.runtime_name.clone(),
+            compiler: login_parameters.client_info.compiler.clone(),
             os_details: login_parameters.client_info.os_details.clone(),
         },
         ..Default::default()
@@ -2127,6 +2129,48 @@ mod tests {
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
             );
+        }
+    }
+
+    mod user_agent_tests {
+        use super::*;
+
+        #[test]
+        fn user_agent_without_runtime_info() {
+            let info = ClientInfo {
+                application: "MyApp".to_string(),
+                version: "1.0.0".to_string(),
+                os: "Linux".to_string(),
+                ..test_client_info()
+            };
+            assert_eq!(user_agent(&info), "MyApp/1.0.0 (Linux)");
+        }
+
+        #[test]
+        fn user_agent_with_runtime_info() {
+            let info = ClientInfo {
+                application: "PythonConnector".to_string(),
+                version: "3.15.0".to_string(),
+                os: "Darwin".to_string(),
+                runtime_name: Some("CPython".to_string()),
+                runtime_version: Some("3.11.6".to_string()),
+                ..test_client_info()
+            };
+            assert_eq!(
+                user_agent(&info),
+                "PythonConnector/3.15.0 (Darwin) CPython/3.11.6"
+            );
+        }
+
+        #[test]
+        fn user_agent_with_only_runtime_name_no_version() {
+            let info = ClientInfo {
+                runtime_name: Some("CPython".to_string()),
+                runtime_version: None,
+                ..test_client_info()
+            };
+            // Only appended when both name and version are present
+            assert!(!user_agent(&info).contains("CPython"));
         }
     }
 

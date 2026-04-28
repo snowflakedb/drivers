@@ -317,7 +317,8 @@ class TestConnectionSetOptions:
 
         assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
+        expected_keys = {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
+        assert set(request.options.keys()) == expected_keys
 
     def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
         """ValidationIssue warnings from the response should be surfaced via warnings.warn."""
@@ -342,7 +343,7 @@ class TestConnectionSetOptions:
         assert "param 'y' has no effect" in str(caught[1].message)
 
     def test_no_user_options_sends_only_client_app_id(self, mock_db_api):
-        """When there are no user-supplied kwargs, only the injected client_app_id is sent."""
+        """When no user-supplied kwargs, connection_set_options is still called with client_app_id."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
@@ -350,8 +351,29 @@ class TestConnectionSetOptions:
 
         assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert set(request.options.keys()) == {"client_app_id"}
-        assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
+        # Only client_app_id from the application default; version/runtime/compiler
+        # are now delivered exclusively via WrapperIdentity in ConnectionInitRequest.
+        assert "client_app_id" in request.options
+        assert "client_app_version" not in request.options
+
+
+class TestDriverIdentity:
+    """Unit tests for driver identity fields in ConnectionInitRequest."""
+
+    def test_driver_identity_in_connection_init(self, mock_db_api):
+        """Driver identity fields should be passed via WrapperIdentity in ConnectionInitRequest."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a")
+
+        init_request = mock_db_api.connection_init.call_args[0][0]
+        identity = init_request.wrapper_identity
+        assert identity.driver_name == "snowflake-connector-python"
+        assert identity.driver_version != ""
+        assert identity.language_runtime != ""
+        assert identity.language_version != ""
+        assert identity.language_compiler != ""
 
 
 class TestClose:

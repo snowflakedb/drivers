@@ -268,23 +268,21 @@ fn connect_with_params(
             tracing::warn!("connection option warning: {}", warning.message);
         }
 
-        // Wrapper identity and optional default login timeout (Okta SAML budget) use the
-        // same batch setter RPC as the connection string options.
-        let mut follow_up = HashMap::from([("client_app_id".to_owned(), "ODBC".to_owned().into())]);
+        // Optional default login timeout (Okta SAML budget).
         if !login_timeout_in_options && !login_timeout_in_attrs {
-            follow_up.insert(
+            let follow_up = HashMap::from([(
                 "authentication_timeout".to_owned(),
                 DEFAULT_LOGIN_TIMEOUT_SECS.to_owned().into(),
-            );
-        }
-        let response = c
-            .connection_set_options(ConnectionSetOptionsRequest {
-                conn_handle: Some(conn_handle),
-                options: follow_up,
-            })
-            .await?;
-        for warning in &response.warnings {
-            tracing::warn!("connection option warning: {}", warning.message);
+            )]);
+            let response = c
+                .connection_set_options(ConnectionSetOptionsRequest {
+                    conn_handle: Some(conn_handle),
+                    options: follow_up,
+                })
+                .await?;
+            for warning in &response.warnings {
+                tracing::warn!("connection option warning: {}", warning.message);
+            }
         }
 
         apply_pre_connection_runtime_attrs_async(c, &pre_connection_attrs, conn_handle).await?;
@@ -292,7 +290,13 @@ fn connect_with_params(
         c.connection_init(ConnectionInitRequest {
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
-            ..Default::default()
+            wrapper_identity: Some(WrapperIdentity {
+                driver_name: Some("ODBC".to_string()),
+                driver_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                language_runtime: None,
+                language_version: None,
+                language_compiler: None,
+            }),
         })
         .await?;
 
