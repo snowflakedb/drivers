@@ -247,14 +247,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR with NULL indicator
 //
 // This is a deliberate behavioral divergence from the old Snowflake driver,
 // which forwards these strings to the server and stores them as non-finite
-// FLOAT values. See BD#47. Applications that need to insert Infinity / NaN
+// FLOAT values. See BD#48. Applications that need to insert Infinity / NaN
 // should bind SQL_C_DOUBLE or SQL_C_FLOAT instead (both are spec-permitted
 // and supported by the new driver).
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
-  SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
@@ -274,7 +274,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR Infinity string fo
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR negative Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
-  SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
@@ -294,7 +294,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR negative Infinity 
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR NaN string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
-  SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
@@ -314,7 +314,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR NaN string for SQL
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
-  SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
@@ -334,7 +334,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR Infinity string f
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR negative Infinity string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
-  SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
@@ -354,7 +354,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR negative Infinity
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR NaN string for SQL_DOUBLE",
                  "[c_char][conversion][sql_real]") {
-  SKIP_OLD_DRIVER("BD#47", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
