@@ -280,7 +280,7 @@ pipeline {
                       sh label: 'Cleanup test PATs', script: '''
                         set +x
                         pip3 install snowflake-connector-python -q 2>/dev/null || true
-                        python3 scripts/cleanup_test_pats.py \
+                        python3 scripts/cleanup_env.py \
                           --parameter-path $(pwd)/parameters.json \
                           --build-tag "JNK_${BUILD_NUMBER}" || true
                       '''
@@ -328,7 +328,7 @@ pipeline {
                       sh label: 'Cleanup test PATs', script: '''
                         set +x
                         pip3 install snowflake-connector-python -q 2>/dev/null || true
-                        python3 scripts/cleanup_test_pats.py \
+                        python3 scripts/cleanup_env.py \
                           --parameter-path $(pwd)/parameters.json \
                           --build-tag "JNK_${BUILD_NUMBER}" || true
                       '''
@@ -408,7 +408,7 @@ pipeline {
                       sh label: 'Cleanup test PATs', script: '''
                         set +x
                         pip3 install snowflake-connector-python -q 2>/dev/null || true
-                        python3 scripts/cleanup_test_pats.py \
+                        python3 scripts/cleanup_env.py \
                           --parameter-path $(pwd)/parameters.json \
                           --build-tag "JNK_${BUILD_NUMBER}" || true
                       '''
