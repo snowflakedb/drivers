@@ -44,6 +44,22 @@ impl LogManager {
             .get_or_init(|| detect_os_details(self.fs.as_ref()))
     }
 
+    /// Create a `LogManager` without installing a global tracing subscriber.
+    ///
+    /// The returned instance still provides a `SessionRegistry` and
+    /// lazily-detected OS details via the given `fs`, but does not call
+    /// `set_global_default`. Use this when the subscriber is managed
+    /// externally (e.g. the host application or test harness already
+    /// configures tracing).
+    pub fn with_none_subscriber(fs: Arc<dyn FsAdapter>) -> Self {
+        Self {
+            telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            telemetry_sessions: SessionRegistry::default(),
+            os_details: once_cell::sync::OnceCell::new(),
+            fs,
+        }
+    }
+
     /// Initialise logging with the given config, creating a fresh
     /// `SessionRegistry` so the Snowflake telemetry layer is always
     /// installed.
