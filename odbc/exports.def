@@ -43,3 +43,6 @@ EXPORTS
     SQLSetDescFieldW
     SQLSetEnvAttr
     SQLSetStmtAttrW
+    ConfigDSN
+    ConfigDSNW
+    ConfigDriver
