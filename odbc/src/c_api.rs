@@ -1350,12 +1350,57 @@ mod setup {
         ) -> i32;
     }
 
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            dw_flags: u32,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+
+    const CP_ACP: u32 = 0;
     const ODBC_ADD_DSN: u16 = 1;
     const ODBC_CONFIG_DSN: u16 = 2;
     const ODBC_REMOVE_DSN: u16 = 3;
 
     fn to_wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// Convert a Windows ANSI code page byte slice to a Rust String.
+    unsafe fn acp_to_string(bytes: &[u8]) -> String {
+        if bytes.is_empty() {
+            return String::new();
+        }
+        let wide_len = unsafe {
+            MultiByteToWideChar(
+                CP_ACP,
+                0,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if wide_len <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut wide_buf = vec![0u16; wide_len as usize];
+        unsafe {
+            MultiByteToWideChar(
+                CP_ACP,
+                0,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                wide_buf.as_mut_ptr(),
+                wide_len,
+            );
+        }
+        String::from_utf16_lossy(&wide_buf)
     }
 
     /// Parse a double-null-terminated wide attribute string into key-value pairs.
@@ -1402,7 +1447,7 @@ mod setup {
                 p = unsafe { p.add(1) };
             }
             let slice = unsafe { std::slice::from_raw_parts(start, len) };
-            let s = String::from_utf8_lossy(slice).into_owned();
+            let s = unsafe { acp_to_string(slice) };
             if let Some((k, v)) = s.split_once('=') {
                 result.push((k.to_string(), v.to_string()));
             }
@@ -1530,8 +1575,7 @@ mod setup {
                 len += 1;
                 p = unsafe { p.add(1) };
             }
-            String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(lpsz_driver, len) })
-                .into_owned()
+            unsafe { acp_to_string(std::slice::from_raw_parts(lpsz_driver, len)) }
         };
         let attrs = unsafe { parse_attributes_a(lpsz_attributes) };
         i32::from(unsafe { config_dsn_impl(hwnd_parent, f_request, &driver, &attrs) })
