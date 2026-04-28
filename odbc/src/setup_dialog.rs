@@ -329,18 +329,23 @@ unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
     let key_w = to_wide(key);
     let default_w = to_wide("");
     let filename_w = to_wide("odbc.ini");
-    let mut buf = [0u16; 512];
-    unsafe {
-        SQLGetPrivateProfileStringW(
-            dsn_w.as_ptr(),
-            key_w.as_ptr(),
-            default_w.as_ptr(),
-            buf.as_mut_ptr(),
-            buf.len() as i32,
-            filename_w.as_ptr(),
-        );
+    let mut buf = vec![0u16; 512];
+    loop {
+        let copied = unsafe {
+            SQLGetPrivateProfileStringW(
+                dsn_w.as_ptr(),
+                key_w.as_ptr(),
+                default_w.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len() as i32,
+                filename_w.as_ptr(),
+            )
+        } as usize;
+        if copied < buf.len().saturating_sub(1) {
+            return String::from_utf16_lossy(&buf[..copied]);
+        }
+        buf.resize(buf.len() * 2, 0);
     }
-    from_wide(&buf)
 }
 
 unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)]) -> bool {
