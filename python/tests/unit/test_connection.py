@@ -1003,3 +1003,24 @@ class TestGetQueryStatusThrowIfError:
         )
         with pytest.raises(ProgrammingError, match="Query failed-qid-2 failed"):
             connection.get_query_status_throw_if_error("failed-qid-2")
+
+
+class TestIsValid:
+    """Unit tests for Connection.is_valid()."""
+
+    def test_returns_true_when_heartbeat_succeeds(self, connection, mock_db_api):
+        mock_db_api.connection_heartbeat.return_value = MagicMock(valid=True)
+        assert connection.is_valid() is True
+
+    def test_returns_false_when_heartbeat_reports_invalid(self, connection, mock_db_api):
+        mock_db_api.connection_heartbeat.return_value = MagicMock(valid=False)
+        assert connection.is_valid() is False
+
+    def test_returns_false_when_closed(self, connection, mock_db_api):
+        connection.close()
+        assert connection.is_valid() is False
+        mock_db_api.connection_heartbeat.assert_not_called()
+
+    def test_returns_false_on_exception(self, connection, mock_db_api):
+        mock_db_api.connection_heartbeat.side_effect = RuntimeError("transport error")
+        assert connection.is_valid() is False

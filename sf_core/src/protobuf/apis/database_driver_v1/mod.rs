@@ -531,6 +531,20 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_heartbeat", skip(self, input))]
+    async fn connection_heartbeat(
+        &self,
+        input: ConnectionHeartbeatRequest,
+    ) -> Result<ConnectionHeartbeatResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let valid = self
+            .driver
+            .connection_heartbeat(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionHeartbeatResponse { valid })
+    }
+
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]
     async fn statement_new(
         &self,

@@ -30,6 +30,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetParameterRequest,
     ConnectionGetQueryStatusRequest,
     ConnectionGetQueryStatusResponse,
+    ConnectionHeartbeatRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionReleaseRequest,
@@ -398,6 +399,20 @@ class Connection(ErrorHandlerMixin):
             bool: True if connection is closed, False otherwise
         """
         return self._closed
+
+    def is_valid(self) -> bool:
+        """Check whether the connection is still usable for sending queries.
+
+        Validates both the network transport and the Snowflake session by sending a heartbeat to the server.
+        """
+        if self.is_closed():
+            return False
+        try:
+            request = ConnectionHeartbeatRequest(conn_handle=self.conn_handle)
+            response = self.db_api.connection_heartbeat(request)
+            return response.valid
+        except Exception:
+            return False
 
     def _get_session_parameter(self, name: str) -> str | None:
         """

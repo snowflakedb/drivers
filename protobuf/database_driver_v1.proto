@@ -432,6 +432,15 @@ message ConnectionTokenResponse {
   optional int64 validity_in_seconds = 2;
 }
 
+// Heartbeat request to validate that the connection and session are still alive.
+message ConnectionHeartbeatRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionHeartbeatResponse {
+  bool valid = 1;
+}
+
 // Fetch the result of a previously executed query by its Snowflake Query ID.
 message ConnectionGetQueryResultRequest {
   ConnectionHandle conn_handle = 1;
@@ -777,6 +786,8 @@ service DatabaseDriver {
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core
   rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
+  // Heartbeat to validate connection and session are still alive
+  rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
