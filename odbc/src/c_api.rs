@@ -1358,6 +1358,52 @@ mod setup {
         s.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
+    /// Convert a byte slice from the system ANSI code page (ACP) to a UTF-8 String.
+    /// On non-Windows this falls back to treating the bytes as UTF-8.
+    #[cfg(target_os = "windows")]
+    fn acp_to_string(bytes: &[u8]) -> String {
+        unsafe extern "system" {
+            fn MultiByteToWideChar(
+                code_page: u32,
+                dw_flags: u32,
+                lp_multi_byte_str: *const u8,
+                cb_multi_byte: i32,
+                lp_wide_char_str: *mut u16,
+                cch_wide_char: i32,
+            ) -> i32;
+        }
+        const CP_ACP: u32 = 0;
+        if bytes.is_empty() {
+            return String::new();
+        }
+        unsafe {
+            let wide_len = MultiByteToWideChar(
+                CP_ACP,
+                0,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                ptr::null_mut(),
+                0,
+            );
+            if wide_len <= 0 {
+                return String::from_utf8_lossy(bytes).into_owned();
+            }
+            let mut wide_buf = vec![0u16; wide_len as usize];
+            let written = MultiByteToWideChar(
+                CP_ACP,
+                0,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                wide_buf.as_mut_ptr(),
+                wide_len,
+            );
+            if written <= 0 {
+                return String::from_utf8_lossy(bytes).into_owned();
+            }
+            String::from_utf16_lossy(&wide_buf[..written as usize])
+        }
+    }
+
     /// Parse a double-null-terminated wide attribute string into key-value pairs.
     unsafe fn parse_attributes_w(attrs: *const u16) -> Vec<(String, String)> {
         let mut result = Vec::new();
@@ -1402,7 +1448,7 @@ mod setup {
                 p = unsafe { p.add(1) };
             }
             let slice = unsafe { std::slice::from_raw_parts(start, len) };
-            let s = String::from_utf8_lossy(slice).into_owned();
+            let s = acp_to_string(slice);
             if let Some((k, v)) = s.split_once('=') {
                 result.push((k.to_string(), v.to_string()));
             }
@@ -1509,6 +1555,7 @@ mod setup {
 
     /// # Safety
     /// Called by the ODBC Installer DLL (ANSI variant).
+    /// TODO: SNOW-3441384 Cleanup if nod needed
     #[unsafe(no_mangle)]
     pub unsafe extern "system" fn ConfigDSN(
         hwnd_parent: *mut core::ffi::c_void,
@@ -1525,8 +1572,7 @@ mod setup {
                 len += 1;
                 p = unsafe { p.add(1) };
             }
-            String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(lpsz_driver, len) })
-                .into_owned()
+            acp_to_string(unsafe { std::slice::from_raw_parts(lpsz_driver, len) })
         };
         let attrs = unsafe { parse_attributes_a(lpsz_attributes) };
         i32::from(unsafe { config_dsn_impl(hwnd_parent, f_request, &driver, &attrs) })
