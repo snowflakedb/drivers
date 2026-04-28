@@ -80,69 +80,115 @@ unsafe extern "system" {
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> *mut core::ffi::c_void;
 }
 
-#[cfg_attr(
-    target_arch = "x86",
-    link(
-        name = "odbccp32",
-        kind = "raw-dylib",
-        import_name_type = "undecorated"
-    )
-)]
-#[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
+// odbccp32.dll and odbc32.dll are loaded dynamically to avoid putting them
+// in the driver DLL's PE import table.  The ODBC Driver Manager (odbc32.dll)
+// normally loads drivers, so a driver must not statically import it.
+// odbccp32.dll is also loaded on-demand to avoid interfering with DLL
+// loader initialization order when the driver is loaded via LoadLibrary.
+#[link(name = "kernel32")]
 unsafe extern "system" {
-    fn SQLGetPrivateProfileStringW(
-        lpszSection: *const u16,
-        lpszEntry: *const u16,
-        lpszDefault: *const u16,
-        retBuffer: *mut u16,
-        cbRetBuffer: i32,
-        lpszFilename: *const u16,
-    ) -> i32;
-    fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> BOOL;
-    fn SQLWritePrivateProfileStringW(
-        lpszSection: *const u16,
-        lpszEntry: *const u16,
-        lpszString: *const u16,
-        lpszFilename: *const u16,
-    ) -> BOOL;
-    fn SQLValidDSNW(lpszDSN: *const u16) -> BOOL;
+    fn LoadLibraryW(lpLibFileName: *const u16) -> *mut core::ffi::c_void;
+    fn GetProcAddress(
+        hModule: *mut core::ffi::c_void,
+        lpProcName: *const u8,
+    ) -> *mut core::ffi::c_void;
 }
 
-#[link(name = "odbc32")]
-unsafe extern "system" {
-    fn SQLAllocHandle(
-        HandleType: i16,
-        InputHandle: *mut core::ffi::c_void,
-        OutputHandle: *mut *mut core::ffi::c_void,
-    ) -> i16;
-    fn SQLSetEnvAttr(
-        EnvironmentHandle: *mut core::ffi::c_void,
-        Attribute: i32,
-        Value: *mut core::ffi::c_void,
-        StringLength: i32,
-    ) -> i16;
-    fn SQLDriverConnectW(
-        ConnectionHandle: *mut core::ffi::c_void,
-        WindowHandle: HWND,
-        InConnectionString: *const u16,
-        StringLength1: i16,
-        OutConnectionString: *mut u16,
-        BufferLength: i16,
-        StringLength2Ptr: *mut i16,
-        DriverCompletion: u16,
-    ) -> i16;
-    fn SQLDisconnect(ConnectionHandle: *mut core::ffi::c_void) -> i16;
-    fn SQLFreeHandle(HandleType: i16, Handle: *mut core::ffi::c_void) -> i16;
-    fn SQLGetDiagRecW(
-        HandleType: i16,
-        Handle: *mut core::ffi::c_void,
-        RecNumber: i16,
-        SqlState: *mut u16,
-        NativeError: *mut i32,
-        MessageText: *mut u16,
-        BufferLength: i16,
-        TextLength: *mut i16,
-    ) -> i16;
+unsafe fn sym(h: *mut core::ffi::c_void, name: &[u8]) -> Option<*mut core::ffi::c_void> {
+    let p = unsafe { GetProcAddress(h, name.as_ptr()) };
+    if p.is_null() { None } else { Some(p) }
+}
+
+// --- odbccp32.dll (ODBC Installer API) ---
+
+type SQLGetPrivateProfileStringWFn =
+    unsafe extern "system" fn(*const u16, *const u16, *const u16, *mut u16, i32, *const u16) -> i32;
+type SQLWriteDSNToIniWFn = unsafe extern "system" fn(*const u16, *const u16) -> BOOL;
+type SQLWritePrivateProfileStringWFn =
+    unsafe extern "system" fn(*const u16, *const u16, *const u16, *const u16) -> BOOL;
+type SQLValidDSNWFn = unsafe extern "system" fn(*const u16) -> BOOL;
+
+struct InstallerApi {
+    get_profile: SQLGetPrivateProfileStringWFn,
+    write_dsn: SQLWriteDSNToIniWFn,
+    write_profile: SQLWritePrivateProfileStringWFn,
+    valid_dsn: SQLValidDSNWFn,
+}
+
+impl InstallerApi {
+    unsafe fn load() -> Option<Self> {
+        let name = to_wide("odbccp32.dll");
+        let h = unsafe { LoadLibraryW(name.as_ptr()) };
+        if h.is_null() {
+            return None;
+        }
+        unsafe {
+            Some(Self {
+                get_profile: std::mem::transmute(sym(h, b"SQLGetPrivateProfileStringW\0")?),
+                write_dsn: std::mem::transmute(sym(h, b"SQLWriteDSNToIniW\0")?),
+                write_profile: std::mem::transmute(sym(h, b"SQLWritePrivateProfileStringW\0")?),
+                valid_dsn: std::mem::transmute(sym(h, b"SQLValidDSNW\0")?),
+            })
+        }
+    }
+}
+
+// --- odbc32.dll (ODBC Driver Manager, for Test button only) ---
+
+type SQLAllocHandleFn =
+    unsafe extern "system" fn(i16, *mut core::ffi::c_void, *mut *mut core::ffi::c_void) -> i16;
+type SQLSetEnvAttrFn =
+    unsafe extern "system" fn(*mut core::ffi::c_void, i32, *mut core::ffi::c_void, i32) -> i16;
+type SQLDriverConnectWFn = unsafe extern "system" fn(
+    *mut core::ffi::c_void,
+    HWND,
+    *const u16,
+    i16,
+    *mut u16,
+    i16,
+    *mut i16,
+    u16,
+) -> i16;
+type SQLDisconnectFn = unsafe extern "system" fn(*mut core::ffi::c_void) -> i16;
+type SQLFreeHandleFn = unsafe extern "system" fn(i16, *mut core::ffi::c_void) -> i16;
+type SQLGetDiagRecWFn = unsafe extern "system" fn(
+    i16,
+    *mut core::ffi::c_void,
+    i16,
+    *mut u16,
+    *mut i32,
+    *mut u16,
+    i16,
+    *mut i16,
+) -> i16;
+
+struct DriverManagerApi {
+    alloc_handle: SQLAllocHandleFn,
+    set_env_attr: SQLSetEnvAttrFn,
+    driver_connect: SQLDriverConnectWFn,
+    disconnect: SQLDisconnectFn,
+    free_handle: SQLFreeHandleFn,
+    get_diag_rec: SQLGetDiagRecWFn,
+}
+
+impl DriverManagerApi {
+    unsafe fn load() -> Option<Self> {
+        let name = to_wide("odbc32.dll");
+        let h = unsafe { LoadLibraryW(name.as_ptr()) };
+        if h.is_null() {
+            return None;
+        }
+        unsafe {
+            Some(Self {
+                alloc_handle: std::mem::transmute(sym(h, b"SQLAllocHandle\0")?),
+                set_env_attr: std::mem::transmute(sym(h, b"SQLSetEnvAttr\0")?),
+                driver_connect: std::mem::transmute(sym(h, b"SQLDriverConnectW\0")?),
+                disconnect: std::mem::transmute(sym(h, b"SQLDisconnect\0")?),
+                free_handle: std::mem::transmute(sym(h, b"SQLFreeHandle\0")?),
+                get_diag_rec: std::mem::transmute(sym(h, b"SQLGetDiagRecW\0")?),
+            })
+        }
+    }
 }
 
 #[repr(C)]
@@ -285,13 +331,16 @@ fn sql_succeeded(rc: i16) -> bool {
 // ---------------------------------------------------------------------------
 
 unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
+    let Some(api) = (unsafe { InstallerApi::load() }) else {
+        return String::new();
+    };
     let dsn_w = to_wide(dsn);
     let key_w = to_wide(key);
     let default_w = to_wide("");
     let filename_w = to_wide("odbc.ini");
     let mut buf = [0u16; 512];
     unsafe {
-        SQLGetPrivateProfileStringW(
+        (api.get_profile)(
             dsn_w.as_ptr(),
             key_w.as_ptr(),
             default_w.as_ptr(),
@@ -304,9 +353,12 @@ unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
 }
 
 unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)]) -> bool {
+    let Some(api) = (unsafe { InstallerApi::load() }) else {
+        return false;
+    };
     let dsn_w = to_wide(dsn);
     let driver_w = to_wide(driver);
-    if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
+    if unsafe { (api.write_dsn)(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
         return false;
     }
     let odbc_ini = to_wide("odbc.ini");
@@ -317,7 +369,7 @@ unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)])
         let key_w = to_wide(key);
         let val_w = to_wide(value);
         unsafe {
-            SQLWritePrivateProfileStringW(
+            (api.write_profile)(
                 dsn_w.as_ptr(),
                 key_w.as_ptr(),
                 val_w.as_ptr(),
@@ -407,7 +459,9 @@ unsafe extern "system" fn config_dialog_proc(
                         let ctx = unsafe { &mut *ctx_ptr };
                         let dsn = unsafe { get_dlg_text(dlg, IDC_DSNEDIT) };
                         let dsn_w = to_wide(&dsn);
-                        if dsn.is_empty() || unsafe { SQLValidDSNW(dsn_w.as_ptr()) } == 0 {
+                        let valid = unsafe { InstallerApi::load() }
+                            .map_or(false, |api| unsafe { (api.valid_dsn)(dsn_w.as_ptr()) } != 0);
+                        if dsn.is_empty() || !valid {
                             let msg = to_wide("Invalid Data Source Name.");
                             let cap = to_wide("Error");
                             unsafe {
@@ -555,27 +609,31 @@ unsafe fn do_test_connection(dlg: HWND) {
 }
 
 unsafe fn attempt_odbc_connection(conn_str: &str) -> String {
+    let Some(dm) = (unsafe { DriverManagerApi::load() }) else {
+        return "FAILED!\r\n\r\nCould not load ODBC Driver Manager (odbc32.dll).".to_string();
+    };
+
     let mut henv: *mut core::ffi::c_void = ptr::null_mut();
     let mut hdbc: *mut core::ffi::c_void = ptr::null_mut();
 
-    let rc = unsafe { SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &mut henv) };
+    let rc = unsafe { (dm.alloc_handle)(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &mut henv) };
     if !sql_succeeded(rc) {
         return "FAILED!\r\n\r\nCould not allocate ODBC environment handle.".to_string();
     }
 
     unsafe {
-        SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC3 as *mut _, 0);
+        (dm.set_env_attr)(henv, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC3 as *mut _, 0);
     }
 
-    let rc = unsafe { SQLAllocHandle(SQL_HANDLE_DBC, henv, &mut hdbc) };
+    let rc = unsafe { (dm.alloc_handle)(SQL_HANDLE_DBC, henv, &mut hdbc) };
     if !sql_succeeded(rc) {
-        unsafe { SQLFreeHandle(SQL_HANDLE_ENV, henv) };
+        unsafe { (dm.free_handle)(SQL_HANDLE_ENV, henv) };
         return "FAILED!\r\n\r\nCould not allocate ODBC connection handle.".to_string();
     }
 
     let conn_w = to_wide(conn_str);
     let rc = unsafe {
-        SQLDriverConnectW(
+        (dm.driver_connect)(
             hdbc,
             ptr::null_mut(),
             conn_w.as_ptr(),
@@ -588,7 +646,7 @@ unsafe fn attempt_odbc_connection(conn_str: &str) -> String {
     };
 
     let result = if sql_succeeded(rc) {
-        unsafe { SQLDisconnect(hdbc) };
+        unsafe { (dm.disconnect)(hdbc) };
         "SUCCESS!\r\n\r\nSuccessfully connected to data source.".to_string()
     } else {
         let mut state = [0u16; 6];
@@ -596,7 +654,7 @@ unsafe fn attempt_odbc_connection(conn_str: &str) -> String {
         let mut msg_buf = [0u16; 1024];
         let mut msg_len = 0i16;
         unsafe {
-            SQLGetDiagRecW(
+            (dm.get_diag_rec)(
                 SQL_HANDLE_DBC,
                 hdbc,
                 1,
@@ -613,8 +671,8 @@ unsafe fn attempt_odbc_connection(conn_str: &str) -> String {
     };
 
     unsafe {
-        SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
-        SQLFreeHandle(SQL_HANDLE_ENV, henv);
+        (dm.free_handle)(SQL_HANDLE_DBC, hdbc);
+        (dm.free_handle)(SQL_HANDLE_ENV, henv);
     }
 
     result
