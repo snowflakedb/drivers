@@ -3800,6 +3800,7 @@ dependencies = [
  "aws-credential-types",
  "aws-lc-rs",
  "aws-sdk-s3",
+ "aws-sdk-sts",
  "base64 0.22.1",
  "chrono",
  "const-oid",

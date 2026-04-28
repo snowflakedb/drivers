@@ -519,20 +519,17 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          # cmake is pre-installed on windows-latest (4.2+); no need to pip install it
+          # install 4.0+ via pip (official Kitware wheel)
+          Invoke-Checked "pip install cmake" { python -m pip install "cmake>=4.0.3" }
+          $cmakePath = (Get-Command cmake.exe).Source | Split-Path
+          echo "CMAKE_DIR=$cmakePath" >> $env:GITHUB_ENV
           cmake --version
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
-          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
-
-          # The pre-built ODBC driver links OpenSSL dynamically — ensure DLLs are available at runtime
-          if (!(Test-Path "C:\Program Files\OpenSSL\lib\VC\x64\MD")) {
-            Invoke-Checked "choco install openssl" { choco install openssl -y --no-progress }
-          }
-          echo "C:\Program Files\OpenSSL\bin" >> $env:GITHUB_PATH
+          Invoke-Checked "vcpkg install zlib:${{ matrix.vcpkg_triplet || 'x64-windows' }}" { vcpkg install zlib:${{ matrix.vcpkg_triplet || 'x64-windows' }} }
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -579,6 +576,12 @@ jobs:
           }
           if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
             throw "MSVC environment setup completed but link.exe is not on PATH"
+          }
+
+          # vcvarsall.bat prepends VS's cmake 3.x to PATH; re-prepend the runner's 4.x
+          if ($env:CMAKE_DIR) {
+            $env:PATH = "$env:CMAKE_DIR;$env:PATH"
+            echo "PATH=$env:PATH" >> $env:GITHUB_ENV
           }
 
       - name: Decode secrets
@@ -709,6 +712,98 @@ jobs:
           path: ~/Library/Caches/Homebrew
           key: macos-brew-odbc-tests-v1
 
+  build_msi:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 Release
+            arch: x64
+            config: release
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: "--release"
+          - name: Windows x64 Debug
+            arch: x64
+            config: debug
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: ""
+    runs-on: windows-latest
+    name: build_msi (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Cargo registry cache (MSI build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-
+
+      - name: Restore Rust target cache (MSI build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-msi
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-
+
+      - name: Prepare cache directories
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .cargo-cache/registry | Out-Null
+          New-Item -ItemType Directory -Force -Path .cargo-cache/git | Out-Null
+          New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
+
+      - name: Build ODBC driver
+        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl --target ${{ matrix.cargo_target }}
+        env:
+          RUSTFLAGS: "-C linker=rust-lld"
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-msi
+
+      - name: Save Cargo registry cache (MSI build)
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (MSI build)
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-msi
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Compute ODBC version
+        id: odbc-version
+        shell: pwsh
+        run: |
+          $versionLine = Get-Content "odbc\version.sh" -Raw
+          if ($versionLine -match 'BASE_VERSION=(\S+)') { $base = $Matches[1] } else { throw "Could not parse BASE_VERSION" }
+          $hash = (git rev-parse --short HEAD)
+          $version = "${base}-${hash}"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          .\odbc\installer\win\package.ps1 `
+            -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
+            -Arch ${{ matrix.arch }} `
+            -BuildConfig ${{ matrix.config }} `
+            -Version "${{ steps.odbc-version.outputs.version }}"
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake_odbc_rs-${{ steps.odbc-version.outputs.version }}-${{ matrix.config }}-${{ matrix.arch }}
+          path: build/snowflake_odbc_rs-*.msi
+
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image
     # and does not consume artifacts from the test jobs. Running in parallel shaves ~10-15 minutes
@@ -768,9 +863,10 @@ jobs:
             -v ${{ github.workspace }}/.cargo-target-rpm:/workspace/target \
             -w /workspace \
             -e PLATFORM=${{ matrix.platform }} \
+            -e COMMIT_HASH=$(git rev-parse --short HEAD) \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             rpm-build \
-            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
+            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
 
       - name: Save Cargo registry cache (RPM build)
         # Skip when the exact key was already restored.
@@ -807,7 +903,7 @@ jobs:
           path: build/snowflake-odbc-*.rpm
 
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -826,12 +922,14 @@ jobs:
           if [[ "${{ needs.odbc_unit_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.build_odbc_driver.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build_msi.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ ODBC tests were RUN and FAILED or CANCELLED"
             echo "  - odbc_unit_tests: ${{ needs.odbc_unit_tests.result }}"
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
             echo "  - build_odbc_driver: ${{ needs.build_odbc_driver.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
+            echo "  - build_msi: ${{ needs.build_msi.result }}"
             exit 1
           fi
           
