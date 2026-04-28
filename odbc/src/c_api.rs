@@ -1509,6 +1509,7 @@ mod setup {
 
     /// # Safety
     /// Called by the ODBC Installer DLL (ANSI variant).
+    /// TODO: Followup in SNOW-3441384. If possible, this should be removed.
     #[unsafe(no_mangle)]
     pub unsafe extern "system" fn ConfigDSN(
         hwnd_parent: *mut core::ffi::c_void,
