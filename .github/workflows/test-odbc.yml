@@ -976,8 +976,8 @@ jobs:
       - name: Upload RPM
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-rpm-${{ matrix.arch }}
-          path: build/snowflake-odbc-*.rpm
+          name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
+          path: build/snowflake-odbc-ud-*.rpm
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi]

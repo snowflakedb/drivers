@@ -56,19 +56,19 @@ mkdir -p "$STAGE_DIR$ODBC_DIR/include"
 cp "$DRIVER_SO" "$STAGE_DIR$ODBC_DIR/lib/"
 cp odbc/include/sf_odbc.h "$STAGE_DIR$ODBC_DIR/include/"
 
-RPM_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.rpm"
+RPM_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.rpm"
 mkdir -p "$BUILD_DIR"
 
 echo "=== Building RPM: $RPM_NAME ==="
 fpm -s dir \
     -t rpm \
-    -n snowflake-odbc \
+    -n snowflake-odbc-ud \
     -v "$VERSION" \
     -C "$STAGE_DIR" \
     -p "$BUILD_DIR/$RPM_NAME" \
     -d unixODBC \
     --url https://www.snowflake.net/ \
-    --description "Snowflake ODBC Driver ($VERSION, Release)" \
+    --description "Snowflake ODBC UD ($VERSION, Release)" \
     --license "Commercial" \
     --vendor "Snowflake Computing, Inc." \
     --rpm-changelog "$RPM_SCRIPTS_DIR/changelog" \
