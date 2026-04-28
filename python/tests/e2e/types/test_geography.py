@@ -4,7 +4,7 @@ This module tests the GEOGRAPHY type which represents geospatial data on a spher
 Values are returned as strings by default (GeoJSON format).
 The output format is controlled by the GEOGRAPHY_OUTPUT_FORMAT session parameter:
   GeoJSON (default), WKT, EWKT -> VARCHAR (str in Python)
-  WKB, EWKB -> BINARY (bytes in Python)
+  WKB, EWKB -> BINARY (bytearray in Python)
 Input via WKT strings or GeoJSON through TO_GEOGRAPHY().
 
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
@@ -129,9 +129,9 @@ class TestGeographyOutputFormat:
         [
             ("GeoJSON", str),
             ("WKT", str),
-            ("WKB", bytes),
+            ("WKB", bytearray),
             ("EWKT", str),
-            ("EWKB", bytes),
+            ("EWKB", bytearray),
         ],
         ids=["GeoJSON", "WKT", "WKB", "EWKT", "EWKB"],
     )
