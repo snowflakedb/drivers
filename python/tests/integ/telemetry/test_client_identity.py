@@ -36,9 +36,10 @@ def test_login_request_contains_correct_client_identity(int_test_connection_fact
         assert env["APPLICATION"] == "PythonConnector"
         assert env["OS"], "OS must not be empty"
         assert env["OS_VERSION"], "OS_VERSION must not be empty"
-        assert env["RUNTIME_NAME"] == platform.python_implementation()
-        assert env["RUNTIME_VERSION"] == platform.python_version()
-        assert env["COMPILER"] == platform.python_compiler()
+        # Values are trimmed by the Rust core before storing
+        assert env["RUNTIME_NAME"] == platform.python_implementation().strip()
+        assert env["RUNTIME_VERSION"] == platform.python_version().strip()
+        assert env["COMPILER"] == platform.python_compiler().strip()
 
         # User-Agent header must identify the driver
         headers = {k.lower(): v for k, v in request["headers"].items()}
