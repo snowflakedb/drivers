@@ -1,8 +1,13 @@
 import json
 import platform
 
-from snowflake.connector.version import __version__
+import pytest
+
+from tests.compatibility import is_old_driver
 from tests.wiremock_client import WiremockClient
+
+
+pytestmark = pytest.mark.skipif(is_old_driver(), reason="Universal driver only")
 
 
 def test_login_request_contains_correct_client_identity(int_test_connection_factory):
@@ -29,6 +34,8 @@ def test_login_request_contains_correct_client_identity(int_test_connection_fact
         assert data["CLIENT_APP_ID"] == "PythonConnector"
 
         # CLIENT_APP_VERSION must be the current package version
+        from snowflake.connector.version import __version__
+
         assert data["CLIENT_APP_VERSION"] == __version__
 
         # CLIENT_ENVIRONMENT must contain correct OS and runtime fields
