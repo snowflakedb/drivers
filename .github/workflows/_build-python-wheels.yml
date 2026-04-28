@@ -449,3 +449,20 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: python/dist/*.whl
+
+  # ── Clean up intermediate build artifacts ──────────────────────────
+  cleanup_build_artifacts:
+    needs: [build_wheels, build_wheel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete intermediate artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate -q '.artifacts[] | select(.name == "protobuf-gen" or (.name | startswith("sf-core-"))) | .id' |
+          while read id; do
+            echo "Deleting artifact $id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+          done
