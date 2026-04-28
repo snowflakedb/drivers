@@ -9,6 +9,7 @@
 
 #include "Connection.hpp"
 #include "EnvOverride.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 
 namespace fs = std::filesystem;
