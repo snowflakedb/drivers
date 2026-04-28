@@ -235,6 +235,26 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    /// Maps to SQLSTATE 22008 ("Datetime field overflow"). Use this when a
+    /// SQL_C_TYPE_TIMESTAMP source is bound to a SQL_TYPE_DATE or
+    /// SQL_TYPE_TIME target and the discarded portion is non-zero. Per ODBC
+    /// Appendix D ("Converting Data from C to SQL Data Types"):
+    ///
+    ///   - TIMESTAMP → DATE: 22008 if the time portion of the timestamp is
+    ///     nonzero (any of hour / minute / second / fraction).
+    ///   - TIMESTAMP → TIME: 22008 if the fractional seconds portion is
+    ///     nonzero.
+    ///
+    /// This is distinct from 22007 (struct field outside the legal range,
+    /// e.g. month=13), 22003 (numeric magnitude overflow), and 07006
+    /// (unsupported conversion).
+    #[snafu(display("Datetime field overflow: {reason}"))]
+    DatetimeFieldOverflow {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid boolean value: {value}"))]
     InvalidBooleanValue {
         value: String,

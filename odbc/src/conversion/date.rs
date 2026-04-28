@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, InvalidDatetimeValueSnafu, JsonBindingError,
-    UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidDatetimeValueSnafu,
+    JsonBindingError, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -219,12 +219,24 @@ impl ReadODBC for SnowflakeDate {
                         .build()
                     })
             }
-            // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the date
-            // portion of the timestamp (matches the legacy 3.16.0 driver, which
-            // accepts a TIMESTAMP source against a DATE target and silently
-            // discards the time part).
+            // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the
+            // date portion of the timestamp. Per ODBC Appendix D ("Converting
+            // Data from C to SQL Data Types") and matching the legacy 3.16.0
+            // driver, the conversion only succeeds when the discarded time
+            // portion is exactly zero; otherwise SQLSTATE 22008 ("Datetime
+            // field overflow") is returned.
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
+                if ts.hour != 0 || ts.minute != 0 || ts.second != 0 || ts.fraction != 0 {
+                    return DatetimeFieldOverflowSnafu {
+                        reason: format!(
+                            "SQL_C_TYPE_TIMESTAMP → SQL_TYPE_DATE: time portion must be \
+                             zero (got hour={}, minute={}, second={}, fraction={})",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .fail();
+                }
                 NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32).ok_or_else(
                     || {
                         InvalidDatetimeValueSnafu {
