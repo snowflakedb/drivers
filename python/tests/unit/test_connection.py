@@ -1026,6 +1026,11 @@ class TestIsValid:
         assert connection.is_valid() is False
 
     def test_returns_false_when_closed(self, connection, mock_db_api):
+        # First is_closed() returns False (close proceeds), then True (post-close)
+        mock_db_api.connection_is_closed.side_effect = [
+            ConnectionIsClosedResponse(is_closed=False),
+            ConnectionIsClosedResponse(is_closed=True),
+        ]
         connection.close()
         assert connection.is_valid() is False
         mock_db_api.connection_heartbeat.assert_not_called()
