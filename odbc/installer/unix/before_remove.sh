@@ -6,7 +6,7 @@
 # Unregisters the driver and DSN from unixODBC.
 #
 
-odbcinst -u -d -n SnowflakeDSIIDriver || true
+odbcinst -u -d -n SnowflakeODBCUDDriver || true
 
 SYSTEM_DSN_PATH=$(odbcinst -j | grep "SYSTEM DATA SOURCES" | sed -n -e 's/SYSTEM DATA SOURCES: //p')
 OLD_ODBC_INI=${ODBCINI-}
