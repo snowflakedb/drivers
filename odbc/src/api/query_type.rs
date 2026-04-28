@@ -82,12 +82,19 @@ impl QueryType {
     /// Any id that falls out the bottom (including `UNKNOWN` and ids the driver
     /// doesn't recognise yet) defaults to `Cursor` so new Snowflake statement
     /// types don't silently lose their result data.
+    ///
+    /// `MULTI_STMT` parents carry no cursor of their own — callers iterate
+    /// through the children via `SQLMoreResults` — so they classify as
+    /// `NoResult`.
     pub fn result_kind(self) -> ResultKind {
         if self.has_result_set() {
             ResultKind::Cursor
         } else if self.is_dml() {
             ResultKind::UpdateCount
-        } else if self.belongs_to(Self::DDL) || self.belongs_to(Self::MISC_QUERY_TYPES) {
+        } else if self.belongs_to(Self::DDL)
+            || self.belongs_to(Self::MISC_QUERY_TYPES)
+            || self.belongs_to(Self::MULTI_STMT)
+        {
             ResultKind::NoResult
         } else {
             ResultKind::Cursor
@@ -175,6 +182,18 @@ mod tests {
         assert_eq!(QueryType::COMMIT.result_kind(), ResultKind::NoResult);
         assert_eq!(QueryType::END.result_kind(), ResultKind::NoResult);
         assert_eq!(QueryType::SET.result_kind(), ResultKind::NoResult);
+    }
+
+    #[test]
+    fn result_kind_no_result_for_multi_stmt_parent() {
+        // MULTI_STMT parents have no cursor of their own; children are iterated
+        // via SQLMoreResults.
+        assert_eq!(QueryType::MULTI_STMT.result_kind(), ResultKind::NoResult);
+        // Any future 0xAxxx subtype of MULTI_STMT should classify the same way.
+        assert_eq!(
+            QueryType::from_raw(Some(0xA100)).result_kind(),
+            ResultKind::NoResult
+        );
     }
 
     #[test]
