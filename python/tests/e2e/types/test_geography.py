@@ -13,7 +13,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_type, parse_geojson
+from .utils import assert_sequential_values, assert_type, parse_geojson
 
 
 # =============================================================================
@@ -106,7 +106,7 @@ class TestGeographyOutputFormat:
 
     The driver must correctly handle all 5 output formats controlled by
     the GEOGRAPHY_OUTPUT_FORMAT session parameter. Text formats (GeoJSON,
-    WKT, EWKT) are returned as str; binary formats (WKB, EWKB) as bytes.
+    WKT, EWKT) are returned as str; binary formats (WKB, EWKB) as bytearray.
     """
 
     @pytest.mark.parametrize(
@@ -209,12 +209,18 @@ class TestGeographyMultipleChunks:
 
         # Then All 20000 rows should be fetched with valid GeoJSON Point values
         assert len(rows) == LARGE_RESULT_SET_SIZE
-        geo_values = [row[1] for row in rows]
-        assert_type(geo_values, str)
-        for val in geo_values:
-            geo = parse_geojson(val)
-            assert geo["type"] == "Point"
-            assert len(geo["coordinates"]) == 2
+        assert_type([row[1] for row in rows], str)
+
+        def expected_row(i):
+            lon = (i % 360) - 180
+            lat = (i % 180) - 90
+            return (i, [float(lon), float(lat)])
+
+        def compare_row(actual, expected):
+            geo = parse_geojson(actual[1])
+            return actual[0] == expected[0] and geo["type"] == "Point" and geo["coordinates"] == expected[1]
+
+        assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=expected_row, compare=compare_row)
 
 
 @with_paramstyle("qmark")
