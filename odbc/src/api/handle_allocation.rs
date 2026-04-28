@@ -251,32 +251,12 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     release_result
 }
 
-/// Initialize logging (helper function for allocation)
-pub fn init_logging() {
-    use std::sync::LazyLock;
-
-    // TODO: This is a hack to initialize the logging system.
-    // We should find a better way to do this.
-    static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
-        sf_core::logging::init(sf_core::logging::LoggingConfig::new(
-            Some("odbc.log".into()),
-            false,
-            false,
-        ))
-    });
-
-    if let Err(e) = LOGGING_RESULT.as_ref() {
-        eprintln!("Failed to initialize logging: {e:?}");
-    }
-}
-
 /// Allocate handle implementation (moved from api.rs)
 pub fn sql_alloc_handle(
     handle_type: sql::HandleType,
     input_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> OdbcResult<()> {
-    init_logging();
     tracing::debug!("SQLAllocHandle: handle_type={:?}", handle_type);
 
     match handle_type {

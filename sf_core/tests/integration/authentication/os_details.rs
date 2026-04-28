@@ -4,6 +4,7 @@ use crate::common::mocks::password;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
 use sf_core::fs_adapter::mock::MockFs;
+use sf_core::logging::LogManager;
 use sf_core::protobuf::apis::database_driver_v1::DriverProviders;
 use wiremock::Mock;
 use wiremock::matchers::{body_partial_json, method, path_regex};
@@ -26,11 +27,12 @@ fn should_include_os_details_on_linux() {
 
     let fs = Arc::new(MockFs::new().with_file("/etc/os-release", MOCK_OS_RELEASE));
     let mock = MockServerWithTls::start();
+    let log_manager = LogManager::with_none_subscriber(fs.clone());
     let client = SnowflakeTestClient::with_int_tests_params_using(
         Some(&mock.http_url()),
         DriverProviders {
             fs: Some(fs),
-            ..Default::default()
+            log_manager: Some(log_manager),
         },
     );
     client.set_connection_option("password", "test_password"); // pragma: allowlist secret

@@ -8,7 +8,7 @@ as defined in PEP 249.
 from typing import Any
 
 from . import util_text  # noqa: F401 - backward compatibility re-exports
-from ._internal.api_client.c_api import register_default_logger_callback
+from ._internal.api_client.c_api import register_default_logger_callback  # noqa: F401
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
 from .constants import QueryStatus, StatementParameterName
@@ -46,8 +46,6 @@ from .version import __version__
 apilevel = "2.0"
 threadsafety = 2  # Threads may share the module and connections, but not cursors
 paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
-
-register_default_logger_callback()
 
 
 @pep249

@@ -1,59 +1,36 @@
 use std::ffi::c_char;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use crate::apis::database_driver_v1::DriverProviders;
+use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
-use crate::telemetry::snowflake_exporter::SessionRegistry;
 use proto_utils::{ProtoError, Transport};
 
 struct CApiState {
     runtime: tokio::runtime::Runtime,
     transport: RustTransport,
-    /// Shared with the Snowflake telemetry exporter layer installed by
-    /// `sf_core_init_logger`. Created here so there is no process-global
-    /// `OnceLock` that survives DLL unload/reload (important for ODBC).
-    telemetry_sessions: SessionRegistry,
-    /// Keeps the `SdkTracerProvider` alive for the process lifetime.
-    /// Set by `sf_core_init_logger` after the tracing subscriber is installed.
-    telemetry_provider: std::sync::Mutex<Option<opentelemetry_sdk::trace::SdkTracerProvider>>,
 }
 
-static STATE: LazyLock<CApiState> = LazyLock::new(|| {
-    let sessions = SessionRegistry::default();
-    let providers = DriverProviders {
-        telemetry_sessions: Some(sessions.clone()),
-        ..Default::default()
-    };
+static STATE: OnceLock<CApiState> = OnceLock::new();
 
-    CApiState {
-        // Single worker thread is intentional: keeps contention minimal and
-        // makes deadlocks easier to detect. Will be increased during
-        // performance optimization.
-        runtime: tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime"),
-        transport: RustTransport::new_with(providers),
-        telemetry_sessions: sessions,
-        telemetry_provider: std::sync::Mutex::new(None),
-    }
-});
+/// Eagerly build the entire core state (tokio runtime + transport) using the
+/// given `LogManager`.  Called once from `sf_core_init`.
+pub(crate) fn init_core_state(lm: LogManager) {
+    STATE.get_or_init(|| {
+        let providers = DriverProviders {
+            log_manager: Some(lm),
+            ..Default::default()
+        };
 
-/// Returns the shared `SessionRegistry` owned by the C API state.
-/// Called by `sf_core_init_logger` so the tracing subscriber and
-/// `DatabaseDriverV1` share the same registry.
-pub(crate) fn telemetry_sessions() -> SessionRegistry {
-    STATE.telemetry_sessions.clone()
-}
-
-/// Store the `SdkTracerProvider` so it is kept alive for the process lifetime.
-/// Called by `sf_core_init_logger` after successfully installing the subscriber.
-pub(crate) fn set_telemetry_provider(provider: opentelemetry_sdk::trace::SdkTracerProvider) {
-    *STATE
-        .telemetry_provider
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some(provider);
+        CApiState {
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime"),
+            transport: RustTransport::new_with(providers),
+        }
+    });
 }
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
@@ -98,13 +75,14 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
 ) -> usize {
     // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
     let result = std::panic::catch_unwind(|| unsafe {
+        let state = STATE.get().expect("sf_core_init was not called");
         let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
         let method = std::ffi::CStr::from_ptr(method)
             .to_string_lossy()
             .to_string();
         let message = std::slice::from_raw_parts(request, request_len);
-        STATE.runtime.block_on(
-            STATE
+        state.runtime.block_on(
+            state
                 .transport
                 .handle_message(&api, &method, message.to_vec()),
         )
