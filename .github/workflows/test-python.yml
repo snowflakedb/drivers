@@ -548,24 +548,6 @@ jobs:
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
-  # ── Clean up intermediate artifacts ────────────────────────────────
-  cleanup:
-    needs: [build_wheels, python_tests]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete sf-core artifacts
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
-            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
-          | while read id; do
-              echo "Deleting artifact $id"
-              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
-            done
-
   python-status:
     needs: [detect-changes, build_wheels, packaging_tests, python_tests, python_tests_reference, python_compare_results]
     if: always()

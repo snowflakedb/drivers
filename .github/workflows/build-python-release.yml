@@ -317,23 +317,6 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
-  # ── Clean up intermediate artifacts ────────────────────────────────
-  cleanup:
-    needs: [build_wheels, test, test_reference]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete intermediate build artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
-            --paginate -q '.artifacts[] | select(.name == "protobuf-gen" or (.name | startswith("sf-core-"))) | .id' \
-          | while read id; do
-              echo "Deleting artifact $id"
-              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
-            done
-
   # ── Status gate ────────────────────────────────────────────────────
   release_status:
     needs: [build_wheels, test, test_reference]
