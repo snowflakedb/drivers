@@ -258,7 +258,7 @@ jobs:
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel (Linux/macOS)
-        if: runner.os != 'Windows' && matrix.py != '3.10'
+        if: runner.os != 'Windows' && matrix.wheel_artifact
         working-directory: python
         run: |
           WHEELS=(dist/*.whl)
@@ -269,9 +269,8 @@ jobs:
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
-      - name: Install snowflake ud driver from sdist (Linux)
-        if: runner.os == 'Linux' && matrix.py == '3.10'
-        # sdist only on Linux — macOS/Windows always use wheels
+      - name: Install snowflake ud driver from sdist (Linux/macOS)
+        if: runner.os != 'Windows' && !matrix.wheel_artifact
         working-directory: python
         run: |
           SDISTS=(dist/*.tar.gz)
@@ -285,7 +284,7 @@ jobs:
           SKIP_CORE_BUILD: "false"
 
       - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows' && matrix.wheel_artifact
         working-directory: python
         shell: pwsh
         run: |
@@ -297,7 +296,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Install snowflake ud driver from sdist (Windows)
-        if: runner.os == 'Windows' && matrix.py == '3.10'
+        if: runner.os == 'Windows' && !matrix.wheel_artifact
         working-directory: python
         shell: pwsh
         run: |
