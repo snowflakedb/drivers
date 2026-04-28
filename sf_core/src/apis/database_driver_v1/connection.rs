@@ -1715,7 +1715,7 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
     tracing::debug!("Cleared session tokens and HTTP client");
 
     // TODO: SNOW-2881763 - Stop heartbeat thread
-    // TODO: SNOW-2912513 - Flush telemetry cache
+    // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
 
     Ok(())
