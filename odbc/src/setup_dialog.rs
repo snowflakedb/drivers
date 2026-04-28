@@ -81,7 +81,11 @@ unsafe extern "system" {
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> *mut core::ffi::c_void;
 }
 
-#[link(name = "odbccp32", kind = "raw-dylib")]
+#[link(
+    name = "odbccp32",
+    kind = "raw-dylib",
+    import_name_type = "undecorated"
+)]
 unsafe extern "system" {
     fn SQLGetPrivateProfileStringW(
         lpszSection: *const u16,
