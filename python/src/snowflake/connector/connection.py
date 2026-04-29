@@ -226,6 +226,15 @@ class Connection(ErrorHandlerMixin):
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
+        self._connect()
+
+        _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
+        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
+        self._closed = False
+        self._close_lock = threading.Lock()
+
+    def _connect(self) -> None:
+        """Establish the connection to Snowflake via the Rust core."""
         self.db_api.connection_init(
             ConnectionInitRequest(
                 conn_handle=self.conn_handle,
@@ -239,10 +248,6 @@ class Connection(ErrorHandlerMixin):
                 ),
             )
         )
-        _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
-        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-        self._closed = False
-        self._close_lock = threading.Lock()
 
     @pep249
     def close(self) -> None:
