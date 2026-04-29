@@ -9,8 +9,9 @@ to just the decorator façade.
 from __future__ import annotations
 
 import functools
-import inspect
+import types
 
+from collections.abc import Generator
 from contextvars import ContextVar
 from typing import Any, Callable, TypeVar, cast
 
@@ -76,7 +77,7 @@ def backward_compatibility(obj: T) -> T:
     return apply_backward_compatibility(obj)
 
 
-_TRACKING = ContextVar("_api_tracking", default=True)
+_TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
 def api_telemetry(func: F) -> F:
@@ -89,14 +90,16 @@ def api_telemetry(func: F) -> F:
     therefore suppressed automatically, ensuring only the outermost
     user-initiated call is recorded.
 
-    For generator functions, tracking stays suppressed for the entire lifetime
-    of the generator (including iteration), so that nested decorated calls
-    during ``yield`` are also suppressed.
+    For generator functions (including generators wrapped by other decorators),
+    tracking stays suppressed for the entire lifetime of the generator
+    (including iteration), so that nested decorated calls during ``yield``
+    are also suppressed.  Detection is done at runtime via ``isinstance``
+    on the return value rather than ``inspect.isgeneratorfunction``, which
+    would fail when intermediate decorators hide the generator nature.
 
     The ``api_method`` string is derived at runtime as
     ``"{ClassName}.{method_name}"``.
     """
-    _is_generator = inspect.isgeneratorfunction(func)
 
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -110,22 +113,29 @@ def api_telemetry(func: F) -> F:
             elif isinstance(self, SnowflakeCursorBase):
                 self._connection._telemetry_client.send_api_usage(api_name)
 
-            if _is_generator:
-                return _suppress_tracking_generator(func(self, *args, **kwargs))
-
             token = _TRACKING.set(False)
             try:
-                return func(self, *args, **kwargs)
-            finally:
+                result = func(self, *args, **kwargs)
+            except BaseException:
                 _TRACKING.reset(token)
+                raise
+
+            if isinstance(result, types.GeneratorType):
+                # Keep tracking suppressed for the generator's entire lifetime.
+                return _suppress_tracking_generator(result, token)
+
+            _TRACKING.reset(token)
+            return result
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
 
 
-def _suppress_tracking_generator(gen: Any) -> Any:
-    """Wrap a generator so _TRACKING is False during each iteration step."""
-    token = _TRACKING.set(False)
+def _suppress_tracking_generator(
+    gen: Generator[Any, Any, Any],
+    token: Any,
+) -> Generator[Any, Any, Any]:
+    """Wrap a generator so ``_TRACKING`` stays ``False`` for its entire lifetime."""
     try:
         yield from gen
     finally:
