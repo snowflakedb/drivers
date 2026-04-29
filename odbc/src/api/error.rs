@@ -18,7 +18,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
 };
 
-use error_trace::{ErrorTrace, format_error_trace};
+use error_trace::ErrorTrace;
 use sf_core::protobuf::generated::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
 
@@ -487,14 +487,12 @@ fn is_well_formed_sql_state(state: &str) -> bool {
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        let error_message = self.structured_message().unwrap_or_else(|| {
+        self.structured_message().unwrap_or_else(|| {
             trace
                 .last()
                 .map(|entry| entry.message.clone())
                 .unwrap_or_default()
-        });
-        let trace_text = format_error_trace(&trace);
-        format!("{}\nTrace:\n{}", error_message, trace_text)
+        })
     }
 
     /// Extract a user-facing message from structured protobuf error fields
