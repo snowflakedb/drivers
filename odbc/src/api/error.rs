@@ -18,7 +18,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
 };
 
-use error_trace::{ErrorTrace, format_error_trace};
+use error_trace::ErrorTrace;
 use sf_core::protobuf::generated::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
 
@@ -487,14 +487,19 @@ fn is_well_formed_sql_state(state: &str) -> bool {
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        let error_message = self.structured_message().unwrap_or_else(|| {
+        self.structured_message().unwrap_or_else(|| {
             trace
                 .last()
                 .map(|entry| entry.message.clone())
                 .unwrap_or_default()
-        });
-        let trace_text = format_error_trace(&trace);
-        format!("{}\nTrace:\n{}", error_message, trace_text)
+        })
+        // DIAGNOSTIC (dtm-server investigation): historically we appended
+        // `\nTrace:\n{format_error_trace(&trace)}` here, but that leaked
+        // internal Rust file paths/lines into every ODBC diagnostic record.
+        // Downstream consumers (Teradata wire protocol in dtm-server) appear
+        // to mis-parse the multi-line error text. Legacy snowflake-odbc
+        // returns just the server message. Trace info is still available via
+        // tracing::info! in exec_direct and via OdbcError's Debug impl.
     }
 
     /// Extract a user-facing message from structured protobuf error fields
