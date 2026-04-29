@@ -6,19 +6,25 @@ use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::ResolvedResultSet as NativeResolvedResultSet;
 use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescriptor;
 use crate::apis::database_driver_v1::Setting;
-use crate::apis::database_driver_v1::error::ConfigError;
-use crate::apis::database_driver_v1::error::RestError;
+use crate::apis::database_driver_v1::error::{ConfigError, InvalidColumnMetadataSnafu, RestError};
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
     ValidationSeverity as CoreValidationSeverity,
 };
+use crate::chunks::{
+    ArrowIpcEncodingSnafu, ChunkError, ChunkFormatKind, ChunkReadingSnafu,
+    convert_string_rowset_to_arrow_reader,
+};
 use crate::protobuf::generated::database_driver_v1::*;
+use crate::query_types::RowType;
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::sql_state::sql_state_from_code;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use error_trace::ErrorTrace;
-
+use snafu::ResultExt;
 // ---------------------------------------------------------------------------
 // Arrow FFI pointer conversions
 // ---------------------------------------------------------------------------
@@ -133,6 +139,50 @@ impl From<Handle> for StatementHandle {
 }
 
 // ---------------------------------------------------------------------------
+// Chunk format conversions (native ↔ proto)
+// ---------------------------------------------------------------------------
+
+impl From<ChunkFormatKind> for ChunkFormat {
+    fn from(value: ChunkFormatKind) -> Self {
+        match value {
+            ChunkFormatKind::ArrowIpc => ChunkFormat::ArrowIpc,
+            ChunkFormatKind::Json => ChunkFormat::Json,
+        }
+    }
+}
+
+/// Proto `ChunkFormat` → `ChunkFormatKind`; returns `None` for unspecified/unknown values.
+pub(super) fn proto_chunk_format_to_kind(value: i32) -> Option<ChunkFormatKind> {
+    let format = ChunkFormat::try_from(value).unwrap_or(ChunkFormat::Unspecified);
+    match format {
+        ChunkFormat::ArrowIpc => Some(ChunkFormatKind::ArrowIpc),
+        ChunkFormat::Json => Some(ChunkFormatKind::Json),
+        ChunkFormat::Unspecified => None,
+    }
+}
+
+/// Encode a JSON rowset as a base64 Arrow IPC stream so inline chunks ship uniformly over the proto boundary.
+pub(super) fn json_rowset_to_arrow_ipc_base64(
+    rowset: &[Vec<Option<String>>],
+    row_types: &[RowType],
+) -> Result<String, ChunkError> {
+    let reader = convert_string_rowset_to_arrow_reader(rowset, row_types)?;
+    let schema = reader.schema();
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
+            .context(ArrowIpcEncodingSnafu)?;
+        for batch in reader {
+            // Iterator error = JSON rowset read/decode failure, not IPC encoding.
+            let batch = batch.context(ChunkReadingSnafu)?;
+            writer.write(&batch).context(ArrowIpcEncodingSnafu)?;
+        }
+        writer.finish().context(ArrowIpcEncodingSnafu)?;
+    }
+    Ok(BASE64.encode(&buf))
+}
+
+// ---------------------------------------------------------------------------
 // Result / chunk / column conversions
 // ---------------------------------------------------------------------------
 
@@ -165,6 +215,44 @@ impl From<NativeColumnMetadata> for ColumnMetadata {
             nullable: meta.nullable,
         }
     }
+}
+
+impl From<ColumnMetadata> for NativeColumnMetadata {
+    fn from(meta: ColumnMetadata) -> Self {
+        NativeColumnMetadata {
+            name: meta.name,
+            r#type: meta.r#type,
+            precision: meta.precision,
+            scale: meta.scale,
+            length: meta.length,
+            byte_length: meta.byte_length,
+            nullable: meta.nullable,
+        }
+    }
+}
+
+/// Convert a native `ColumnMetadata` into `RowType` via the shared `query_response::RowType` parser.
+// TODO: replace the transient shim with a shared type-string → RowType function.
+#[allow(clippy::result_large_err)]
+pub(super) fn column_metadata_to_row_type(
+    column_metadata: &NativeColumnMetadata,
+) -> Result<RowType, ApiError> {
+    let temp_row_type = crate::rest::snowflake::query_response::RowType {
+        name: column_metadata.name.clone(),
+        scale: column_metadata.scale.map(|v| v as u64),
+        nullable: column_metadata.nullable,
+        type_: column_metadata.r#type.clone(),
+        byte_length: column_metadata.byte_length.map(|v| v as u64),
+        length: column_metadata.length.map(|v| v as u64),
+        precision: column_metadata.precision.map(|v| v as u64),
+        ext_type_name: None,
+        _fields: None,
+    };
+    (&temp_row_type)
+        .try_into()
+        .context(InvalidColumnMetadataSnafu {
+            column: column_metadata.name.clone(),
+        })
 }
 
 fn native_stats_to_proto(
@@ -520,7 +608,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ArrowParsing { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::JsonChunkDecoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::InlineJsonEncoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::InvalidColumnMetadata { column, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
+                InvalidParameterValue {
+                    parameter: format!("column: {column}"),
+                    value: String::new(),
+                    explanation: Some("Failed to parse column metadata".to_string()),
+                },
+            )),
+        },
         ApiError::Base64Decoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::UnsupportedQueryResultFormat { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
         ApiError::TokenCacheInitialization { source, .. } => DriverError {
@@ -579,10 +685,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// code is the user-facing error number.  Login errors use client-side error codes
 /// (mapped by the Python layer) so the server code is NOT surfaced here.
 ///
+/// SQLSTATE resolution order (first hit wins):
+///   1. The `sqlState` the server included in its response (verbatim).
+///   2. `sql_state_from_code` lookup against the numeric Snowflake error
+///      code, which covers paths (async-poll, query-monitoring) that drop
+///      `sqlState` on the wire but keep the error code.
+///
+/// We deliberately do NOT inspect the human-readable message text:
+/// classification belongs to the server, and substring matching on
+/// English error messages is locale-fragile and false-positive-prone.
+///
+/// Centralising this here means downstream consumers (ODBC, JDBC, ADBC) can
+/// rely on `sql_state` as the single source of truth for error
+/// classification.
+///
 /// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
-/// New query-related error variants should be added here as they are introduced.
+/// New query-related error variants should be added here as they are
+/// introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
-    match error {
+    let (code, sql_state) = match error {
         ApiError::Query {
             source: RestError::QueryFailed {
                 code, sql_state, ..
@@ -598,7 +719,11 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
             ..
         } => (Some(*code), None),
         _ => (None, None),
-    }
+    };
+
+    let sql_state = sql_state.or_else(|| code.and_then(sql_state_from_code).map(|s| s.to_owned()));
+
+    (code, sql_state)
 }
 
 fn extract_query_id(error: &ApiError) -> Option<String> {
@@ -703,7 +828,11 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
         ApiError::ArrowParsing { .. } => StatusCode::InternalError,
+        ApiError::JsonChunkDecoding { .. } => StatusCode::InternalError,
+        ApiError::InlineJsonEncoding { .. } => StatusCode::InternalError,
+        ApiError::InvalidColumnMetadata { .. } => StatusCode::InvalidArgument,
         ApiError::Base64Decoding { .. } => StatusCode::InternalError,
+        ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
         ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
@@ -764,5 +893,119 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     #[allow(clippy::result_large_err)]
     fn to_protobuf(self) -> Result<T, DriverException> {
         self.map_err(to_driver_exception)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rest::snowflake::error::SfError;
+    use snafu::Location;
+
+    fn loc() -> Location {
+        Location::new("test", 0, 0)
+    }
+
+    fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
+        ApiError::Query {
+            location: loc(),
+            source: RestError::QueryFailed {
+                message: "test".to_owned(),
+                code,
+                sql_state: sql_state.map(|s| s.to_owned()),
+                query_id: None,
+                location: loc(),
+            },
+        }
+    }
+
+    fn async_query(code: i32) -> ApiError {
+        ApiError::Query {
+            location: loc(),
+            source: RestError::AsyncQuery {
+                location: loc(),
+                source: SfError::SnowflakeBody {
+                    code,
+                    message: "test".to_owned(),
+                    location: loc(),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn query_failed_passes_through_server_sql_state() {
+        let err = query_failed(Some(1003), Some("42000"));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(1003), Some("42000".to_owned()))
+        );
+    }
+
+    #[test]
+    fn server_sql_state_wins_over_lookup_table() {
+        // If the server provides "22000", trust it even though our table maps
+        // 100038 → "22003". The wire value is authoritative.
+        let err = query_failed(Some(100038), Some("22000"));
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100038), Some("22000".to_owned()))
+        );
+    }
+
+    #[test]
+    fn query_failed_falls_back_to_lookup_when_sql_state_missing() {
+        let err = query_failed(Some(100038), None);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100038), Some("22003".to_owned()))
+        );
+
+        let err = query_failed(Some(100078), None);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100078), Some("22001".to_owned()))
+        );
+
+        let err = query_failed(Some(1003), None);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(1003), Some("42000".to_owned()))
+        );
+    }
+
+    #[test]
+    fn unknown_code_with_no_sql_state_stays_none() {
+        let err = query_failed(Some(999_999), None);
+        assert_eq!(extract_vendor_info(&err), (Some(999_999), None));
+    }
+
+    #[test]
+    fn missing_code_and_sql_state_stays_none() {
+        let err = query_failed(None, None);
+        assert_eq!(extract_vendor_info(&err), (None, None));
+    }
+
+    #[test]
+    fn async_query_path_now_supplies_sql_state() {
+        // Previously this path returned (Some(code), None) unconditionally —
+        // the regression this fix is targeting.
+        let err = async_query(1003);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(1003), Some("42000".to_owned()))
+        );
+
+        let err = async_query(100038);
+        assert_eq!(
+            extract_vendor_info(&err),
+            (Some(100038), Some("22003".to_owned()))
+        );
+    }
+
+    #[test]
+    fn async_query_unknown_code_keeps_sql_state_none() {
+        let err = async_query(424_242);
+        assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
     }
 }

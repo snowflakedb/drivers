@@ -43,6 +43,7 @@ add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
 
 # session
 add_odbc_test(e2e_session_session_parameters session/session_parameters.cpp)
+add_odbc_test(e2e_session_connection_params session/connection_params.cpp)
 
 # types
 add_odbc_test(e2e_types_binary types/binary.cpp)

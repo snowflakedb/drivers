@@ -488,33 +488,20 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 }
 
 /// Parse an INI-format string and return the key/value pairs from `section`.
+///
+/// Section name matching is case-insensitive; returned keys are uppercased.
 #[cfg(not(windows))]
 fn parse_ini_section(content: &str, section: &str) -> Option<HashMap<String, String>> {
-    let mut in_section = false;
-    let mut params = HashMap::new();
-    let mut found = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('[') && line.ends_with(']') {
-            let s = &line[1..line.len() - 1];
-            in_section = s.eq_ignore_ascii_case(section);
-            if in_section {
-                found = true;
-            }
-            continue;
-        }
-        if !in_section || line.starts_with('#') || line.starts_with(';') || line.is_empty() {
-            continue;
-        }
-        if let Some(eq_pos) = line.find('=') {
-            let key = line[..eq_pos].trim().to_uppercase();
-            let value = line[eq_pos + 1..].trim().to_string();
-            params.insert(key, value);
-        }
-    }
-
-    if found { Some(params) } else { None }
+    let ini = ini::Ini::load_from_str_noescape(content).ok()?;
+    let props = ini.iter().find_map(|(name, props)| {
+        name.filter(|n| n.eq_ignore_ascii_case(section))
+            .map(|_| props)
+    })?;
+    let params = props
+        .iter()
+        .map(|(k, v)| (k.to_uppercase(), v.to_string()))
+        .collect();
+    Some(params)
 }
 
 /// Look up DSN parameters from the Windows registry.

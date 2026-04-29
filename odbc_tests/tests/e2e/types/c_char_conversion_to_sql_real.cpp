@@ -6,6 +6,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -233,4 +234,140 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR with NULL indicator
   // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_DOUBLE>(fetch_stmt, 1) == std::nullopt);
+}
+
+// ============================================================================
+// Non-finite IEEE-754 literals: "Infinity", "-Infinity", "NaN"
+//
+// Per the MS ODBC spec Appendix C, a string bound as SQL_C_CHAR / SQL_C_WCHAR
+// to a numeric SQL target must match the "numeric-literal" grammar, which
+// does not admit the tokens "Infinity", "-Infinity" or "NaN". The driver
+// therefore rejects them client-side with SQLSTATE 22018 (Invalid character
+// value for cast specification).
+//
+// This is a deliberate behavioral divergence from the old Snowflake driver,
+// which forwards these strings to the server and stores them as non-finite
+// FLOAT values. See BD#48. Applications that need to insert Infinity / NaN
+// should bind SQL_C_DOUBLE or SQL_C_FLOAT instead (both are spec-permitted
+// and supported by the new driver).
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR Infinity string for SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When SQL_C_CHAR "Infinity" is bound to SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  char val[] = "Infinity";
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR negative Infinity string for SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When SQL_C_CHAR "-Infinity" is bound to SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  char val[] = "-Infinity";
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR NaN string for SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When SQL_C_CHAR "NaN" is bound to SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  char val[] = "NaN";
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR Infinity string for SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When SQL_C_WCHAR "Infinity" is bound to SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLWCHAR val[] = {'I', 'n', 'f', 'i', 'n', 'i', 't', 'y', 0};
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR negative Infinity string for SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When SQL_C_WCHAR "-Infinity" is bound to SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLWCHAR val[] = {'-', 'I', 'n', 'f', 'i', 'n', 'i', 't', 'y', 0};
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_WCHAR NaN string for SQL_DOUBLE",
+                 "[c_char][conversion][sql_real]") {
+  SKIP_OLD_DRIVER("BD#48", "Old driver accepts non-finite string literals; new driver rejects per ODBC spec");
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When SQL_C_WCHAR "NaN" is bound to SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLWCHAR val[] = {'N', 'a', 'N', 0};
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then SQLExecute fails with SQLSTATE 22018
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }

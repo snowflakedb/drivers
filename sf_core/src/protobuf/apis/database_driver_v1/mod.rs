@@ -3,13 +3,15 @@ mod converter;
 use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
-use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::apis::database_driver_v1::InlineData;
+use crate::apis::database_driver_v1::error::{ConfigurationSnafu, InlineJsonEncodingSnafu};
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
-    ToProtobuf, core_validation_issue_to_proto, flat_sections_to_nested_json,
+    ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
+    flat_sections_to_nested_json, json_rowset_to_arrow_ipc_base64, proto_chunk_format_to_kind,
     proto_options_to_hashmap,
 };
 use error_trace::ErrorTrace;
@@ -122,12 +124,26 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<DatabaseFetchChunkResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
         let chunk = required(input.chunk, "Chunk is required")?;
+        let chunk_format: ChunkFormatKind = required(
+            proto_chunk_format_to_kind(chunk.format),
+            "Chunk format is required",
+        )?;
+        // Columns are only needed for JSON chunks; Arrow IPC streams are self-describing.
+        let row_types: Vec<RowType> = match chunk_format {
+            ChunkFormatKind::ArrowIpc => Vec::new(),
+            ChunkFormatKind::Json => input
+                .columns
+                .into_iter()
+                .map(|c| column_metadata_to_row_type(&c.into()))
+                .collect::<Result<Vec<_>, _>>()
+                .to_protobuf()?,
+        };
         let chunk_data = required(chunk.data, "Chunk data is required")?;
         let fetch_input: FetchChunkInput = chunk_data.into();
 
         let stream = self
             .driver
-            .database_fetch_chunk(db_handle.into(), fetch_input)
+            .database_fetch_chunk(db_handle.into(), fetch_input, chunk_format, row_types)
             .await
             .to_protobuf()?;
 
@@ -788,10 +804,38 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .await
             .to_protobuf()?;
 
+        let columns: Vec<ColumnMetadata> = chunk_info
+            .descriptor
+            .columns
+            .iter()
+            .cloned()
+            .map(|c| c.into())
+            .collect();
+
         let mut chunks = Vec::new();
 
-        if let Some(base64_data) = chunk_info.initial_chunk_base64 {
-            // Calculate inline chunk row count: total from descriptor minus remote chunks
+        // Inline chunks are always normalized to Arrow IPC on the wire.
+        let inline_base64 = match &chunk_info.inline {
+            InlineData::Json(rowset) => {
+                let row_types: Vec<RowType> = chunk_info
+                    .descriptor
+                    .columns
+                    .iter()
+                    .map(column_metadata_to_row_type)
+                    .collect::<Result<Vec<_>, _>>()
+                    .to_protobuf()?;
+                Some(
+                    json_rowset_to_arrow_ipc_base64(rowset, &row_types)
+                        .context(InlineJsonEncodingSnafu)
+                        .to_protobuf()?,
+                )
+            }
+            InlineData::ArrowIpc(b64) => Some(b64.clone()),
+            InlineData::None => None,
+        };
+
+        if let Some(base64_data) = inline_base64 {
+            // Inline chunk row count = total rows - rows in remote chunks.
             let remote_rows: i32 = chunk_info.chunks.iter().map(|c| c.row_count).sum();
             let inline_row_count = chunk_info
                 .descriptor
@@ -808,7 +852,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         for c in &chunk_info.chunks {
             chunks.push(ResultChunk {
-                format: ChunkFormat::ArrowIpc as i32,
+                format: ChunkFormat::from(chunk_info.format) as i32,
                 data: Some(result_chunk::Data::Remote(RemoteChunk {
                     url: c.url.clone(),
                     headers: c.headers.clone(),
@@ -820,7 +864,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         }
 
         Ok(StatementResultChunksResponse {
-            result: Some(ResultChunksResult { chunks }),
+            result: Some(ResultChunksResult { chunks, columns }),
         })
     }
 
@@ -936,6 +980,8 @@ pub type DatabaseDriverClient =
     >;
 
 pub use crate::apis::database_driver_v1::DriverProviders;
+use crate::chunks::ChunkFormatKind;
+use crate::query_types::RowType;
 
 pub fn database_driver_client() -> DatabaseDriverClient {
     database_driver_client_with(DriverProviders::default())

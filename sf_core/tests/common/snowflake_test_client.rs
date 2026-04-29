@@ -250,6 +250,8 @@ impl SnowflakeTestClient {
             .database_fetch_chunk_blocking(DatabaseFetchChunkRequest {
                 db_handle: Some(self.db_handle),
                 chunk: Some(chunk),
+                // Arrow IPC path: columns are ignored.
+                columns: Vec::new(),
             })
             .unwrap()
     }

@@ -801,8 +801,8 @@ jobs:
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake_odbc_rs-${{ steps.odbc-version.outputs.version }}-${{ matrix.config }}-${{ matrix.arch }}
-          path: build/snowflake_odbc_rs-*.msi
+          name: snowflake_odbc_ud-${{ steps.odbc-version.outputs.version }}-${{ matrix.config }}-${{ matrix.arch }}
+          path: build/snowflake_odbc_ud-*.msi
 
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image
@@ -899,8 +899,8 @@ jobs:
       - name: Upload RPM
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-rpm-${{ matrix.arch }}
-          path: build/snowflake-odbc-*.rpm
+          name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
+          path: build/snowflake-odbc-ud-*.rpm
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi]
