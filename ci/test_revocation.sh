@@ -33,14 +33,27 @@ if [ "$REVOCATION_REF" = "main" ]; then
     echo "[Warn] Production CI should set REVOCATION_REF to a pinned tag or commit SHA." >&2
 fi
 
-# Clean up workspace AND any ASKPASS helper on exit. The askpass script is chmod 700
-# and deleted here to minimize the window in which the helper file exists on disk.
+# Single point of EXIT cleanup. All cleanup targets are declared up-front so this
+# function is the *only* place that knows how to dispose of them — adding a new
+# tmp resource means: declare its variable here, populate it where needed, and
+# extend cleanup() with a guarded removal. Avoid the antipattern of installing
+# multiple `trap ... EXIT` handlers that overwrite each other; bash only keeps
+# the most recent one, which historically caused us to silently drop earlier
+# cleanup steps when reordering code.
+#
+# Tracking variables — declared empty so cleanup() can safely guard with `[ -n ]`
+# even if the script exits before they're populated:
+#   REVOCATION_DIR  — temp clone of the revocation-validation framework
+#   ASKPASS_SCRIPT  — temp git-askpass helper (chmod 700; deleted to minimise
+#                     the window in which the file exists on disk with creds)
+#   CARGO_SHIM_DIR  — temp dir hosting the cargo wrapper that injects --features cli
 ASKPASS_SCRIPT=""
+CARGO_SHIM_DIR=""
 cleanup() {
-    rm -rf "$REVOCATION_DIR"
-    if [ -n "$ASKPASS_SCRIPT" ]; then
-        rm -f "$ASKPASS_SCRIPT"
-    fi
+    [ -n "$REVOCATION_DIR" ] && rm -rf "$REVOCATION_DIR"
+    [ -n "$ASKPASS_SCRIPT" ] && rm -f "$ASKPASS_SCRIPT"
+    [ -n "$CARGO_SHIM_DIR" ] && rm -rf "$CARGO_SHIM_DIR"
+    return 0
 }
 trap cleanup EXIT
 
@@ -104,8 +117,8 @@ if [ -z "$REAL_CARGO" ]; then
     echo "[Error] cargo not found on PATH — cannot set up compatibility shim" >&2
     exit 1
 fi
-# Also clean up the shim directory on exit (extend the existing cleanup trap).
-trap 'cleanup; rm -rf "$CARGO_SHIM_DIR"' EXIT
+# CARGO_SHIM_DIR is now populated; cleanup() picks it up automatically on EXIT
+# (see the consolidated cleanup definition near the top of this script).
 cat > "$CARGO_SHIM_DIR/cargo" <<EOF
 #!/bin/bash
 # Shim: auto-enable \`cli\` feature when building sf_core's diagnostic binaries.
