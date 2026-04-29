@@ -3,7 +3,7 @@ requires = ["hatchling", "editables", "Cython", "setuptools", "mypy-protobuf~=5.
 build-backend = "hatchling.build"
 
 [project]
-name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs switching tests to UD
+name = "snowflake-connector-python"
 dynamic = ["version"]
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
@@ -16,14 +16,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "cryptography>=44.0.1",
     "protobuf>=6.32.1",
@@ -262,7 +261,7 @@ skip-install = true
 dev-mode = false
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
@@ -275,7 +274,7 @@ template = "test"
 features = ["test", "dev", "pandas"]
 
 [[tool.hatch.envs.test-pandas.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test-pandas.scripts]
 cov = "pytest tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
@@ -299,7 +298,7 @@ template = "test"
 
 [tool.hatch.envs.reference.scripts]
 test = [
-    "uv pip uninstall snowflake-connector-python-ud",
+    "uv pip uninstall snowflake-connector-python",
     "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.3.0}",
     "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas {args}",
 ]
@@ -310,7 +309,7 @@ template = "test"
 
 [tool.hatch.envs.reference-pandas.scripts]
 test = [
-    "uv pip uninstall snowflake-connector-python-ud",
+    "uv pip uninstall snowflake-connector-python",
     "uv pip install snowflake-connector-python[pandas]=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.3.0}",
     "pytest tests/e2e/pandas {args}",
 ]

@@ -59,7 +59,7 @@ def _get_driver_version(driver_type):
         if driver_type == "old":
             return version("snowflake-connector-python")
         else:
-            return version("snowflake-connector-python-ud")
+            return version("snowflake-connector-python")
     except PackageNotFoundError as err:
         print(f"Warning: Could not determine driver version: {err}")
         return "UNKNOWN"
