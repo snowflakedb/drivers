@@ -76,7 +76,18 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              command -v unzip >/dev/null || yum install -y unzip
+              # If unzip is not pre-installed in the Docker image, do a runtime install.
+              # Refresh dnf metadata first — pre-built images ship with a stale dnf cache
+              # whose repomd.xml references content-addressed metadata blobs that Rocky
+              # rotates upstream weekly. After rotation, every mirror returns 404 for
+              # those blob hashes and `yum install` fails with cascading errors. The
+              # cache refresh adds ~30s but eliminates this whole class of outage.
+              # Long-term fix: bake `unzip` into the Docker image (Dockerfile.coverage)
+              # so this runtime path is dead code.
+              if ! command -v unzip >/dev/null; then
+                dnf clean all && dnf makecache --refresh -y
+                yum install -y unzip
+              fi
               export PARAMETER_PATH=/workdir/parameters.json
 
               echo "--- :hammer: Building sf_core"
@@ -148,7 +159,18 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              command -v unzip >/dev/null || yum install -y unzip
+              # If unzip is not pre-installed in the Docker image, do a runtime install.
+              # Refresh dnf metadata first — pre-built images ship with a stale dnf cache
+              # whose repomd.xml references content-addressed metadata blobs that Rocky
+              # rotates upstream weekly. After rotation, every mirror returns 404 for
+              # those blob hashes and `yum install` fails with cascading errors. The
+              # cache refresh adds ~30s but eliminates this whole class of outage.
+              # Long-term fix: bake `unzip` into the Docker image (Dockerfile.coverage)
+              # so this runtime path is dead code.
+              if ! command -v unzip >/dev/null; then
+                dnf clean all && dnf makecache --refresh -y
+                yum install -y unzip
+              fi
               export PARAMETER_PATH=/workdir/parameters.json
               cd python
 
@@ -200,7 +222,18 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              command -v unzip >/dev/null || yum install -y unzip
+              # If unzip is not pre-installed in the Docker image, do a runtime install.
+              # Refresh dnf metadata first — pre-built images ship with a stale dnf cache
+              # whose repomd.xml references content-addressed metadata blobs that Rocky
+              # rotates upstream weekly. After rotation, every mirror returns 404 for
+              # those blob hashes and `yum install` fails with cascading errors. The
+              # cache refresh adds ~30s but eliminates this whole class of outage.
+              # Long-term fix: bake `unzip` into the Docker image (Dockerfile.coverage)
+              # so this runtime path is dead code.
+              if ! command -v unzip >/dev/null; then
+                dnf clean all && dnf makecache --refresh -y
+                yum install -y unzip
+              fi
               export PARAMETER_PATH=/workdir/parameters.json
               export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
@@ -262,7 +295,18 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              command -v unzip >/dev/null || yum install -y unzip
+              # If unzip is not pre-installed in the Docker image, do a runtime install.
+              # Refresh dnf metadata first — pre-built images ship with a stale dnf cache
+              # whose repomd.xml references content-addressed metadata blobs that Rocky
+              # rotates upstream weekly. After rotation, every mirror returns 404 for
+              # those blob hashes and `yum install` fails with cascading errors. The
+              # cache refresh adds ~30s but eliminates this whole class of outage.
+              # Long-term fix: bake `unzip` into the Docker image (Dockerfile.coverage)
+              # so this runtime path is dead code.
+              if ! command -v unzip >/dev/null; then
+                dnf clean all && dnf makecache --refresh -y
+                yum install -y unzip
+              fi
               export PARAMETER_PATH=/workdir/parameters.json
 
               echo "--- :hammer: Building JDBC Bridge"
