@@ -146,67 +146,67 @@ echo "[Info] Installed cargo shim at $CARGO_SHIM_DIR (auto-enables cli feature f
 
 echo "[Info] Running tests with Go $(go version | grep -oE 'go[0-9]+\.[0-9]+')..."
 
-# Output policy: NO reports. The framework writes structured JSON to a tmp file
-# only so we can parse it for a console-log summary at the end; the file itself
-# is deleted before exit and never archived. The HTML report is not generated at
-# all (no --output-html flag) — even on failure, the Jenkins console log carries
-# the framework's per-test stdout, which is sufficient for triage. This trims the
-# stage's per-build cost on Jenkins from "archive + publish multi-MB artifacts" to
-# "log a few lines".
-#
-# Log level: `info` keeps stdout compact. Override with REVOCATION_LOG_LEVEL=debug
-# (env var) for verbose investigation when triaging a specific failure.
+# Output policy:
+# - DEFAULT (info-level): generate NO reports. The framework's stdout (captured in
+#   the Jenkins console log) plus the exit code are the entire audit trail. No
+#   files written to the workspace, nothing for Jenkins to archive or publish.
+#   This is the lightest possible footprint and matches the steady-state CI need:
+#   "did revocation validation pass?" → see the green stage in Jenkins; nothing
+#   else to look at.
+# - DEBUG (REVOCATION_LOG_LEVEL=debug): generate JSON + HTML reports to the
+#   workspace AND keep them. Devs investigating a specific failure can set this
+#   env var on a one-off Jenkins re-run (or local run) and inspect the artifacts
+#   via the Jenkins workspace browser. Reports are still NOT archived — they live
+#   in the build's workspace until the next build overwrites it.
 LOG_LEVEL="${REVOCATION_LOG_LEVEL:-info}"
-RESULTS_JSON="$(mktemp "${TMPDIR:-/tmp}/revocation-results.XXXXXX.json")"
 
-# Extend the EXIT trap so the tmp results file is always cleaned up, even on errors.
-trap 'cleanup; rm -rf "$CARGO_SHIM_DIR"; rm -f "$RESULTS_JSON"' EXIT
+GO_RUN_ARGS=(
+    --client universal-driver-rust
+    --universal-driver-path "$DRIVER_ROOT"
+    --log-level "$LOG_LEVEL"
+)
+
+if [ "$LOG_LEVEL" = "debug" ]; then
+    echo "[Info] Debug mode — will write revocation-results.json and revocation-report.html to \$WORKSPACE."
+    GO_RUN_ARGS+=(
+        --output "${WORKSPACE}/revocation-results.json"
+        --output-html "${WORKSPACE}/revocation-report.html"
+    )
+fi
 
 set +e
-go run . \
-    --client universal-driver-rust \
-    --universal-driver-path "$DRIVER_ROOT" \
-    --output "$RESULTS_JSON" \
-    --log-level "$LOG_LEVEL"
+go run . "${GO_RUN_ARGS[@]}"
 EXIT_CODE=$?
 set -e
 
-# Print a compact one-screen summary derived from the JSON. Falls back gracefully
-# if jq/python aren't available or the JSON is malformed — we still get the exit
-# code as the source of truth, the summary is just a nicety for the console reader.
+# Status line — single source of truth is the exit code. The framework's own
+# end-of-run summary is in the stdout above this point (captured in the Jenkins
+# console log) for anyone who wants per-test detail.
 echo
 echo "============================================================"
-echo "Revocation Validation Summary"
-echo "============================================================"
-if [ -s "$RESULTS_JSON" ]; then
-    if command -v jq >/dev/null 2>&1; then
-        # The framework's JSON shape: { "total": N, "passed": N, "failed": N, "skipped": N, "tests": [...] }
-        # `// "?"` defaults missing keys to "?" so we never fail on schema drift.
-        jq -r '
-            "  Total:    \(.total // "?")\n" +
-            "  Passed:   \(.passed // "?")\n" +
-            "  Failed:   \(.failed // "?")\n" +
-            "  Skipped:  \(.skipped // "?")"
-        ' "$RESULTS_JSON" 2>/dev/null || echo "  (jq parse failed — see exit code below)"
-        # On failure, also list the failing test names (one per line, truncated to 20).
-        if [ "$EXIT_CODE" -ne 0 ]; then
-            echo
-            echo "  Failed tests:"
-            jq -r '.tests[]? | select(.status == "failed" or .status == "FAIL" or .passed == false) | "    - \(.name // .id // "<unnamed>")"' \
-                "$RESULTS_JSON" 2>/dev/null | head -n 20 || true
-        fi
-    else
-        echo "  (jq not available — summary skipped; see framework stdout above for per-test results)"
-    fi
+if [ "$EXIT_CODE" -eq 0 ]; then
+    echo "Revocation Validation: PASSED"
 else
-    echo "  (no results file produced — see framework stdout above)"
+    echo "Revocation Validation: FAILED (exit $EXIT_CODE)"
+    echo "See the framework's per-test output above this line for failure details."
+    if [ "$LOG_LEVEL" != "debug" ]; then
+        echo "For verbose logs and machine-readable JSON/HTML artifacts, re-run with"
+        echo "  REVOCATION_LOG_LEVEL=debug"
+    fi
 fi
 echo "============================================================"
 
-if [ "$EXIT_CODE" -eq 0 ]; then
-    echo "[Info] Revocation Validation passed."
-else
-    echo "[Warn] Revocation Validation FAILED (exit $EXIT_CODE) — see Jenkins console log above for per-test details."
+# In debug mode, tell Jenkins viewers where the artifacts went.
+if [ "$LOG_LEVEL" = "debug" ]; then
+    if [ -f "${WORKSPACE}/revocation-results.json" ]; then
+        chmod 0644 "${WORKSPACE}/revocation-results.json" 2>/dev/null || true
+        echo "[Info] JSON results: ${WORKSPACE}/revocation-results.json ($(wc -c < "${WORKSPACE}/revocation-results.json" 2>/dev/null || echo '?') bytes)"
+    fi
+    if [ -f "${WORKSPACE}/revocation-report.html" ]; then
+        chmod 0644 "${WORKSPACE}/revocation-report.html" 2>/dev/null || true
+        echo "[Info] HTML report:  ${WORKSPACE}/revocation-report.html ($(wc -c < "${WORKSPACE}/revocation-report.html" 2>/dev/null || echo '?') bytes)"
+    fi
+    echo "[Info] Files are accessible via the Jenkins build's Workspace link."
 fi
 
 exit $EXIT_CODE
