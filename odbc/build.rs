@@ -46,8 +46,17 @@ fn main() {
         println!("cargo:rerun-if-changed=src/setup/resource.h");
         println!("cargo:rerun-if-env-changed=COMMIT_HASH");
 
+        emit_git_head_rerun_hints();
+
         let rc_path = manifest_path.join("src/setup/resource.rc");
-        let _ = embed_resource::compile(rc_path, embed_resource::NONE);
+        if let embed_resource::CompilationResult::Failed(error) =
+            embed_resource::compile(&rc_path, embed_resource::NONE)
+        {
+            panic!(
+                "failed to compile Windows resource file `{}`: {error}",
+                rc_path.display()
+            );
+        }
     }
 }
 
@@ -77,6 +86,24 @@ fn parse_base_version(manifest_dir: &str) -> (u32, u32, u32) {
         }
     }
     panic!("BASE_VERSION not found in version.sh")
+}
+
+#[cfg(target_os = "windows")]
+fn emit_git_head_rerun_hints() {
+    let git_dir =
+        std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../.git");
+    let head_path = git_dir.join("HEAD");
+    if head_path.exists() {
+        println!("cargo:rerun-if-changed={}", head_path.display());
+        if let Ok(contents) = std::fs::read_to_string(&head_path) {
+            if let Some(ref_path) = contents.trim().strip_prefix("ref: ") {
+                let full_ref = git_dir.join(ref_path);
+                if full_ref.exists() {
+                    println!("cargo:rerun-if-changed={}", full_ref.display());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
