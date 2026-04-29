@@ -441,19 +441,11 @@ pipeline {
                   }
                 }
               }
-              post {
-                always {
-                  archiveArtifacts artifacts: 'revocation-results.json,revocation-report.html', allowEmptyArchive: true
-                  publishHTML(target: [
-                    allowMissing: true,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: '.',
-                    reportFiles: 'revocation-report.html',
-                    reportName: 'Revocation Validation Report'
-                  ])
-                }
-              }
+              // No `post` block: ci/test_revocation.sh produces no artifacts (no HTML
+              // report, no archived JSON). The framework's stdout + the script's compact
+              // summary in the Jenkins console log are the entire audit trail. The stage's
+              // pass/fail status comes from the script's exit code, which Jenkins already
+              // surfaces as the stage status — no further annotation needed.
             }
           }
         }

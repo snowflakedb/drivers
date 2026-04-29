@@ -146,37 +146,67 @@ echo "[Info] Installed cargo shim at $CARGO_SHIM_DIR (auto-enables cli feature f
 
 echo "[Info] Running tests with Go $(go version | grep -oE 'go[0-9]+\.[0-9]+')..."
 
+# Output policy: NO reports. The framework writes structured JSON to a tmp file
+# only so we can parse it for a console-log summary at the end; the file itself
+# is deleted before exit and never archived. The HTML report is not generated at
+# all (no --output-html flag) — even on failure, the Jenkins console log carries
+# the framework's per-test stdout, which is sufficient for triage. This trims the
+# stage's per-build cost on Jenkins from "archive + publish multi-MB artifacts" to
+# "log a few lines".
+#
+# Log level: `info` keeps stdout compact. Override with REVOCATION_LOG_LEVEL=debug
+# (env var) for verbose investigation when triaging a specific failure.
+LOG_LEVEL="${REVOCATION_LOG_LEVEL:-info}"
+RESULTS_JSON="$(mktemp "${TMPDIR:-/tmp}/revocation-results.XXXXXX.json")"
+
+# Extend the EXIT trap so the tmp results file is always cleaned up, even on errors.
+trap 'cleanup; rm -rf "$CARGO_SHIM_DIR"; rm -f "$RESULTS_JSON"' EXIT
+
 set +e
 go run . \
     --client universal-driver-rust \
     --universal-driver-path "$DRIVER_ROOT" \
-    --output "${WORKSPACE}/revocation-results.json" \
-    --output-html "${WORKSPACE}/revocation-report.html" \
-    --log-level debug
+    --output "$RESULTS_JSON" \
+    --log-level "$LOG_LEVEL"
 EXIT_CODE=$?
 set -e
 
-# Normalize output file permissions/ownership before the Jenkins archive step runs.
-# This script executes inside a Docker container as root; the files are written by
-# root and end up 0644 on disk, but Jenkins' archiveArtifacts remoting occasionally
-# fails with "Failed to extract ... transfer of N files" when the file state is odd
-# (e.g., root-owned in a jenkins-user workspace, or partial writes). Explicit chmod
-# + ls -la gives us clean permissions AND a diagnostic log so we can see file sizes
-# if archival ever fails again. `|| true` keeps this block best-effort — missing
-# files are reported below, not here.
-if [ -f "${WORKSPACE}/revocation-results.json" ]; then
-    chmod 0644 "${WORKSPACE}/revocation-results.json" 2>/dev/null || true
-fi
-if [ -f "${WORKSPACE}/revocation-report.html" ]; then
-    chmod 0644 "${WORKSPACE}/revocation-report.html" 2>/dev/null || true
-fi
-ls -la "${WORKSPACE}/revocation-results.json" "${WORKSPACE}/revocation-report.html" 2>&1 || true
-
-if [ -f "${WORKSPACE}/revocation-results.json" ] && [ -f "${WORKSPACE}/revocation-report.html" ]; then
-    echo "[Info] Results: ${WORKSPACE}/revocation-results.json"
-    echo "[Info] Report: ${WORKSPACE}/revocation-report.html"
+# Print a compact one-screen summary derived from the JSON. Falls back gracefully
+# if jq/python aren't available or the JSON is malformed — we still get the exit
+# code as the source of truth, the summary is just a nicety for the console reader.
+echo
+echo "============================================================"
+echo "Revocation Validation Summary"
+echo "============================================================"
+if [ -s "$RESULTS_JSON" ]; then
+    if command -v jq >/dev/null 2>&1; then
+        # The framework's JSON shape: { "total": N, "passed": N, "failed": N, "skipped": N, "tests": [...] }
+        # `// "?"` defaults missing keys to "?" so we never fail on schema drift.
+        jq -r '
+            "  Total:    \(.total // "?")\n" +
+            "  Passed:   \(.passed // "?")\n" +
+            "  Failed:   \(.failed // "?")\n" +
+            "  Skipped:  \(.skipped // "?")"
+        ' "$RESULTS_JSON" 2>/dev/null || echo "  (jq parse failed — see exit code below)"
+        # On failure, also list the failing test names (one per line, truncated to 20).
+        if [ "$EXIT_CODE" -ne 0 ]; then
+            echo
+            echo "  Failed tests:"
+            jq -r '.tests[]? | select(.status == "failed" or .status == "FAIL" or .passed == false) | "    - \(.name // .id // "<unnamed>")"' \
+                "$RESULTS_JSON" 2>/dev/null | head -n 20 || true
+        fi
+    else
+        echo "  (jq not available — summary skipped; see framework stdout above for per-test results)"
+    fi
 else
-    echo "[Warn] Expected output files were not generated"
+    echo "  (no results file produced — see framework stdout above)"
+fi
+echo "============================================================"
+
+if [ "$EXIT_CODE" -eq 0 ]; then
+    echo "[Info] Revocation Validation passed."
+else
+    echo "[Warn] Revocation Validation FAILED (exit $EXIT_CODE) — see Jenkins console log above for per-test details."
 fi
 
 exit $EXIT_CODE
