@@ -15,7 +15,7 @@ import json
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_geojson, assert_sequential_values, assert_type, parse_geojson
+from .utils import assert_geojson, assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -193,13 +193,10 @@ class TestGeographyMultipleChunks:
             return (i, [float(lon), float(lat)])
 
         def compare_row(actual, expected):
-            geo = parse_geojson(actual[1])
-            return (
-                actual[0] == expected[0]
-                and geo is not None
-                and geo["type"] == "Point"
-                and geo["coordinates"] == expected[1]
-            )
+            if actual[1] is None:
+                return False
+            geo = json.loads(actual[1])
+            return actual[0] == expected[0] and geo["type"] == "Point" and geo["coordinates"] == expected[1]
 
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=expected_row, compare=compare_row)
 
