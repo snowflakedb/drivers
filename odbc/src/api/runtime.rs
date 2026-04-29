@@ -103,6 +103,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
             env_registry: HandleManager::new(),
             dbc_registry: HandleManager::new(),
         });
+        tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
     }
     guard.env_count += 1;
     Ok(())
