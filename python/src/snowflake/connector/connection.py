@@ -224,7 +224,6 @@ class Connection(ErrorHandlerMixin):
 
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-        self._closed = False
         self._close_lock = threading.Lock()
 
     def _connect(self) -> None:
@@ -242,9 +241,6 @@ class Connection(ErrorHandlerMixin):
                 ),
             )
         )
-        _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
-        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-        self._close_lock = threading.Lock()
 
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
