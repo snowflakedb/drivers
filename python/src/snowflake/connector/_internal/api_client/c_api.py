@@ -134,30 +134,54 @@ level_map = {
 
 
 def logger_callback(level: int, message: bytes, filename: bytes, line: int, function: bytes) -> int:
-    py_level = level_map.get(level)
-    if py_level is None:
+    # Guard against calls arriving after the Python interpreter has begun
+    # tearing down (module globals set to None, logging infrastructure gone).
+    # The Rust tracing subscriber outlives the interpreter and can fire the
+    # callback during finalization — on some Python/OS combos this causes
+    # "FATAL: exception not rethrown" (SIGABRT).  See SNOW-3416420.
+    try:
+        if sys.is_finalizing():
+            return 0
+    except BaseException:
         return 0
 
-    sf_core_logger = get_sf_core_logger()
-    # Respect the logger's configured level - skip if not enabled
-    if not sf_core_logger.isEnabledFor(py_level):
-        return 0
+    try:
+        py_level = level_map.get(level)
+        if py_level is None:
+            return 0
 
-    record = sf_core_logger.makeRecord(
-        sf_core_logger.name,
-        py_level,
-        filename.decode("utf-8"),
-        line,
-        message.decode("utf-8"),
-        (),
-        None,
-        func=function.decode("utf-8"),
-    )
-    sf_core_logger.handle(record)
+        sf_core_logger = get_sf_core_logger()
+        if not sf_core_logger.isEnabledFor(py_level):
+            return 0
+
+        record = sf_core_logger.makeRecord(
+            sf_core_logger.name,
+            py_level,
+            filename.decode("utf-8", errors="replace"),
+            line,
+            message.decode("utf-8", errors="replace"),
+            (),
+            None,
+            func=function.decode("utf-8", errors="replace"),
+        )
+        sf_core_logger.handle(record)
+    except BaseException:
+        pass
     return 0
 
 
 c_logger_callback = LOGGER_CALLBACK(logger_callback)
+
+# The Rust tracing subscriber holds a raw C function pointer to the
+# ffi_closure backing c_logger_callback.  During Py_Finalize the module
+# dict is cleared, dropping the only Python reference and freeing the
+# closure.  Rust then calls a dangling pointer → SIGABRT.
+# A manual Py_IncRef prevents the closure from ever being collected.
+# This is an intentional one-object leak (~200 bytes) that keeps the
+# trampoline valid for the lifetime of the process.
+ctypes.pythonapi.Py_IncRef.argtypes = [ctypes.py_object]
+ctypes.pythonapi.Py_IncRef.restype = None
+ctypes.pythonapi.Py_IncRef(c_logger_callback)
 
 
 def register_default_logger_callback() -> None:
