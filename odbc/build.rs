@@ -41,6 +41,10 @@ fn main() {
         .expect("failed to write version_generated.h");
 
         println!("cargo:rerun-if-changed=version.sh");
+        println!("cargo:rerun-if-changed=exports.def");
+        println!("cargo:rerun-if-changed=src/setup/resource.rc");
+        println!("cargo:rerun-if-changed=src/setup/resource.h");
+        println!("cargo:rerun-if-env-changed=COMMIT_HASH");
 
         let rc_path = manifest_path.join("src/setup/resource.rc");
         let _ = embed_resource::compile(rc_path, embed_resource::NONE);
@@ -53,17 +57,26 @@ fn parse_base_version(manifest_dir: &str) -> (u32, u32, u32) {
         .expect("failed to read version.sh");
     for line in version_sh.lines() {
         if let Some(val) = line.strip_prefix("BASE_VERSION=") {
-            let parts: Vec<&str> = val.trim().split('.').collect();
-            if parts.len() == 3 {
-                return (
-                    parts[0].parse().unwrap_or(0),
-                    parts[1].parse().unwrap_or(0),
-                    parts[2].parse().unwrap_or(0),
-                );
-            }
+            let trimmed = val.trim();
+            let parts: Vec<&str> = trimmed.split('.').collect();
+            assert!(
+                parts.len() == 3,
+                "invalid BASE_VERSION in version.sh: expected <major>.<minor>.<patch>, got `{trimmed}`"
+            );
+            return (
+                parts[0]
+                    .parse()
+                    .unwrap_or_else(|_| panic!("invalid major version in `{trimmed}`")),
+                parts[1]
+                    .parse()
+                    .unwrap_or_else(|_| panic!("invalid minor version in `{trimmed}`")),
+                parts[2]
+                    .parse()
+                    .unwrap_or_else(|_| panic!("invalid patch version in `{trimmed}`")),
+            );
         }
     }
-    (0, 0, 0)
+    panic!("BASE_VERSION not found in version.sh")
 }
 
 #[cfg(target_os = "windows")]
