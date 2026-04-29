@@ -15,7 +15,7 @@ import json
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_sequential_values, assert_type, parse_geojson
+from .utils import assert_geojson, assert_sequential_values, assert_type, parse_geojson
 
 
 # =============================================================================
@@ -37,13 +37,6 @@ POLYGON_GEOJSON_COORDS = [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]
 # LARGE RESULT SET SIZE
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 20_000
-
-
-def _assert_geojson(value: str, expected_type: str, expected_coords: list) -> None:
-    """Assert a GeoJSON string has the expected type and coordinates."""
-    geo = parse_geojson(value)
-    assert geo["type"] == expected_type
-    assert geo["coordinates"] == expected_coords
 
 
 class TestGeographyLiteral:
@@ -72,7 +65,7 @@ class TestGeographyLiteral:
 
         # Then Result should contain a GeoJSON <shape> value
         assert isinstance(result[0], str)
-        _assert_geojson(result[0], expected_type, expected_coords)
+        assert_geojson(result[0], expected_type, expected_coords)
 
     def test_should_select_geography_from_geojson_input(self, execute_query):
         # Given Snowflake client is logged in
@@ -85,13 +78,13 @@ class TestGeographyLiteral:
 
         # Then Result should contain a GeoJSON Point value
         assert isinstance(result[0], str)
-        _assert_geojson(result[0], "Point", POINT_GEOJSON_COORDS)
+        assert_geojson(result[0], "Point", POINT_GEOJSON_COORDS)
 
 
-class TestGeographyOutputFormat:
-    """Tests for GEOGRAPHY type with different output formats.
+class TestGeographyTypeCasting:
+    """Tests for GEOGRAPHY type casting per output format.
 
-    The driver must correctly handle all 5 output formats controlled by
+    The driver must correctly cast values for all 5 output formats controlled by
     the GEOGRAPHY_OUTPUT_FORMAT session parameter. Text formats (GeoJSON,
     WKT, EWKT) are returned as str; binary formats (WKB, EWKB) as bytearray.
     """
@@ -107,7 +100,9 @@ class TestGeographyOutputFormat:
         ],
         ids=["GeoJSON", "WKT", "WKB", "EWKT", "EWKB"],
     )
-    def test_should_select_geography_in_format_output_format(self, connection_factory, output_format, expected_type):
+    def test_should_cast_geography_to_expected_type_for_format_output_format(
+        self, connection_factory, output_format, expected_type
+    ):
         # Given Snowflake client is logged in
         pass
         # And Session parameter GEOGRAPHY_OUTPUT_FORMAT is set to <format>
@@ -143,10 +138,10 @@ class TestGeographyTable:
         # Then Result should contain the expected GeoJSON values
         assert len(rows) == 2
         assert rows[0][0] == 1
-        _assert_geojson(rows[0][1], "Point", POINT_GEOJSON_COORDS)
+        assert_geojson(rows[0][1], "Point", POINT_GEOJSON_COORDS)
 
         assert rows[1][0] == 2
-        _assert_geojson(rows[1][1], "LineString", LINESTRING_GEOJSON_COORDS)
+        assert_geojson(rows[1][1], "LineString", LINESTRING_GEOJSON_COORDS)
 
     def test_should_handle_null_geography_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -162,7 +157,7 @@ class TestGeographyTable:
         # Then Result should contain [GeoJSON Point, NULL]
         assert len(rows) == 2
         assert rows[0][0] == 1
-        _assert_geojson(rows[0][1], "Point", POINT_GEOJSON_COORDS)
+        assert_geojson(rows[0][1], "Point", POINT_GEOJSON_COORDS)
 
         assert rows[1][0] == 2
         assert rows[1][1] is None
@@ -236,7 +231,7 @@ class TestGeographyBinding:
             assert result == (None,)
         else:
             assert isinstance(result[0], str)
-            _assert_geojson(result[0], "Point", POINT_GEOJSON_COORDS)
+            assert_geojson(result[0], "Point", POINT_GEOJSON_COORDS)
 
     def test_should_insert_geography_using_parameter_binding(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -254,6 +249,6 @@ class TestGeographyBinding:
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY id")
         assert len(rows) == 3
 
-        _assert_geojson(rows[0][1], "Point", POINT_GEOJSON_COORDS)
-        _assert_geojson(rows[1][1], "LineString", LINESTRING_GEOJSON_COORDS)
-        _assert_geojson(rows[2][1], "Polygon", POLYGON_GEOJSON_COORDS)
+        assert_geojson(rows[0][1], "Point", POINT_GEOJSON_COORDS)
+        assert_geojson(rows[1][1], "LineString", LINESTRING_GEOJSON_COORDS)
+        assert_geojson(rows[2][1], "Polygon", POLYGON_GEOJSON_COORDS)

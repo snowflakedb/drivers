@@ -31,11 +31,11 @@ Feature: GEOGRAPHY type support
     Then Result should contain a GeoJSON Point value
 
   # =========================================================================== #
-  #                          Output format handling                             #
+  #                     Type casting per output format                          #
   # =========================================================================== #
 
   @python_e2e
-  Scenario Outline: should select geography in <format> output format
+  Scenario Outline: should cast geography to <expected_type> for <format> output format
     Given Snowflake client is logged in
     And Session parameter GEOGRAPHY_OUTPUT_FORMAT is set to <format>
     When Query "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')" is executed

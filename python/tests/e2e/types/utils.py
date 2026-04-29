@@ -16,6 +16,13 @@ def parse_geojson(value: str | None) -> dict | list | None:
     return json.loads(value)
 
 
+def assert_geojson(value: str, expected_type: str, expected_coords: list) -> None:
+    """Parse a GeoJSON string and assert it has the expected type and coordinates."""
+    geo = parse_geojson(value)
+    assert geo["type"] == expected_type
+    assert geo["coordinates"] == expected_coords
+
+
 # Minimum normalized positive value (smallest normal number)
 # Used for tolerance selection in float comparisons
 FLOAT_MIN_NORMAL = 2.2250738585072014e-308
