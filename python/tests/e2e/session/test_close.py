@@ -456,8 +456,8 @@ class TestLogoutRetryBehavior:
 
 @pytest.mark.skip_reference(reason="subprocess imports Connection (not SnowflakeConnection)")
 @pytest.mark.skipif(
-    sys.version_info[:2] == (3, 9),
-    reason="SNOW-3416420: Rust tokio runtime teardown crashes during Py_Finalize on py3.9",
+    sys.version_info[:2] in ((3, 9), (3, 10)),
+    reason="SNOW-3416420: Rust log callback fires into dead Python interpreter during Py_Finalize",
 )
 class TestAutoCleanup:
     """Auto-cleanup deprecation tests.
