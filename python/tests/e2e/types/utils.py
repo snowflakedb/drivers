@@ -9,16 +9,9 @@ from datetime import datetime
 from math import isinf, isnan
 
 
-def parse_geojson(value: str | None) -> dict | list | None:
-    """Parse a GeoJSON string value returned by Snowflake, returning None for SQL NULLs."""
-    if value is None:
-        return None
-    return json.loads(value)
-
-
 def assert_geojson(value: str, expected_type: str, expected_coords: list) -> None:
     """Parse a GeoJSON string and assert it has the expected type and coordinates."""
-    geo = parse_geojson(value)
+    geo = json.loads(value)
     assert geo["type"] == expected_type
     assert geo["coordinates"] == expected_coords
 
