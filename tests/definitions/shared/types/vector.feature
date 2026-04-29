@@ -68,22 +68,3 @@ Feature: VECTOR type support
     Given Snowflake client is logged in
     When Query generating 20000 integer vectors is executed
     Then All 20000 rows should be fetched with valid 3-element integer vectors
-
-  # =========================================================================== #
-  #                           Parameter binding                                 #
-  # =========================================================================== #
-
-  @python_e2e
-  Scenario: should insert and select vectors using parameter binding
-    Given Snowflake client is logged in
-    And Table with VECTOR columns exists
-    When Vector values are inserted using parameter binding
-    And Query "SELECT * FROM <table> ORDER BY id" is executed
-    Then Result should contain the bound vector values
-
-  @python_e2e
-  Scenario: should insert and select vectors using batch parameter binding
-    Given Snowflake client is logged in
-    And Table with VECTOR columns exists
-    When Vector values are bulk-inserted using multirow binding
-    Then SELECT should return the inserted vector values

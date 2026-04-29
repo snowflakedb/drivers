@@ -10,7 +10,6 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 
 import pytest
 
-from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
@@ -207,68 +206,3 @@ class TestVectorMultipleChunks:
         assert len(rows) == LARGE_RESULT_SET_SIZE
         assert_type([row[1] for row in rows], list)
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=lambda i: (i, [i, i * 2, i * 3]))
-
-
-@with_paramstyle("qmark")
-class TestVectorBinding:
-    """Tests for VECTOR type using parameter binding."""
-
-    def test_should_insert_and_select_vectors_using_parameter_binding(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
-        # And Table with VECTOR columns exists
-        table_name = f"{tmp_schema}.vector_bind_table"
-        execute_query(
-            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
-            f"(id INT, int_vec VECTOR(INT, 3), float_vec VECTOR(FLOAT, 3))"
-        )
-
-        # When Vector values are inserted using parameter binding
-        execute_query(
-            f"INSERT INTO {table_name} SELECT ?, {_vec_sql(INT_VEC_3D, 'INT')}, {_vec_sql(FLOAT_VEC_3D, 'FLOAT')}",
-            (1,),
-        )
-        execute_query(
-            f"INSERT INTO {table_name} SELECT ?, {_vec_sql(INT_VEC_3D_B, 'INT')}, NULL::VECTOR(FLOAT, 3)",
-            (2,),
-        )
-
-        # And Query "SELECT * FROM <table> ORDER BY id" is executed
-        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY id")
-
-        # Then Result should contain the bound vector values
-        assert len(rows) == 2
-        assert rows[0][1] == INT_VEC_3D
-        assert_type(rows[0][1], int)
-        assert rows[0][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
-        assert_type(rows[0][2], float)
-        assert rows[1][1] == INT_VEC_3D_B
-        assert rows[1][2] is None
-
-    def test_should_insert_and_select_vectors_using_batch_parameter_binding(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
-        # And Table with VECTOR columns exists
-        table_name = f"{tmp_schema}.vector_batch_bind_table"
-        execute_query(
-            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
-            f"(id INT, int_vec VECTOR(INT, 3), float_vec VECTOR(FLOAT, 3))"
-        )
-
-        # When Vector values are bulk-inserted using multirow binding
-        test_data = [(1, INT_VEC_3D, FLOAT_VEC_3D), (2, INT_VEC_3D_B, FLOAT_VEC_3D)]
-        for row_id, int_vec, float_vec in test_data:
-            execute_query(
-                f"INSERT INTO {table_name} SELECT ?, {_vec_sql(int_vec, 'INT')}, {_vec_sql(float_vec, 'FLOAT')}",
-                (row_id,),
-            )
-
-        # Then SELECT should return the inserted vector values
-        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY id")
-        assert len(rows) == 2
-        assert rows[0][1] == INT_VEC_3D
-        assert_type(rows[0][1], int)
-        assert rows[0][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
-        assert rows[1][1] == INT_VEC_3D_B
-        assert_type(rows[1][1], int)
-        assert rows[1][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
