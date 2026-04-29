@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -13,6 +14,11 @@ pub struct GherkinValidator {
     _workspace_root: PathBuf,
     features_dir: PathBuf,
     discovery: TestDiscovery,
+    /// Cached `(path, parsed Feature)` pairs for every `.feature` under
+    /// `features_dir`. Populated lazily on first access; subsequent calls
+    /// reuse the parsed data instead of re-walking and re-parsing (which
+    /// previously happened 4–5 times per validator run).
+    features_cache: OnceCell<Vec<(PathBuf, Feature)>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -154,23 +160,42 @@ impl GherkinValidator {
             _workspace_root: workspace_root,
             features_dir,
             discovery,
+            features_cache: OnceCell::new(),
         })
     }
 
-    pub fn validate_all_features(&self) -> Result<Vec<ValidationResult>> {
-        let mut results = Vec::new();
+    /// Parse every `.feature` file under `features_dir` exactly once per validator
+    /// lifetime and return borrowed references. This replaces the previous pattern
+    /// where four independent call sites each walked `features_dir` and re-parsed
+    /// every file.
+    fn all_features(&self) -> Result<&[(PathBuf, Feature)]> {
+        if let Some(cached) = self.features_cache.get() {
+            return Ok(cached.as_slice());
+        }
 
-        // Find all .feature files
+        let mut parsed: Vec<(PathBuf, Feature)> = Vec::new();
         for entry in WalkDir::new(&self.features_dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
         {
-            let feature = Feature::parse_from_file(entry.path()).with_context(|| {
-                format!("Failed to parse feature file: {}", entry.path().display())
-            })?;
+            let path = entry.path().to_path_buf();
+            let feature = Feature::parse_from_file(&path)
+                .with_context(|| format!("Failed to parse feature file: {}", path.display()))?;
+            parsed.push((path, feature));
+        }
 
-            let validation_result = self.validate_feature_with_path(&feature, entry.path())?;
+        // Deterministic order, independent of the filesystem walk order.
+        parsed.sort_by(|a, b| a.0.cmp(&b.0));
+
+        Ok(self.features_cache.get_or_init(|| parsed).as_slice())
+    }
+
+    pub fn validate_all_features(&self) -> Result<Vec<ValidationResult>> {
+        let mut results = Vec::new();
+
+        for (path, feature) in self.all_features()? {
+            let validation_result = self.validate_feature_with_path(feature, path)?;
             results.push(validation_result);
         }
 
@@ -217,23 +242,14 @@ impl GherkinValidator {
 
     /// Find features that have no tags at all (TODO items)
     pub fn find_untagged_features(&self) -> Result<Vec<PathBuf>> {
-        use walkdir::WalkDir;
         let mut untagged_features = Vec::new();
 
-        for entry in WalkDir::new(&self.features_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
-        {
-            let feature_path = entry.path();
-            let feature = Feature::parse_from_file(feature_path)?;
-
-            // Check if feature has no tags and no scenario has tags
+        for (feature_path, feature) in self.all_features()? {
             let feature_has_tags = !feature.tags.is_empty();
             let scenarios_have_tags = feature.scenarios.iter().any(|s| !s.tags.is_empty());
 
             if !feature_has_tags && !scenarios_have_tags {
-                untagged_features.push(feature_path.to_path_buf());
+                untagged_features.push(feature_path.clone());
             }
         }
 
@@ -282,16 +298,14 @@ impl GherkinValidator {
                             .unwrap_or("");
                         let has_integration_definition =
                             integration_defined.iter().any(|(lang, stem)| {
-                                lang == language
-                                    && self.file_name_matches_feature(file_name, stem)
+                                lang == language && self.file_name_matches_feature(file_name, stem)
                             });
                         if !has_integration_definition {
                             continue;
                         }
                     }
 
-                    let violations =
-                        step_finder.find_methods_missing_when_then(entry.path())?;
+                    let violations = step_finder.find_methods_missing_when_then(entry.path())?;
                     if !violations.is_empty() {
                         results.push(FileGherkinValidation {
                             file_path: entry.path().to_path_buf(),
@@ -335,7 +349,10 @@ impl GherkinValidator {
             ],
             Language::Odbc => vec![
                 (self._workspace_root.join("odbc_tests/tests/e2e"), false),
-                (self._workspace_root.join("odbc_tests/tests/integration"), true),
+                (
+                    self._workspace_root.join("odbc_tests/tests/integration"),
+                    true,
+                ),
             ],
             Language::Python => vec![
                 (self._workspace_root.join("python/tests/e2e"), false),
@@ -402,19 +419,12 @@ impl GherkinValidator {
     fn build_integration_defined_set(
         &self,
     ) -> Result<std::collections::HashSet<(Language, String)>> {
-        use crate::feature_parser::Feature;
         use crate::test_discovery::TestLevel;
 
         let mut integration_defined = std::collections::HashSet::new();
 
-        for entry in WalkDir::new(&self.features_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
-        {
-            let feature = Feature::parse_from_file(entry.path())?;
-            let feature_stem = entry
-                .path()
+        for (feature_path, feature) in self.all_features()? {
+            let feature_stem = feature_path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
@@ -453,23 +463,14 @@ impl GherkinValidator {
             Vec<Language>,
         > = std::collections::HashMap::new();
 
-        // Walk through all .feature files
-        for entry in WalkDir::new(&self.features_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
-        {
-            let feature_path = entry.path();
-            let feature = Feature::parse_from_file(feature_path)?;
-            // Use unique feature ID (relative path) instead of just file stem
+        for (feature_path, feature) in self.all_features()? {
+            let feature_path = feature_path.as_path();
             let feature_id = self.get_feature_id(feature_path);
 
-            // Validate feature is in a known directory structure
             self.validate_feature_prefix(feature_path, &feature_id)?;
 
             // Get generic languages declared at feature level
-            let feature_declared_languages =
-                TestDiscovery::get_generic_languages(&feature.tags);
+            let feature_declared_languages = TestDiscovery::get_generic_languages(&feature.tags);
             let feature_excluded = TestDiscovery::get_excluded_languages(&feature.tags);
             let mut required_languages = std::collections::HashSet::new();
 
@@ -605,8 +606,7 @@ impl GherkinValidator {
                 if !any_feature_requires_language {
                     // No matching feature requires this language - determine why
                     // Use the first matching feature (language-specific preferred over shared)
-                    let reason =
-                        self.determine_orphan_reason(matching_feature_ids[0], language)?;
+                    let reason = self.determine_orphan_reason(matching_feature_ids[0], language)?;
 
                     orphaned_files.push(OrphanedTestFile {
                         file_path: test_file_path.to_path_buf(),
@@ -689,7 +689,7 @@ impl GherkinValidator {
         all_scenarios: &[(String, String)],
         scenario_language_requirements: &std::collections::HashMap<(String, String), Vec<Language>>,
     ) -> Result<Vec<String>> {
-        let content = std::fs::read_to_string(file_path)
+        let content = crate::file_cache::read_to_string_cached(file_path)
             .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
 
         let mut orphaned_methods = Vec::new();
@@ -768,7 +768,8 @@ impl GherkinValidator {
                 }
             }
             Language::Odbc => {
-                let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
+                let catch2_regex =
+                    Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
                 for captures in catch2_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
@@ -807,9 +808,11 @@ impl GherkinValidator {
         feature_id: &str,
         language: &Language,
     ) -> Result<OrphanReason> {
-        // Find the feature file using the feature ID (relative path)
+        // Resolve feature via the shared cache rather than re-reading from disk.
         let feature_path = self.find_feature_file_by_id(feature_id)?;
-        let feature = Feature::parse_from_file(&feature_path)?;
+        let feature = self
+            .find_feature_by_path(&feature_path)
+            .ok_or_else(|| anyhow::anyhow!("Feature not in cache: {}", feature_path.display()))?;
 
         // Check if feature has generic language tag for this language
         let feature_generic_languages = TestDiscovery::get_generic_languages(&feature.tags);
@@ -841,6 +844,14 @@ impl GherkinValidator {
         })
     }
 
+    /// Look up a feature in the parsed-feature cache by its canonical path.
+    fn find_feature_by_path(&self, path: &Path) -> Option<&Feature> {
+        self.features_cache
+            .get()?
+            .iter()
+            .find_map(|(p, f)| (p.as_path() == path).then_some(f))
+    }
+
     /// Find a feature file by its ID (relative path without .feature extension)
     fn find_feature_file_by_id(&self, feature_id: &str) -> Result<PathBuf> {
         // Feature ID is the relative path, so we can reconstruct the full path
@@ -855,17 +866,11 @@ impl GherkinValidator {
     }
 
     fn find_feature_file(&self, feature_name: &str) -> Result<PathBuf> {
-        use walkdir::WalkDir;
-
-        for entry in WalkDir::new(&self.features_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
-        {
-            let path = entry.path();
-            let file_stem = path.file_stem().unwrap().to_str().unwrap();
-            if file_stem == feature_name {
-                return Ok(path.to_path_buf());
+        for (path, _feature) in self.all_features()? {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == feature_name {
+                    return Ok(path.clone());
+                }
             }
         }
 
@@ -1170,10 +1175,17 @@ impl GherkinValidator {
                         continue;
                     }
 
-                    // For each test method found, check if it implements all scenario steps
+                    // For each test method found, check if it implements all scenario steps.
+                    // We call the combined helper so each method is parsed exactly once
+                    // (previously `find_steps_in_method` and `find_empty_steps_in_method`
+                    // each re-read the file and re-computed boundaries).
                     for (method_name, line_number) in test_methods_with_lines {
-                        let method_steps = step_finder
-                            .find_steps_in_method(actual_test_file_path, &method_name)?;
+                        let (method_steps, method_empty_steps) = step_finder
+                            .find_steps_and_empty_steps_in_method(
+                                actual_test_file_path,
+                                &method_name,
+                            )?;
+
                         let scenario_steps: Vec<String> = scenario
                             .steps
                             .iter()
@@ -1201,10 +1213,6 @@ impl GherkinValidator {
                                 all_implemented_steps.push(step);
                             }
                         }
-
-                        // Check for empty steps (step comments with no implementation code)
-                        let method_empty_steps = step_finder
-                            .find_empty_steps_in_method(actual_test_file_path, &method_name)?;
                         for empty_step in &method_empty_steps {
                             if !all_empty_steps.contains(empty_step) {
                                 all_empty_steps.push(empty_step.clone());
@@ -1280,7 +1288,11 @@ impl GherkinValidator {
             TestDiscovery::get_test_level_for_language(&scenario.tags, language) == first_level
         });
 
-        if all_same { Some(first_level) } else { None }
+        if all_same {
+            Some(first_level)
+        } else {
+            None
+        }
     }
 
     fn steps_match(&self, implemented_step: &str, feature_step: &str) -> bool {
@@ -1316,15 +1328,10 @@ impl GherkinValidator {
     pub fn find_language_specific_tests(&self) -> Result<Vec<LanguageSpecificTests>> {
         let mut results = Vec::new();
 
-        // Collect all feature names so we can identify files with no match
-        let mut feature_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for entry in WalkDir::new(&self.features_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
-        {
-            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
+        // Collect all feature names so we can identify files with no match.
+        let mut feature_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (path, _feature) in self.all_features()? {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 feature_names.insert(stem.to_string());
             }
         }
@@ -1338,8 +1345,7 @@ impl GherkinValidator {
             let mut e2e_files: Vec<LanguageSpecificTestFile> = Vec::new();
             let mut integration_files: Vec<LanguageSpecificTestFile> = Vec::new();
 
-            for (test_dir, is_integration) in self.get_all_test_directories_for_language(language)
-            {
+            for (test_dir, is_integration) in self.get_all_test_directories_for_language(language) {
                 if !test_dir.exists() {
                     continue;
                 }
@@ -1369,7 +1375,7 @@ impl GherkinValidator {
                     }
 
                     // No matching feature — this is a language-specific test file
-                    let content = std::fs::read_to_string(test_file_path)?;
+                    let content = crate::file_cache::read_to_string_cached(test_file_path)?;
                     let method_names = self.get_all_test_methods_in_file(&content, language)?;
 
                     if method_names.is_empty() {
@@ -1384,8 +1390,12 @@ impl GherkinValidator {
                     let method_line_regex = match language {
                         Language::Rust => Some(regex::Regex::new(r"(?:async\s+)?fn\s+(\w+)\s*\(")?),
                         Language::Python => Some(regex::Regex::new(r"def\s+(test_\w+)\s*\(")?),
-                        Language::Odbc => Some(regex::Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\([^"]*"([^"]+)""#)?),
-                        Language::Jdbc => Some(regex::Regex::new(r"(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(")?),
+                        Language::Odbc => Some(regex::Regex::new(
+                            r#"TEST_CASE(?:_METHOD)?\s*\([^"]*"([^"]+)""#,
+                        )?),
+                        Language::Jdbc => Some(regex::Regex::new(
+                            r"(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+                        )?),
                         _ => None,
                     };
 
@@ -1488,60 +1498,49 @@ impl GherkinValidator {
         let validation_results = self.validate_all_features()?;
         let orphan_results = self.find_orphaned_tests()?;
 
-        // Create feature info map from parsed features
+        // Create feature info map from the shared parsed-feature cache.
         let mut features = HashMap::new();
-
-        // Parse all feature files
-        for entry in WalkDir::new(&self.features_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
-        {
-            if let Ok(feature) = Feature::parse_from_file(entry.path()) {
-                // Extract Behavior Difference scenarios (scenarios with @{driver}_behavior_difference annotations)
-                // Include scenarios with driver tags that might have Behavior Difference implementations
-                // We'll check for actual Behavior Difference implementations during processing
-                let behavior_difference_scenarios: Vec<String> = feature
-                    .scenarios
-                    .iter()
-                    .filter(|scenario| {
-                        scenario.tags.iter().any(|tag| {
-                            let tag_str = tag.as_str();
-                            matches!(
-                                tag_str,
-                                "odbc"
-                                    | "jdbc"
-                                    | "python"
-                                    | "pep249"
-                                    | "core"
-                                    | "csharp"
-                                    | "dotnet"
-                                    | "javascript"
-                                    | "nodejs"
-                                    | "js"
-                            ) || tag_str.starts_with("odbc_")
-                                || tag_str.starts_with("jdbc_")
-                                || tag_str.starts_with("python_")
-                                || tag_str.starts_with("core_")
-                                || tag_str.starts_with("csharp_")
-                                || tag_str.starts_with("dotnet_")
-                                || tag_str.starts_with("javascript_")
-                                || tag_str.starts_with("nodejs_")
-                                || tag_str.starts_with("js_")
-                        })
+        for (feature_path, feature) in self.all_features()? {
+            let behavior_difference_scenarios: Vec<String> = feature
+                .scenarios
+                .iter()
+                .filter(|scenario| {
+                    scenario.tags.iter().any(|tag| {
+                        let tag_str = tag.as_str();
+                        matches!(
+                            tag_str,
+                            "odbc"
+                                | "jdbc"
+                                | "python"
+                                | "pep249"
+                                | "core"
+                                | "csharp"
+                                | "dotnet"
+                                | "javascript"
+                                | "nodejs"
+                                | "js"
+                        ) || tag_str.starts_with("odbc_")
+                            || tag_str.starts_with("jdbc_")
+                            || tag_str.starts_with("python_")
+                            || tag_str.starts_with("core_")
+                            || tag_str.starts_with("csharp_")
+                            || tag_str.starts_with("dotnet_")
+                            || tag_str.starts_with("javascript_")
+                            || tag_str.starts_with("nodejs_")
+                            || tag_str.starts_with("js_")
                     })
-                    .map(|s| s.name.clone())
-                    .collect();
+                })
+                .map(|s| s.name.clone())
+                .collect();
 
-                let feature_id = self.get_feature_id(entry.path());
-                features
-                    .entry(feature_id)
-                    .or_insert_with(|| crate::behavior_differences_processor::FeatureInfo {
-                        behavior_difference_scenarios: Vec::new(),
-                    })
-                    .behavior_difference_scenarios
-                    .extend(behavior_difference_scenarios);
-            }
+            let feature_id = self.get_feature_id(feature_path);
+            features
+                .entry(feature_id)
+                .or_insert_with(|| crate::behavior_differences_processor::FeatureInfo {
+                    behavior_difference_scenarios: Vec::new(),
+                })
+                .behavior_difference_scenarios
+                .extend(behavior_difference_scenarios);
         }
 
         // Process Behavior Differences
@@ -1566,11 +1565,9 @@ mod tests {
     use super::*;
 
     fn get_rust_methods(content: &str) -> Vec<String> {
-        let validator = GherkinValidator::new(
-            std::path::PathBuf::from("."),
-            std::path::PathBuf::from("."),
-        )
-        .expect("validator creation should not fail");
+        let validator =
+            GherkinValidator::new(std::path::PathBuf::from("."), std::path::PathBuf::from("."))
+                .expect("validator creation should not fail");
         validator
             .get_all_test_methods_in_file(content, &Language::Rust)
             .expect("regex should not fail")
@@ -1617,7 +1614,10 @@ async fn multi_thread_test() {}
 "#;
         let mut methods = get_rust_methods(content);
         methods.sort();
-        assert_eq!(methods, vec!["async_test", "multi_thread_test", "sync_test"]);
+        assert_eq!(
+            methods,
+            vec!["async_test", "multi_thread_test", "sync_test"]
+        );
     }
 
     #[test]

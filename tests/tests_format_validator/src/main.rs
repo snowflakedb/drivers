@@ -2,6 +2,7 @@ mod behavior_differences_processor;
 mod behavior_differences_utils;
 mod driver_handlers;
 mod feature_parser;
+mod file_cache;
 mod step_finder;
 mod test_discovery;
 mod utils;
@@ -312,7 +313,9 @@ fn main() -> anyhow::Result<()> {
     let has_gherkin_violations = !gherkin_violations.is_empty();
     if has_gherkin_violations {
         println!("\n❌ VALIDATION ERROR - Missing When/Then Gherkin comments:");
-        println!("   Every test method must contain at least one non-empty When and Then step comment.");
+        println!(
+            "   Every test method must contain at least one non-empty When and Then step comment."
+        );
         for file_validation in &gherkin_violations {
             println!("  {}", file_validation.file_path.display());
             for violation in &file_validation.violations {

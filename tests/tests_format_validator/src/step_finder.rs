@@ -1,8 +1,97 @@
+use crate::file_cache::read_to_string_cached;
 use crate::test_discovery::Language;
 use crate::utils::{clean_method_name, strings_match_normalized, to_pascal_case, to_snake_case};
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::path::Path;
+use std::sync::LazyLock;
+
+// Hot-path regexes. These were previously compiled on every call to
+// `find_all_test_methods_with_lines`, `find_method_boundaries` and the
+// per-step helpers. For a full run that pipeline runs thousands of times,
+// so compiling each regex once at process start is a significant win.
+static PY_TEST_METHOD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"def\s+(test_\w+)\s*\(").expect("valid regex"));
+static CATCH2_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#).expect("valid regex")
+});
+static RUST_FN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:async\s+)?fn\s+(\w+)").expect("valid regex"));
+static JAVA_METHOD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:final\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+    )
+    .expect("valid regex")
+});
+static RUST_TEST_ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$").expect("valid regex")
+});
+
+/// Regex matching the start of a Gherkin step comment (`// Given ...` or `# Given ...`)
+/// with a captured step type and text. Cached per comment-prefix so we never
+/// rebuild the same regex for the same language.
+fn gherkin_comment_regex(prefix: &str) -> &'static Regex {
+    static CACHE: LazyLock<std::sync::Mutex<std::collections::HashMap<String, &'static Regex>>> =
+        LazyLock::new(Default::default);
+    let mut map = CACHE.lock().expect("gherkin regex cache poisoned");
+    if let Some(re) = map.get(prefix) {
+        return re;
+    }
+    let re = Box::leak(Box::new(
+        Regex::new(&format!(
+            r"{}\s*(Given|When|Then|And|But)\s+(.+)",
+            regex::escape(prefix)
+        ))
+        .expect("valid regex"),
+    ));
+    map.insert(prefix.to_string(), re);
+    re
+}
+
+/// Regex matching any comment line (for continuation detection).
+fn comment_continuation_regex(prefix: &str) -> &'static Regex {
+    static CACHE: LazyLock<std::sync::Mutex<std::collections::HashMap<String, &'static Regex>>> =
+        LazyLock::new(Default::default);
+    let mut map = CACHE.lock().expect("comment regex cache poisoned");
+    if let Some(re) = map.get(prefix) {
+        return re;
+    }
+    let re = Box::leak(Box::new(
+        Regex::new(&format!(r"{}\s+(.+)", regex::escape(prefix))).expect("valid regex"),
+    ));
+    map.insert(prefix.to_string(), re);
+    re
+}
+
+fn when_regex(prefix: &str) -> &'static Regex {
+    static CACHE: LazyLock<std::sync::Mutex<std::collections::HashMap<String, &'static Regex>>> =
+        LazyLock::new(Default::default);
+    let mut map = CACHE.lock().expect("when regex cache poisoned");
+    if let Some(re) = map.get(prefix) {
+        return re;
+    }
+    let re = Box::leak(Box::new(
+        Regex::new(&format!(r"(?m)^\s*{}\s*When\s+\S", regex::escape(prefix)))
+            .expect("valid regex"),
+    ));
+    map.insert(prefix.to_string(), re);
+    re
+}
+
+fn then_regex(prefix: &str) -> &'static Regex {
+    static CACHE: LazyLock<std::sync::Mutex<std::collections::HashMap<String, &'static Regex>>> =
+        LazyLock::new(Default::default);
+    let mut map = CACHE.lock().expect("then regex cache poisoned");
+    if let Some(re) = map.get(prefix) {
+        return re;
+    }
+    let re = Box::leak(Box::new(
+        Regex::new(&format!(r"(?m)^\s*{}\s*Then\s+\S", regex::escape(prefix)))
+            .expect("valid regex"),
+    ));
+    map.insert(prefix.to_string(), re);
+    re
+}
 
 /// Configuration for language-specific step finding
 #[derive(Debug)]
@@ -77,7 +166,10 @@ impl LanguageConfig {
         Self {
             test_annotation: "TEST_CASE(", // Catch2 style (also matches TEST_CASE_METHOD)
             method_pattern: |method_name| {
-                format!(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#, regex::escape(method_name))
+                format!(
+                    r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#,
+                    regex::escape(method_name)
+                )
             },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C++
@@ -123,16 +215,13 @@ impl MethodBoundaryFinder {
         let lines: Vec<&str> = content.lines().collect();
         let mut methods = Vec::new();
 
-        // Pre-compile regexes outside the loop
-        let test_method_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
-        let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
-        // Rust: support optional async before fn
-        let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
-        // Match Java method declarations (not annotation lines like @MethodSource(...))
-        let method_regex = Regex::new(
-            r"^(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:final\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
-        )?;
-        let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
+        // Use cached compiled regexes (see module top). Previously these were
+        // recompiled on every call, which became a major hot-path cost.
+        let test_method_regex: &Regex = &PY_TEST_METHOD_RE;
+        let catch2_regex: &Regex = &CATCH2_RE;
+        let fn_regex: &Regex = &RUST_FN_RE;
+        let method_regex: &Regex = &JAVA_METHOD_RE;
+        let rust_test_attr_regex: &Regex = &RUST_TEST_ATTR_RE;
 
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -149,7 +238,8 @@ impl MethodBoundaryFinder {
                 "TEST_CASE(" => {
                     // C++ Catch2: TEST_CASE("method_name") or TEST_CASE_METHOD(Fixture, "method_name")
                     // Declarations may span multiple lines.
-                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(") {
+                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")
+                    {
                         if let Some(captures) = catch2_regex.captures(trimmed) {
                             let method_name = captures[1].to_string();
                             methods.push((method_name, i + 1));
@@ -249,8 +339,21 @@ impl MethodBoundaryFinder {
         let mut method_start_line: Option<usize> = None;
         let mut method_end_line: Option<usize> = None;
 
-        // Regex to detect Rust test attributes like #[test], #[tokio::test], #[tokio::test(...)]
-        let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
+        // Cached Rust test-attribute regex (see module top).
+        let rust_test_attr_regex: &Regex = &RUST_TEST_ATTR_RE;
+
+        // Build the method-specific pattern once per call. Previously this was
+        // rebuilt on every iteration of the outer loop, making Python/Rust
+        // boundary lookups O(n_lines) in regex compiles.
+        let method_pattern = (self.config.method_pattern)(method_name);
+        let compiled_method_regex: Option<Regex> = if matches!(
+            self.config.test_annotation,
+            "def test_" | "TEST_CASE(" | "#[test]"
+        ) {
+            Some(Regex::new(&method_pattern)?)
+        } else {
+            None
+        };
 
         // Find the method start
         for (i, line) in lines.iter().enumerate() {
@@ -258,8 +361,9 @@ impl MethodBoundaryFinder {
 
             // Special handling for Python - method declaration is the annotation
             if self.config.test_annotation == "def test_" {
-                let pattern = (self.config.method_pattern)(method_name);
-                let method_regex = Regex::new(&pattern)?;
+                let method_regex = compiled_method_regex
+                    .as_ref()
+                    .expect("compiled above for def test_");
                 if method_regex.is_match(trimmed) {
                     method_start_line = Some(i);
                     break;
@@ -273,7 +377,8 @@ impl MethodBoundaryFinder {
                 || (self.config.test_annotation.contains("pytest")
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
-                    && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
+                    && (trimmed.starts_with("TEST_CASE(")
+                        || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
             {
@@ -281,8 +386,9 @@ impl MethodBoundaryFinder {
                 // For C++, the TEST_CASE line itself contains the method name
                 // (or on a continuation line for multi-line declarations)
                 if self.config.test_annotation == "TEST_CASE(" {
-                    let pattern = (self.config.method_pattern)(method_name);
-                    let method_regex = Regex::new(&pattern)?;
+                    let method_regex = compiled_method_regex
+                        .as_ref()
+                        .expect("compiled above for TEST_CASE(");
                     if method_regex.is_match(trimmed) {
                         method_start_line = Some(i);
                         break;
@@ -330,17 +436,17 @@ impl MethodBoundaryFinder {
                             continue;
                         }
 
-                        let pattern = (self.config.method_pattern)(method_name);
                         if self.config.test_annotation == "#[test]" {
-                            // Rust uses regex pattern
-                            let method_regex = Regex::new(&pattern)?;
+                            let method_regex = compiled_method_regex
+                                .as_ref()
+                                .expect("compiled above for #[test]");
                             if method_regex.is_match(method_line) {
                                 method_start_line = Some(j);
                                 break;
                             }
                         } else {
                             // Java use simple contains
-                            if method_line.contains(&pattern) {
+                            if method_line.contains(&method_pattern) {
                                 method_start_line = Some(j);
                                 break;
                             }
@@ -504,11 +610,8 @@ impl MethodBoundaryFinder {
         method_lines: &[&str],
         comment_prefix: &str,
     ) -> Result<Vec<StepPosition>> {
-        let gherkin_comment_regex = Regex::new(&format!(
-            r"{}\s*(Given|When|Then|And|But)\s+(.+)",
-            regex::escape(comment_prefix)
-        ))?;
-        let continuation_regex = Regex::new(&format!(r"{}\s+(.+)", regex::escape(comment_prefix)))?;
+        let gherkin_comment_regex = gherkin_comment_regex(comment_prefix);
+        let continuation_regex = comment_continuation_regex(comment_prefix);
 
         let mut step_positions: Vec<StepPosition> = Vec::new();
         let mut i = 0;
@@ -735,7 +838,7 @@ impl StepFinder {
 
     /// Find all implemented steps in a test file using comment-based approach
     pub fn find_implemented_steps(&self, file_path: &Path) -> Result<Vec<String>> {
-        let content = std::fs::read_to_string(file_path)
+        let content = read_to_string_cached(file_path)
             .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
 
         let comment_prefix = match self.language {
@@ -751,14 +854,8 @@ impl StepFinder {
         let mut steps = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
 
-        // Create regex for Gherkin comments
-        let comment_regex = format!(
-            r"{}\s*(Given|When|Then|And|But)\s+(.+)",
-            regex::escape(comment_prefix)
-        );
-        let gherkin_comment_regex = Regex::new(&comment_regex)?;
-        let continuation_regex = format!(r"{}\s+(.+)", regex::escape(comment_prefix));
-        let continuation_comment_regex = Regex::new(&continuation_regex)?;
+        let gherkin_comment_regex = gherkin_comment_regex(comment_prefix);
+        let continuation_comment_regex = comment_continuation_regex(comment_prefix);
 
         let mut i = 0;
         while i < lines.len() {
@@ -822,22 +919,6 @@ impl StepFinder {
         }
     }
 
-    /// Find implemented steps within a specific test method
-    pub fn find_steps_in_method(&self, file_path: &Path, method_name: &str) -> Result<Vec<String>> {
-        let (steps, _) = self.find_steps_and_empty_steps_in_method(file_path, method_name)?;
-        Ok(steps)
-    }
-
-    /// Find Gherkin step comments in a method that have no implementation code following them
-    pub fn find_empty_steps_in_method(
-        &self,
-        file_path: &Path,
-        method_name: &str,
-    ) -> Result<Vec<String>> {
-        let (_, empty_steps) = self.find_steps_and_empty_steps_in_method(file_path, method_name)?;
-        Ok(empty_steps)
-    }
-
     /// Find both implemented steps and empty steps in a single pass, reading the file
     /// and computing method boundaries only once.
     pub fn find_steps_and_empty_steps_in_method(
@@ -845,7 +926,7 @@ impl StepFinder {
         file_path: &Path,
         method_name: &str,
     ) -> Result<(Vec<String>, Vec<String>)> {
-        let content = std::fs::read_to_string(file_path)
+        let content = read_to_string_cached(file_path)
             .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
 
         let comment_prefix = self.comment_prefix();
@@ -891,9 +972,10 @@ impl StepFinder {
                 if uses_fixture {
                     empty_steps.retain(|step| {
                         let s = step.to_lowercase();
-                        !(s.starts_with("given") && (s.contains("logged in")
-                            || s.contains("connection is established")
-                            || s.contains("snowflake connection")))
+                        !(s.starts_with("given")
+                            && (s.contains("logged in")
+                                || s.contains("connection is established")
+                                || s.contains("snowflake connection")))
                     });
                 }
             }
@@ -912,7 +994,7 @@ impl StepFinder {
         &self,
         file_path: &Path,
     ) -> Result<Vec<(String, usize, Vec<String>)>> {
-        let content = std::fs::read_to_string(file_path)
+        let content = read_to_string_cached(file_path)
             .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
 
         let comment_prefix = self.comment_prefix();
@@ -922,14 +1004,8 @@ impl StepFinder {
 
         // Non-empty When/Then: keyword followed by at least one non-whitespace char.
         // Anchored to start of line to avoid matching inside string literals.
-        let when_regex = Regex::new(&format!(
-            r"(?m)^\s*{}\s*When\s+\S",
-            regex::escape(comment_prefix)
-        ))?;
-        let then_regex = Regex::new(&format!(
-            r"(?m)^\s*{}\s*Then\s+\S",
-            regex::escape(comment_prefix)
-        ))?;
+        let when_regex = when_regex(comment_prefix);
+        let then_regex = then_regex(comment_prefix);
 
         let mut violations = Vec::new();
         for (method_name, line_number) in all_methods {
@@ -937,8 +1013,8 @@ impl StepFinder {
             let start_idx = line_number.saturating_sub(1);
             let end_idx = boundary_finder.find_method_end_from(&lines, start_idx);
 
-            let method_text = lines[start_idx..=end_idx.min(lines.len().saturating_sub(1))]
-                .join("\n");
+            let method_text =
+                lines[start_idx..=end_idx.min(lines.len().saturating_sub(1))].join("\n");
 
             let mut missing = Vec::new();
             if !when_regex.is_match(&method_text) {
@@ -962,7 +1038,7 @@ impl StepFinder {
         file_path: &Path,
         scenario_name: &str,
     ) -> Result<Vec<(String, usize)>> {
-        let content = std::fs::read_to_string(file_path)
+        let content = read_to_string_cached(file_path)
             .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
 
         match self.language {

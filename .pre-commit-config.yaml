@@ -71,3 +71,7 @@ repos:
         entry: ./tests/tests_format_validator/run_validator.sh
         pass_filenames: false
         language: system
+        # Only run when a feature file, a test file under one of the validated
+        # test trees, or the validator itself changes. Keeps the hook from
+        # running on every unrelated commit.
+        files: ^(tests/definitions/.*\.feature|sf_core/tests/(e2e|integration)/.*\.rs|jdbc/src/test/java/net/snowflake/jdbc/(e2e|integration)/.*\.java|odbc_tests/tests/(e2e|integration)/.*\.cpp|python/tests/(e2e|integ)/.*\.py|tests/tests_format_validator/.*)$

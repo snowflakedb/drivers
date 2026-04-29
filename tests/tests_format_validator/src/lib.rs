@@ -2,6 +2,7 @@ pub mod behavior_differences_processor;
 pub mod behavior_differences_utils;
 pub mod driver_handlers;
 pub mod feature_parser;
+pub mod file_cache;
 pub mod step_finder;
 pub mod test_discovery;
 pub mod utils;
