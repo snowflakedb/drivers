@@ -37,9 +37,9 @@ class TestConnectionInitIdentity:
         full_mock_db_api.connection_init.assert_called_once()
         req = full_mock_db_api.connection_init.call_args[0][0]
         identity = req.wrapper_identity
-        from snowflake.connector.connection import CLIENT_NAME
+        from snowflake.connector.connection import _APPLICATION_NAME
 
-        assert identity.driver_name == CLIENT_NAME
+        assert identity.driver_name == _APPLICATION_NAME
         assert identity.driver_version == __version__
         assert identity.language_runtime == platform.python_implementation()
         assert identity.language_version == platform.python_version()

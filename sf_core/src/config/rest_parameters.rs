@@ -76,6 +76,12 @@ pub struct ClientInfo {
     pub os: String,
     pub os_version: String,
     pub ocsp_mode: Option<String>,
+    /// Wrapper runtime name (e.g. "CPython", "OpenJDK"). Only set by language wrappers.
+    pub runtime_name: Option<String>,
+    /// Wrapper runtime version (e.g. "3.11.6", "21.0.1"). Only set by language wrappers.
+    pub runtime_version: Option<String>,
+    /// Wrapper compiler info (e.g. "Clang 13.0.0 ..."). Only set by language wrappers.
+    pub compiler: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
     pub platforms: Vec<String>,
@@ -87,16 +93,27 @@ impl ClientInfo {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
 
-        // TODO: ClientInfo should be dynamically created based on the real hardware and
-        // the wrapper client type
         let client_info = ClientInfo {
             application: settings
                 .get_string("client_app_id")
-                .unwrap_or_else(|| "PythonConnector".to_string()),
-            version: "3.15.0".to_string(),
-            os: "Darwin".to_string(),
-            os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string()),
+            version: settings
+                .get_string("client_app_version")
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+            os: std::env::consts::OS.to_string(),
+            os_version: crate::telemetry::environment::detect_os_version(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
+            runtime_name: settings
+                .get_string("client_runtime_name")
+                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
+            runtime_version: settings
+                .get_string("client_runtime_version")
+                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
+            compiler: settings
+                .get_string("client_compiler")
+                .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
             crl_config,
             tls_config,
             platforms: Vec::new(),
@@ -122,6 +139,9 @@ pub mod test_fixtures {
             os: std::env::consts::OS.to_string(),
             os_version: "1.0".to_string(),
             ocsp_mode: None,
+            runtime_name: None,
+            runtime_version: None,
+            compiler: None,
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
             platforms: Vec::new(),
@@ -748,5 +768,78 @@ mod tests {
             err_msg.contains("Missing required parameter") && err_msg.contains("user"),
             "Expected MissingParameter error for empty user, got: {err_msg}"
         );
+    }
+
+    #[test]
+    fn test_client_info_uses_defaults_when_no_wrapper_settings() {
+        let settings = create_test_settings(vec![(
+            "host",
+            Setting::String("test.snowflakecomputing.com".to_string()),
+        )]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.application, env!("CARGO_PKG_NAME"));
+        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.runtime_name.is_none());
+        assert!(info.runtime_version.is_none());
+        assert!(info.compiler.is_none());
+    }
+
+    #[test]
+    fn test_client_info_with_custom_wrapper_identity() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            ("client_app_id", Setting::String("JDBC".to_string())),
+            ("client_app_version", Setting::String("3.21.0".to_string())),
+            (
+                "client_runtime_name",
+                Setting::String("OpenJDK".to_string()),
+            ),
+            (
+                "client_runtime_version",
+                Setting::String("21.0.1".to_string()),
+            ),
+            (
+                "client_compiler",
+                Setting::String("javac 21.0.1".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.application, "JDBC");
+        assert_eq!(info.version, "3.21.0");
+        assert_eq!(info.runtime_name.as_deref(), Some("OpenJDK"));
+        assert_eq!(info.runtime_version.as_deref(), Some("21.0.1"));
+        assert_eq!(info.compiler.as_deref(), Some("javac 21.0.1"));
+    }
+
+    #[test]
+    fn test_client_info_empty_strings_become_none() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            ("client_runtime_name", Setting::String("".to_string())),
+            ("client_runtime_version", Setting::String("  ".to_string())),
+            ("client_compiler", Setting::String(" \t ".to_string())),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert!(
+            info.runtime_name.is_none(),
+            "empty string should become None"
+        );
+        assert!(
+            info.runtime_version.is_none(),
+            "whitespace-only should become None"
+        );
+        assert!(info.compiler.is_none(), "whitespace+tab should become None");
+    }
+
+    #[test]
+    fn test_detect_os_version_not_empty() {
+        let version = crate::telemetry::environment::detect_os_version();
+        assert!(!version.is_empty());
     }
 }

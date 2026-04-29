@@ -22,7 +22,6 @@ pub struct AuthRequestClientCapabilities {
     pub smk_id_as_string: bool,
 }
 
-// TODO: Currently this is only compatible with Python, should be generalized later
 #[derive(Debug, Serialize, Default)]
 pub struct AuthRequestClientEnvironment {
     #[serde(rename = "APPLICATION")]
@@ -35,12 +34,12 @@ pub struct AuthRequestClientEnvironment {
     pub ocsp_mode: Option<String>,
     #[serde(rename = "PLATFORM")]
     pub platforms: Vec<String>,
-    #[serde(rename = "PYTHON_VERSION", skip_serializing_if = "Option::is_none")]
-    pub python_version: Option<String>,
-    #[serde(rename = "PYTHON_RUNTIME", skip_serializing_if = "Option::is_none")]
-    pub python_runtime: Option<String>,
-    #[serde(rename = "PYTHON_COMPILER", skip_serializing_if = "Option::is_none")]
-    pub python_compiler: Option<String>,
+    #[serde(rename = "RUNTIME_VERSION", skip_serializing_if = "Option::is_none")]
+    pub runtime_version: Option<String>,
+    #[serde(rename = "RUNTIME_NAME", skip_serializing_if = "Option::is_none")]
+    pub runtime_name: Option<String>,
+    #[serde(rename = "COMPILER", skip_serializing_if = "Option::is_none")]
+    pub compiler: Option<String>,
     #[serde(rename = "OS_DETAILS", skip_serializing_if = "Option::is_none")]
     pub os_details: Option<HashMap<String, String>>,
 }
@@ -51,6 +50,8 @@ pub struct AuthRequestData {
     pub client_app_id: String,
     #[serde(rename = "CLIENT_APP_VERSION")]
     pub client_app_version: String,
+    #[serde(rename = "CLIENT_APP_VERSION_FULL")]
+    pub client_app_version_full: String,
     #[serde(rename = "SVN_REVISION")]
     pub _svn_revision: Option<String>,
     #[serde(rename = "ACCOUNT_NAME")]
@@ -187,4 +188,58 @@ pub struct AuthResponse {
     #[serde(rename = "code")]
     pub _code: Option<String>,
     pub success: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_environment_serializes_with_expected_keys() {
+        let env = AuthRequestClientEnvironment {
+            application: "JDBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "Linux-5.10-aarch64-64bit".to_string(),
+            ocsp_mode: Some("FAIL_OPEN".to_string()),
+            runtime_version: Some("21.0.1".to_string()),
+            runtime_name: Some("OpenJDK".to_string()),
+            compiler: Some("javac 21.0.1".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["APPLICATION"], "JDBC");
+        assert_eq!(json["OS"], "Linux");
+        assert_eq!(json["OS_VERSION"], "Linux-5.10-aarch64-64bit");
+        assert_eq!(json["OCSP_MODE"], "FAIL_OPEN");
+        assert_eq!(json["RUNTIME_VERSION"], "21.0.1");
+        assert_eq!(json["RUNTIME_NAME"], "OpenJDK");
+        assert_eq!(json["COMPILER"], "javac 21.0.1");
+    }
+
+    #[test]
+    fn test_client_environment_omits_none_runtime_fields() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Windows".to_string(),
+            os_version: "10.0".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert!(
+            json.get("RUNTIME_VERSION").is_none(),
+            "None fields should be skipped"
+        );
+        assert!(
+            json.get("RUNTIME_NAME").is_none(),
+            "None fields should be skipped"
+        );
+        assert!(
+            json.get("COMPILER").is_none(),
+            "None fields should be skipped"
+        );
+        assert!(
+            json.get("OCSP_MODE").is_none(),
+            "None OCSP_MODE should be skipped"
+        );
+    }
 }

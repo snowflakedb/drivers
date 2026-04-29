@@ -44,6 +44,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
@@ -94,10 +95,23 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
                     .build());
         logConnectionOptionWarnings(response);
       }
+      WrapperIdentity.Builder identityBuilder =
+          WrapperIdentity.newBuilder()
+              .setDriverName("JDBC")
+              .setDriverVersion(determineClientAppVersion());
+      String runtimeName = System.getProperty("java.vm.name");
+      if (runtimeName != null && !runtimeName.trim().isEmpty()) {
+        identityBuilder.setLanguageRuntime(runtimeName);
+      }
+      String runtimeVersion = System.getProperty("java.version");
+      if (runtimeVersion != null && !runtimeVersion.trim().isEmpty()) {
+        identityBuilder.setLanguageVersion(runtimeVersion);
+      }
       ConnectionInitRequest connectionInitRequest =
           ConnectionInitRequest.newBuilder()
               .setDbHandle(databaseHandle)
               .setConnHandle(connectionHandle)
+              .setWrapperIdentity(identityBuilder.build())
               .build();
       ProtobufApis.databaseDriverV1.connectionInit(connectionInitRequest);
     } catch (DatabaseDriverService.ServiceException e) {
@@ -157,6 +171,17 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
           warning.getCode(),
           warning.getMessage());
     }
+  }
+
+  private String determineClientAppVersion() {
+    Package pkg = SnowflakeConnectionImpl.class.getPackage();
+    if (pkg != null) {
+      String version = pkg.getImplementationVersion();
+      if (version != null && !version.trim().isEmpty()) {
+        return version;
+      }
+    }
+    return "4.0.0";
   }
 
   @Override
