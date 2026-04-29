@@ -14,16 +14,8 @@ from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
-def _assert_float32_equal(actual: list[float], expected: list[float]) -> None:
-    """Assert two float32 vectors are equal within 32-bit float tolerance.
-
-    VECTOR(FLOAT) uses 32-bit floats, so values like 1.8 become 1.7999999523162842.
-    Standard assert_floats_equal uses 64-bit tolerances which are too tight.
-    """
-    assert len(actual) == len(expected), f"Length mismatch: {len(actual)} != {len(expected)}"
-    for i, (a, e) in enumerate(zip(actual, expected)):
-        assert a == pytest.approx(e, rel=1e-6), f"Mismatch at index {i}: expected {e}, got {a}"
-
+# VECTOR(FLOAT) uses 32-bit floats — need relaxed tolerance vs 64-bit assert_floats_equal.
+FLOAT32_APPROX = {"rel": 1e-6}
 
 # =============================================================================
 # INT VECTOR TEST VALUES
@@ -72,7 +64,7 @@ class TestVectorTypeCasting:
         assert_type(result, list)
         assert result[0] == INT_VEC_3D
         assert_type(result[0], int)
-        _assert_float32_equal(result[1], FLOAT_VEC_3D)
+        assert result[1] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
         assert_type(result[1], float)
 
 
@@ -80,28 +72,29 @@ class TestVectorLiteral:
     """Tests for VECTOR type using SELECT with literals (no tables)."""
 
     LITERAL_TEST_CASES = [
-        ("INT-3d", _vec_sql(INT_VEC_3D_ALT, "INT"), INT_VEC_3D_ALT, False),
-        ("INT-2d", _vec_sql(INT_VEC_2D, "INT"), INT_VEC_2D, False),
-        ("FLOAT-5d", _vec_sql(FLOAT_VEC_5D_ALT, "FLOAT"), FLOAT_VEC_5D_ALT, True),
+        ("INT-3d", "INT", INT_VEC_3D_ALT),
+        ("INT-2d", "INT", INT_VEC_2D),
+        ("FLOAT-5d", "FLOAT", FLOAT_VEC_5D_ALT),
     ]
 
     @pytest.mark.parametrize(
-        "subtype, query_value, expected_value, is_float",
+        "subtype, vec_type, expected_value",
         LITERAL_TEST_CASES,
         ids=[c[0] for c in LITERAL_TEST_CASES],
     )
-    def test_should_select_subtype_vector_literal(self, execute_query, subtype, query_value, expected_value, is_float):
+    def test_should_select_subtype_vector_literal(self, execute_query, subtype, vec_type, expected_value):
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT <query_value>" is executed
-        sql = f"SELECT {query_value}"
+        # When Query "SELECT <expected_value>::VECTOR(<vec_type>, ...)" is executed
+        sql = f"SELECT {_vec_sql(expected_value, vec_type)}"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain <subtype> vector <expected_value>
         assert isinstance(result[0], list)
-        if is_float:
-            _assert_float32_equal(result[0], expected_value)
+        assert len(result[0]) == len(expected_value)
+        if vec_type == "FLOAT":
+            assert result[0] == pytest.approx(expected_value, **FLOAT32_APPROX)
             assert_type(result[0], float)
         else:
             assert result[0] == expected_value
@@ -112,7 +105,7 @@ class TestVectorLiteral:
         pass
 
         # When Query selecting special vector values is executed
-        result = execute_query(
+        null_result = execute_query(
             f"SELECT {_vec_sql(INT_VEC_3D, 'INT')}, NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)",
             single_row=True,
         )
@@ -121,13 +114,13 @@ class TestVectorLiteral:
         max_dim_result = execute_query(f"SELECT [{values}]::VECTOR(FLOAT, {MAX_DIMENSION_SIZE})", single_row=True)
 
         # Then NULL vectors should return None and max-dimension vector should be valid
-        assert result[0] == INT_VEC_3D
-        assert result[1] is None
-        assert result[2] is None
+        assert null_result[0] == INT_VEC_3D
+        assert null_result[1] is None
+        assert null_result[2] is None
         assert isinstance(max_dim_result[0], list)
         assert len(max_dim_result[0]) == MAX_DIMENSION_SIZE
         assert_type(max_dim_result[0], float)
-        _assert_float32_equal(max_dim_result[0], expected)
+        assert max_dim_result[0] == pytest.approx(expected, **FLOAT32_APPROX)
 
 
 class TestVectorTable:
@@ -155,11 +148,11 @@ class TestVectorTable:
         assert len(rows) == 2
         assert rows[0][1] == INT_VEC_3D
         assert_type(rows[0][1], int)
-        _assert_float32_equal(rows[0][2], FLOAT_VEC_5D)
+        assert rows[0][2] == pytest.approx(FLOAT_VEC_5D, **FLOAT32_APPROX)
         assert_type(rows[0][2], float)
         assert rows[1][1] == INT_VEC_3D_B
         assert_type(rows[1][1], int)
-        _assert_float32_equal(rows[1][2], FLOAT_VEC_5D_B)
+        assert rows[1][2] == pytest.approx(FLOAT_VEC_5D_B, **FLOAT32_APPROX)
         assert_type(rows[1][2], float)
 
     def test_should_handle_null_vector_values_from_table(self, execute_query, tmp_schema):
@@ -186,7 +179,7 @@ class TestVectorTable:
         assert rows[0][1] == INT_VEC_3D
         assert rows[0][2] is None
         assert rows[1][1] is None
-        _assert_float32_equal(rows[1][2], FLOAT_VEC_3D)
+        assert rows[1][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
         assert rows[2][1] is None
         assert rows[2][2] is None
 
@@ -247,7 +240,7 @@ class TestVectorBinding:
         assert len(rows) == 2
         assert rows[0][1] == INT_VEC_3D
         assert_type(rows[0][1], int)
-        _assert_float32_equal(rows[0][2], FLOAT_VEC_3D)
+        assert rows[0][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
         assert_type(rows[0][2], float)
         assert rows[1][1] == INT_VEC_3D_B
         assert rows[1][2] is None
@@ -275,7 +268,7 @@ class TestVectorBinding:
         assert len(rows) == 2
         assert rows[0][1] == INT_VEC_3D
         assert_type(rows[0][1], int)
-        _assert_float32_equal(rows[0][2], FLOAT_VEC_3D)
+        assert rows[0][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
         assert rows[1][1] == INT_VEC_3D_B
         assert_type(rows[1][1], int)
-        _assert_float32_equal(rows[1][2], FLOAT_VEC_3D)
+        assert rows[1][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)

@@ -24,14 +24,14 @@ Feature: VECTOR type support
   @python_e2e
   Scenario Outline: should select <subtype> vector literal
     Given Snowflake client is logged in
-    When Query "SELECT <query_value>" is executed
+    When Query "SELECT <expected_value>::VECTOR(<vec_type>, ...)" is executed
     Then Result should contain <subtype> vector <expected_value>
 
     Examples:
-      | subtype   | query_value                                      | expected_value           |
-      | INT-3d    | [1, 3, -5]::VECTOR(INT, 3)                       | [1, 3, -5]               |
-      | INT-2d    | [40, 1234567]::VECTOR(INT, 2)                    | [40, 1234567]            |
-      | FLOAT-5d  | [1.8, -3.4, 6.7, 0, 2.3]::VECTOR(FLOAT, 5)      | [1.8, -3.4, 6.7, 0, 2.3]|
+      | subtype   | vec_type | expected_value              |
+      | INT-3d    | INT      | [1, 3, -5]                  |
+      | INT-2d    | INT      | [40, 1234567]               |
+      | FLOAT-5d  | FLOAT    | [1.8, -3.4, 6.7, 0.0, 2.3] |
 
   @python_e2e
   Scenario: should select vector special values
