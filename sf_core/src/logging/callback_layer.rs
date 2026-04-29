@@ -1,9 +1,14 @@
 use std::ffi::{CString, c_char};
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::field::Field;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
+
+/// Guard for the Python log callback. Set to `false` by `sf_core_shutdown()`
+/// before `Py_Finalize` tears down the interpreter.
+static CALLBACK_ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub type CLogCallback = unsafe extern "C" fn(
     level: u32,
@@ -23,11 +28,19 @@ impl CallbackLayer {
     }
 }
 
+/// Disable the Python log callback. Called from `sf_core_shutdown()`.
+pub fn disable_callback() {
+    CALLBACK_ENABLED.store(false, Ordering::Release);
+}
+
 impl<S> Layer<S> for CallbackLayer
 where
     S: Subscriber,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        if !CALLBACK_ENABLED.load(Ordering::Relaxed) {
+            return;
+        }
         let level = match *event.metadata().level() {
             Level::ERROR => 0,
             Level::WARN => 1,

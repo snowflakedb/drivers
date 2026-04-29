@@ -25,3 +25,13 @@ pub extern "C" fn sf_core_init(callback: logging::CLogCallback) -> u32 {
         }
     }
 }
+
+/// Disable the Python-bound log callback before interpreter shutdown.
+///
+/// Python wrapper registers this as an `atexit` handler so it runs before
+/// `Py_Finalize` tears down the interpreter. Without this, the Rust tracing
+/// subscriber fires events into a dead Python callback, causing SIGABRT.
+#[unsafe(no_mangle)]
+pub extern "C" fn sf_core_shutdown() {
+    logging::disable_callback();
+}

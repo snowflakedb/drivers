@@ -104,6 +104,9 @@ core.sf_core_get_perf_data.restype = CoreInstrumentationData
 core.sf_core_reset_perf_metrics.argtypes = []
 core.sf_core_reset_perf_metrics.restype = None
 
+core.sf_core_shutdown.argtypes = []
+core.sf_core_shutdown.restype = None
+
 
 def sf_core_api_call_proto(
     api: ctypes.c_char_p,
@@ -166,6 +169,11 @@ def register_default_logger_callback() -> None:
     Call this function explicitly to set up logging.
     """
     sf_core_init(c_logger_callback)
+    # Disable Rust→Python log callback before Py_Finalize tears down the interpreter.
+    # Without this, Rust tracing events fire into a dead Python callback → SIGABRT.
+    import atexit
+
+    atexit.register(core.sf_core_shutdown)
 
 
 @functools.lru_cache(maxsize=1)
