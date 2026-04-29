@@ -559,40 +559,27 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
     .fail()
 }
 
-/// Disconnect from the database
+/// Disconnect from the database, performing logout via sf_core.
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let dbc = conn_from_handle(connection_handle)?;
-    let old_state = {
-        let mut connection = dbc.connection.lock();
-        std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
-    };
-    if let ConnectionState::Connected {
-        db_handle,
-        conn_handle,
-    } = old_state
-    {
-        global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-            if let Err(e) = c
-                .connection_release(ConnectionReleaseRequest {
-                    conn_handle: Some(conn_handle),
+    let mut connection = dbc.connection.lock();
+    match &connection.state {
+        ConnectionState::Connected { conn_handle, .. } => {
+            global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                c.connection_close(ConnectionCloseRequest {
+                    conn_handle: Some(*conn_handle),
                 })
                 .await
-            {
-                tracing::warn!("Failed to release core connection handle: {e:?}");
-            }
-            if let Err(e) = c
-                .database_release(DatabaseReleaseRequest {
-                    db_handle: Some(db_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release core database handle: {e:?}");
-            }
-        });
+            })?;
+        }
+        ConnectionState::Disconnected => {
+            return DisconnectedSnafu.fail();
+        }
     }
 
+    connection.state = ConnectionState::Disconnected;
     Ok(())
 }
 
