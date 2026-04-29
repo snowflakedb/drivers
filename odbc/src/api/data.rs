@@ -294,12 +294,11 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     };
 
     let mut cache = FetchConverterCache::new();
-    let numeric_settings = unsafe { stmt.conn() }.connection.numeric_settings;
-
     // Fast path: a single-row fetch propagates the conversion error to
     // the caller instead of just marking the row as Error.
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut stmt.state)?;
+        let numeric_settings = stmt.conn()?.connection.lock().numeric_settings;
         cache.refresh_if_needed(stmt, &numeric_settings)?;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
@@ -341,6 +340,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
 
     let mut rows_fetched: usize = 0;
     let mut has_error = false;
+    let numeric_settings = stmt.conn()?.connection.lock().numeric_settings;
 
     // Column-major block-cursor loop. Each iteration advances into the
     // next row and then processes as many rows as fit in the current
@@ -744,14 +744,13 @@ pub fn get_data(
                 datetime_interval_precision: ard_binding
                     .and_then(|b| b.datetime_interval_precision),
             };
+            let settings = stmt.conn()?.connection.lock().numeric_settings;
             let conversion_warnings = read_arrow_value(
                 &binding,
                 array_ref,
                 field,
                 *batch_idx,
-                // SAFETY: conn pointer is valid for the statement's lifetime;
-                // no mutable reference to the Connection exists in this scope.
-                &unsafe { stmt.conn() }.connection.numeric_settings,
+                &settings,
                 &mut offset,
             )
             .context(ConversionSnafu)?;
