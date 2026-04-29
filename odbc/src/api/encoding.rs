@@ -7,6 +7,7 @@ use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use snafu::ResultExt;
 use std::cmp::min;
+#[cfg(not(windows))]
 use std::sync::OnceLock;
 
 #[cfg(not(windows))]

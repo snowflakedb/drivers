@@ -8,15 +8,26 @@ use super::aws_identity::{CallerIdentityProvider, StsCallerIdentityProvider, has
 
 const DETECTION_TIMEOUT: Duration = Duration::from_millis(200);
 
+const GCP_METADATA_FLAVOR_HEADER: &str = "Metadata-Flavor";
+const GCP_METADATA_FLAVOR_VALUE: &str = "Google";
+
 #[derive(Clone)]
 pub struct DetectionConfig {
     pub(crate) caller_identity_provider: Arc<dyn CallerIdentityProvider>,
+    pub(crate) aws_metadata_base_url: String,
+    pub(crate) azure_metadata_base_url: String,
+    pub(crate) gce_metadata_root_url: String,
+    pub(crate) gce_metadata_base_url: String,
 }
 
 impl Default for DetectionConfig {
     fn default() -> Self {
         Self {
             caller_identity_provider: Arc::new(StsCallerIdentityProvider),
+            aws_metadata_base_url: "http://169.254.169.254".to_string(),
+            azure_metadata_base_url: "http://169.254.169.254".to_string(),
+            gce_metadata_root_url: "http://metadata.google.internal".to_string(),
+            gce_metadata_base_url: "http://metadata.google.internal/computeMetadata/v1".to_string(),
         }
     }
 }
@@ -44,6 +55,8 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
         return vec!["disabled".to_string()];
     }
 
+    let http = reqwest::Client::new();
+
     let detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![
         ("is_aws_lambda", async { is_aws_lambda() }.boxed()),
         ("is_azure_function", async { is_azure_function() }.boxed()),
@@ -60,6 +73,14 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
             "has_aws_identity",
             has_aws_identity(config.caller_identity_provider.as_ref()).boxed(),
         ),
+        ("is_ec2_instance", is_ec2_instance(&http, config).boxed()),
+        ("is_azure_vm", is_azure_vm(&http, config).boxed()),
+        (
+            "has_azure_managed_identity",
+            has_azure_managed_identity(&http, config).boxed(),
+        ),
+        ("is_gce_vm", is_gce_vm(&http, config).boxed()),
+        ("has_gcp_identity", has_gcp_identity(&http, config).boxed()),
     ];
 
     let results = futures::future::join_all(detectors.into_iter().map(|(name, fut)| async move {
@@ -105,6 +126,96 @@ fn is_github_action() -> bool {
     env_non_empty("GITHUB_ACTIONS")
 }
 
+async fn is_ec2_instance(http: &reqwest::Client, config: &DetectionConfig) -> bool {
+    let token = async {
+        let response = http
+            .put(format!("{}/latest/api/token", config.aws_metadata_base_url))
+            .header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let body = response.text().await.ok()?;
+        Some(body.trim().to_string()).filter(|t| !t.is_empty())
+    }
+    .await;
+
+    let document: reqwest::Result<serde_json::Value> = async {
+        let mut request = http.get(format!(
+            "{}/latest/dynamic/instance-identity/document",
+            config.aws_metadata_base_url,
+        ));
+        if let Some(token) = token {
+            request = request.header("X-aws-ec2-metadata-token", token);
+        }
+        request.send().await?.error_for_status()?.json().await
+    }
+    .await;
+
+    document
+        .ok()
+        .and_then(|doc| doc.get("instanceId")?.as_str().map(str::to_owned))
+        .is_some_and(|id| !id.is_empty())
+}
+
+async fn is_azure_vm(http: &reqwest::Client, config: &DetectionConfig) -> bool {
+    let url = format!(
+        "{}/metadata/instance?api-version=2019-03-11",
+        config.azure_metadata_base_url
+    );
+    http.get(url)
+        .header("Metadata", "true")
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn has_azure_managed_identity(http: &reqwest::Client, config: &DetectionConfig) -> bool {
+    if is_azure_function() && env_non_empty("IDENTITY_HEADER") {
+        return true;
+    }
+    let url = format!(
+        "{}/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com",
+        config.azure_metadata_base_url
+    );
+    http.get(url)
+        .header("Metadata", "true")
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn is_gce_vm(http: &reqwest::Client, config: &DetectionConfig) -> bool {
+    http.get(&config.gce_metadata_root_url)
+        .send()
+        .await
+        .map(|response| {
+            response
+                .headers()
+                .get(GCP_METADATA_FLAVOR_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value == GCP_METADATA_FLAVOR_VALUE)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+async fn has_gcp_identity(http: &reqwest::Client, config: &DetectionConfig) -> bool {
+    let url = format!(
+        "{}/instance/service-accounts/default/email",
+        config.gce_metadata_base_url
+    );
+    http.get(url)
+        .header(GCP_METADATA_FLAVOR_HEADER, GCP_METADATA_FLAVOR_VALUE)
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
 #[cfg(any(test, feature = "test-utils"))]
 const PLATFORM_DETECTION_ENV_KEYS: &[&str] = &[
     "SNOWFLAKE_DISABLE_PLATFORM_DETECTION",
@@ -113,6 +224,7 @@ const PLATFORM_DETECTION_ENV_KEYS: &[&str] = &[
     "FUNCTIONS_WORKER_RUNTIME",
     "FUNCTIONS_EXTENSION_VERSION",
     "AzureWebJobsStorage",
+    "IDENTITY_HEADER",
     "K_SERVICE",
     "K_REVISION",
     "K_CONFIGURATION",
@@ -171,9 +283,18 @@ mod tests {
     /// Returns a [`DetectionConfig`] wired with inert fakes for every field,
     /// so detectors never reach the network. Tests override individual fields
     /// (e.g. `cfg.caller_identity_provider = ...`) to exercise specific paths.
+    ///
+    /// Every HTTP URL is pointed at `http://127.0.0.1:1`, which reliably
+    /// refuses connections on all supported platforms, so HTTP detectors
+    /// fail fast and cannot flake an env-only or STS-only assertion.
     fn test_detection_config() -> DetectionConfig {
+        let unreachable_url = "http://127.0.0.1:1".to_string();
         DetectionConfig {
             caller_identity_provider: Arc::new(FakeCallerIdentityProvider::new(None)),
+            aws_metadata_base_url: unreachable_url.clone(),
+            azure_metadata_base_url: unreachable_url.clone(),
+            gce_metadata_root_url: unreachable_url.clone(),
+            gce_metadata_base_url: unreachable_url,
         }
     }
 
@@ -381,11 +502,46 @@ mod tests {
             async {
                 let platforms = detect_platforms(&test_detection_config()).await;
                 assert!(
-                    !platforms.contains(&"is_github_action".to_string()),
-                    "empty string must be treated as unset, got {platforms:?}",
+                    platforms.is_empty(),
+                    "empty string must be treated as unset, got {platforms:?}"
                 );
             },
         )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn drops_detectors_when_timeout_reached() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_delay(DETECTION_TIMEOUT * 4))
+            .mount(&server)
+            .await;
+
+        let mut slow_sts =
+            FakeCallerIdentityProvider::new(Some("arn:aws:iam::123456789012:user/alice".into()));
+        slow_sts.delay = DETECTION_TIMEOUT * 4;
+
+        let mut cfg = test_detection_config();
+        cfg.caller_identity_provider = Arc::new(slow_sts);
+        cfg.aws_metadata_base_url = server.uri();
+        cfg.azure_metadata_base_url = server.uri();
+        cfg.gce_metadata_root_url = server.uri();
+        cfg.gce_metadata_base_url = server.uri();
+
+        temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+            let detect = tokio::spawn({
+                let cfg = cfg.clone();
+                async move { detect_platforms(&cfg).await }
+            });
+            tokio::time::advance(DETECTION_TIMEOUT + Duration::from_millis(1)).await;
+
+            let platforms = detect.await.expect("detect_platforms timed out");
+            assert!(
+                platforms.is_empty(),
+                "all slow detectors must be dropped by per-detector timeout, got {platforms:?}"
+            );
+        })
         .await;
     }
 
@@ -418,27 +574,249 @@ mod tests {
             })
             .await;
         }
+    }
 
-        #[tokio::test(start_paused = true)]
-        async fn drops_when_provider_exceeds_timeout() {
+    mod metadata_server_detectors {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        use super::*;
+
+        #[tokio::test]
+        async fn detects_is_ec2_instance_via_imdsv2() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .and(header("X-aws-ec2-metadata-token-ttl-seconds", "21600"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .and(header("X-aws-ec2-metadata-token", "imds-token"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(r#"{"instanceId":"i-12345"}"#),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
             let mut cfg = test_detection_config();
-            let mut caller_identity_provider = FakeCallerIdentityProvider::new(Some(
-                "arn:aws:iam::123456789012:user/alice".into(),
-            ));
-            caller_identity_provider.delay = DETECTION_TIMEOUT * 4;
-            cfg.caller_identity_provider = Arc::new(caller_identity_provider);
+            cfg.aws_metadata_base_url = server.uri();
 
             temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
-                let detect = tokio::spawn({
-                    let cfg = cfg.clone();
-                    async move { detect_platforms(&cfg).await }
-                });
-                tokio::time::advance(DETECTION_TIMEOUT + Duration::from_millis(1)).await;
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["is_ec2_instance".to_string()],
+                    "expected is_ec2_instance, got {platforms:?}"
+                );
+            })
+            .await;
+        }
 
-                let platforms = detect.await.expect("detect_platforms timed out");
+        #[tokio::test]
+        async fn detects_is_ec2_instance_via_imdsv1_when_token_request_fails() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .respond_with(ResponseTemplate::new(403))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(r#"{"instanceId":"i-12345"}"#),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.aws_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["is_ec2_instance".to_string()],
+                    "expected is_ec2_instance via IMDSv1 fallback, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn rejects_is_ec2_instance_when_document_lacks_instance_id() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_string(r#"{"region":"us-east-1"}"#),
+                )
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.aws_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
                 assert!(
                     platforms.is_empty(),
-                    "slow provider must be dropped by per-detector timeout, got {platforms:?}"
+                    "missing instanceId must not trigger is_ec2_instance, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn rejects_is_ec2_instance_when_document_returns_non_2xx() {
+            let server = MockServer::start().await;
+            Mock::given(method("PUT"))
+                .and(path("/latest/api/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/latest/dynamic/instance-identity/document"))
+                .respond_with(ResponseTemplate::new(401))
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.aws_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert!(
+                    platforms.is_empty(),
+                    "non-2xx document response must not trigger is_ec2_instance, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn detects_is_azure_vm_with_metadata_header() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/metadata/instance"))
+                .and(header("Metadata", "true"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.azure_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["is_azure_vm".to_string()],
+                    "expected is_azure_vm, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn detects_has_azure_managed_identity_via_functions_env() {
+            temp_env::async_with_vars(
+                platform_detection_env_vars(&[
+                    ("FUNCTIONS_WORKER_RUNTIME", "node"),
+                    ("FUNCTIONS_EXTENSION_VERSION", "~4"),
+                    ("AzureWebJobsStorage", "DefaultEndpoint=..."),
+                    ("IDENTITY_HEADER", "header"),
+                ]),
+                async {
+                    let platforms = detect_platforms(&test_detection_config()).await;
+                    assert_eq!(
+                        platforms,
+                        vec![
+                            "is_azure_function".to_string(),
+                            "has_azure_managed_identity".to_string()
+                        ],
+                        "expected is_azure_function + has_azure_managed_identity, got {platforms:?}"
+                    );
+                },
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn detects_has_azure_managed_identity_via_metadata() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/metadata/identity/oauth2/token"))
+                .and(header("Metadata", "true"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.azure_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["has_azure_managed_identity".to_string()],
+                    "expected has_azure_managed_identity, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn detects_is_gce_vm_via_metadata_flavor_header() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).insert_header("Metadata-Flavor", "Google"))
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.gce_metadata_root_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["is_gce_vm".to_string()],
+                    "expected is_gce_vm, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn detects_has_gcp_identity_via_metadata_service() {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/instance/service-accounts/default/email"))
+                .and(header("Metadata-Flavor", "Google"))
+                .respond_with(ResponseTemplate::new(200).set_body_string("sa@example.iam"))
+                .mount(&server)
+                .await;
+
+            let mut cfg = test_detection_config();
+            cfg.gce_metadata_base_url = server.uri();
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(
+                    platforms,
+                    vec!["has_gcp_identity".to_string()],
+                    "expected has_gcp_identity, got {platforms:?}"
                 );
             })
             .await;

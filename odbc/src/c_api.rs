@@ -1295,3 +1295,307 @@ pub unsafe extern "C" fn SQLSetDescFieldW(
     )
     .to_sql_code()
 }
+
+// ============================================================================
+// DllMain — capture module handle for dialog resources
+// ============================================================================
+
+#[cfg(target_os = "windows")]
+pub(crate) static DLL_HINSTANCE: std::sync::atomic::AtomicPtr<core::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(target_os = "windows")]
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn DllMain(
+    h_instance: *mut core::ffi::c_void,
+    reason: u32,
+    _reserved: *mut core::ffi::c_void,
+) -> i32 {
+    const DLL_PROCESS_ATTACH: u32 = 1;
+    if reason == DLL_PROCESS_ATTACH {
+        DLL_HINSTANCE.store(h_instance, std::sync::atomic::Ordering::Relaxed);
+    }
+    1 // TRUE
+}
+
+// ============================================================================
+// Setup DLL API — ConfigDriver / ConfigDSN
+//
+// These functions are called by the ODBC Installer DLL, not the
+// Driver Manager. They allow the ODBC Administrator UI to add, modify, and
+// remove DSNs for this driver.
+// ============================================================================
+
+#[cfg(target_os = "windows")]
+mod setup {
+    use std::ptr;
+
+    #[cfg_attr(
+        target_arch = "x86",
+        link(
+            name = "odbccp32",
+            kind = "raw-dylib",
+            import_name_type = "undecorated"
+        )
+    )]
+    #[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
+    unsafe extern "system" {
+        fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> i32;
+        fn SQLRemoveDSNFromIniW(lpszDSN: *const u16) -> i32;
+        fn SQLWritePrivateProfileStringW(
+            lpszSection: *const u16,
+            lpszEntry: *const u16,
+            lpszString: *const u16,
+            lpszFilename: *const u16,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            dw_flags: u32,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+
+    const CP_ACP: u32 = 0;
+    const ODBC_ADD_DSN: u16 = 1;
+    const ODBC_CONFIG_DSN: u16 = 2;
+    const ODBC_REMOVE_DSN: u16 = 3;
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// Convert a Windows ANSI code page byte slice to a Rust String.
+    unsafe fn acp_to_string(bytes: &[u8]) -> String {
+        if bytes.is_empty() {
+            return String::new();
+        }
+        let wide_len = unsafe {
+            MultiByteToWideChar(
+                CP_ACP,
+                0,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if wide_len <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut wide_buf = vec![0u16; wide_len as usize];
+        unsafe {
+            MultiByteToWideChar(
+                CP_ACP,
+                0,
+                bytes.as_ptr(),
+                bytes.len() as i32,
+                wide_buf.as_mut_ptr(),
+                wide_len,
+            );
+        }
+        String::from_utf16_lossy(&wide_buf)
+    }
+
+    /// Parse a double-null-terminated wide attribute string into key-value pairs.
+    unsafe fn parse_attributes_w(attrs: *const u16) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        if attrs.is_null() {
+            return result;
+        }
+        let mut p = attrs;
+        loop {
+            if unsafe { *p } == 0 {
+                break;
+            }
+            let start = p;
+            let mut len = 0usize;
+            while unsafe { *p } != 0 {
+                len += 1;
+                p = unsafe { p.add(1) };
+            }
+            let slice = unsafe { std::slice::from_raw_parts(start, len) };
+            let s = String::from_utf16_lossy(slice);
+            if let Some((k, v)) = s.split_once('=') {
+                result.push((k.to_string(), v.to_string()));
+            }
+            p = unsafe { p.add(1) };
+        }
+        result
+    }
+
+    unsafe fn parse_attributes_a(attrs: *const u8) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        if attrs.is_null() {
+            return result;
+        }
+        let mut p = attrs;
+        loop {
+            if unsafe { *p } == 0 {
+                break;
+            }
+            let start = p;
+            let mut len = 0usize;
+            while unsafe { *p } != 0 {
+                len += 1;
+                p = unsafe { p.add(1) };
+            }
+            let slice = unsafe { std::slice::from_raw_parts(start, len) };
+            let s = unsafe { acp_to_string(slice) };
+            if let Some((k, v)) = s.split_once('=') {
+                result.push((k.to_string(), v.to_string()));
+            }
+            p = unsafe { p.add(1) };
+        }
+        result
+    }
+
+    fn find_dsn(attrs: &[(String, String)]) -> Option<&str> {
+        attrs
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("DSN"))
+            .map(|(_, v)| v.as_str())
+    }
+
+    unsafe fn write_dsn_silent(dsn: &str, driver: &str, attrs: &[(String, String)]) -> bool {
+        let dsn_w = to_wide(dsn);
+        let driver_w = to_wide(driver);
+        if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
+            return false;
+        }
+        let odbc_ini = to_wide("odbc.ini");
+        let mut ok = true;
+        for (key, value) in attrs {
+            if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
+                continue;
+            }
+            let key_w = to_wide(key);
+            let val_w = to_wide(value);
+            if unsafe {
+                SQLWritePrivateProfileStringW(
+                    dsn_w.as_ptr(),
+                    key_w.as_ptr(),
+                    val_w.as_ptr(),
+                    odbc_ini.as_ptr(),
+                )
+            } == 0
+            {
+                ok = false;
+            }
+        }
+        ok
+    }
+
+    unsafe fn config_dsn_impl(
+        hwnd_parent: *mut core::ffi::c_void,
+        f_request: u16,
+        driver: &str,
+        attrs: &[(String, String)],
+    ) -> bool {
+        match f_request {
+            ODBC_REMOVE_DSN => {
+                let Some(dsn) = find_dsn(attrs) else {
+                    return false;
+                };
+                let dsn_w = to_wide(dsn);
+                unsafe { SQLRemoveDSNFromIniW(dsn_w.as_ptr()) != 0 }
+            }
+            ODBC_ADD_DSN | ODBC_CONFIG_DSN => {
+                let dsn = find_dsn(attrs).unwrap_or("");
+                let is_add = f_request == ODBC_ADD_DSN;
+
+                // Show dialog when a parent window is provided (ODBC Administrator).
+                // Fall back to silent mode for programmatic DSN creation (null hwnd).
+                if !hwnd_parent.is_null() {
+                    unsafe {
+                        crate::setup_dialog::show_config_dialog(
+                            hwnd_parent,
+                            is_add,
+                            driver,
+                            dsn,
+                            attrs,
+                        )
+                    }
+                } else if !dsn.is_empty() {
+                    unsafe { write_dsn_silent(dsn, driver, attrs) }
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// # Safety
+    /// Called by the ODBC Installer DLL (Unicode variant).
+    #[unsafe(no_mangle)]
+    pub unsafe extern "system" fn ConfigDSNW(
+        hwnd_parent: *mut core::ffi::c_void,
+        f_request: u16,
+        lpsz_driver: *const u16,
+        lpsz_attributes: *const u16,
+    ) -> i32 {
+        let driver = if lpsz_driver.is_null() {
+            String::new()
+        } else {
+            let mut len = 0;
+            let mut p = lpsz_driver;
+            while unsafe { *p } != 0 {
+                len += 1;
+                p = unsafe { p.add(1) };
+            }
+            String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(lpsz_driver, len) })
+        };
+        let attrs = unsafe { parse_attributes_w(lpsz_attributes) };
+        i32::from(unsafe { config_dsn_impl(hwnd_parent, f_request, &driver, &attrs) })
+    }
+
+    /// # Safety
+    /// Called by the ODBC Installer DLL (ANSI variant).
+    /// TODO: Followup in SNOW-3441384. If possible, this should be removed.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "system" fn ConfigDSN(
+        hwnd_parent: *mut core::ffi::c_void,
+        f_request: u16,
+        lpsz_driver: *const u8,
+        lpsz_attributes: *const u8,
+    ) -> i32 {
+        let driver = if lpsz_driver.is_null() {
+            String::new()
+        } else {
+            let mut len = 0;
+            let mut p = lpsz_driver;
+            while unsafe { *p } != 0 {
+                len += 1;
+                p = unsafe { p.add(1) };
+            }
+            unsafe { acp_to_string(std::slice::from_raw_parts(lpsz_driver, len)) }
+        };
+        let attrs = unsafe { parse_attributes_a(lpsz_attributes) };
+        i32::from(unsafe { config_dsn_impl(hwnd_parent, f_request, &driver, &attrs) })
+    }
+
+    /// # Safety
+    /// Called by the ODBC Installer DLL for driver-level install/remove hooks.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "system" fn ConfigDriver(
+        _hwnd_parent: *mut core::ffi::c_void,
+        _f_request: u16,
+        _lpsz_driver: *const u8,
+        _lpsz_args: *const u8,
+        _lpsz_msg: *mut u8,
+        _cb_msg_max: u16,
+        _pcb_msg_out: *mut u16,
+    ) -> i32 {
+        if !_pcb_msg_out.is_null() {
+            unsafe { ptr::write(_pcb_msg_out, 0) };
+        }
+        1 // TRUE
+    }
+}

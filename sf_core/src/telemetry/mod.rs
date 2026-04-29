@@ -11,38 +11,6 @@ pub(crate) mod aws_identity;
 pub mod os_details;
 pub mod platform_detection;
 
-use crate::apis::database_driver_v1::DriverProviders;
-
-/// Telemetry state created during logging initialization.
-///
-/// Bridges (C API, JDBC, ODBC) should store this between `init_logging` and
-/// `DatabaseDriverV1` creation, then pass it to [`DriverProviders`] via
-/// [`into_providers`](TelemetryInit::into_providers).
-pub struct TelemetryInit {
-    pub provider: opentelemetry_sdk::trace::SdkTracerProvider,
-    pub sessions: snowflake_exporter::SessionRegistry,
-}
-
-impl TelemetryInit {
-    /// Convert into `DriverProviders` fields for `DatabaseDriverV1`.
-    pub fn into_providers(self) -> DriverProviders {
-        DriverProviders {
-            telemetry_sessions: Some(self.sessions),
-            telemetry_provider: Some(self.provider),
-            ..Default::default()
-        }
-    }
-
-    /// Create `DriverProviders` by cloning (provider uses `Arc` internally).
-    pub fn to_providers(&self) -> DriverProviders {
-        DriverProviders {
-            telemetry_sessions: Some(self.sessions.clone()),
-            telemetry_provider: Some(self.provider.clone()),
-            ..Default::default()
-        }
-    }
-}
-
 use opentelemetry::trace::TraceContextExt;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 

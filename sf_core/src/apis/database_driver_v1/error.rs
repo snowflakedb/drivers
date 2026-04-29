@@ -147,9 +147,34 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to decode JSON chunk data"))]
+    JsonChunkDecoding {
+        source: arrow::error::ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to encode inline JSON rowset as Arrow IPC"))]
+    InlineJsonEncoding {
+        #[snafu(implicit)]
+        location: Location,
+        source: ChunkError,
+    },
+    #[snafu(display("Invalid column metadata for '{column}'"))]
+    InvalidColumnMetadata {
+        column: String,
+        #[snafu(implicit)]
+        location: Location,
+        source: crate::rest::snowflake::query_response::QueryResponseError,
+    },
     #[snafu(display("Failed to decode base64 chunk data"))]
     Base64Decoding {
         source: base64::DecodeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported queryResultFormat reported by the server: '{format}'"))]
+    UnsupportedQueryResultFormat {
+        format: String,
         #[snafu(implicit)]
         location: Location,
     },

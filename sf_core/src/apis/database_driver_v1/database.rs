@@ -1,19 +1,23 @@
+use arrow::array::{RecordBatchIterator, RecordBatchReader};
+use arrow::datatypes::{Fields, Schema};
 use std::collections::HashMap;
 use std::io;
+use std::sync::Arc;
 use tokio::sync::Mutex;
-
-use arrow::ffi_stream::FFI_ArrowArrayStream;
-use arrow_ipc::reader::StreamReader;
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use snafu::ResultExt;
 
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
-use crate::chunks::{ChunkDownloadData, get_chunk_data};
+use crate::chunks::prefetch::{JsonChunkParser, ParseChunk};
+use crate::chunks::{ChunkDownloadData, ChunkFormatKind, get_chunk_data};
 use crate::config::ParamStore;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
+use crate::query_types::RowType;
+use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow_ipc::reader::StreamReader;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use snafu::ResultExt;
 
 impl DatabaseDriverV1 {
     pub fn database_new(&self) -> Handle {
@@ -61,6 +65,8 @@ impl DatabaseDriverV1 {
         &self,
         db_handle: Handle,
         input: FetchChunkInput,
+        format: ChunkFormatKind,
+        row_types: Vec<RowType>,
     ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
         if self.databases.get_obj(db_handle).is_none() {
             return InvalidArgumentSnafu {
@@ -72,7 +78,7 @@ impl DatabaseDriverV1 {
         let bytes = match input {
             FetchChunkInput::Inline(data) => BASE64.decode(&data).context(Base64DecodingSnafu)?,
             FetchChunkInput::Remote(chunk) => {
-                // TODO Configure the client properly here
+                // TODO: Configure the client properly here
                 let client = reqwest::Client::new();
                 get_chunk_data(client, chunk)
                     .await
@@ -80,9 +86,34 @@ impl DatabaseDriverV1 {
             }
         };
 
-        let cursor = io::Cursor::new(bytes);
-        let reader = StreamReader::try_new(cursor, None).context(ArrowParsingSnafu)?;
-        Ok(Box::new(FFI_ArrowArrayStream::new(Box::new(reader))))
+        let reader: Box<dyn RecordBatchReader + Send> = match format {
+            ChunkFormatKind::ArrowIpc => {
+                let cursor = io::Cursor::new(bytes);
+                let reader = StreamReader::try_new(cursor, None).context(ArrowParsingSnafu)?;
+                Box::new(reader)
+            }
+            ChunkFormatKind::Json => {
+                if row_types.is_empty() {
+                    return InvalidArgumentSnafu {
+                        argument: "Column metadata is required to decode CHUNK_FORMAT_JSON chunks"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let parser = JsonChunkParser { row_types };
+                let batches = parser.parse_chunk(bytes).context(JsonChunkDecodingSnafu)?;
+                let schema = batches
+                    .first()
+                    .map(|b| b.schema())
+                    .unwrap_or_else(|| Arc::new(Schema::new(Fields::empty())));
+                Box::new(RecordBatchIterator::new(
+                    batches.into_iter().map(Ok::<_, arrow::error::ArrowError>),
+                    schema,
+                ))
+            }
+        };
+
+        Ok(Box::new(FFI_ArrowArrayStream::new(reader)))
     }
 }
 

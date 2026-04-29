@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(config.server_session_keep_alive, None);
         assert_eq!(config.enable_server_session_keep_alive_auto_detection, None);
         assert_eq!(config.error_strategy, ErrorStrategy::Strict);
-        assert_eq!(config.logout_total_timeout, Duration::from_secs(5));
+        assert_eq!(config.logout_total_timeout, Duration::from_secs(15));
         assert_eq!(config.max_attempts, Some(3));
         assert_eq!(config.logout_request_timeout, None);
     }

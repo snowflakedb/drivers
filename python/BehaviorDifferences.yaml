@@ -110,3 +110,14 @@ behavior_differences:
       NEW driver: Calling `fetchone`, `fetchmany`, `fetchall`, or iterating a cursor before any query has been executed raises
         `ProgrammingError("No results available (already consumed or not produced by this query)", errno=252009)` (`ER_NO_DATA_FOUND`).
       OLD driver: The same calls have no guard, so they raise `TypeError` because the cursor's internal result state is `None`.
+
+  23:
+    name: "Connection does not expose a public connect() method"
+    description: |
+      NEW driver: `Connection` does not have a public `connect()` method. 
+        The connection to Snowflake is established internally during `__init__` via a private `_connect()` call. 
+        All connection parameters must be provided at construction time.
+      OLD driver: `SnowflakeConnection` exposes a public `connect(**kwargs)` method that `__init__` calls at the end of construction.
+        Despite being public, the method was not usable as a reconnect mechanism: after a successful connection 
+        the driver calls `auth_class.reset_secrets()` and `self._password = None`, wiping credential state from the auth instance.
+        A subsequent `connect()` call — even with full kwargs re-supplied — fails.

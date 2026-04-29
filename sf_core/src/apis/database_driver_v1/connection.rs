@@ -180,7 +180,7 @@ impl DatabaseDriverV1 {
                     let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
                     client_info.platforms = self.platforms().await.clone();
-                    client_info.os_details = self.os_details().clone();
+                    client_info.os_details = self.os_details().cloned();
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 

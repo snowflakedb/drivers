@@ -25,6 +25,7 @@ from ._internal.decorators import backward_compatibility
 from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ColumnMetadata,
     DatabaseFetchChunkRequest,
     ResultChunk,
 )
@@ -88,10 +89,12 @@ class ResultBatch(ErrorHandlerMixin):
         chunk: ResultChunk,
         description: list[ResultMetadata],
         connection: Connection | None,
+        columns: list[ColumnMetadata] | None = None,
     ) -> None:
         self._chunk = chunk
         self._description = description
         self._connection = connection
+        self._columns: list[ColumnMetadata] = list(columns) if columns else []
         # Populated by :meth:`populate_data`; consumed (reset to ``None``) by
         # :meth:`_take_arrow_stream_ptr` because an Arrow stream can only be
         # read once.
@@ -103,11 +106,12 @@ class ResultBatch(ErrorHandlerMixin):
         chunks: list[ResultChunk] | None,
         description: list[ResultMetadata] | None,
         connection: Connection | None,
+        columns: list[ColumnMetadata] | None = None,
     ) -> list[ResultBatch] | None:
         """Create a list of batches from raw result chunks, or ``None`` if unavailable."""
         if chunks is None or description is None:
             return None
-        return [cls(chunk=chunk, description=description, connection=connection) for chunk in chunks]
+        return [cls(chunk=chunk, description=description, connection=connection, columns=columns) for chunk in chunks]
 
     # ------------------------------------------------------------------
     # Properties
@@ -159,6 +163,7 @@ class ResultBatch(ErrorHandlerMixin):
         request = DatabaseFetchChunkRequest(
             db_handle=connection.db_handle,
             chunk=self._chunk,
+            columns=self._columns,
         )
         response = connection.db_api.database_fetch_chunk(request)
         return get_stream_ptr(response)
@@ -287,6 +292,7 @@ class ResultBatch(ErrorHandlerMixin):
         return {
             "chunk_bytes": self._chunk.SerializeToString(),
             "description": self._description,
+            "column_bytes": [c.SerializeToString() for c in self._columns],
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -294,6 +300,12 @@ class ResultBatch(ErrorHandlerMixin):
         chunk.ParseFromString(state["chunk_bytes"])
         self._chunk = chunk
         self._description = state["description"]
+        columns: list[ColumnMetadata] = []
+        for raw in state.get("column_bytes", []):
+            col = ColumnMetadata()
+            col.ParseFromString(raw)
+            columns.append(col)
+        self._columns = columns
         self._connection = None
         self._arrow_stream_ptr = None
 

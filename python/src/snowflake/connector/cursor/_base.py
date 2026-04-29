@@ -34,6 +34,7 @@ from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ColumnMetadata,
     ConnectionAbortQueryRequest,
     ConnectionGetQueryResultRequest,
     ConnectionGetResultSetRequest,
@@ -182,6 +183,8 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
         # -- Active iteration state (cleared on reset) --
         self._result_chunks: list[ResultChunk] | None = None
+        # Column metadata forwarded to ``DatabaseFetchChunkRequest`` (required for JSON chunks).
+        self._result_chunk_columns: list[ColumnMetadata] = []
         self._iterator: ArrowStreamIterator | None = None
         self._fetch_mode: FetchMode | None = None
 
@@ -522,13 +525,28 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
 
+    def _store_chunk_metadata(
+        self,
+        metadata: tuple[list[ResultChunk], list[ColumnMetadata]] | None,
+    ) -> None:
+        """Persist the ``(chunks, columns)`` pair returned by _fetch_result_chunk_metadata."""
+        if metadata is None:
+            self._result_chunks = None
+            self._result_chunk_columns = []
+            return
+        chunks, columns = metadata
+        self._result_chunks = chunks
+        self._result_chunk_columns = columns
+
     def _fetch_result_chunk_metadata(
         self, stmt_handle: StatementHandle, query_id: str | None = None
-    ) -> list[ResultChunk] | None:
+    ) -> tuple[list[ResultChunk], list[ColumnMetadata]] | None:
         """Retrieve chunk metadata for a specific query ID while the statement handle is alive.
 
         For single-statement queries, query_id should be None (server infers from statement handle).
         For multi-statement queries, query_id must specify which child query's chunks to return.
+
+        Returns ``(chunks, columns)``; ``columns`` is required for JSON chunks and ignored for Arrow IPC.
         """
         try:
             # Only include query_id in request if explicitly provided (for multistatement)
@@ -540,7 +558,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
                 request = StatementResultChunksRequest(stmt_handle=stmt_handle)
             response = self._connection.db_api.statement_result_chunks(request)
             if response.HasField("result"):
-                return list(response.result.chunks)
+                return list(response.result.chunks), list(response.result.columns)
             logger.warning("No result field in response")
             return None
         except Exception:
@@ -595,7 +613,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         result_set_response = self._fetch_result_set(stmt_handle, descriptor.query_id)
         self._query_result = _QueryResult._from_result_set_response(result_set_response, descriptor, query)
         # For single-statement, pass the query_id to chunks request
-        self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle, query_id=descriptor.query_id)
+        self._store_chunk_metadata(self._fetch_result_chunk_metadata(stmt_handle, query_id=descriptor.query_id))
 
     def _handle_multi_statement_response(
         self, response: ExecuteQueryResponse, stmt_handle: StatementHandle, query: str
@@ -614,7 +632,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         # Edge case: empty multi-statement result
         if not self._multi_statement_query_ids:
             self._query_result = _QueryResult(query=query)
-            self._result_chunks = None
+            self._store_chunk_metadata(None)
             self._multi_statement_parent_qid = None  # Clear parent QID for consistency
             return
 
@@ -625,7 +643,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
         # For first result in multistatement, pass the full query
         self._query_result = _QueryResult._from_result_set_response(result_set_response, descriptor, query)
-        self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle, first_qid)
+        self._store_chunk_metadata(self._fetch_result_chunk_metadata(stmt_handle, first_qid))
         self._multi_statement_current_index = 1
 
     def _apply_statement_parameters(self, stmt_handle: StatementHandle) -> None:
@@ -936,7 +954,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         self._query_result = _QueryResult._from_result_set_response(result_set_response, descriptor)
         self._rownumber = -1
         # Note: chunk metadata not available for child results without statement handle
-        self._result_chunks = None
+        self._store_chunk_metadata(None)
 
         return self
 
@@ -1007,7 +1025,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """
         del self._messages[:]
         self._query_result.reset(closing=closing)
-        self._result_chunks = None
+        self._store_chunk_metadata(None)
         self._iterator = None
         self._fetch_mode = None
         self._binding_data = None
@@ -1179,7 +1197,12 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @_requires_open
     def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
-        return ResultBatch.from_chunks(self._result_chunks, self._query_result.description, self._connection)
+        return ResultBatch.from_chunks(
+            self._result_chunks,
+            self._query_result.description,
+            self._connection,
+            self._result_chunk_columns,
+        )
 
     # ------------------------------------------------------------------
     # Async query support
