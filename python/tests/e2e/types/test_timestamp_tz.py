@@ -103,7 +103,7 @@ class TestTimestampTzLiteral:
         assert tuple(to_utc(result)) == tuple(to_utc(expected_values))
 
         # And Values should have timezone info
-        for actual, expected in zip(result, expected_values):
+        for actual, expected in zip(result, expected_values, strict=True):
             assert actual.utcoffset() == expected.utcoffset(), (
                 f"Expected offset {expected.utcoffset()}, got {actual.utcoffset()}"
             )
@@ -134,7 +134,7 @@ class TestTimestampTzLiteral:
             timedelta(hours=4, minutes=30),
             timedelta(hours=-2, minutes=-30),
         ]
-        for val, expected_offset in zip(result, expected_offsets):
+        for val, expected_offset in zip(result, expected_offsets, strict=True):
             actual_offset = val.utcoffset()
             assert actual_offset == expected_offset, f"Expected offset {expected_offset}, got {actual_offset}"
 

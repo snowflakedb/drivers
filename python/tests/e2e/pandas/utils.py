@@ -46,7 +46,7 @@ def execute_and_fetch_multiple_batches(cursor, sql: str, params=None) -> pd.Data
 
 def assert_dtypes(df: pd.DataFrame, expected: list) -> None:
     assert df.shape[1] == len(expected), f"Column count mismatch: {df.shape[1]} vs {len(expected)}"
-    for i, (dtype, check) in enumerate(zip(df.dtypes, expected)):
+    for i, (dtype, check) in enumerate(zip(df.dtypes, expected, strict=False)):
         assert check(dtype), f"Column {i} ({df.columns[i]}): dtype {dtype} failed {check.__name__}"
 
 

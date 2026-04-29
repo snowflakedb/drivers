@@ -78,7 +78,7 @@ def normalize_fixed_column_types(
     """
     new_fields = []
     changed = False
-    for field, metadata in zip(schema, description):
+    for field, metadata in zip(schema, description, strict=False):
         if metadata.type_code == FIXED and field.type != pyarrow.int64():
             new_fields.append(field.with_type(pyarrow.int64()))
             changed = True

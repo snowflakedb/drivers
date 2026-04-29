@@ -9,9 +9,9 @@ Implementation details are in snowflake.connector._internal.write_pandas_operati
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from functools import partial, wraps
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from ._internal.errorhandler import route_exception
 from ._internal.extras import pandas, requires_dependency, sqlalchemy

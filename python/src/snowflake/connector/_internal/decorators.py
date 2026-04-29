@@ -8,7 +8,8 @@ to just the decorator façade.
 
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from .backward_compatibility import apply_backward_compatibility
 

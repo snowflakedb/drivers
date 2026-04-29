@@ -217,7 +217,7 @@ pipeline {
 
                                         sh label: 'Install the wheel', script: '''
                                             set +x
-                                            hatch run test.py3.9:install-wheel
+                                            hatch run test.py3.10:install-wheel
                                         '''
                                         
                                         def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
@@ -225,7 +225,7 @@ pipeline {
                                             export PARAMETER_PATH=$(pwd)/../parameters.json
                                             export PYTHONPATH=$(pwd)/src:$PYTHONPATH
                                             mkdir -p reports
-                                            hatch run test.py3.9:cov -- \
+                                            hatch run test.py3.10:cov -- \
                                                 --cov-report=term
                                             test_status=$?
                                             if [ -f coverage.xml ]; then
