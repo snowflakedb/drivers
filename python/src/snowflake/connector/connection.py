@@ -245,7 +245,10 @@ class Connection(ErrorHandlerMixin):
         )
         from ._internal.telemetry import TelemetryClient
 
-        self._telemetry_client = TelemetryClient(db_api=self.db_api, conn_handle=self.conn_handle)
+        self._telemetry_client = TelemetryClient(
+            db_api=self.db_api,
+            conn_handle=cast(ConnectionHandle, self.conn_handle),
+        )
 
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
