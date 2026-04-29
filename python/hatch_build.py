@@ -247,9 +247,15 @@ class BuildHook(BuildHookInterface):
         self._apply_compile_flags(ext)
         self._apply_link_flags(ext)
 
-        # Cythonize and build
-        extensions = cythonize([ext])
-        self._run_build(extensions, src_root)
+        # Cythonize and build — chdir to self.root so relative source paths
+        # resolve correctly for both cythonize and the subsequent compilation.
+        saved_cwd = os.getcwd()
+        os.chdir(self.root)
+        try:
+            extensions = cythonize([ext])
+            self._run_build(extensions, src_root)
+        finally:
+            os.chdir(saved_cwd)
 
     def _apply_compile_flags(self, ext: Extension) -> None:
         """Apply platform-specific compile flags to the extension."""
@@ -317,16 +323,7 @@ class BuildHook(BuildHookInterface):
         cmd.ensure_finalized()
         cmd.build_lib = str(src_root)
         cmd.inplace = True
-
-        # Extension sources use relative paths (see _build_extensions) so the
-        # build must run from self.root for both cythonize and compile to find
-        # the source files.
-        saved_cwd = os.getcwd()
-        os.chdir(self.root)
-        try:
-            cmd.run()
-        finally:
-            os.chdir(saved_cwd)
+        cmd.run()
 
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""

@@ -32,7 +32,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.13"], "linux_aarch": ["3.11","3.14"], "macos_arm": ["3.12","3.14"], "windows_x86": ["3.11","3.12","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -130,69 +130,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            py: "3.10"
-            hatch_env: "test"
-            cloud_provider: azure
-          - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
-            py: "3.13"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: ubuntu-latest # JSON result format test
-            py: "3.13"
-            hatch_env: "test"
-            cloud_provider: aws
-            result_format: json
-          - os: ubuntu-24.04-arm
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: ubuntu-24.04-arm
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: windows-latest
-            py: "3.12"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: windows-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: azure
-          - os: windows-11-arm
-            py: "3.12"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: windows-11-arm
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: windows-11-arm
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: azure
+          # sdist tests (Python 3.10 — builds sf_core from source; no wheel_artifact needed)
+          - { os: ubuntu-latest,     py: "3.10", hatch_env: "test",    cloud_provider: "azure" }
+          - { os: macos-latest,      py: "3.10", hatch_env: "test",    cloud_provider: "gcp"   }
+          - { os: windows-latest,    py: "3.10", hatch_env: "test",    cloud_provider: "aws"   }
+          # wheel tests
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64" } # Reference — keep in sync with REFERENCE_* env vars above
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64", result_format: "json" }
+          - { os: ubuntu-24.04-arm,  py: "3.14", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "manylinux_aarch64" }
+          - { os: ubuntu-24.04-arm,  py: "3.11", hatch_env: "test",    cloud_provider: "azure", wheel_artifact: "manylinux_aarch64" }
+          - { os: macos-latest,      py: "3.14", hatch_env: "test",    cloud_provider: "azure", wheel_artifact: "macosx_arm64" }
+          - { os: macos-latest,      py: "3.12", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "macosx_arm64" }
+          - { os: windows-latest,    py: "3.12", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "win_amd64" }
+          - { os: windows-latest,    py: "3.14", hatch_env: "test",    cloud_provider: "azure", wheel_artifact: "win_amd64" }
+          - { os: windows-11-arm,    py: "3.12", hatch_env: "test",    cloud_provider: "aws",   wheel_artifact: "win_arm64" }
+          - { os: windows-11-arm,    py: "3.11", hatch_env: "test",    cloud_provider: "gcp",   wheel_artifact: "win_arm64" }
           # test integration with Pandas
-          - os: ubuntu-latest
-            py: "3.14"
-            hatch_env: "test-pandas"
-            cloud_provider: gcp
-          - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
-            py: "3.13"
-            hatch_env: "test-pandas"
-            cloud_provider: aws
-          - os: ubuntu-latest
-            py: "3.13"
-            hatch_env: "test-pandas"
-            cloud_provider: aws
-            result_format: json
-          - os: windows-latest
-            py: "3.11"
-            hatch_env: "test-pandas"
-            cloud_provider: aws
-          - os: ubuntu-24.04-arm
-            py: "3.12"
-            hatch_env: "test-pandas"
-            cloud_provider: azure
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64" } # Reference — keep in sync with REFERENCE_* env vars above
+          - { os: ubuntu-latest,     py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws",   wheel_artifact: "manylinux_x86_64", result_format: "json" }
+          - { os: ubuntu-24.04-arm,  py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: macos-latest,      py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws",   wheel_artifact: "macosx_arm64" }
+          - { os: windows-latest,    py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp",   wheel_artifact: "win_amd64" }
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     env:
@@ -218,9 +176,9 @@ jobs:
       # dependencies regardless of which cloud provider the E2E tests target, so sharing one
       # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
       # and improves hit rates.
-      - name: Restore uv cache (Linux)
-        id: uv-cache-linux
-        if: runner.os == 'Linux'
+      - name: Restore uv cache (Linux/macOS)
+        id: uv-cache-unix
+        if: runner.os != 'Windows'
         uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
@@ -247,10 +205,10 @@ jobs:
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download wheel
-        if: matrix.py != '3.10'
+        if: matrix.wheel_artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ (matrix.os == 'windows-latest' && 'win_amd64' || (matrix.os == 'windows-11-arm' && 'win_arm64' || (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64'))) }}_py${{ matrix.py }}
+          name: ${{ matrix.wheel_artifact }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
@@ -297,8 +255,8 @@ jobs:
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Install snowflake ud driver from wheel (Linux)
-        if: runner.os == 'Linux' && matrix.py != '3.10'
+      - name: Install snowflake ud driver from wheel (Linux/macOS)
+        if: runner.os != 'Windows' && matrix.wheel_artifact
         working-directory: python
         run: |
           WHEELS=(dist/*.whl)
@@ -309,8 +267,8 @@ jobs:
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
-      - name: Install snowflake ud driver from sdist (Linux)
-        if: runner.os == 'Linux' && matrix.py == '3.10'
+      - name: Install snowflake ud driver from sdist (Linux/macOS)
+        if: runner.os != 'Windows' && !matrix.wheel_artifact
         working-directory: python
         run: |
           SDISTS=(dist/*.tar.gz)
@@ -324,7 +282,7 @@ jobs:
           SKIP_CORE_BUILD: "false"
 
       - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows' && matrix.py != '3.10'
+        if: runner.os == 'Windows' && matrix.wheel_artifact
         working-directory: python
         shell: pwsh
         run: |
@@ -336,7 +294,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Install snowflake ud driver from sdist (Windows)
-        if: runner.os == 'Windows' && matrix.py == '3.10'
+        if: runner.os == 'Windows' && !matrix.wheel_artifact
         working-directory: python
         shell: pwsh
         run: |
@@ -350,9 +308,9 @@ jobs:
         env:
           SKIP_CORE_BUILD: "false"
 
-      - name: Run tests with coverage (Linux)
-        if: runner.os == 'Linux'
-        id: run_python_tests_linux
+      - name: Run tests with coverage (Linux/macOS)
+        if: runner.os != 'Windows'
+        id: run_python_tests_unix
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         working-directory: python
         run: |
@@ -367,8 +325,8 @@ jobs:
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Rerun failed Python tests (Linux)
-        if: steps.run_python_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
+      - name: Rerun failed Python tests (Linux/macOS)
+        if: steps.run_python_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
         working-directory: python
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
@@ -427,13 +385,8 @@ jobs:
         shell: bash
         run: uv cache prune --ci
 
-      - name: Save uv cache (Linux)
-        # Skip when the exact key was already restored. Note: prefix-key fallbacks
-        # (restore-keys) do not set cache-hit=true, so saves still run after a
-        # partial restore — which is the common case after a uv.lock change.
-        if: always() && runner.os == 'Linux' && steps.uv-cache-linux.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+      - name: Save uv cache (Linux/macOS)
+        if: always() && runner.os != 'Windows' && steps.uv-cache-unix.outputs.cache-hit != 'true'
         continue-on-error: true
         timeout-minutes: 10
         env:
@@ -594,24 +547,6 @@ jobs:
             --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}.json \
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
-
-  # ── Clean up intermediate artifacts ────────────────────────────────
-  cleanup:
-    needs: [build_wheels, python_tests]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete sf-core artifacts
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
-            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
-          | while read id; do
-              echo "Deleting artifact $id"
-              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
-            done
 
   python-status:
     needs: [detect-changes, build_wheels, packaging_tests, python_tests, python_tests_reference, python_compare_results]

@@ -48,6 +48,9 @@ runs:
 
     - name: Save vcpkg OpenSSL cache
       if: steps.cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      env:
+        ZSTD_NBTHREADS: '2'
       uses: actions/cache/save@v5
       with:
         path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}
