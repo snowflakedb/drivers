@@ -9,17 +9,6 @@ Feature: GEOMETRY type support
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 
   # =========================================================================== #
-  #                               Type casting                                  #
-  # =========================================================================== #
-
-  @python_e2e
-  Scenario: should cast geometry values to appropriate type
-    # Python: Values should be cast to 'str' type (GeoJSON string)
-    Given Snowflake client is logged in
-    When Query "SELECT TO_GEOMETRY('POINT(1820.12 890.56)')" is executed
-    Then All values should be returned as appropriate type
-
-  # =========================================================================== #
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
@@ -36,11 +25,11 @@ Feature: GEOMETRY type support
       | Polygon    | TO_GEOMETRY('POLYGON((0 0, 4 0, 4 3, 0 3, 0 0))')             |
 
   # =========================================================================== #
-  #                          Output format handling                             #
+  #                     Type casting per output format                          #
   # =========================================================================== #
 
   @python_e2e
-  Scenario Outline: should select geometry in <format> output format
+  Scenario Outline: should cast geometry to <expected_type> for <format> output format
     Given Snowflake client is logged in
     And Session parameter GEOMETRY_OUTPUT_FORMAT is set to <format>
     When Query "SELECT TO_GEOMETRY('POINT(1820.12 890.56)')" is executed
