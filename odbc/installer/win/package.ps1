@@ -138,7 +138,7 @@ $ObjDir = Join-Path $OutputDir "wixobj"
 New-Item -ItemType Directory -Force -Path $ObjDir | Out-Null
 
 $WixObj = Join-Path $ObjDir "snowflake_odbc_${Arch}${configSuffix}.wixobj"
-$MsiFile = Join-Path $OutputDir "snowflake_odbc_ud-${Version}${configSuffix}-${Arch}.msi"
+$MsiFile = Join-Path $OutputDir "snowflake-odbc-ud-${Version}${configSuffix}-${Arch}.msi"
 
 $candleArch = if ($Arch -eq "x64") { "x64" } else { "x86" }
 
