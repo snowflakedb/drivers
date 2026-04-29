@@ -559,25 +559,37 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
     .fail()
 }
 
-/// Disconnect from the database, performing logout via sf_core.
+/// Disconnect from the database, performing logout and releasing sf_core handles.
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let dbc = conn_from_handle(connection_handle)?;
     let mut connection = dbc.connection.lock();
-    match &connection.state {
-        ConnectionState::Connected { conn_handle, .. } => {
-            global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.connection_close(ConnectionCloseRequest {
-                    conn_handle: Some(*conn_handle),
-                })
-                .await
-            })?;
-        }
+    let (db_handle, conn_handle) = match &connection.state {
+        ConnectionState::Connected {
+            db_handle,
+            conn_handle,
+        } => (*db_handle, *conn_handle),
         ConnectionState::Disconnected => {
             return DisconnectedSnafu.fail();
         }
-    }
+    };
+
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.connection_close(ConnectionCloseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await?;
+        c.connection_release(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await?;
+        c.database_release(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        })
+        .await?;
+        Ok::<_, crate::api::OdbcError>(())
+    })?;
 
     connection.state = ConnectionState::Disconnected;
     Ok(())

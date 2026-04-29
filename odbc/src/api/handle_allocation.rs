@@ -217,7 +217,7 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
         .retain(|id| *id != handle_id);
     drop(env_guard);
 
-    cleanup_connection(dbc)?;
+    cleanup_connection(delete_guard.value())?;
     delete_guard.delete();
     Ok(())
 }
