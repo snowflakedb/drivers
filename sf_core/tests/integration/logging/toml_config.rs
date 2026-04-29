@@ -19,7 +19,7 @@ fn toml_log_section_with_level_filtering() {
         &config_path,
         format!(
             "[log]\nlevel = \"DEBUG\"\npath = \"{}\"\nfile = \"toml_test.log\"\n",
-            log_dir.display()
+            log_dir.display().to_string().replace('\\', "/")
         ),
     )
     .unwrap();
