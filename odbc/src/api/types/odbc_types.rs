@@ -945,11 +945,10 @@ pub struct Connection {
     pub metadata_id: bool,
 }
 
-// Safety: `*const Statement` inside `child_statements` is `!Send` and `!Sync`, but access to
-// Connection is always serialised through the Mutex<Connection> in Dbc, and ODBC
-// guarantees that a single connection handle is only used from one thread at a time.
+// Safety: `*const Statement` inside `child_statements` is `!Send`, but access to Connection
+// is always serialised through the Mutex<Connection> in Dbc, and ODBC guarantees that a
+// single connection handle is only used from one thread at a time.
 unsafe impl Send for Connection {}
-unsafe impl Sync for Connection {}
 
 /// Application Parameter Descriptor (APD) record.
 ///

@@ -61,7 +61,7 @@ impl<T> HandleManager<T> {
         if idx >= slots.len() {
             slots.resize_with(idx + 1, || Arc::new(RwLock::new(None)));
         }
-        slots[idx] = Arc::new(RwLock::new(Some(value)));
+        *slots[idx].write() = Some(value);
         Ok(HandleId { id })
     }
 

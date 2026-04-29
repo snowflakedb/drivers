@@ -67,7 +67,6 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
     tracing::info!("Allocating new statement handle");
     let dbc = conn_from_handle(input_handle)?;
     let mut connection = dbc.connection.lock();
-    // Extract needed data under a short-lived lock; release before the async call.
     let (conn_handle, metadata_id) = {
         match &connection.state {
             ConnectionState::Connected {
@@ -122,7 +121,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
         false
     });
     connection.child_statements.push((weak, raw_ptr));
-    return Ok(raw_ptr as *mut Statement);
+    Ok(raw_ptr as *mut Statement)
 }
 
 /// Free an environment handle
