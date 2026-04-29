@@ -9,17 +9,6 @@ Feature: GEOGRAPHY type support
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-geospatial
 
   # =========================================================================== #
-  #                               Type casting                                  #
-  # =========================================================================== #
-
-  @python_e2e
-  Scenario: should cast geography values to appropriate type
-    # Python: Values should be cast to 'str' type (GeoJSON string)
-    Given Snowflake client is logged in
-    When Query "SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')" is executed
-    Then All values should be returned as appropriate type
-
-  # =========================================================================== #
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
