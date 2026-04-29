@@ -1839,5 +1839,8 @@ fn test_client_info() -> ClientInfo {
         tls_config: Default::default(),
         platforms: vec![],
         os_details: None,
+        compiler: None,
+        runtime_name: None,
+        runtime_version: None,
     }
 }
