@@ -18,7 +18,7 @@ pub use database::FetchChunkInput;
 pub use error::ApiError;
 pub use global_state::{DatabaseDriverV1, DriverProviders};
 pub use statement::{
-    BindingType, ColumnMetadata, DataPtr, ExecuteQueryResult, ResolvedResultSet,
+    BindingType, ColumnMetadata, DataPtr, ExecuteQueryResult, InlineData, ResolvedResultSet,
     ResultSetDescriptor, StoredChunkInfo,
 };
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

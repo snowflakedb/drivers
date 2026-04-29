@@ -204,7 +204,6 @@ class TestFetchArrowBatches:
 class TestResultBatchPickleArrow:
     """Tests for result batch pickle round-trip with to_arrow conversion."""
 
-    @pytest.mark.skip_for_json_result_set(reason="JSON format remote chunks not yet supported in pickle path")
     def test_should_survive_pickle_round_trip_and_convert_to_arrow(self, execute_query, cursor, connection_factory):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
