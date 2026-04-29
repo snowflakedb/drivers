@@ -301,10 +301,38 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         self.driver
-            .flush_telemetry_on_release(conn_handle.into())
-            .await
+            .connection_release(conn_handle.into())
             .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_close", skip(self, input))]
+    async fn connection_close(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        self.driver
+            .connection_close(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionCloseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_is_closed", skip(self, input))]
+    async fn connection_is_closed(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let is_closed = self
+            .driver
+            .connection_is_closed(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionIsClosedResponse { is_closed })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(self, input))]
@@ -1073,6 +1101,18 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: DatabaseReleaseRequest,
     ) -> BlockingProtoResult<DatabaseReleaseResponse>;
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> BlockingProtoResult<ConnectionCloseResponse>;
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> BlockingProtoResult<ConnectionIsClosedResponse>;
+    fn connection_get_info_blocking(
+        &self,
+        input: ConnectionGetInfoRequest,
+    ) -> BlockingProtoResult<ConnectionGetInfoResponse>;
     fn statement_get_result_set_blocking(
         &self,
         input: StatementGetResultSetRequest,
@@ -1188,6 +1228,27 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: DatabaseReleaseRequest,
     ) -> BlockingProtoResult<DatabaseReleaseResponse> {
         block_on_client_call(self.database_release(input))
+    }
+
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> BlockingProtoResult<ConnectionCloseResponse> {
+        block_on_client_call(self.connection_close(input))
+    }
+
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> BlockingProtoResult<ConnectionIsClosedResponse> {
+        block_on_client_call(self.connection_is_closed(input))
+    }
+
+    fn connection_get_info_blocking(
+        &self,
+        input: ConnectionGetInfoRequest,
+    ) -> BlockingProtoResult<ConnectionGetInfoResponse> {
+        block_on_client_call(self.connection_get_info(input))
     }
 
     fn statement_get_result_set_blocking(

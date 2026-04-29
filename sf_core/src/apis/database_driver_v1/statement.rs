@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::sync::Mutex;
 
-use super::connection::{Connection, RefreshContext};
+use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::query::process_query_response;
@@ -28,6 +28,7 @@ use crate::rest::snowflake::async_exec::submit_statement_async;
 use crate::rest::snowflake::query_request;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
+use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -613,25 +614,23 @@ impl DatabaseDriverV1 {
 
         let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
 
-        let response = {
-            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_get_query_result(
-                    &http_client,
-                    &query_parameters,
-                    session_token.reveal(),
-                    &query_id,
-                    &retry_policy,
+        let response = with_valid_session(&conn_ptr, |token| {
+            let http_client = &http_client;
+            let query_parameters = &query_parameters;
+            let query_id = &query_id;
+            let retry_policy = &retry_policy;
+            async move {
+                snowflake_get_query_result(
+                    http_client,
+                    query_parameters,
+                    token.reveal(),
+                    query_id,
+                    retry_policy,
                 )
                 .await
-                {
-                    Ok(result) => break Ok(result),
-                    Err(e) => last_error = Some(e),
-                }
             }
-        }?;
+        })
+        .await?;
 
         if response.success {
             let conn = conn_ptr.lock().await;
@@ -677,33 +676,30 @@ impl DatabaseDriverV1 {
 
         let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
 
-        {
-            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_abort_query(
-                    &http_client,
-                    &query_parameters,
-                    session_token.reveal(),
-                    &query_id,
-                )
-                .await
-                {
-                    Ok(()) => break Ok(()),
-                    Err(e) => last_error = Some(e),
-                }
+        with_valid_session(&conn_ptr, |token| {
+            let http_client = &http_client;
+            let query_parameters = &query_parameters;
+            let query_id = &query_id;
+            async move {
+                snowflake_abort_query(http_client, query_parameters, token.reveal(), query_id).await
             }
-        }
+        })
+        .await
     }
 }
 
 /// Lock the connection and extract the transport parameters, HTTP client, and retry policy
 /// needed to issue a query.
+///
+/// Also rejects query execution if close() has already been called on the connection.
 async fn query_context(
     conn: &Arc<Mutex<Connection>>,
 ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
     let conn = conn.lock().await;
+    // Reject query execution if close() has been called
+    if conn.is_closed.load(Ordering::SeqCst) {
+        return Err(ConnectionClosedSnafu {}.build());
+    }
     Ok((
         conn.query_transport_parameters()?,
         conn.http_client

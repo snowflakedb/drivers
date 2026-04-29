@@ -70,6 +70,27 @@ pub enum HttpError {
     },
 }
 
+/// Calculate effective timeout for a request attempt.
+///
+/// Returns the minimum of:
+/// - Configured per_request_timeout (if set)
+/// - Remaining time in total budget
+///
+/// This ensures:
+/// 1. Individual requests don't exceed per_request_timeout (if configured)
+/// 2. Total time never exceeds max_elapsed budget — even when per_request_timeout
+///    is None, the remaining budget is applied as the request timeout so that
+///    in-flight requests are cancelled when the budget expires.
+fn calculate_request_timeout(
+    per_request_timeout: Option<Duration>,
+    remaining: Duration,
+) -> Duration {
+    match per_request_timeout {
+        Some(configured) => configured.min(remaining),
+        None => remaining,
+    }
+}
+
 pub async fn execute_with_retry<T, B, F, H>(
     build_request: B,
     ctx: &HttpContext,
@@ -100,7 +121,18 @@ where
         }
         let remaining = policy.max_elapsed - elapsed;
 
-        let result = build_request().send().await;
+        // Calculate dynamic timeout: min(per_request_timeout, remaining_budget).
+        // Always set — ensures max_elapsed is a hard bound on in-flight requests.
+        let timeout = calculate_request_timeout(policy.per_request_timeout, remaining);
+        tracing::debug!(
+            attempt,
+            timeout_secs = timeout.as_secs(),
+            remaining_secs = remaining.as_secs(),
+            "Applying dynamic per-request timeout"
+        );
+        let req_builder = build_request().timeout(timeout);
+
+        let result = req_builder.send().await;
 
         match result {
             Ok(resp) => {
@@ -225,5 +257,56 @@ where
             Ok(bytes.to_vec())
         }
         Err(e) => Err(TransportSnafu.into_error(e)),
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_request_timeout_falls_back_to_remaining_when_not_configured() {
+        let result = calculate_request_timeout(None, Duration::from_secs(10));
+        assert_eq!(
+            result,
+            Duration::from_secs(10),
+            "Should fall back to remaining budget when per_request_timeout not configured"
+        );
+    }
+
+    #[test]
+    fn test_calculate_request_timeout_uses_configured_when_more_time_available() {
+        let configured = Duration::from_secs(5);
+        let remaining = Duration::from_secs(15);
+        let result = calculate_request_timeout(Some(configured), remaining);
+        assert_eq!(
+            result,
+            Duration::from_secs(5),
+            "Should use configured timeout when remaining is larger"
+        );
+    }
+
+    #[test]
+    fn test_calculate_request_timeout_uses_remaining_when_less_than_configured() {
+        let configured = Duration::from_secs(10);
+        let remaining = Duration::from_secs(3);
+        let result = calculate_request_timeout(Some(configured), remaining);
+        assert_eq!(
+            result,
+            Duration::from_secs(3),
+            "Should use remaining time when less than configured"
+        );
+    }
+
+    #[test]
+    fn test_calculate_request_timeout_last_attempt_gets_full_remaining() {
+        let configured = Duration::from_secs(5);
+        let remaining = Duration::from_millis(1500); // 1.5s remaining
+        let result = calculate_request_timeout(Some(configured), remaining);
+        assert_eq!(
+            result,
+            Duration::from_millis(1500),
+            "Last attempt should get all remaining time"
+        );
     }
 }

@@ -1,10 +1,12 @@
 #![allow(clippy::result_large_err)]
 mod alter_session_parser;
+pub mod async_query_registry;
 pub mod connection;
 mod database;
 pub(crate) mod error;
 mod global_state;
 pub(crate) mod heartbeat;
+mod logout;
 pub(crate) mod multistatement;
 mod query;
 pub mod spcs_token;
@@ -13,6 +15,7 @@ pub(crate) mod validation;
 
 pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
+pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
 pub use error::ApiError;

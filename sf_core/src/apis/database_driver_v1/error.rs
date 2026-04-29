@@ -51,6 +51,11 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Connection is closed"))]
+    ConnectionClosed {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("TLS client creation failed: {source}"))]
     TlsClientCreation {
         source: TlsError,
@@ -107,6 +112,12 @@ pub enum ApiError {
     },
     #[snafu(display("Master token expired, full re-authentication required"))]
     MasterTokenExpired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Logout failed: {message}"))]
+    LogoutFailed {
+        message: String,
         #[snafu(implicit)]
         location: Location,
     },

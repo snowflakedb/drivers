@@ -670,6 +670,12 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 },
             )),
         },
+        ApiError::ConnectionClosed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
+        ApiError::LogoutFailed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
     }
 }
 
@@ -829,6 +835,8 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::UnsupportedQueryResultFormat { .. } => StatusCode::InternalError,
         ApiError::HttpRequest { .. } => StatusCode::GenericError,
         ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
+        ApiError::ConnectionClosed { .. } => StatusCode::InvalidArgument,
+        ApiError::LogoutFailed { .. } => StatusCode::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);

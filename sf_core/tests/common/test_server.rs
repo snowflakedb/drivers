@@ -1,0 +1,272 @@
+//! Common test server helpers for integration tests.
+//!
+//! This module provides reusable mock HTTP server implementations for testing
+//! HTTP retry behavior, request verification, and response simulation.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+const CONNECTION_CLOSE: &str = "Connection: close";
+
+/// Read the full incoming HTTP request bytes from a stream.
+///
+/// Returns the bytes read (up to 4096). Panics if the read fails.
+async fn read_request_bytes(stream: &mut TcpStream) -> Vec<u8> {
+    let mut buf = vec![0u8; 4096];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .expect("server: failed to read request");
+    buf.truncate(n);
+    buf
+}
+
+/// Spawn a test server that responds to HTTP requests.
+///
+/// The responder receives the attempt number (1-based) and returns the raw HTTP response bytes.
+/// Useful for testing retry behavior.
+///
+/// # Arguments
+/// * `max_attempts` - Maximum number of requests to handle before the server stops
+/// * `responder` - Async closure that takes the attempt number and returns response bytes
+///
+/// # Returns
+/// * `SocketAddr` - The address the server is listening on
+/// * `Arc<AtomicUsize>` - Counter for number of attempts made
+/// * `JoinHandle` - Handle to the server task
+///
+/// # Example
+/// ```ignore
+/// let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
+///     if attempt == 1 {
+///         // First attempt: return 503
+///         b"HTTP/1.1 503 Service Unavailable\r\n...".to_vec()
+///     } else {
+///         // Second attempt: success
+///         b"HTTP/1.1 200 OK\r\n...".to_vec()
+///     }
+/// }).await;
+/// ```
+pub async fn spawn_test_server<F, Fut>(
+    max_attempts: usize,
+    responder: F,
+) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
+where
+    F: Fn(usize) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Vec<u8>> + Send + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let attempts_clone = attempts.clone();
+    let responder = Arc::new(responder);
+
+    let handle = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            let responder = responder.clone();
+
+            // Read the request (we discard it, responder only cares about attempt number)
+            drop(read_request_bytes(&mut stream).await);
+
+            let response = responder(attempt).await;
+            stream.write_all(&response).await.unwrap();
+            let _ = stream.shutdown().await;
+
+            if attempt >= max_attempts {
+                break;
+            }
+        }
+    });
+
+    (addr, attempts, handle)
+}
+
+/// Spawn a server that captures the full HTTP request for verification.
+///
+/// The server handles **one request**, captures its raw bytes, and resolves the
+/// `JoinHandle` to those bytes. Await the handle after the request to retrieve them:
+///
+/// ```ignore
+/// let (addr, attempts, server) = spawn_capture_server().await;
+/// // ... make request to addr ...
+/// let captured_bytes: Vec<u8> = server.await.unwrap();
+/// assert!(captured_bytes.starts_with(b"POST /session"));
+/// ```
+///
+/// **Access model**: this function returns `JoinHandle<Vec<u8>>` — the captured
+/// request is retrieved by awaiting the handle. Contrast with
+/// [`spawn_capture_server_with_response`], which processes the request inside the
+/// closure and returns `JoinHandle<()>` (no bytes returned to the caller).
+///
+/// # Arguments
+/// * No arguments — always responds with `{"success":true}` 200 OK.
+///
+/// # Returns
+/// * `SocketAddr` - The address the server is listening on
+/// * `Arc<AtomicUsize>` - Counter for number of requests handled
+/// * `JoinHandle<Vec<u8>>` - Handle that resolves to the captured request bytes
+pub async fn spawn_capture_server() -> (
+    SocketAddr,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<Vec<u8>>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let attempts_clone = attempts.clone();
+
+    let handle = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        attempts_clone.fetch_add(1, Ordering::SeqCst);
+
+        let buf = read_request_bytes(&mut stream).await;
+
+        // Send success response
+        stream
+            .write_all(&json_response(r#"{"success":true}"#))
+            .await
+            .unwrap();
+        let _ = stream.shutdown().await;
+
+        buf
+    });
+
+    (addr, attempts, handle)
+}
+
+/// Spawn a capture server with custom response.
+///
+/// Handles up to `max_attempts` requests. For each request the raw bytes are
+/// decoded as UTF-8 (lossy) and passed to `responder`, which returns the raw
+/// HTTP response bytes to send back.
+///
+/// **Access model**: the captured request is processed *inside* `responder` —
+/// this function returns `JoinHandle<()>` (no bytes returned to the caller).
+/// Contrast with [`spawn_capture_server`], which resolves the handle to the
+/// raw captured bytes.
+///
+/// # Arguments
+/// * `max_attempts` - Maximum number of requests to handle
+/// * `responder` - Closure that takes the request string and returns response bytes
+///
+/// # Returns
+/// * `SocketAddr` - The address the server is listening on
+/// * `Arc<AtomicUsize>` - Counter for number of requests handled
+/// * `JoinHandle<()>` - Handle to the server task
+pub async fn spawn_capture_server_with_response<F>(
+    max_attempts: usize,
+    responder: F,
+) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
+where
+    F: Fn(String) -> Vec<u8> + Send + Sync + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let responder = Arc::new(responder);
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let attempt_clone = attempt.clone();
+
+    let handle = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let current = attempt_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            let responder = responder.clone();
+
+            let raw = read_request_bytes(&mut stream).await;
+            let request = String::from_utf8_lossy(&raw).to_string();
+
+            let response = responder(request);
+            let _ = stream.write_all(&response).await;
+            let _ = stream.shutdown().await;
+
+            if current >= max_attempts {
+                break;
+            }
+        }
+    });
+
+    (addr, attempt, handle)
+}
+
+/// Helper to create a JSON HTTP 200 response.
+pub fn json_response(body: &str) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
+        body.len(),
+        body
+    )
+    .into_bytes()
+}
+
+/// Helper to create a JSON HTTP error response.
+pub fn json_error_response(status: u16, status_text: &str, body: &str) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
+        status,
+        status_text,
+        body.len(),
+        body
+    )
+    .into_bytes()
+}
+
+/// Helper to create a 503 Service Unavailable response with Retry-After header.
+pub fn service_unavailable_response(body: &str, retry_after: u32) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
+        body.len(),
+        retry_after,
+        body
+    )
+    .into_bytes()
+}
+
+/// Extract a query parameter from an HTTP request string.
+pub fn extract_query_param<'a>(request: &'a str, param: &str) -> Option<&'a str> {
+    let search = format!("{}=", param);
+    if let Some(start) = request.find(&search) {
+        let value_start = start + search.len();
+        let remaining = &request[value_start..];
+        let end = remaining
+            .find(['&', ' ', '\r', '\n'])
+            .unwrap_or(remaining.len());
+        Some(&remaining[..end])
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_query_param() {
+        let request = "GET /session?delete=true&requestId=abc123 HTTP/1.1\r\n";
+        assert_eq!(extract_query_param(request, "delete"), Some("true"));
+        assert_eq!(extract_query_param(request, "requestId"), Some("abc123"));
+        assert_eq!(extract_query_param(request, "missing"), None);
+    }
+
+    #[test]
+    fn test_json_response() {
+        let response = json_response(r#"{"success":true}"#);
+        let response_str = String::from_utf8_lossy(&response);
+        assert!(response_str.contains("HTTP/1.1 200 OK"));
+        assert!(response_str.contains("Content-Type: application/json"));
+        assert!(response_str.contains(r#"{"success":true}"#));
+    }
+
+    #[test]
+    fn test_service_unavailable_response() {
+        let response = service_unavailable_response(r#"{"error":"busy"}"#, 5);
+        let response_str = String::from_utf8_lossy(&response);
+        assert!(response_str.contains("HTTP/1.1 503 Service Unavailable"));
+        assert!(response_str.contains("Retry-After: 5"));
+    }
+}

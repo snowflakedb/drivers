@@ -12,7 +12,7 @@ def get_snow_logger(
     extra: Mapping[str, object] | None = None,
 ) -> SnowLogger:
     logger = logging.getLogger(name)
-    return SnowLogger(logger, extra)  # type: ignore[arg-type]
+    return SnowLogger(logger, extra or {})
 
 
 class SnowLogger(logging.LoggerAdapter):

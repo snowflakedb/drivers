@@ -3,6 +3,7 @@ pub mod async_exec;
 mod auth;
 pub mod error;
 pub mod heartbeat;
+pub mod logout;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
@@ -36,6 +37,14 @@ use url::Url;
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
+
+// ─── Snowflake GS protocol error codes ───────────────────────────────────────
+/// GS error code returned when a session no longer exists on the server.
+/// Logout callers treat this as success — the goal (an invalidated session) is achieved.
+pub const SESSION_GONE: i32 = 390111;
+/// GS error code returned when the session token has expired.
+/// The caller must use the master token to obtain a fresh session token and retry.
+pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -1597,6 +1606,13 @@ pub enum RestError {
     HttpRetry {
         context: &'static str,
         source: crate::http::retry::HttpError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Logout failed: {message} (code: {code})"))]
+    LogoutFailed {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

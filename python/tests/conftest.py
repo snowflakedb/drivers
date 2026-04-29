@@ -184,9 +184,13 @@ def int_test_connection_factory(connector_adapter):
 def pytest_runtest_setup(item):
     """Skip tests based on connector type and markers."""
     if IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_universal"):
-        pytest.skip("Skipping test for universal driver")
+        marker = item.get_closest_marker("skip_universal")
+        reason = marker.kwargs.get("reason", "Skipping test for universal driver")
+        pytest.skip(reason)
     elif not IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_reference"):
-        pytest.skip("Skipping test for reference driver")
+        marker = item.get_closest_marker("skip_reference")
+        reason = marker.kwargs.get("reason", "Skipping test for reference driver")
+        pytest.skip(reason)
     marker = item.get_closest_marker("skip_for_json_result_set")
     if marker is not None:
         result_format = os.getenv("QUERY_RESULT_FORMAT")
@@ -196,3 +200,7 @@ def pytest_runtest_setup(item):
 
     if item.get_closest_marker("require_vpn") and os.environ.get("JENKINS_URL") is None:
         pytest.skip("Requires VPN (run on Jenkins)")
+
+
+from tests.helpers.fixtures import core_proxy as core_proxy  # noqa: E402
+from tests.helpers.fixtures import mock_db_api as mock_db_api  # noqa: E402

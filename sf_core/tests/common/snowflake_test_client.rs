@@ -1,4 +1,5 @@
 use proto_utils::ProtoError;
+use sf_core::config::logout::ErrorStrategy;
 use sf_core::config::param_names;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DatabaseDriverClientBlockingExt, DriverProviders, database_driver_client,
@@ -438,6 +439,10 @@ impl SnowflakeTestClient {
         self.set_connection_config_setting(option_name, option_value.into());
     }
 
+    pub fn set_connection_option_bool(&self, option_name: &str, option_value: bool) {
+        self.set_connection_config_setting(option_name, option_value.into());
+    }
+
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
         self.client
             .connection_set_options_blocking(ConnectionSetOptionsRequest {
@@ -559,6 +564,57 @@ impl SnowflakeTestClient {
         if let Some(protocol) = &self.parameters.protocol {
             self.set_connection_option("protocol", protocol);
         }
+    }
+
+    /// Initialize this connection (call after configuring options, before queries).
+    #[allow(clippy::result_large_err)]
+    pub fn connection_init_blocking(
+        &self,
+    ) -> Result<ConnectionInitResponse, Box<ProtoError<DriverException>>> {
+        self.client.connection_init_blocking(ConnectionInitRequest {
+            conn_handle: Some(self.conn_handle),
+            db_handle: Some(self.db_handle),
+            ..Default::default()
+        })
+    }
+
+    pub fn set_logout_error_strategy(&self, strategy: ErrorStrategy) {
+        self.set_connection_option("logout_error_strategy", strategy.as_str());
+    }
+
+    /// Close this connection (logout + release).
+    #[allow(clippy::result_large_err)]
+    pub fn connection_close_blocking(
+        &self,
+    ) -> Result<ConnectionCloseResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_close_blocking(ConnectionCloseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+    }
+
+    /// Check whether this connection has been closed.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_is_closed_blocking(&self) -> Result<bool, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_is_closed_blocking(ConnectionIsClosedRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .map(|r| r.is_closed)
+    }
+
+    /// Get connection info (tokens, host, etc.) for inspection.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_get_info_blocking(
+        &self,
+        include_master_token: bool,
+    ) -> Result<ConnectionGetInfoResponse, Box<ProtoError<DriverException>>> {
+        self.client
+            .connection_get_info_blocking(ConnectionGetInfoRequest {
+                conn_handle: Some(self.conn_handle),
+                include_master_token,
+                ..Default::default()
+            })
     }
 }
 

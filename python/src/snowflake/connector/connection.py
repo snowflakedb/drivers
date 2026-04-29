@@ -6,25 +6,28 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
+import atexit
 import functools
 import logging
 import platform
 import re
 import threading
+import warnings
 
 from collections.abc import Generator, Iterable
 from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, TypeVar, Union, cast
 
+from snowflake.connector._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ConfigSetting,
     ConnectionHandle,
     DatabaseHandle,
     WrapperIdentity,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
+    ConnectionCloseRequest,
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
@@ -32,6 +35,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetQueryStatusResponse,
     ConnectionHeartbeatRequest,
     ConnectionInitRequest,
+    ConnectionIsClosedRequest,
     ConnectionNewRequest,
     ConnectionReleaseRequest,
     ConnectionSetOptionsRequest,
@@ -40,7 +44,6 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseNewRequest,
     DatabaseReleaseRequest,
 )
-from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 from snowflake.connector._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
 
 from ._internal._private_key_helper import normalize_private_key
@@ -50,6 +53,11 @@ from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
+from ._internal.logout_config_mapping import (
+    LogoutConfig,
+    LogoutOptionKeys,
+)
+from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
@@ -57,8 +65,6 @@ from .errors import DatabaseError, Error, ErrorValue, InterfaceError, Programmin
 from .telemetry import TelemetryClient
 from .version import __version__
 
-
-logger = logging.getLogger(__name__)
 
 # backward compatibility constant
 # snowflake-sqlalchemy imports this symbol and calls .get(name) in
@@ -82,6 +88,10 @@ LOG_MAX_QUERY_LENGTH = 80
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
 ConnectionParameters = dict[str, ConnectionParamValue]
+
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -126,6 +136,19 @@ class Connection(ErrorHandlerMixin):
             port: Port number
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             session_parameters: Optional dict of session parameters to set at connection time
+            server_session_keep_alive: Optional[bool] - Control server session lifecycle
+                - True: Never send logout (Fire & Forget; session persists on server
+                  as long as there is activity in it, e.g. running queries)
+                - False: Always send logout on close. For backward compatibility,
+                  False is currently remapped to None when auto-detection is enabled,
+                  so Core checks the async query registry before logout.
+                  This remapping will be removed in a future version.
+                - None: Delegate to auto-detection setting
+            enable_server_session_keep_alive_auto_detection: Optional[bool]
+                - True (default): Check async query registry before logout (backward compat)
+                - False: Don't check registry
+                - None: Auto-detection disabled (Core treats None as False)
+            auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             authenticator: Authentication method. Use ``"USERNAME_PASSWORD_MFA"`` for MFA authentication.
             passcode: MFA passcode (TOTP one-time code from an authenticator app). When provided
                 with ``authenticator="USERNAME_PASSWORD_MFA"``, the driver automatically uses the
@@ -182,57 +205,27 @@ class Connection(ErrorHandlerMixin):
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
-        session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
+        if autocommit is not None and not isinstance(autocommit, bool):
+            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
 
-        if autocommit is not None:
-            if not isinstance(autocommit, bool):
-                raise ProgrammingError(msg=f"Invalid autocommit parameter: {autocommit!r}")
+        # Pop all special-purpose keys from kwargs in-place.
+        # After this, kwargs contains only generic Core options.
+        self._parse_kwargs(kwargs, autocommit)
 
-        if session_params is None:
-            session_params = {}
-        if autocommit is not None:
-            session_params["AUTOCOMMIT"] = str(autocommit).lower()
+        # All driver config → Core in a single RPC (generic kwargs + logout config)
+        self._send_driver_options(kwargs)
 
-        # Pre-process private_key if present - normalize for Rust core
-        if "private_key" in kwargs:
-            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
-
-        options = {}
-        for key, value in kwargs.items():
-            if isinstance(value, bool):
-                options[key] = ConfigSetting(bool_value=value)
-            elif isinstance(value, int):
-                options[key] = ConfigSetting(int_value=value)
-            elif isinstance(value, str):
-                options[key] = ConfigSetting(string_value=value)
-            elif isinstance(value, float):
-                options[key] = ConfigSetting(double_value=value)
-            elif isinstance(value, bytes):
-                options[key] = ConfigSetting(bytes_value=value)
-
-        if options:
-            import warnings as py_warnings
-
-            response = self.db_api.connection_set_options(
-                ConnectionSetOptionsRequest(
-                    conn_handle=self.conn_handle,
-                    options=options,
-                )
-            )
-            for warning in response.warnings:
-                py_warnings.warn(warning.message, stacklevel=2)
-
-        # Set session parameters if provided (before connection_init)
-        if session_params:
+        # Session params → Core (separate RPC: these are Snowflake server
+        # SET commands (string→string), not driver config (typed ConfigSetting))
+        if self._session_params:
             self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=self._session_params)
             )
 
         self._connect()
 
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-        self._closed = False
         self._close_lock = threading.Lock()
 
     def _connect(self) -> None:
@@ -251,50 +244,186 @@ class Connection(ErrorHandlerMixin):
             )
         )
 
-    @pep249
-    def close(self) -> None:
-        """Close the connection now.
+        if self._should_auto_cleanup():
+            atexit.register(self._close_at_process_exit)
 
-        Thread-safety: the lock is held only for the flag flip and handle swap
-        (no I/O, no risk of deadlock).  The actual Rust-side release happens
-        outside the lock so concurrent ``close()`` calls are idempotent and
-        in-flight operations see the connection as closed immediately.
+    def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> None:
+        """Parse and extract all special params from kwargs in-place.
+
+        After this call, kwargs contains only generic Core options
+        suitable for connection_set_options. Special params are stored
+        on self (auto_cleanup, _session_params, _numpy, logout_config).
         """
+        # Python-only (pop — never goes to Core)
+        self.auto_cleanup: bool = pop_typed_kwarg(kwargs, "auto_cleanup", bool, True)
+
+        # Session params use a dedicated RPC (connection_set_session_parameters),
+        # not the generic connection_set_options path, so pop them from kwargs.
+        self._session_params = self._extract_session_params(kwargs, autocommit)
+
+        # Transform in-place (stays in kwargs for generic path)
+        if "private_key" in kwargs:
+            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
+
+        # Logout params (pop + resolve defaults + build config).
+        # Init-time snapshot only; Core re-derives at close() time from connection_seed,
+        # so post-init overrides like close(retry=False) won't be reflected here.
+        self.logout_config = LogoutConfig.from_kwargs(kwargs)
+
+    @staticmethod
+    def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
+        """Pop session_parameters from kwargs and fold in autocommit."""
+        params: SessionParameters = kwargs.pop("session_parameters", None) or {}
+        if autocommit is not None:
+            params["AUTOCOMMIT"] = str(autocommit).lower()
+        return params
+
+    def _send_driver_options(self, kwargs: dict[str, Any]) -> None:
+        """Send all driver config to Core in a single connection_set_options RPC.
+
+        Combines generic kwargs (user, account, host, ...) with resolved logout
+        config from self.logout_config (server_session_keep_alive, error_strategy,
+        timeouts, ...) into one batched call. Called at init time, before connection_init.
+        """
+        options = create_config_settings_from_dict(kwargs)
+        options.update(create_config_settings_from_dict(self.logout_config.to_option_dict()))
+        if options:
+            response = self.db_api.connection_set_options(
+                ConnectionSetOptionsRequest(
+                    conn_handle=self.conn_handle,
+                    options=options,
+                )
+            )
+            for warning in response.warnings:
+                warnings.warn(warning.message, stacklevel=2)
+
+    @pep249
+    def close(self, retry: bool = True) -> None:
+        """
+        Close the connection, send logout, and release handles.
+
+        Args:
+            retry: If False, overrides max_attempts to 1 (no retries) before closing.
+                   If True (default), uses init-time configuration.
+
+        Thread-safety: the lock guards only the handle swap (nanoseconds, no I/O).
+        All FFI calls use local handle copies outside the lock, so concurrent
+        close() calls are safe — the second caller gets None handles and skips.
+        """
+        atexit.unregister(self._close_at_process_exit)
+
+        # Fast path — Core query, no lock. Core marks is_closed=true via AtomicBool
+        # at the START of connection_close (before HTTP logout), so this returns True
+        # even while another thread's logout is still in-flight.
+        if self.is_closed():
+            return
+
+        # Lock guards ONLY the handle swap — prevents concurrent double-release.
         with self._close_lock:
-            if self._closed:
-                return
-            self._closed = True
             del self._messages[:]
             conn_handle, self.conn_handle = self.conn_handle, None
             db_handle, self.db_handle = self.db_handle, None
 
-        if conn_handle:
-            self._release_connection_handle(conn_handle)
-        if db_handle:
-            self._release_database_handle(db_handle)
+        # All I/O outside the lock, using local handle copies.
+        # try/finally ensures handles are always released — on success, Strict
+        # failure, or set_options failure.
+        try:
+            if conn_handle:
+                if not retry:
+                    self.db_api.connection_set_options(
+                        ConnectionSetOptionsRequest(
+                            conn_handle=conn_handle,
+                            options=create_config_settings_from_dict({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
+                        )
+                    )
+
+                # Logout + mark closed in Core (network I/O, bounded by Core's timeout)
+                self.db_api.connection_close(ConnectionCloseRequest(conn_handle=conn_handle))
+        finally:
+            # Release handles in Core's object store.
+            # Separated from connection_close for future connection pooling.
+            if conn_handle:
+                self._release_connection_handle(conn_handle)
+            if db_handle:
+                self._release_database_handle(db_handle)
+
+    def _try_close(self) -> None:
+        """Best-effort close for __del__ and atexit — never raises."""
+        try:
+            if not self.is_closed():
+                self.close(retry=False)
+        except Exception:
+            try:
+                logger.debug("close() failed during cleanup")
+            except Exception:
+                pass
+
+    def _should_auto_cleanup(self) -> bool:
+        """Whether this connection should auto-close on GC/exit.
+
+        Uses getattr with False as fallback (NOT the default value of auto_cleanup,
+        which is True). False here is a GC fail-safe: if __del__ fires on a
+        half-initialized object (exception during __init__), we must NOT attempt
+        cleanup on an object whose Core handles were never created.
+        """
+        return getattr(self, "auto_cleanup", False)
+
+    def __del__(self) -> None:
+        if self._should_auto_cleanup():
+            self._try_close()
 
     def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
         """Release the Rust-side connection handle."""
         try:
-            connection_release_request = ConnectionReleaseRequest(conn_handle=conn_handle)
-            self.db_api.connection_release(connection_release_request)
+            self.db_api.connection_release(ConnectionReleaseRequest(conn_handle=conn_handle))
         except Exception:
             logger.warning("Failed to release connection handle", exc_info=True)
 
     def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
         """Release the Rust-side database handle."""
         try:
-            database_release_request = DatabaseReleaseRequest(db_handle=db_handle)
-            self.db_api.database_release(database_release_request)
+            self.db_api.database_release(DatabaseReleaseRequest(db_handle=db_handle))
         except Exception:
             logger.warning("Failed to release database handle", exc_info=True)
 
-    def __del__(self) -> None:
+    def _close_at_process_exit(self) -> None:
+        """
+        Cleanup handler called by atexit when process exits.
+
+        If close() was called successfully, this handler should have been unregistered
+        and should NOT run. If it runs for an already-closed connection, that indicates
+        a potential bug (unregister failed, race condition, or multiple registrations).
+
+        The entire body is wrapped in try/except because during interpreter shutdown,
+        any call (FFI, logging, warnings) may fail due to torn-down module state.
+        """
         try:
-            self.close()
+            if self.is_closed():
+                logger.debug(
+                    "atexit handler ran for already-closed connection. "
+                    "This may indicate atexit.unregister() failed or a race condition occurred."
+                )
+                return
+
+            # Connection is leaked (not explicitly closed) — emit FutureWarning.
+            # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
+            try:
+                warnings.warn(
+                    "Connection was not explicitly closed before process exit. "
+                    "Auto-cleanup at exit will be disabled by default in a future version. "
+                    "Please explicitly call connection.close() or use context manager.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+            except Exception:
+                pass  # Interpreter shutting down; warning emission is best-effort
+
+            self._try_close()
         except Exception:
-            logger.warning("Failed to close.", exc_info=True)
-            pass
+            try:
+                logger.warning("_close_at_process_exit failed during interpreter shutdown")
+            except Exception:
+                pass  # logger itself may be torn down
 
     @property
     @pep249
@@ -402,10 +531,16 @@ class Connection(ErrorHandlerMixin):
         """
         Check if the connection is closed.
 
-        Returns:
-            bool: True if connection is closed, False otherwise
+        Queries Core's authoritative state. If the handle has been released
+        (connection_release after close), the query fails — treated as closed
+        since a released handle means close() already completed.
         """
-        return self._closed
+        try:
+            response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
+            return bool(response.is_closed)
+        except Exception:
+            # Handle released or FFI unavailable — connection is closed
+            return True
 
     def is_valid(self) -> bool:
         """Check whether the connection is still usable for sending queries.
@@ -786,7 +921,7 @@ class Connection(ErrorHandlerMixin):
 
     def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
         """Fetch query status from the server and map the status name to a QueryStatus enum value."""
-        if self._closed:
+        if self.is_closed():
             return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
         response = self.db_api.connection_get_query_status(
             ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sf_qid)

@@ -1,3 +1,4 @@
+@core @python
 Feature: Session Logout
 
   # Core-level HTTP protocol details are in core/session/logout.feature
@@ -8,6 +9,7 @@ Feature: Session Logout
   #                          Token Cleanup
   # ===========================================================================
 
+  @core_e2e @python_e2e
   Scenario Outline: should cleanup all tokens on close regardless of whether logout was sent
     # Tests that tokens are cleared regardless of logout decision
     Given Snowflake client is logged in
@@ -22,7 +24,7 @@ Feature: Session Logout
       | True                      |
       | None                      |
 
-
+  @core_e2e @python_e2e
   Scenario: should be idempotent when close called multiple times
     Given Snowflake client is logged in
     When Connection is closed
@@ -35,6 +37,7 @@ Feature: Session Logout
   #                    Post-Logout Session Invalidation
   # ===========================================================================
 
+  @core_e2e @python_e2e
   Scenario: should reject queries client-side after connection is closed
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully
@@ -46,6 +49,7 @@ Feature: Session Logout
   #                        Process Exit and Thread Management
   # ===========================================================================
 
+  # @core_e2e — deferred: requires SNOW-2881763 (Heartbeat) and SNOW-2912513 (Telemetry)
   Scenario: should allow process to exit cleanly when session kept alive
     # Requires: SNOW-2881763 (Heartbeat), SNOW-2912513 (Telemetry)
     Given Connection with heartbeat enabled
@@ -61,6 +65,7 @@ Feature: Session Logout
   #                        Concurrency
   # ===========================================================================
 
+  @core_e2e @python_e2e
   Scenario: should handle concurrent close calls safely
     Given Snowflake client is logged in
     When Connection is closed from multiple threads concurrently
