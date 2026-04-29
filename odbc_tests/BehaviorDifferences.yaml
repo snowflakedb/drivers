@@ -511,3 +511,15 @@ behavior_differences:
       Applications that check the return code of SQLCancel/SQLCancelHandle in multi-threaded scenarios may see intermittent SQL_ERROR on the old driver. The cancellation itself still takes effect (the executing function returns HY008), so the functional impact is limited to the cancel call's return code.
     description: |
       Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function — "When SQLCancel is successfully called to cancel a function running in another thread, the driver does not post SQL_ERROR with SQLSTATE HY008."
+
+  48:
+    name: "SQL_C_CHAR/WCHAR non-finite string literals rejected client-side with 22018"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and the string value is "Infinity", "-Infinity", or "NaN" bound against a SQL_REAL / SQL_DOUBLE / SQL_FLOAT parameter, the driver forwards the string to the server and stores a non-finite FLOAT value.
+    new_driver_behavior: |
+      Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification). The MS ODBC specification (Appendix C, "numeric-literal" grammar) restricts character inputs bound to numeric SQL types to the ANSI SQL numeric literal syntax, which does not include the tokens "Infinity", "-Infinity", or "NaN".
+    impact: |
+      Applications that need to insert non-finite IEEE-754 values should bind SQL_C_FLOAT or SQL_C_DOUBLE (both spec-permitted and supported) rather than passing a string representation.
