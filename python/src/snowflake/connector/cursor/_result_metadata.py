@@ -51,24 +51,10 @@ class ResultMetadata(NamedTuple):
         )
 
     @classmethod
-    def create_description(cls, result: PrepareResult | None) -> list[ResultMetadata] | None:
+    def create_description(cls, result: PrepareResult | ResultSetDescriptor | None) -> list[ResultMetadata] | None:
         """Extract description from execute result column metadata."""
         if result and result.columns:
             return [cls.from_column(col) for col in result.columns]
-        return None
-
-    @classmethod
-    def _create_description_from_descriptor(cls, descriptor: ResultSetDescriptor | None) -> list[ResultMetadata] | None:
-        """Extract description from ResultSetDescriptor column metadata.
-
-        Args:
-            descriptor: ResultSetDescriptor from a proto response.
-
-        Returns:
-            List of ResultMetadata or ``None`` if no columns.
-        """
-        if descriptor and descriptor.columns:
-            return [cls.from_column(col) for col in descriptor.columns]
         return None
 
 

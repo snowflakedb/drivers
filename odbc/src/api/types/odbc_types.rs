@@ -1,8 +1,6 @@
 use crate::api::bitmask::Bitmask;
-use crate::api::error::{
-    ConnectionHasNoEnvironmentSnafu, InvalidDescriptorKindSnafu, OdbcRuntimeSnafu,
-};
-use crate::api::handle_registry::HandleId;
+use crate::api::error::{InvalidDescriptorKindSnafu, OdbcRuntimeSnafu};
+use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::runtime::global;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
@@ -15,7 +13,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
 };
 use snafu::ResultExt;
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::Weak;
 
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -895,7 +893,7 @@ pub struct Environment {
     pub connection_pooling: sql::AttrConnectionPooling,
     pub connection_pool_match: sql::AttrCpMatch,
     pub diagnostic_info: DiagnosticInfo,
-    pub connections: Vec<*mut Dbc>,
+    pub connections: Vec<HandleId>,
 }
 
 pub enum ConnectionState {
@@ -912,16 +910,8 @@ pub enum ConnectionState {
 pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
 
 pub struct Dbc {
-    pub connection: Connection,
-    pub env: Weak<Env>,
-}
-
-impl Dbc {
-    pub fn env(&self) -> Result<Arc<Env>, OdbcError> {
-        self.env
-            .upgrade()
-            .ok_or(ConnectionHasNoEnvironmentSnafu.build())
-    }
+    pub connection: Mutex<Connection>,
+    pub env_id: HandleId,
 }
 
 pub struct Connection {
@@ -955,12 +945,9 @@ pub struct Connection {
     pub metadata_id: bool,
 }
 
-// Safety: Send is required so that the async runtime can transfer ownership of the
-// Connection allocation between threads (e.g. when a Tokio task completes on a
-// different thread than it started). All ODBC API access remains serialised on the
-// single caller thread — the raw-pointer DBC handle is never shared across threads.
-// `*const Statement` inside `child_statements` is `!Send`, but Connection is never
-// accessed concurrently, so this is safe.
+// Safety: `*const Statement` inside `child_statements` is `!Send`, but access to Connection
+// is always serialised through the Mutex<Connection> in Dbc, and ODBC guarantees that a
+// single connection handle is only used from one thread at a time.
 unsafe impl Send for Connection {}
 
 /// Application Parameter Descriptor (APD) record.
@@ -1245,9 +1232,8 @@ impl GetDataState {
 }
 
 pub struct Statement {
-    /// Raw pointer to the owning connection. Valid for the entire lifetime of this Statement
-    /// (the connection always outlives its statements). Access via `conn()` / `conn_ptr()`.
-    conn: *mut Dbc,
+    /// ID of the parent connection handle. Looked up via the global dbc_registry.
+    conn_id: HandleId,
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1284,21 +1270,16 @@ pub struct Statement {
     pub cancel_token: CancellationToken,
 }
 
-/// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
-// The conn raw pointer is valid for the Statement's lifetime (Connection outlives Statement).
-// `Send` allows moving the allocation across threads (e.g. when the runtime hands the raw
-// Arc pointer back on an arbitrary thread). `Sync` is NOT implemented: sharing `&Statement`
-// across threads is unsound because `conn` is a `*mut Connection` with no synchronisation.
-// Connection itself uses `unsafe impl Send` to suppress auto-trait checks on the
-// `Vec<(Weak<Statement>, *const Statement)>` field, so `Statement: Sync` is not required
-// for `Connection: Send`.
+// Safety: `Send` allows moving the Statement allocation across threads when the Arc is
+// handed back on an arbitrary thread.
 unsafe impl Send for Statement {}
+unsafe impl Sync for Statement {}
 
 impl Statement {
     /// Construct a new Statement for the given connection.
-    pub fn new(conn: *mut Dbc, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
+    pub fn new(conn_id: HandleId, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
         Self {
-            conn,
+            conn_id,
             stmt_handle,
             state: StatementState::Created.into(),
             ard: ArdDescriptor::new(),
@@ -1319,49 +1300,32 @@ impl Statement {
         }
     }
 
-    /// Borrow the owning connection.
+    /// Look up the parent connection via the global dbc_registry.
     ///
-    /// # Safety
-    /// The caller must ensure the Connection outlives this borrow and no other
-    /// mutable reference to the Connection exists simultaneously.
-    pub unsafe fn conn(&self) -> &Dbc {
-        debug_assert!(
-            !self.conn.is_null(),
-            "Statement::conn: connection pointer is null"
-        );
-        unsafe { &*self.conn }
-    }
-
-    /// Return the raw connection pointer without creating a Rust borrow on `self`.
-    ///
-    /// Use this when you need both a `&mut Connection` and access to other
-    /// `Statement` fields in the same scope — the raw pointer carries no borrow
-    /// on `self`, so the borrow checker treats the resulting `&mut Connection`
-    /// as independent.
-    ///
-    /// # Safety
-    /// The caller must ensure that no live `conn()` borrow (or any other `&Connection`
-    /// derived from this statement) exists while the returned pointer is dereferenced
-    /// mutably. Having both an active `&Connection` and a `&mut Connection` pointing
-    /// to the same allocation is undefined behaviour.
-    pub(crate) unsafe fn conn_ptr(&self) -> *mut Dbc {
-        self.conn
+    /// Returns an error if the parent connection has already been freed.
+    pub fn conn(&self) -> OdbcResult<HandleGuard<Dbc>> {
+        global()
+            .context(OdbcRuntimeSnafu)?
+            .dbc_registry
+            .get(self.conn_id)
     }
 }
 
 // Helper functions for handle conversion
-pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<Arc<Env>> {
+pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Env>> {
     let handle_id = HandleId::from(handle);
-    let env = global()
+    global()
         .context(OdbcRuntimeSnafu)?
         .env_registry
-        .get(handle_id)?;
-    Ok(env)
+        .get(handle_id)
 }
 
-pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Dbc {
-    let conn_ptr = handle as *mut Dbc;
-    unsafe { conn_ptr.as_mut().unwrap() }
+pub fn conn_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Dbc>> {
+    let handle_id = HandleId::from(handle);
+    global()
+        .context(OdbcRuntimeSnafu)?
+        .dbc_registry
+        .get(handle_id)
 }
 
 pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement {

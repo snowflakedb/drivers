@@ -6,7 +6,7 @@ use sf_core::protobuf::apis::database_driver_v1::{
 };
 use snafu::{Location, ResultExt, Snafu};
 
-use crate::api::handle_registry::EnvironmentHandleRegistry;
+use crate::api::handle_registry::HandleManager;
 
 /// Holds the shared tokio runtime and driver client used by all ODBC
 /// environments in this process.
@@ -22,7 +22,8 @@ use crate::api::handle_registry::EnvironmentHandleRegistry;
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
     client: DatabaseDriverClient,
-    pub env_registry: EnvironmentHandleRegistry,
+    pub env_registry: HandleManager<crate::api::Env>,
+    pub dbc_registry: HandleManager<crate::api::Dbc>,
 }
 
 impl OdbcGlobals {
@@ -99,7 +100,8 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         guard.globals = Some(OdbcGlobals {
             runtime,
             client,
-            env_registry: EnvironmentHandleRegistry::new(),
+            env_registry: HandleManager::new(),
+            dbc_registry: HandleManager::new(),
         });
     }
     guard.env_count += 1;

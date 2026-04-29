@@ -33,14 +33,27 @@ if [ "$REVOCATION_REF" = "main" ]; then
     echo "[Warn] Production CI should set REVOCATION_REF to a pinned tag or commit SHA." >&2
 fi
 
-# Clean up workspace AND any ASKPASS helper on exit. The askpass script is chmod 700
-# and deleted here to minimize the window in which the helper file exists on disk.
+# Single point of EXIT cleanup. All cleanup targets are declared up-front so this
+# function is the *only* place that knows how to dispose of them — adding a new
+# tmp resource means: declare its variable here, populate it where needed, and
+# extend cleanup() with a guarded removal. Avoid the antipattern of installing
+# multiple `trap ... EXIT` handlers that overwrite each other; bash only keeps
+# the most recent one, which historically caused us to silently drop earlier
+# cleanup steps when reordering code.
+#
+# Tracking variables — declared empty so cleanup() can safely guard with `[ -n ]`
+# even if the script exits before they're populated:
+#   REVOCATION_DIR  — temp clone of the revocation-validation framework
+#   ASKPASS_SCRIPT  — temp git-askpass helper (chmod 700; deleted to minimise
+#                     the window in which the file exists on disk with creds)
+#   CARGO_SHIM_DIR  — temp dir hosting the cargo wrapper that injects --features cli
 ASKPASS_SCRIPT=""
+CARGO_SHIM_DIR=""
 cleanup() {
-    rm -rf "$REVOCATION_DIR"
-    if [ -n "$ASKPASS_SCRIPT" ]; then
-        rm -f "$ASKPASS_SCRIPT"
-    fi
+    [ -n "$REVOCATION_DIR" ] && rm -rf "$REVOCATION_DIR"
+    [ -n "$ASKPASS_SCRIPT" ] && rm -f "$ASKPASS_SCRIPT"
+    [ -n "$CARGO_SHIM_DIR" ] && rm -rf "$CARGO_SHIM_DIR"
+    return 0
 }
 trap cleanup EXIT
 
@@ -104,8 +117,8 @@ if [ -z "$REAL_CARGO" ]; then
     echo "[Error] cargo not found on PATH — cannot set up compatibility shim" >&2
     exit 1
 fi
-# Also clean up the shim directory on exit (extend the existing cleanup trap).
-trap 'cleanup; rm -rf "$CARGO_SHIM_DIR"' EXIT
+# CARGO_SHIM_DIR is now populated; cleanup() picks it up automatically on EXIT
+# (see the consolidated cleanup definition near the top of this script).
 cat > "$CARGO_SHIM_DIR/cargo" <<EOF
 #!/bin/bash
 # Shim: auto-enable \`cli\` feature when building sf_core's diagnostic binaries.
@@ -146,37 +159,67 @@ echo "[Info] Installed cargo shim at $CARGO_SHIM_DIR (auto-enables cli feature f
 
 echo "[Info] Running tests with Go $(go version | grep -oE 'go[0-9]+\.[0-9]+')..."
 
+# Output policy:
+# - DEFAULT (info-level): generate NO reports. The framework's stdout (captured in
+#   the Jenkins console log) plus the exit code are the entire audit trail. No
+#   files written to the workspace, nothing for Jenkins to archive or publish.
+#   This is the lightest possible footprint and matches the steady-state CI need:
+#   "did revocation validation pass?" → see the green stage in Jenkins; nothing
+#   else to look at.
+# - DEBUG (REVOCATION_LOG_LEVEL=debug): generate JSON + HTML reports to the
+#   workspace AND keep them. Devs investigating a specific failure can set this
+#   env var on a one-off Jenkins re-run (or local run) and inspect the artifacts
+#   via the Jenkins workspace browser. Reports are still NOT archived — they live
+#   in the build's workspace until the next build overwrites it.
+LOG_LEVEL="${REVOCATION_LOG_LEVEL:-info}"
+
+GO_RUN_ARGS=(
+    --client universal-driver-rust
+    --universal-driver-path "$DRIVER_ROOT"
+    --log-level "$LOG_LEVEL"
+)
+
+if [ "$LOG_LEVEL" = "debug" ]; then
+    echo "[Info] Debug mode — will write revocation-results.json and revocation-report.html to \$WORKSPACE."
+    GO_RUN_ARGS+=(
+        --output "${WORKSPACE}/revocation-results.json"
+        --output-html "${WORKSPACE}/revocation-report.html"
+    )
+fi
+
 set +e
-go run . \
-    --client universal-driver-rust \
-    --universal-driver-path "$DRIVER_ROOT" \
-    --output "${WORKSPACE}/revocation-results.json" \
-    --output-html "${WORKSPACE}/revocation-report.html" \
-    --log-level debug
+go run . "${GO_RUN_ARGS[@]}"
 EXIT_CODE=$?
 set -e
 
-# Normalize output file permissions/ownership before the Jenkins archive step runs.
-# This script executes inside a Docker container as root; the files are written by
-# root and end up 0644 on disk, but Jenkins' archiveArtifacts remoting occasionally
-# fails with "Failed to extract ... transfer of N files" when the file state is odd
-# (e.g., root-owned in a jenkins-user workspace, or partial writes). Explicit chmod
-# + ls -la gives us clean permissions AND a diagnostic log so we can see file sizes
-# if archival ever fails again. `|| true` keeps this block best-effort — missing
-# files are reported below, not here.
-if [ -f "${WORKSPACE}/revocation-results.json" ]; then
-    chmod 0644 "${WORKSPACE}/revocation-results.json" 2>/dev/null || true
-fi
-if [ -f "${WORKSPACE}/revocation-report.html" ]; then
-    chmod 0644 "${WORKSPACE}/revocation-report.html" 2>/dev/null || true
-fi
-ls -la "${WORKSPACE}/revocation-results.json" "${WORKSPACE}/revocation-report.html" 2>&1 || true
-
-if [ -f "${WORKSPACE}/revocation-results.json" ] && [ -f "${WORKSPACE}/revocation-report.html" ]; then
-    echo "[Info] Results: ${WORKSPACE}/revocation-results.json"
-    echo "[Info] Report: ${WORKSPACE}/revocation-report.html"
+# Status line — single source of truth is the exit code. The framework's own
+# end-of-run summary is in the stdout above this point (captured in the Jenkins
+# console log) for anyone who wants per-test detail.
+echo
+echo "============================================================"
+if [ "$EXIT_CODE" -eq 0 ]; then
+    echo "Revocation Validation: PASSED"
 else
-    echo "[Warn] Expected output files were not generated"
+    echo "Revocation Validation: FAILED (exit $EXIT_CODE)"
+    echo "See the framework's per-test output above this line for failure details."
+    if [ "$LOG_LEVEL" != "debug" ]; then
+        echo "For verbose logs and machine-readable JSON/HTML artifacts, re-run with"
+        echo "  REVOCATION_LOG_LEVEL=debug"
+    fi
+fi
+echo "============================================================"
+
+# In debug mode, tell Jenkins viewers where the artifacts went.
+if [ "$LOG_LEVEL" = "debug" ]; then
+    if [ -f "${WORKSPACE}/revocation-results.json" ]; then
+        chmod 0644 "${WORKSPACE}/revocation-results.json" 2>/dev/null || true
+        echo "[Info] JSON results: ${WORKSPACE}/revocation-results.json ($(wc -c < "${WORKSPACE}/revocation-results.json" 2>/dev/null || echo '?') bytes)"
+    fi
+    if [ -f "${WORKSPACE}/revocation-report.html" ]; then
+        chmod 0644 "${WORKSPACE}/revocation-report.html" 2>/dev/null || true
+        echo "[Info] HTML report:  ${WORKSPACE}/revocation-report.html ($(wc -c < "${WORKSPACE}/revocation-report.html" 2>/dev/null || echo '?') bytes)"
+    fi
+    echo "[Info] Files are accessible via the Jenkins build's Workspace link."
 fi
 
 exit $EXIT_CODE

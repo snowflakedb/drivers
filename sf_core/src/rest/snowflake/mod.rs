@@ -1631,7 +1631,7 @@ pub enum RestError {
 }
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
-    #[snafu(display("Failed to parse Snowflake response"))]
+    #[snafu(display("Failed to parse Snowflake response {source}"))]
     ResponseFormat {
         source: serde_json::Error,
         #[snafu(implicit)]

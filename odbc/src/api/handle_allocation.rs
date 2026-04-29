@@ -1,4 +1,3 @@
-use crate::api::env_from_handle;
 use crate::api::error::{
     ConnectionStillConnectedSnafu, DisconnectedSnafu, EnvironmentHasConnectionsSnafu,
     InvalidHandleSnafu, OdbcRuntimeSnafu, Required,
@@ -22,7 +21,7 @@ use tracing;
 pub fn alloc_environment() -> OdbcResult<sql::Handle> {
     tracing::info!("Allocating new environment handle");
     env_allocated().context(OdbcRuntimeSnafu)?;
-    let env = Arc::new(Env {
+    let env = Env {
         environment: Mutex::new(Environment {
             odbc_version: 3,
             connection_pooling: sql::AttrConnectionPooling::Off,
@@ -30,17 +29,21 @@ pub fn alloc_environment() -> OdbcResult<sql::Handle> {
             diagnostic_info: DiagnosticInfo::default(),
             connections: vec![],
         }),
-    });
+    };
     let handle = global().context(OdbcRuntimeSnafu)?.env_registry.add(env)?;
     Ok(handle.into())
 }
 
 /// Allocate a new connection handle
-pub fn alloc_connection(env: Arc<Env>) -> OdbcResult<*mut Dbc> {
+pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
     tracing::info!("Allocating new connection handle");
-    let dbc = Box::new(Dbc {
-        env: Arc::downgrade(&env),
-        connection: Connection {
+    let env_guard = global()
+        .context(OdbcRuntimeSnafu)?
+        .env_registry
+        .get(env_id)?;
+    let dbc = Dbc {
+        env_id,
+        connection: Mutex::new(Connection {
             state: ConnectionState::Disconnected,
             diagnostic_info: DiagnosticInfo::default(),
             pre_connection_attrs: Default::default(),
@@ -52,105 +55,100 @@ pub fn alloc_connection(env: Arc<Env>) -> OdbcResult<*mut Dbc> {
             cached_autocommit: crate::api::types::AutocommitValue::On,
             current_catalog: None,
             metadata_id: false,
-        },
-    });
-    let ptr = Box::into_raw(dbc);
-    env.environment.lock().connections.push(ptr);
-    Ok(ptr)
+        }),
+    };
+    let dbc_handle = global().context(OdbcRuntimeSnafu)?.dbc_registry.add(dbc)?;
+    env_guard.environment.lock().connections.push(dbc_handle);
+    Ok(dbc_handle.into())
 }
 
 /// Allocate a new statement handle
 pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> {
     tracing::info!("Allocating new statement handle");
-    let conn = conn_from_handle(input_handle);
-    let connection = &mut conn.connection;
-    match &mut connection.state {
-        ConnectionState::Connected {
-            db_handle: _,
-            conn_handle,
-        } => {
-            let metadata_id = connection.metadata_id;
-            let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.statement_new(StatementNewRequest {
-                    conn_handle: Some(*conn_handle),
-                })
-                .await
-            })?;
-            let stmt_handle = response
-                .stmt_handle
-                .required("Statement handle is required")?;
+    let dbc = conn_from_handle(input_handle)?;
+    let mut connection = dbc.connection.lock();
+    let (conn_handle, metadata_id) = {
+        match &connection.state {
+            ConnectionState::Connected {
+                db_handle: _,
+                conn_handle,
+            } => (*conn_handle, connection.metadata_id),
+            ConnectionState::Disconnected => {
+                tracing::error!("Cannot allocate statement: connection is disconnected");
+                return DisconnectedSnafu.fail();
+            }
+        }
+    };
+    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.statement_new(StatementNewRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await
+    })?;
 
-            // Statement is Send but not Sync (conn is *mut Connection with no synchronisation).
-            // Arc is used for reference-counted ownership and Weak tracking on Connection;
-            // the Arc is converted to a raw pointer immediately — it is never cloned and
-            // never shared across threads. Rc cannot be used because Connection: Send.
-            #[allow(clippy::arc_with_non_send_sync)]
-            let stmt = Arc::new(Statement::new(conn as *mut Dbc, stmt_handle, metadata_id));
-            // Defensive prune: in correct code free_statement removes each entry before
-            // dropping the Arc, so Weaks here are always upgradeable. This retain is a
-            // safety net against a future bug in the removal logic, not a routine cleanup.
-            conn.connection.child_statements.retain(|(w, raw_ptr)| {
-                if w.upgrade().is_some() {
-                    return true;
-                }
-                // A dead Weak means free_statement dropped the Arc without removing the
-                // child_statements entry — this is a bug. Log it so leaks are visible.
-                tracing::error!(
-                    "alloc_statement: defensive prune found dead Weak (raw_ptr={raw_ptr:p}); \
-                     server-side statement handle may have leaked"
-                );
-                false
-            });
-            let weak = Arc::downgrade(&stmt);
-            // Transfer ownership to a raw pointer used as the opaque ODBC handle.
-            // Store the same pointer in child_statements so free_connection can call
-            // Arc::from_raw with a pointer that satisfies its documented contract.
-            let raw_ptr = Arc::into_raw(stmt);
-            // Set descriptor back-pointers now that the Statement has a stable heap address.
-            let stmt_mut = unsafe { &mut *(raw_ptr as *mut Statement) };
-            stmt_mut.ard.stmt = raw_ptr;
-            stmt_mut.ird.stmt = raw_ptr;
-            stmt_mut.apd.stmt = raw_ptr;
-            stmt_mut.ipd.stmt = raw_ptr;
-            conn.connection.child_statements.push((weak, raw_ptr));
-            Ok(raw_ptr as *mut Statement)
+    let stmt_handle = response
+        .stmt_handle
+        .required("Statement handle is required")?;
+
+    let conn_id = HandleId::from(input_handle);
+    #[allow(clippy::arc_with_non_send_sync)]
+    let stmt = Arc::new(Statement::new(conn_id, stmt_handle, metadata_id));
+    let weak = Arc::downgrade(&stmt);
+    // Transfer ownership to a raw pointer used as the opaque ODBC handle.
+    // Store the same pointer in child_statements so free_connection can call
+    // Arc::from_raw with a pointer that satisfies its documented contract.
+    let raw_ptr = Arc::into_raw(stmt);
+    // Set descriptor back-pointers now that the Statement has a stable heap address.
+    let stmt_mut = unsafe { &mut *(raw_ptr as *mut Statement) };
+    stmt_mut.ard.stmt = raw_ptr;
+    stmt_mut.ird.stmt = raw_ptr;
+    stmt_mut.apd.stmt = raw_ptr;
+    stmt_mut.ipd.stmt = raw_ptr;
+
+    // Defensive prune: in correct code free_statement removes each entry before
+    // dropping the Arc, so Weaks here are always upgradeable. This retain is a
+    // safety net against a future bug in the removal logic, not a routine cleanup.
+    connection.child_statements.retain(|(w, raw_ptr)| {
+        if w.upgrade().is_some() {
+            return true;
         }
-        ConnectionState::Disconnected => {
-            tracing::error!("Cannot allocate statement: connection is disconnected");
-            DisconnectedSnafu.fail()
-        }
-    }
+        // A dead Weak means free_statement dropped the Arc without removing the
+        // child_statements entry — this is a bug. Log it so leaks are visible.
+        tracing::error!(
+            "alloc_statement: defensive prune found dead Weak (raw_ptr={raw_ptr:p}); \
+                server-side statement handle may have leaked"
+        );
+        false
+    });
+    connection.child_statements.push((weak, raw_ptr));
+    Ok(raw_ptr as *mut Statement)
 }
 
 /// Free an environment handle
 pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
     let handle_id = HandleId::from(handle);
-    let env_removal_guard = global()
+    let delete_guard = global()
         .context(OdbcRuntimeSnafu)?
         .env_registry
-        .remove(handle_id)?;
-    let environment = env_removal_guard.environment.lock();
+        .get_for_delete(handle_id)?;
+    let environment = delete_guard.value().environment.lock();
     if !environment.connections.is_empty() {
         return EnvironmentHasConnectionsSnafu.fail();
     }
     drop(environment);
-    env_removal_guard.complete();
+    delete_guard.delete();
     env_freed().context(OdbcRuntimeSnafu)?;
     Ok(())
 }
 
-fn cleanup_connection(conn: *mut Dbc) -> OdbcResult<()> {
+fn cleanup_connection(dbc: &Dbc) -> OdbcResult<()> {
     // Release any outstanding statements whose ODBC handles were never freed.
     // Each Weak still in child_statements corresponds to an Arc::into_raw that was
     // never reclaimed by free_statement (strong count = 1, held by the raw ODBC handle).
     // Reconstruct the Arc to take back that ownership, then release the server resource.
-    let conn = unsafe { &mut *conn };
-    let connection = &mut conn.connection;
-    let stmts: Vec<_> = connection.child_statements.drain(..).collect();
+    let stmts: Vec<_> = dbc.connection.lock().child_statements.drain(..).collect();
     for (w, raw_ptr) in stmts {
         // Safety: raw_ptr was obtained via Arc::into_raw in alloc_statement.
-        // (Note: Arc::as_ptr and Arc::into_raw are NOT equivalent — as_ptr does not transfer
-        // strong-count ownership; into_raw does. Only into_raw satisfies Arc::from_raw's contract.)
         // free_statement removes its child_statements entry before dropping the Arc, so any
         // entry still present here means the ODBC handle was never freed — strong count == 1.
         // Guard: verify the Weak is still live before dereferencing raw_ptr. A dead Weak means
@@ -182,18 +180,6 @@ fn cleanup_connection(conn: *mut Dbc) -> OdbcResult<()> {
             Err(e) => tracing::warn!("free_connection: runtime unavailable: {e:?}"),
         }
     }
-
-    unsafe {
-        drop(Box::from_raw(conn as *mut Dbc));
-    }
-    Ok(())
-}
-
-fn remove_connection_from_env(conn: *mut Dbc) -> OdbcResult<()> {
-    let dbc = unsafe { &mut *conn };
-    let env = dbc.env()?;
-    let mut environment = env.environment.lock();
-    environment.connections.retain(|c| *c != conn);
     Ok(())
 }
 
@@ -204,13 +190,36 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing connection handle");
-    let dbc = handle as *mut Dbc;
-    let conn = unsafe { &*dbc };
-    if matches!(conn.connection.state, ConnectionState::Connected { .. }) {
+    let handle_id = HandleId::from(handle);
+    let delete_guard = global()
+        .context(OdbcRuntimeSnafu)?
+        .dbc_registry
+        .get_for_delete(handle_id)?;
+    let dbc = delete_guard.value();
+
+    if matches!(
+        dbc.connection.lock().state,
+        ConnectionState::Connected { .. }
+    ) {
         return ConnectionStillConnectedSnafu.fail();
     }
-    remove_connection_from_env(dbc)?;
-    cleanup_connection(dbc)
+
+    // Remove from parent env's connections list.
+    let env_id = dbc.env_id;
+    let env_guard = global()
+        .context(OdbcRuntimeSnafu)?
+        .env_registry
+        .get(env_id)?;
+    env_guard
+        .environment
+        .lock()
+        .connections
+        .retain(|id| *id != handle_id);
+    drop(env_guard);
+
+    cleanup_connection(dbc)?;
+    delete_guard.delete();
+    Ok(())
 }
 
 /// Free a statement handle
@@ -236,12 +245,12 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     });
     if release_result.is_ok() {
         // Release succeeded — remove the bookkeeping entry and drop the Arc.
-        // Arc<Statement> doesn't implement DerefMut, so use conn_ptr() (takes &self via Arc::Deref)
-        // to get an independent &mut Connection.
-        unsafe { &mut *stmt.conn_ptr() }
-            .connection
-            .child_statements
-            .retain(|(_, raw_ptr)| *raw_ptr != handle as *const Statement);
+        if let Ok(dbc) = stmt.conn() {
+            dbc.connection
+                .lock()
+                .child_statements
+                .retain(|(_, raw_ptr)| *raw_ptr != handle as *const Statement);
+        }
         drop(stmt);
     } else {
         // Release failed — forget the Arc so the raw pointer in child_statements stays valid
@@ -274,9 +283,9 @@ pub fn sql_alloc_handle(
                 "Allocating new dbc: SQLAllocHandle: handle_type={:?}",
                 handle_type
             );
-            let env = env_from_handle(input_handle)?;
-            let handle = alloc_connection(env)?;
-            unsafe { *output_handle = handle as sql::Handle };
+            let env_id = HandleId::from(input_handle);
+            let handle = alloc_connection(env_id)?;
+            unsafe { *output_handle = handle };
             Ok(())
         }
         sql::HandleType::Stmt => {

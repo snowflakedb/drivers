@@ -180,3 +180,14 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
 
     response_obj.into_raw()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_new_succeeds_without_log_manager() {
+        // LogManager::get() returns None when not initialised; construction must not panic.
+        let _bridge = JdbcBridge::new();
+    }
+}

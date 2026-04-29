@@ -78,19 +78,19 @@ impl QueryType {
 
     /// Which ODBC state should the driver produce for a statement of this type.
     ///
-    /// Precedence: `has_result_set` → `is_dml` → explicit no-result families.
-    /// Any id that falls out the bottom (including `UNKNOWN` and ids the driver
-    /// doesn't recognise yet) defaults to `Cursor` so new Snowflake statement
-    /// types don't silently lose their result data.
+    /// Precedence: `has_result_set` → `is_dml` → default `NoResult`.
+    /// Matches the reference driver (`snowflake-odbc` `SFResults.cpp`), which
+    /// whitelists cursor-producing types and DML, and treats everything else
+    /// (DDL, TCL / MISC, MULTI_STMT parents, SYSCMD subtypes we haven't
+    /// whitelisted, and unknown / future ids) as "no cursor, unknown row
+    /// count".
     pub fn result_kind(self) -> ResultKind {
         if self.has_result_set() {
             ResultKind::Cursor
         } else if self.is_dml() {
             ResultKind::UpdateCount
-        } else if self.belongs_to(Self::DDL) || self.belongs_to(Self::MISC_QUERY_TYPES) {
-            ResultKind::NoResult
         } else {
-            ResultKind::Cursor
+            ResultKind::NoResult
         }
     }
 }
@@ -178,15 +178,41 @@ mod tests {
     }
 
     #[test]
-    fn result_kind_cursor_for_unknown_or_absent_id() {
-        // Defensive default: an id the driver doesn't recognise yet (or a
-        // missing `statementTypeId` on the wire) should open a cursor so
-        // future statement types don't silently drop their result data.
-        assert_eq!(QueryType::UNKNOWN.result_kind(), ResultKind::Cursor);
-        assert_eq!(QueryType::from_raw(None).result_kind(), ResultKind::Cursor);
+    fn result_kind_no_result_for_multi_stmt_parent() {
+        // MULTI_STMT parents have no cursor of their own; children are iterated
+        // via SQLMoreResults.
+        assert_eq!(QueryType::MULTI_STMT.result_kind(), ResultKind::NoResult);
+        // Any future 0xAxxx subtype of MULTI_STMT should classify the same way.
+        assert_eq!(
+            QueryType::from_raw(Some(0xA100)).result_kind(),
+            ResultKind::NoResult
+        );
+    }
+
+    #[test]
+    fn result_kind_no_result_for_unknown_or_absent_id() {
+        // Default for any id the driver doesn't explicitly whitelist for a
+        // cursor or DML is `NoResult`, matching the reference driver.
+        assert_eq!(QueryType::UNKNOWN.result_kind(), ResultKind::NoResult);
+        assert_eq!(
+            QueryType::from_raw(None).result_kind(),
+            ResultKind::NoResult
+        );
         assert_eq!(
             QueryType::from_raw(Some(0xBEEF)).result_kind(),
-            ResultKind::Cursor
+            ResultKind::NoResult
+        );
+    }
+
+    #[test]
+    fn result_kind_no_result_for_syscmd_subtypes_not_whitelisted() {
+        // SYSCMD subtypes outside the explicit has_result_set whitelist
+        // (SHOW / DESCRIBE / LIST_FILES) — e.g. SET, USE, ALTER SESSION — must
+        // report no cursor and unknown row count.
+        assert_eq!(QueryType::SYSCMD.result_kind(), ResultKind::NoResult);
+        assert_eq!(
+            QueryType::from_raw(Some(0x4104)).result_kind(),
+            ResultKind::NoResult
         );
     }
 }

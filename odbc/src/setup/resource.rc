@@ -1,4 +1,5 @@
 #include "resource.h"
+#include "version_generated.h"
 #include <winresrc.h>
 
 #define IDC_STATIC  -1
@@ -7,6 +8,44 @@
 // English (United States) resources
 
 LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version Information
+//
+
+VS_VERSION_INFO VERSIONINFO
+  FILEVERSION    SF_VERSION_CSV
+  PRODUCTVERSION SF_VERSION_CSV
+  FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+  FILEFLAGS      VS_FF_DEBUG
+#else
+  FILEFLAGS      0x0L
+#endif
+  FILEOS         VOS_NT_WINDOWS32
+  FILETYPE       VFT_DLL
+  FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "Snowflake Computing\0"
+            VALUE "FileDescription",  "Snowflake ODBC UD Driver\0"
+            VALUE "FileVersion",      SF_VERSION_STR
+            VALUE "InternalName",     "sfodbc\0"
+            VALUE "LegalCopyright",   "Copyright (C) Snowflake Computing. All rights reserved.\0"
+            VALUE "OriginalFilename", SF_ORIGINAL_FILENAME
+            VALUE "ProductName",      "Snowflake ODBC UD\0"
+            VALUE "ProductVersion",   SF_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1252
+    END
+END
 
 /////////////////////////////////////////////////////////////////////////////
 //

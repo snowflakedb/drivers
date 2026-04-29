@@ -66,7 +66,12 @@ impl LogManager {
     pub fn init(config: LoggingConfig) -> Result<Self, LogError> {
         let sessions = SessionRegistry::default();
         let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
-            .expect("provider is always Some when sessions are provided");
+            .ok_or_else(|| {
+                InitSnafu {
+                    message: "provider is always Some when sessions are provided",
+                }
+                .build()
+            })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: sessions,
@@ -86,8 +91,13 @@ impl LogManager {
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
-        let provider = Self::try_init(config, Some(app_sink), Some(registry.clone()))?
-            .expect("provider is always Some when registry is Some");
+        let provider =
+            Self::try_init(config, Some(app_sink), Some(registry.clone()))?.ok_or_else(|| {
+                InitSnafu {
+                    message: "provider is always Some when registry is Some",
+                }
+                .build()
+            })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: registry,
@@ -239,13 +249,111 @@ impl LogManager {
                 );
             }
 
-            Ok(tracing_subscriber::fmt::layer()
+            let fmt_layer = tracing_subscriber::fmt::layer()
                 .with_ansi(false)
-                .with_writer(appender)
-                .with_filter(config.level)
-                .boxed())
+                .with_writer(appender);
+
+            Ok(fmt_layer.with_filter(config.level).boxed())
         } else {
             Ok(EmptyLayer.boxed())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_core_layer_disabled_returns_empty() {
+        let config = LoggingConfig {
+            enabled: false,
+            ..LoggingConfig::default()
+        };
+        assert!(LogManager::build_core_layer(&config).is_ok());
+    }
+
+    #[test]
+    fn build_core_layer_no_path_returns_empty() {
+        let config = LoggingConfig {
+            enabled: true,
+            log_path: None,
+            ..LoggingConfig::default()
+        };
+        assert!(LogManager::build_core_layer(&config).is_ok());
+    }
+
+    #[test]
+    fn build_core_layer_with_path_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = LoggingConfig {
+            enabled: true,
+            log_path: Some(dir.path().to_path_buf()),
+            ..LoggingConfig::default()
+        };
+        assert!(LogManager::build_core_layer(&config).is_ok());
+    }
+
+    #[test]
+    fn build_core_layer_with_custom_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = LoggingConfig {
+            enabled: true,
+            log_path: Some(dir.path().to_path_buf()),
+            log_file_name: Some("custom.log".to_string()),
+            ..LoggingConfig::default()
+        };
+        assert!(
+            LogManager::build_core_layer(&config).is_ok(),
+            "build_core_layer should succeed with a custom file name"
+        );
+    }
+
+    #[test]
+    fn build_core_layer_respects_level_filter() {
+        use tracing::level_filters::LevelFilter;
+
+        let dir = tempfile::tempdir().unwrap();
+        for level in [
+            LevelFilter::OFF,
+            LevelFilter::ERROR,
+            LevelFilter::WARN,
+            LevelFilter::INFO,
+            LevelFilter::DEBUG,
+            LevelFilter::TRACE,
+        ] {
+            let config = LoggingConfig {
+                enabled: true,
+                log_path: Some(dir.path().to_path_buf()),
+                level,
+                ..LoggingConfig::default()
+            };
+            assert!(
+                LogManager::build_core_layer(&config).is_ok(),
+                "build_core_layer should succeed for level {level:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_config_is_enabled_info_no_path() {
+        use tracing::level_filters::LevelFilter;
+
+        let config = LoggingConfig::default();
+        assert!(config.enabled, "default config should be enabled");
+        assert_eq!(
+            config.level,
+            LevelFilter::INFO,
+            "default level should be INFO"
+        );
+        assert!(config.log_path.is_none(), "default log_path should be None");
+        assert!(
+            config.log_file_name.is_none(),
+            "default log_file_name should be None"
+        );
+        assert!(
+            !config.open_telemetry,
+            "default opentelemetry should be false"
+        );
     }
 }

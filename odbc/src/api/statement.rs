@@ -75,13 +75,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     }
 
     // Validate connection before committing to NeedData state.
-    let dbc = unsafe { &mut *stmt.conn_ptr() };
-    match &mut dbc.connection.state {
-        ConnectionState::Disconnected => {
-            tracing::error!("exec_direct: connection is disconnected");
-            return DisconnectedSnafu.fail();
-        }
-        ConnectionState::Connected { .. } => {}
+    let dbc = stmt.conn()?;
+    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
+        tracing::error!("exec_direct: connection is disconnected");
+        return DisconnectedSnafu.fail();
     }
 
     // exec-direct supersedes any prior SQLPrepare on this handle; clear the
@@ -113,48 +110,46 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         return DaeRequiredSnafu.fail();
     }
 
-    // Re-borrow connection for execution.
-    let dbc = unsafe { &mut *stmt.conn_ptr() };
-    let conn = &mut dbc.connection;
-    match &mut conn.state {
-        ConnectionState::Connected {
-            db_handle: _,
-            conn_handle,
-        } => {
-            let (bindings, _json_owner) =
-                apply_parameter_bindings(&stmt.apd, &stmt.ipd, false, None)?;
-            let stmt_handle = stmt.stmt_handle;
-
-            stmt.cancel_token = CancellationToken::new();
-            let _cancel_token = stmt.cancel_token.clone();
-            // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
-            // _cancel_token.cancelled() to support cross-thread SQLCancel.
-            let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: statement_text.to_string(),
-                })
-                .await?;
-
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                })
-                .await
-            });
-
-            tracing::info!("exec_direct: response={:?}", response);
-            let response = response?;
-
-            update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
-            apply_execute_response(stmt, response, ExecutionOrigin::Direct)?;
-            Ok(())
+    // Get conn_handle for execution under lock, then release before async call.
+    let conn_handle = {
+        let connection = dbc.connection.lock();
+        match &connection.state {
+            ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+            ConnectionState::Disconnected => {
+                tracing::error!("exec_direct: connection is disconnected");
+                return DisconnectedSnafu.fail();
+            }
         }
-        ConnectionState::Disconnected => {
-            tracing::error!("exec_direct: connection is disconnected");
-            DisconnectedSnafu.fail()
-        }
-    }
+    };
+    let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false, None)?;
+    let stmt_handle = stmt.stmt_handle;
+
+    stmt.cancel_token = CancellationToken::new();
+    let _cancel_token = stmt.cancel_token.clone();
+    // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
+    // _cancel_token.cancelled() to support cross-thread SQLCancel.
+    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            query: statement_text.to_string(),
+        })
+        .await?;
+
+        c.statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            bindings,
+        })
+        .await
+    });
+
+    tracing::info!("exec_direct: response={:?}", response);
+    let response = response?;
+
+    let mut settings = dbc.connection.lock().numeric_settings;
+    update_numeric_settings(&conn_handle, &mut settings)?;
+    dbc.connection.lock().numeric_settings = settings;
+    apply_execute_response(stmt, response, ExecutionOrigin::Direct)?;
+    Ok(())
 }
 
 use crate::conversion::NumericSettings;
@@ -244,77 +239,68 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    let dbc = unsafe { &mut *stmt.conn_ptr() };
-    let connection = &mut dbc.connection;
-    match &mut connection.state {
-        ConnectionState::Connected {
-            db_handle: _,
-            conn_handle: _,
-        } => {
-            tracing::debug!("prepare: query = {query}");
-
-            let stmt_handle = stmt.stmt_handle;
-            stmt.cancel_token = CancellationToken::new();
-            let _cancel_token = stmt.cancel_token.clone();
-            // TODO(SNOW-3258922): Wire _cancel_token into tokio::select!
-            // alongside the RPC future to support cancellation.
-            let prepare_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: query.to_string(),
-                })
-                .await?;
-
-                c.statement_prepare(StatementPrepareRequest {
-                    stmt_handle: Some(stmt_handle),
-                })
-                .await
-            })?;
-
-            let result = prepare_result.result.required("Result is required")?;
-            let stream_ptr = result.stream.required("Stream is required")?;
-            let reader = reader_from_protobuf_stream(stream_ptr)?;
-            let schema = reader.schema();
-            stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
-
-            if result.number_of_binds < 0 {
-                tracing::warn!(
-                    "prepare: server reported negative bind count ({}), treating as 0",
-                    result.number_of_binds
-                );
-            }
-            let raw_bind_count = result.number_of_binds.max(0);
-            let param_count = u16::try_from(raw_bind_count).map_err(|_| {
-                crate::api::error::CountFieldIncorrectSnafu {
-                    reason: format!(
-                        "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
-                        u16::MAX
-                    ),
-                }
-                .build()
-            })?;
-            stmt.prepared_param_count = Some(param_count);
-            let max_varchar = connection.numeric_settings.max_varchar_size;
-            stmt.ipd.records.retain(|&k, _| k <= param_count);
-            for i in 1..=param_count {
-                stmt.ipd
-                    .records
-                    .entry(i)
-                    .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
-            }
-            tracing::info!(
-                "prepare: auto-IPD populated {param_count} parameter markers (from server)"
-            );
-
-            stmt.state.set(StatementState::Prepared { schema });
-            tracing::info!("prepare: Successfully prepared statement");
-            Ok(())
-        }
-        ConnectionState::Disconnected => {
-            tracing::error!("prepare: connection is disconnected");
-            DisconnectedSnafu.fail()
-        }
+    let dbc = stmt.conn()?;
+    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
+        tracing::error!("prepare: connection is disconnected");
+        return DisconnectedSnafu.fail();
     }
+
+    tracing::debug!("prepare: query = {query}");
+
+    let stmt_handle = stmt.stmt_handle;
+    stmt.cancel_token = CancellationToken::new();
+    let _cancel_token = stmt.cancel_token.clone();
+    // TODO(SNOW-3258922): Wire _cancel_token into tokio::select!
+    // alongside the RPC future to support cancellation.
+    let prepare_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            query: query.to_string(),
+        })
+        .await?;
+
+        c.statement_prepare(StatementPrepareRequest {
+            stmt_handle: Some(stmt_handle),
+        })
+        .await
+    })?;
+
+    let result = prepare_result.result.required("Result is required")?;
+    let stream_ptr = result.stream.required("Stream is required")?;
+    let reader = reader_from_protobuf_stream(stream_ptr)?;
+    let schema = reader.schema();
+    stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
+
+    if result.number_of_binds < 0 {
+        tracing::warn!(
+            "prepare: server reported negative bind count ({}), treating as 0",
+            result.number_of_binds
+        );
+    }
+    let raw_bind_count = result.number_of_binds.max(0);
+    let param_count = u16::try_from(raw_bind_count).map_err(|_| {
+        crate::api::error::CountFieldIncorrectSnafu {
+            reason: format!(
+                "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
+                u16::MAX
+            ),
+        }
+        .build()
+    })?;
+    stmt.prepared_param_count = Some(param_count);
+    let max_varchar = dbc.connection.lock().numeric_settings.max_varchar_size;
+    stmt.ipd.records.retain(|&k, _| k <= param_count);
+    for i in 1..=param_count {
+        stmt.ipd
+            .records
+            .entry(i)
+            .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
+    }
+    tracing::info!("prepare: auto-IPD populated {param_count} parameter markers (from server)");
+
+    stmt.state.set(StatementState::Prepared { schema });
+    tracing::info!("prepare: Successfully prepared statement");
+    Ok(())
 }
 
 /// Execute a prepared statement
@@ -343,14 +329,10 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     let is_prepared = origin.is_prepared();
 
     // Validate connection before committing to NeedData state.
-    let dbc = unsafe { &mut *stmt.conn_ptr() };
-    let conn = &mut dbc.connection;
-    match &mut conn.state {
-        ConnectionState::Disconnected => {
-            tracing::error!("execute: connection is disconnected");
-            return DisconnectedSnafu.fail();
-        }
-        ConnectionState::Connected { .. } => {}
+    let dbc = stmt.conn()?;
+    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
+        tracing::error!("execute: connection is disconnected");
+        return DisconnectedSnafu.fail();
     }
 
     let dae_params = find_dae_params(&stmt.apd, stmt.prepared_param_count);
@@ -372,43 +354,38 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         return DaeRequiredSnafu.fail();
     }
 
-    // Re-borrow connection for execution.
-    let dbc = unsafe { &mut *stmt.conn_ptr() };
-    let conn = &mut dbc.connection;
-    match &mut conn.state {
-        ConnectionState::Connected {
-            db_handle: _,
-            conn_handle,
-        } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(
-                &stmt.apd,
-                &stmt.ipd,
-                is_prepared,
-                stmt.prepared_param_count,
-            )?;
-
-            stmt.cancel_token = CancellationToken::new();
-            let _cancel_token = stmt.cancel_token.clone();
-            // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
-            // _cancel_token.cancelled() to support cross-thread SQLCancel.
-            let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    bindings,
-                })
-                .await
-            })?;
-
-            tracing::info!("execute: Successfully executed statement");
-            update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
-            apply_execute_response(stmt, response, origin)?;
-            Ok(())
+    // Get conn_handle for execution under lock, then release before async call.
+    let conn_handle = {
+        let connection = dbc.connection.lock();
+        match &connection.state {
+            ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+            ConnectionState::Disconnected => {
+                tracing::error!("execute: connection is disconnected");
+                return DisconnectedSnafu.fail();
+            }
         }
-        ConnectionState::Disconnected => {
-            tracing::error!("execute: connection is disconnected");
-            DisconnectedSnafu.fail()
-        }
-    }
+    };
+    let (bindings, _json_owner) =
+        apply_parameter_bindings(&stmt.apd, &stmt.ipd, is_prepared, stmt.prepared_param_count)?;
+
+    stmt.cancel_token = CancellationToken::new();
+    let _cancel_token = stmt.cancel_token.clone();
+    // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
+    // _cancel_token.cancelled() to support cross-thread SQLCancel.
+    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt.stmt_handle),
+            bindings,
+        })
+        .await
+    })?;
+
+    tracing::info!("execute: Successfully executed statement");
+    let mut settings = dbc.connection.lock().numeric_settings;
+    update_numeric_settings(&conn_handle, &mut settings)?;
+    dbc.connection.lock().numeric_settings = settings;
+    apply_execute_response(stmt, response, origin)?;
+    Ok(())
 }
 
 fn set_state(stmt: &mut Statement, state: StatementState) {
