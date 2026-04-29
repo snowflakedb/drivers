@@ -5,7 +5,7 @@
 
 use crate::{
     api::{
-        Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
+        Environment, OdbcError, OdbcResult, SqlState, conn_from_handle,
         encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
         env_from_handle,
         error::{
@@ -189,7 +189,7 @@ impl WithDiagnosticInfo for crate::api::Connection {
     }
 }
 
-impl WithDiagnosticInfo for Statement {
+impl WithDiagnosticInfo for crate::api::StatementInner {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
     }
@@ -266,8 +266,14 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
         dbc.connection.lock().get_diag_info_mut().clear();
         return;
     }
+    if handle_type == sql::HandleType::Stmt {
+        let Ok(guard) = stmt_from_handle(handle) else {
+            return;
+        };
+        guard.inner.lock().get_diag_info_mut().clear();
+        return;
+    }
     let t: &mut dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Stmt => stmt_from_handle(handle),
         sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return,
     };
@@ -279,7 +285,7 @@ fn from_handle_type_non_env<'a>(
     handle: sql::Handle,
 ) -> Option<&'a mut dyn WithDiagnosticInfo> {
     match handle_type {
-        sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
+        // Stmt is handled separately in callers (needs HandleGuard + Mutex)
         sql::HandleType::Desc => Some(desc_diag_from_handle(handle)),
         _ => {
             tracing::info!("Invalid handle type: {:?}", handle_type);
@@ -342,6 +348,16 @@ pub fn set_diag_info_from_warnings(
         }
         return;
     }
+    if handle_type == sql::HandleType::Stmt {
+        let Ok(guard) = stmt_from_handle(handle) else {
+            return;
+        };
+        let mut inner = guard.inner.lock();
+        for warning in warnings {
+            inner.get_diag_info_mut().add_record(from_warning(warning));
+        }
+        return;
+    }
     if let Some(t) = from_handle_type_non_env(handle_type, handle) {
         let diagnostic_info = t.get_diag_info_mut();
         for warning in warnings {
@@ -380,6 +396,13 @@ pub fn set_diag_info_from_result(
         add_from_result(dbc.connection.lock().get_diag_info_mut());
         return;
     }
+    if handle_type == sql::HandleType::Stmt {
+        let Ok(guard) = stmt_from_handle(handle) else {
+            return;
+        };
+        add_from_result(guard.inner.lock().get_diag_info_mut());
+        return;
+    }
     if let Some(t) = from_handle_type_non_env(handle_type, handle) {
         add_from_result(t.get_diag_info_mut());
     }
@@ -398,8 +421,11 @@ pub fn get_diag_info(
         let dbc = conn_from_handle(handle)?;
         return Ok(dbc.connection.lock().get_diag_info().clone());
     }
+    if handle_type == sql::HandleType::Stmt {
+        let guard = stmt_from_handle(handle)?;
+        return Ok(guard.inner.lock().get_diag_info().clone());
+    }
     let t: &dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Stmt => stmt_from_handle(handle),
         sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return InvalidHandleSnafu.fail(),
     };

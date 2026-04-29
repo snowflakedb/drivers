@@ -7,7 +7,7 @@ use crate::api::error::{
     UnsupportedFeatureSnafu,
 };
 use crate::api::{
-    GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
+    GetDataState, OdbcResult, StatementInner, StatementState, WithState, stmt_from_handle,
 };
 use crate::conversion::warning::Warnings;
 use crate::conversion::{
@@ -67,10 +67,10 @@ impl FetchConverterCache {
     /// cached one (or if the cache is empty).
     fn refresh_if_needed(
         &mut self,
-        stmt: &Statement,
+        inner: &StatementInner,
         numeric_settings: &NumericSettings,
     ) -> OdbcResult<()> {
-        let StatementState::Fetching { record_batch, .. } = stmt.state.as_ref() else {
+        let StatementState::Fetching { record_batch, .. } = inner.state.as_ref() else {
             return Ok(());
         };
 
@@ -90,9 +90,9 @@ impl FetchConverterCache {
 
         let schema = record_batch.schema();
         self.entries.clear();
-        self.entries.reserve(stmt.ard.bindings.len());
+        self.entries.reserve(inner.ard.bindings.len());
 
-        for (&column_number, binding) in &stmt.ard.bindings {
+        for (&column_number, binding) in &inner.ard.bindings {
             // ODBC reserves column 0 for bookmarks; `checked_sub` also guards
             // debug-mode panics if `SQLBindCol` accepted a 0.
             let arrow_col = (column_number as usize).checked_sub(1);
@@ -265,28 +265,31 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
 /// Fetch the next rowset of data (block cursor aware).
 pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("fetch called");
-    let stmt = stmt_from_handle(statement_handle);
-
-    if stmt.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
+    let guard = stmt_from_handle(statement_handle)?;
+    {
+        let inner = guard.inner.lock();
+        if inner.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
+        if inner.used_extended_fetch {
+            return MixedCursorFunctionsSnafu.fail();
+        }
     }
-
-    if stmt.used_extended_fetch {
-        return MixedCursorFunctionsSnafu.fail();
-    }
-
-    fetch_impl(statement_handle, warnings)
+    fetch_impl(&guard, warnings)
 }
 
-fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
-    let stmt = stmt_from_handle(statement_handle);
-    stmt.get_data_state = None;
+fn fetch_impl(
+    guard: &crate::api::handle_registry::HandleGuard<crate::api::Statement>,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    let mut inner = guard.inner.lock();
+    inner.get_data_state = None;
 
-    let array_size = stmt.ard.array_size.max(1);
-    let bind_type = stmt.ard.bind_type;
-    let bind_offset_ptr = stmt.ard.bind_offset_ptr;
-    let row_status_ptr = stmt.ird.array_status_ptr;
-    let rows_fetched_ptr = stmt.ird.rows_processed_ptr;
+    let array_size = inner.ard.array_size.max(1);
+    let bind_type = inner.ard.bind_type;
+    let bind_offset_ptr = inner.ard.bind_offset_ptr;
+    let row_status_ptr = inner.ird.array_status_ptr;
+    let rows_fetched_ptr = inner.ird.rows_processed_ptr;
     let bind_offset = if !bind_offset_ptr.is_null() {
         unsafe { *bind_offset_ptr }
     } else {
@@ -297,19 +300,13 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     // Fast path: a single-row fetch propagates the conversion error to
     // the caller instead of just marking the row as Error.
     if array_size == 1 && bind_offset_ptr.is_null() {
-        advance_cursor(&mut stmt.state)?;
-        let numeric_settings = stmt.conn()?.connection.lock().numeric_settings;
-        cache.refresh_if_needed(stmt, &numeric_settings)?;
+        advance_cursor(&mut inner.state)?;
+        let numeric_settings = guard.conn()?.connection.lock().numeric_settings;
+        cache.refresh_if_needed(&inner, &numeric_settings)?;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
-        // Same invariant as the multi-row path: after a successful
-        // `advance_cursor` the state must be `Fetching`. A bare
-        // `current_batch_idx` would silently fall back to `0` if the
-        // invariant ever broke and `execute_bindings_for_segment` would
-        // happily report success while skipping conversion. Match
-        // explicitly and fail with `InternalError` instead.
-        let arrow_start = match stmt.state.as_ref() {
+        let arrow_start = match inner.state.as_ref() {
             StatementState::Fetching { batch_idx, .. } => *batch_idx,
             _ => {
                 return InternalSnafu {
@@ -319,7 +316,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 .fail();
             }
         };
-        let outputs = execute_bindings_for_segment(stmt, &cache, arrow_start, 1, 0, 0, 0);
+        let outputs = execute_bindings_for_segment(&inner, &cache, arrow_start, 1, 0, 0, 0);
         match outputs.into_iter().next().unwrap_or_else(|| Ok(Vec::new())) {
             Ok(row_warnings) => {
                 let status = if row_warnings.is_empty() {
@@ -340,13 +337,10 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
 
     let mut rows_fetched: usize = 0;
     let mut has_error = false;
-    let numeric_settings = stmt.conn()?.connection.lock().numeric_settings;
+    let numeric_settings = guard.conn()?.connection.lock().numeric_settings;
 
-    // Column-major block-cursor loop. Each iteration advances into the
-    // next row and then processes as many rows as fit in the current
-    // record batch in a single column-major segment.
     while rows_fetched < array_size {
-        match advance_cursor(&mut stmt.state) {
+        match advance_cursor(&mut inner.state) {
             Ok(()) => {}
             Err(crate::api::OdbcError::NoMoreData { .. }) => {
                 for remaining in rows_fetched..array_size {
@@ -371,7 +365,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
             }
         }
 
-        if let Err(e) = cache.refresh_if_needed(stmt, &numeric_settings) {
+        if let Err(e) = cache.refresh_if_needed(&inner, &numeric_settings) {
             if rows_fetched == 0 {
                 return Err(e);
             }
@@ -389,7 +383,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 record_batch,
                 batch_idx,
                 ..
-            } = stmt.state.as_ref()
+            } = inner.state.as_ref()
             else {
                 return InternalSnafu {
                     message: "advance_cursor returned Ok but state is not Fetching".to_string(),
@@ -420,7 +414,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
         };
 
         let outputs = execute_bindings_for_segment(
-            stmt,
+            &inner,
             &cache,
             arrow_start,
             segment_len,
@@ -452,7 +446,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
         // `advance_cursor` already landed on the first row of the segment;
         // skip the rest so the next call lands on the row after it.
         if segment_len > 1 {
-            bump_batch_idx(&mut stmt.state, segment_len - 1)?;
+            bump_batch_idx(&mut inner.state, segment_len - 1)?;
         }
     }
 
@@ -532,9 +526,12 @@ pub fn fetch_scroll(
     fetch_orientation: sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let stmt = stmt_from_handle(statement_handle);
-    if stmt.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
+    let guard = stmt_from_handle(statement_handle)?;
+    {
+        let inner = guard.inner.lock();
+        if inner.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
     }
 
     let orientation = FetchOrientation::try_from(fetch_orientation)?;
@@ -561,9 +558,10 @@ pub fn extended_fetch(
 ) -> OdbcResult<()> {
     tracing::debug!("extended_fetch called");
 
+    let guard = stmt_from_handle(statement_handle)?;
     {
-        let stmt = stmt_from_handle(statement_handle);
-        if stmt.state.as_ref().is_need_data() {
+        let inner = guard.inner.lock();
+        if inner.state.as_ref().is_need_data() {
             return InvalidDuringDaeSnafu.fail();
         }
     }
@@ -577,12 +575,14 @@ pub fn extended_fetch(
         }
     }
 
-    let stmt = stmt_from_handle(statement_handle);
-    stmt.used_extended_fetch = true;
-    stmt.ird.rows_processed_ptr = row_count_ptr;
-    stmt.ird.array_status_ptr = row_status_ptr;
+    {
+        let mut inner = guard.inner.lock();
+        inner.used_extended_fetch = true;
+        inner.ird.rows_processed_ptr = row_count_ptr;
+        inner.ird.array_status_ptr = row_status_ptr;
+    }
 
-    fetch_impl(statement_handle, warnings)
+    fetch_impl(&guard, warnings)
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {
@@ -598,7 +598,7 @@ fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus)
 /// than per cell. Returns one `Result` per row, preserving the row-major
 /// "first error aborts the row" semantics.
 fn execute_bindings_for_segment(
-    stmt: &Statement,
+    inner: &StatementInner,
     cache: &FetchConverterCache,
     arrow_start: usize,
     segment_len: usize,
@@ -609,7 +609,7 @@ fn execute_bindings_for_segment(
     let mut outputs: Vec<Result<Warnings, ConversionError>> =
         (0..segment_len).map(|_| Ok(Vec::new())).collect();
 
-    let StatementState::Fetching { record_batch, .. } = stmt.state.as_ref() else {
+    let StatementState::Fetching { record_batch, .. } = inner.state.as_ref() else {
         return outputs;
     };
 
@@ -650,11 +650,11 @@ pub fn get_data(
 ) -> OdbcResult<()> {
     tracing::debug!("get_data: statement_handle={:?}", statement_handle);
 
-    {
-        let stmt = stmt_from_handle(statement_handle);
-        if stmt.state.as_ref().is_need_data() {
-            return InvalidDuringDaeSnafu.fail();
-        }
+    let guard = stmt_from_handle(statement_handle)?;
+    let mut inner = guard.inner.lock();
+
+    if inner.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
     }
 
     if target_value_ptr.is_null() {
@@ -668,9 +668,7 @@ pub fn get_data(
         .fail();
     }
 
-    let stmt = stmt_from_handle(statement_handle);
-
-    if stmt.ard.array_size > 1 {
+    if inner.ard.array_size > 1 {
         tracing::warn!("get_data: cannot use SQLGetData with row_array_size > 1");
         return InvalidCursorPositionSnafu.fail();
     }
@@ -682,7 +680,7 @@ pub fn get_data(
 
     // SQL_ARD_TYPE: resolve from the ARD descriptor's concise type for the column
     let target_type = if target_type == CDataType::Ard {
-        match stmt.ard.bindings.get(&col_or_param_num) {
+        match inner.ard.bindings.get(&col_or_param_num) {
             Some(b) => b.target_type,
             None => {
                 return InvalidDescriptorIndexSnafu {
@@ -697,12 +695,12 @@ pub fn get_data(
 
     // Handle state from previous SQLGetData calls
     let mut offset: Option<usize> = None;
-    if let Some(ref state) = stmt.get_data_state
+    if let Some(ref state) = inner.get_data_state
         && state.col() == col_or_param_num
     {
         match state {
             GetDataState::Completed { .. } => {
-                stmt.get_data_state = None;
+                inner.get_data_state = None;
                 return NoMoreDataSnafu.fail();
             }
             GetDataState::Partial {
@@ -714,9 +712,9 @@ pub fn get_data(
         }
     }
     // Clear state before proceeding (will be re-set below based on result)
-    stmt.get_data_state = None;
+    inner.get_data_state = None;
 
-    match stmt.state.as_ref() {
+    match inner.state.as_ref() {
         StatementState::Fetching {
             record_batch,
             batch_idx,
@@ -733,7 +731,7 @@ pub fn get_data(
             let schema = record_batch.schema();
             let field = schema.field(col_idx);
 
-            let ard_binding = stmt.ard.bindings.get(&col_or_param_num);
+            let ard_binding = inner.ard.bindings.get(&col_or_param_num);
             let binding = Binding {
                 target_type,
                 target_value_ptr,
@@ -745,7 +743,7 @@ pub fn get_data(
                 datetime_interval_precision: ard_binding
                     .and_then(|b| b.datetime_interval_precision),
             };
-            let settings = stmt.conn()?.connection.lock().numeric_settings;
+            let settings = guard.conn()?.connection.lock().numeric_settings;
             let conversion_warnings = read_arrow_value(
                 &binding,
                 array_ref,
@@ -760,13 +758,13 @@ pub fn get_data(
             // The write method sets offset to Some(n) on truncation, None when complete.
             match offset {
                 Some(new_offset) => {
-                    stmt.get_data_state = Some(GetDataState::Partial {
+                    inner.get_data_state = Some(GetDataState::Partial {
                         col: col_or_param_num,
                         offset: new_offset,
                     });
                 }
                 None => {
-                    stmt.get_data_state = Some(GetDataState::Completed {
+                    inner.get_data_state = Some(GetDataState::Completed {
                         col: col_or_param_num,
                     });
                 }

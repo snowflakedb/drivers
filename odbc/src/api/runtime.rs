@@ -24,6 +24,7 @@ pub struct OdbcGlobals {
     client: DatabaseDriverClient,
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
+    pub stmt_registry: HandleManager<crate::api::Statement>,
 }
 
 impl OdbcGlobals {
@@ -102,6 +103,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
             client,
             env_registry: HandleManager::new(),
             dbc_registry: HandleManager::new(),
+            stmt_registry: HandleManager::new(),
         });
     }
     guard.env_count += 1;

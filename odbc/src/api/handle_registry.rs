@@ -7,7 +7,7 @@ use crate::api::OdbcResult;
 use crate::api::error::InvalidHandleSnafu;
 use odbc_sys as sql;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct HandleId {
     id: usize,
 }
