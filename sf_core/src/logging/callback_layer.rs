@@ -38,7 +38,7 @@ where
     S: Subscriber,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        if !CALLBACK_ENABLED.load(Ordering::Relaxed) {
+        if !CALLBACK_ENABLED.load(Ordering::Acquire) {
             return;
         }
         let level = match *event.metadata().level() {
