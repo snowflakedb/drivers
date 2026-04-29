@@ -179,17 +179,24 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
         std::env::consts::ARCH
     );
     match (&client_info.runtime_name, &client_info.runtime_version) {
-        (Some(name), Some(ver)) => format!("{base} {name}/{ver}"),
+        (Some(name), Some(ver)) => {
+            // Sanitize runtime name: replace spaces with underscores so the
+            // User-Agent token is safe for parsers that split on whitespace
+            // (e.g. Java's `java.vm.name` = "OpenJDK 64-Bit Server VM").
+            let safe_name = name.replace(' ', "_");
+            format!("{base} {safe_name}/{ver}")
+        }
         _ => base,
     }
 }
 
 /// Strip non-numeric suffixes from a version string so the server accepts it.
 ///
-/// The Snowflake server validates `CLIENT_APP_VERSION` against
-/// `[0-9]+\.[0-9]+\.[0-9]+` — alphabetic suffixes like "dev" or "rc1"
-/// cause the version to fail validation and disable feature gates.
-/// Example: `"5.0.0dev"` → `"5.0.0"`, `"4.0.0"` → `"4.0.0"`.
+/// `CLIENT_APP_VERSION` must be a dotted numeric version for feature gates to
+/// remain enabled, so this helper removes alphabetic suffixes like `"dev"` or
+/// `"rc1"` from each dot-separated segment while preserving existing numeric
+/// segments. Examples: `"5.0.0dev"` → `"5.0.0"`, `"4.0.0"` → `"4.0.0"`,
+/// `"2.21.8.1"` → `"2.21.8.1"`.
 fn strip_version_suffix(version: &str) -> String {
     version
         .split('.')
@@ -2198,6 +2205,22 @@ mod tests {
             };
             // Only appended when both name and version are present
             assert!(!user_agent(&info).contains("CPython"));
+        }
+
+        #[test]
+        fn user_agent_sanitizes_spaces_in_runtime_name() {
+            let info = ClientInfo {
+                application: "JDBC".to_string(),
+                version: "4.0.2".to_string(),
+                os: "Linux".to_string(),
+                runtime_name: Some("OpenJDK 64-Bit Server VM".to_string()),
+                runtime_version: Some("17.0.6".to_string()),
+                ..test_client_info()
+            };
+            assert_eq!(
+                user_agent(&info),
+                format!("JDBC/4.0.2 (Linux-{ARCH}) OpenJDK_64-Bit_Server_VM/17.0.6")
+            );
         }
     }
 
