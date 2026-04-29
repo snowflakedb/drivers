@@ -30,7 +30,7 @@
         "encryptionMaterial": {
           "queryStageMasterKey": "mock_key==",
           "queryId": "mock-query-id",
-          "smkId": 1
+          "smkId": "1"
         },
         "src_locations": [
           "{{REPO_ROOT}}/tests/test_data/generated_test_data/compression/*.xz"

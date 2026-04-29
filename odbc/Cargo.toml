@@ -29,6 +29,7 @@ tokio-util = "0.7"
 # Only used by performance tests.
 [features]
 perf_timing = ["sf_core/perf_timing"]
+vendored-openssl = ["sf_core/vendored-openssl"]
 
 [dev-dependencies]
 test-case = "3.3.1"

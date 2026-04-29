@@ -11,7 +11,7 @@ from . import util_text  # noqa: F401 - backward compatibility re-exports
 from ._internal.api_client.c_api import register_default_logger_callback
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
-from .constants import QueryStatus
+from .constants import QueryStatus, StatementParameterName
 from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
@@ -83,6 +83,7 @@ __all__ = [
     "Connection",
     "SnowflakeConnection",
     "QueryStatus",
+    "StatementParameterName",
     "DictCursor",
     "SnowflakeCursor",
     # Exceptions

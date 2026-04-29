@@ -5,8 +5,7 @@ mod tests {
         NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN, column_size_from_field,
         decimal_digits_from_field, make_converter, sql_type_from_field,
     };
-    use arrow::array::GenericByteArray;
-    use arrow::datatypes::{Field, Utf8Type};
+    use arrow::datatypes::Field;
     use odbc_sys as sql;
     use std::collections::HashMap;
 
@@ -116,12 +115,11 @@ mod tests {
     }
 
     #[test]
-    fn make_converter_succeeds_on_utf8_array() {
+    fn make_converter_succeeds_for_semi_structured_field() {
         for lt in &["OBJECT", "ARRAY", "VARIANT"] {
             let field = semi_structured_field(lt, vec![]);
-            let array: GenericByteArray<Utf8Type> = vec![Some(r#"{"key":"value"}"#)].into();
             let ns = NumericSettings::default();
-            let result = make_converter(&field, &array, &ns);
+            let result = make_converter(&field, &ns);
             assert!(
                 result.is_ok(),
                 "make_converter failed for {lt}: {:?}",

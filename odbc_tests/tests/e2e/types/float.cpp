@@ -12,6 +12,7 @@
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
+#include "test_setup.hpp"
 
 // Old driver returns "INFINITY"/"-INFINITY", new driver returns "inf"/"-inf"
 static bool is_positive_infinity_str(const std::string& s) {
@@ -25,6 +26,9 @@ static bool is_negative_infinity_str(const std::string& s) {
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
   return lower == "-inf" || lower == "-infinity";
 }
+
+// Realistic large maximum value (15 significant digits, works in both Arrow and JSON)
+constexpr double FLOAT_REALISTIC_MAX = 1.79769313486231e+308;
 
 // ============================================================================
 // TYPE CASTING
@@ -123,6 +127,8 @@ TEST_CASE("should handle special float values from literals for float and synony
 }
 
 TEST_CASE("should handle float case boundary values from literals for float and synonyms", "[float]") {
+  SKIP_FOR_JSON_RESULT_SET("JSON format loses precision for Double.MAX_VALUE boundary values");
+
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -159,6 +165,25 @@ TEST_CASE("should handle float precision boundary values from literals for float
   // Then Result should verify precision around 15 decimal digits
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123456789012345.0));
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(1234567890123456.0));
+}
+
+TEST_CASE("should handle realistic large float case boundary values from literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT <query_values>" is executed
+  auto stmt = conn.execute_fetch("SELECT 1.79769313486231e+308::FLOAT, -1.79769313486231e+308::FLOAT");
+
+  // Then Result should contain floats [<expected_values>]
+  double val1 = get_data<SQL_C_DOUBLE>(stmt, 1);
+  double val2 = get_data<SQL_C_DOUBLE>(stmt, 2);
+
+  CHECK(val1 == Catch::Approx(FLOAT_REALISTIC_MAX));
+  CHECK(val2 == Catch::Approx(-FLOAT_REALISTIC_MAX));
+
+  // Verify values are finite (works in both Arrow and JSON)
+  CHECK_FALSE(std::isinf(val1));
+  CHECK_FALSE(std::isinf(val2));
 }
 
 TEST_CASE("should handle NULL values from literals for float and synonyms", "[float]") {
@@ -274,6 +299,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle special float values from tab
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle float boundary values from table for float and synonyms",
                  "[float]") {
+  SKIP_FOR_JSON_RESULT_SET("JSON format loses precision for Double.MAX_VALUE boundary values");
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308,

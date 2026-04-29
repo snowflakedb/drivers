@@ -474,20 +474,17 @@ impl ReadODBC for SnowflakeReal {
                     }
                     .fail();
                 }
-                let v = if expected == 4 {
+                // Per MS ODBC "C to SQL: Binary" spec, the only validation on
+                // SQL_C_BINARY -> SQL_REAL/DOUBLE is the length-equals check
+                // above; the bytes are then interpreted as IEEE-754 and passed
+                // through to the server. NaN and +/-Infinity are valid IEEE-754
+                // values that Snowflake FLOAT columns accept, so we do not
+                // reject them here.
+                if expected == 4 {
                     read_unaligned::<f32>(binding) as f64
                 } else {
                     read_unaligned::<f64>(binding)
-                };
-                if !v.is_finite() {
-                    return NumericMagnitudeOverflowSnafu {
-                        reason: format!(
-                            "non-finite value {v} from SQL_C_BINARY cannot be bound to real SQL type"
-                        ),
-                    }
-                    .fail();
                 }
-                v
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

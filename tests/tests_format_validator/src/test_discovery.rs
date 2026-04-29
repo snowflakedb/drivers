@@ -104,34 +104,6 @@ impl TestDiscovery {
         languages
     }
 
-    /// Detect if a feature is language-specific based on its folder path
-    /// Returns Some(Language) if in a language-specific folder (core/, python/, odbc/, etc.)
-    /// Returns None if in shared/ folder
-    pub fn get_language_from_path(feature_path: &std::path::Path) -> Option<Language> {
-        let path_components: Vec<&str> = feature_path
-            .components()
-            .filter_map(|c| c.as_os_str().to_str())
-            .collect();
-
-        // Look for the organizational directory after "definitions"
-        for (i, component) in path_components.iter().enumerate() {
-            if *component == "definitions" && i + 1 < path_components.len() {
-                let org_dir = path_components[i + 1];
-                return match org_dir {
-                    "core" => Some(Language::Rust),
-                    "python" => Some(Language::Python),
-                    "odbc" => Some(Language::Odbc),
-                    "jdbc" => Some(Language::Jdbc),
-                    "csharp" => Some(Language::CSharp),
-                    "javascript" => Some(Language::JavaScript),
-                    "shared" => None,
-                    _ => None,
-                };
-            }
-        }
-        None
-    }
-
     pub fn get_excluded_languages(tags: &[String]) -> Vec<Language> {
         let mut excluded = Vec::new();
 
@@ -261,18 +233,15 @@ impl TestDiscovery {
             .collect();
 
         // Look for "definitions" in the path and get the next component
-        // Skip organizational directories (shared, core, python, odbc, jdbc)
-        // and get the actual test subdirectory (authentication, http, put_get, query, tls, etc.)
+        // Skip the organizational directory (shared/) and get the actual test subdirectory
+        // (authentication, http, put_get, query, tls, etc.)
         for (i, component) in path_components.iter().enumerate() {
             if *component == "definitions" && i + 1 < path_components.len() {
                 let mut idx = i + 1;
                 let subdir = path_components[idx];
 
-                // Skip organizational directories
-                if matches!(
-                    subdir,
-                    "shared" | "core" | "python" | "odbc" | "jdbc" | "csharp" | "javascript"
-                ) {
+                // Skip the shared/ organizational directory
+                if subdir == "shared" {
                     // If there's another level after the organizational directory, use that
                     if i + 2 < path_components.len() {
                         idx = i + 2;

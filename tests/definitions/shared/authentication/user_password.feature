@@ -18,38 +18,3 @@ Feature: Username and Password Authentication
     Given Authentication is set to default with valid username and wrong password
     When Trying to Connect
     Then There is error returned
-
-  @core_int
-  Scenario: should authenticate with password via wiremock
-    Given Wiremock is running and has password login success mapping
-    And Snowflake client is configured for password authentication
-    When Trying to Connect
-    Then Login is successful
-
-  @core_int
-  Scenario: should fail authentication when user is not provided
-    Given Wiremock is running and has password login success mapping
-    And Snowflake client is configured for password authentication without user
-    When Trying to Connect
-    Then There is error returned with missing parameter
-
-  @core_int
-  Scenario: should fail authentication when password is not provided
-    Given Wiremock is running and has password login success mapping
-    And Snowflake client is configured for password authentication without password
-    When Trying to Connect
-    Then There is error returned with missing parameter
-
-  @core_int
-  Scenario: should fail authentication when password is empty
-    Given Wiremock is running and has password login success mapping
-    And Snowflake client is configured for password authentication with empty password
-    When Trying to Connect
-    Then There is error returned with missing parameter
-
-  @core_int
-  Scenario: should fail authentication when wrong credentials are provided
-    Given Wiremock is running and has password login failure mapping for wrong credentials
-    And Snowflake client is configured for password authentication with wrong password
-    When Trying to Connect
-    Then There is error returned

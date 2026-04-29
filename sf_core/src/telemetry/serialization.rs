@@ -8,45 +8,56 @@ use serde_json::{Value, json};
 ///
 /// Format: `{"logs": [{"message": {...}, "timestamp": "..."}]}`
 pub fn spans_to_snowflake_payload(spans: &[SpanData]) -> Value {
-    let logs: Vec<Value> = spans.iter().map(span_to_log_entry).collect();
+    let logs: Vec<Value> = spans.iter().flat_map(span_to_log_entries).collect();
     json!({ "logs": logs })
 }
 
-fn span_to_log_entry(span: &SpanData) -> Value {
+fn span_to_log_entries(span: &SpanData) -> Vec<Value> {
+    let mut entries = Vec::new();
+
+    if span.events.is_empty() {
+        // No events — emit the span itself as a single log entry (e.g. session_init
+        // when emitted as a standalone span for backward compatibility).
+        entries.push(attrs_to_log_entry(
+            &span.name,
+            &span.attributes,
+            span.start_time,
+        ));
+    } else {
+        // Each event on the span becomes its own log entry. The span's
+        // attributes are inherited so every entry carries session_id etc.
+        for event in span.events.iter() {
+            let mut attrs: Vec<opentelemetry::KeyValue> = span.attributes.clone();
+            for kv in &event.attributes {
+                attrs.push(kv.clone());
+            }
+            entries.push(attrs_to_log_entry(&event.name, &attrs, event.timestamp));
+        }
+    }
+
+    entries
+}
+
+fn attrs_to_log_entry(
+    name: &str,
+    attributes: &[opentelemetry::KeyValue],
+    timestamp: SystemTime,
+) -> Value {
     let mut message = serde_json::Map::new();
+    message.insert("type".to_string(), Value::String(name.to_string()));
 
-    message.insert("type".to_string(), Value::String(span.name.to_string()));
-
-    for kv in &span.attributes {
+    for kv in attributes {
         let key = kv.key.as_str();
         if key == "type" {
-            tracing::warn!("Span attribute key 'type' conflicts with span name field, skipping");
             continue;
         }
         message.insert(key.to_string(), otel_value_to_json(&kv.value));
     }
 
-    // Flatten span events (e.g., exception events) into the message.
-    // Event attributes are prefixed with "exception." to avoid overwriting span attributes.
-    for event in span.events.iter() {
-        if event.name.as_ref() == "exception" {
-            for kv in &event.attributes {
-                let key = kv.key.as_str();
-                let prefixed = if key.starts_with("exception.") {
-                    key.to_string()
-                } else {
-                    format!("exception.{key}")
-                };
-                message.insert(prefixed, otel_value_to_json(&kv.value));
-            }
-        }
-    }
-
-    let timestamp = system_time_to_epoch_millis(span.start_time);
-
+    let ts = system_time_to_epoch_millis(timestamp);
     json!({
         "message": message,
-        "timestamp": timestamp.to_string()
+        "timestamp": ts.to_string()
     })
 }
 

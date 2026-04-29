@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ResultChunk
-from snowflake.connector.errors import InterfaceError
+from snowflake.connector.errors import Error, InterfaceError
 from snowflake.connector.result_batch import (
     IterTableStructure,
     IterUnit,
@@ -366,3 +366,46 @@ class TestToPandasConnection:
             force_microsecond_precision=True,
         )
         mock_table.to_pandas.assert_called_once()
+
+
+# ------------------------------------------------------------------
+# Errorhandler routing
+# ------------------------------------------------------------------
+
+
+def _make_connection_with_handler():
+    """Build a MagicMock connection with real messages list and default handler."""
+    conn = MagicMock()
+    conn.messages = []
+    conn.errorhandler = Error.default_errorhandler
+    return conn
+
+
+class TestErrorhandlerRouting:
+    def test_error_routed_through_connection_handler(self):
+        conn = _make_connection_with_handler()
+        batch = _make_batch(connection=conn)
+
+        with patch.object(batch, "_fetch_arrow_stream_ptr", side_effect=InterfaceError(msg="fetch failed")):
+            with pytest.raises(InterfaceError, match="fetch failed"):
+                batch.populate_data()
+
+        assert len(conn.messages) == 1
+        assert conn.messages[0][0] is InterfaceError
+
+    def test_custom_handler_is_called_before_reraise(self):
+        conn = _make_connection_with_handler()
+        observed = []
+        conn.errorhandler = lambda c, cur, cls, val: observed.append(cls)
+        batch = _make_batch(connection=conn)
+
+        with patch.object(batch, "_fetch_arrow_stream_ptr", side_effect=InterfaceError(msg="observed")):
+            with pytest.raises(InterfaceError, match="observed"):
+                batch.populate_data()
+
+        assert observed == [InterfaceError]
+
+    def test_no_connection_still_raises(self):
+        batch = _make_batch()
+        with pytest.raises(InterfaceError, match="not connected"):
+            batch.create_iter()

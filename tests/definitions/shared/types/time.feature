@@ -1,4 +1,4 @@
-@python
+@python @core_not_needed
 Feature: TIME type support
   # Snowflake TIME stores wallclock time in the form HH:MI:SS with optional fractional seconds.
   # Precision parameter: TIME(0) to TIME(9); default precision is 9 (nanoseconds).

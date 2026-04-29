@@ -70,6 +70,13 @@ Feature: Basic execute query
     When Invalid SQL "SELCT INVALID SYNTAX" is executed
     Then An error should be returned
 
+  @python_e2e
+  Scenario: should return proper error for NULL in NOT NULL column
+    Given Snowflake client is logged in
+    And A temporary table with a NOT NULL column is created
+    When NULL is inserted into the NOT NULL column
+    Then A proper error should be raised with vendor code 100072
+
   # ============================================================================
   # SEQUENTIAL EXECUTION
   # ============================================================================

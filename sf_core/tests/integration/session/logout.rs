@@ -366,13 +366,13 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
 // ===========================================================================
 
 #[tokio::test]
-async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond() {
-    //Given Mock HTTP server holds connection open for 10 seconds without responding
+async fn should_timeout_after_15_seconds_by_default_when_server_does_not_respond() {
+    //Given Mock HTTP server holds connection open for 20 seconds without responding
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Logout endpoint delays 10s — longer than Core's default 5s total timeout.
-    // The retry loop now enforces max_elapsed as a hard bound on in-flight
+    // Logout endpoint delays 20s — longer than Core's default 15s total timeout.
+    // The retry loop enforces max_elapsed as a hard bound on in-flight
     // requests (remaining budget applied as per-request timeout when
     // per_request_timeout is None).
     Mock::given(method("POST"))
@@ -382,7 +382,7 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
             ResponseTemplate::new(200)
                 .set_body_json(json!({ "success": true }))
                 .insert_header("Content-Type", "application/json")
-                .set_delay(Duration::from_secs(10)),
+                .set_delay(Duration::from_secs(20)),
         )
         .mount(&server)
         .await;
@@ -403,12 +403,12 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     let elapsed = start.elapsed();
 
     //Then Close throws timeout error
-    assert!(result.is_err(), "Should timeout with default 5s budget");
+    assert!(result.is_err(), "Should timeout with default 15s budget");
 
-    //And Total elapsed time is between 5 and 7 seconds
+    //And Total elapsed time is between 14 and 17 seconds
     assert!(
-        elapsed >= Duration::from_secs(4) && elapsed < Duration::from_secs(8),
-        "Should timeout after ~5 seconds, took {:?}",
+        elapsed >= Duration::from_secs(14) && elapsed < Duration::from_secs(18),
+        "Should timeout after ~15 seconds, took {:?}",
         elapsed
     );
 }

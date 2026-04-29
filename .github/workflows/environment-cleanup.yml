@@ -1,0 +1,69 @@
+# Nightly cleanup of stale Snowflake schemas (see scripts/cleanup_env.py).
+# Scheduled runs use the workflow file on the repository default branch only
+# (GitHub does not run schedules from arbitrary branches).
+name: Environment cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      age_days:
+        description: "Drop schemas older than this many days (owned by test user/role)"
+        required: false
+        default: "2"
+      dry_run:
+        description: "If true, only list schemas that would be dropped"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # 01:00 UTC daily
+    - cron: "0 1 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: environment-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Environment cleanup (${{ matrix.cloud }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud: [aws, gcp, azure]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Snowflake connector
+        run: |
+          python -m pip install -U pip
+          python -m pip install snowflake-connector-python cryptography -q
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Cleanup stale schemas (test user/role)
+        run: |
+          set -euxo pipefail
+          ARGS=(--cleanup-stale-schemas --parameter-path "${GITHUB_WORKSPACE}/parameters.json")
+          ARGS+=(--age-days "${AGE_DAYS}")
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            ARGS+=(--dry-run)
+          fi
+          python scripts/cleanup_env.py "${ARGS[@]}"
+        env:
+          AGE_DAYS: ${{ github.event.inputs.age_days || '2' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        shell: bash

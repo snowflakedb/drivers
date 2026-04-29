@@ -19,9 +19,9 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, TypeVar, Union, cast
 
-from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
+from snowflake.connector._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
+from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ConfigSetting,
     ConnectionHandle,
     DatabaseHandle,
     WrapperIdentity,
@@ -33,6 +33,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetParameterRequest,
     ConnectionGetQueryStatusRequest,
     ConnectionGetQueryStatusResponse,
+    ConnectionHeartbeatRequest,
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
@@ -43,22 +44,21 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseNewRequest,
     DatabaseReleaseRequest,
 )
+from snowflake.connector._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
-from ._internal.logout_config_mapping import (
-    LogoutConfig,
-    remap_keep_alive_for_backward_compat,
-)
+from ._internal.logout_config_mapping import LogoutConfig
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
-from .errors import DatabaseError, Error, InterfaceError, ProgrammingError
+from .errors import DatabaseError, Error, ErrorValue, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
 from .version import __version__
 
@@ -88,75 +88,6 @@ ConnectionParameters = dict[str, ConnectionParamValue]
 logger = logging.getLogger(__name__)
 
 
-_UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
-
-
-def _pop_bool_kwarg(kwargs: dict[str, Any], key: str, default: bool) -> bool:
-    """Pop a required boolean kwarg with runtime type validation.
-
-    Raises ProgrammingError for non-bool values (e.g. string "false" is truthy).
-    """
-    value = kwargs.pop(key, default)
-    if not isinstance(value, bool):
-        raise ProgrammingError(f"{key} must be bool, got {type(value).__name__}")
-    return value
-
-
-def _pop_optional_bool_kwarg(kwargs: dict[str, Any], key: str) -> bool | None:
-    """Pop an optional boolean kwarg with runtime type validation.
-
-    Returns None if not provided. Raises ProgrammingError for non-bool/non-None values.
-    """
-    value = kwargs.pop(key, None)
-    if value is not None and not isinstance(value, bool):
-        raise ProgrammingError(f"{key} must be bool or None, got {type(value).__name__}")
-    return value
-
-
-def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
-    """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
-
-    If not provided, defaults to True and emits a FutureWarning:
-    the default will change to None in a future version (SNOW-2314152).
-    """
-    raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
-    if raw is _UNSET:
-        warnings.warn(
-            "enable_server_session_keep_alive_auto_detection was not set and defaults "
-            "to True. In a future version, the default will change to None. "
-            "Please provide an explicit value: "
-            "True = check for running async queries before logout (queries are preserved); "
-            "False/None = always send logout on close (async queries may be terminated by server). "
-            "Logout behavior can also be overridden with server_session_keep_alive. "
-            "See the connection parameter docs for more info.",
-            FutureWarning,
-            stacklevel=5,
-        )
-        return True
-    if raw is not None and not isinstance(raw, bool):
-        raise ProgrammingError(
-            f"enable_server_session_keep_alive_auto_detection must be bool or None, got {type(raw).__name__}"
-        )
-    return raw
-
-
-def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
-    """Wrap kwargs values into ConfigSetting protobuf messages for Core."""
-    options: dict[str, ConfigSetting] = {}
-    for key, value in kwargs.items():
-        if isinstance(value, bool):
-            options[key] = ConfigSetting(bool_value=value)
-        elif isinstance(value, int):
-            options[key] = ConfigSetting(int_value=value)
-        elif isinstance(value, str):
-            options[key] = ConfigSetting(string_value=value)
-        elif isinstance(value, float):
-            options[key] = ConfigSetting(double_value=value)
-        elif isinstance(value, bytes):
-            options[key] = ConfigSetting(bytes_value=value)
-    return options
-
-
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -167,13 +98,17 @@ def _requires_open(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: Connection, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():
-            raise DatabaseError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
+            raise DatabaseError(
+                msg="Connection is closed.",
+                errno=ER_CONNECTION_IS_CLOSED,
+                sqlstate=SQLSTATE_CONNECTION_NOT_EXISTS,
+            )
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
 
 
-class Connection:
+class Connection(ErrorHandlerMixin):
     """Connection objects represent a database connection."""
 
     def __init__(
@@ -232,6 +167,9 @@ class Connection:
                 is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
+        self._messages: list[tuple[type[Exception], ErrorValue]] = []
+        self._errorhandler: Callable[..., None] = Error.default_errorhandler
+
         # paramstyle (via setter so str | ParamStyle normalization is single-sourced)
         from snowflake.connector import paramstyle as default_paramstyle
 
@@ -247,10 +185,10 @@ class Connection:
             self._application = _APPLICATION_NAME
         elif isinstance(application, str):
             if not APPLICATION_RE.match(application):
-                raise ProgrammingError(f"Invalid application name: {application!r}")
+                raise ProgrammingError(msg=f"Invalid application name: {application!r}")
             self._application = application
         else:
-            raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
+            raise ProgrammingError(msg=f"Invalid application parameter (must be a non-empty string): {application!r}")
         kwargs["client_app_id"] = self._application
 
         # Extract Python-only params before processing kwargs for Rust core
@@ -295,8 +233,6 @@ class Connection:
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._close_lock = threading.Lock()
-        self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
-        self._errorhandler: Callable
 
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
@@ -309,7 +245,7 @@ class Connection:
         on self (auto_cleanup, _session_params, _numpy, logout_config).
         """
         # Python-only (pop — never goes to Core)
-        self.auto_cleanup: bool = _pop_bool_kwarg(kwargs, "auto_cleanup", True)
+        self.auto_cleanup: bool = pop_typed_kwarg(kwargs, "auto_cleanup", bool, True)
 
         # Session params use a dedicated RPC (connection_set_session_parameters),
         # not the generic connection_set_options path, so pop them from kwargs.
@@ -322,7 +258,7 @@ class Connection:
         # Logout params (pop + resolve defaults + build config).
         # Init-time base config; Core merges close-time overrides (e.g. retry=False
         # → max_attempts=1 in ConnectionCloseRequest) via merge_with_request().
-        self.logout_config = self._parse_logout_config(kwargs)
+        self.logout_config = LogoutConfig.from_kwargs(kwargs)
 
     @staticmethod
     def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
@@ -331,16 +267,6 @@ class Connection:
         if autocommit is not None:
             params["AUTOCOMMIT"] = str(autocommit).lower()
         return params
-
-    def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
-        """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
-        keep_alive = _pop_optional_bool_kwarg(kwargs, "server_session_keep_alive")
-        auto_detection = _extract_auto_detection_param(kwargs)
-        keep_alive = remap_keep_alive_for_backward_compat(keep_alive, auto_detection)
-        return LogoutConfig(
-            server_session_keep_alive=keep_alive,
-            enable_server_session_keep_alive_auto_detection=auto_detection,
-        )
 
     def _send_driver_options(self, kwargs: dict[str, Any]) -> None:
         """Send all driver config to Core in a single connection_set_options RPC.
@@ -351,8 +277,8 @@ class Connection:
         Core stores this as conn.logout_config. At close() time, Core merges any
         close-time overrides (from ConnectionCloseRequest fields) via merge_with_request().
         """
-        options = _build_config_settings(kwargs)
-        options.update(_build_config_settings(self.logout_config.to_option_dict()))
+        options = create_config_settings_from_dict(kwargs)
+        options.update(create_config_settings_from_dict(self.logout_config.to_option_dict()))
         if options:
             response = self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
@@ -390,6 +316,7 @@ class Connection:
 
         # Lock guards ONLY the handle swap — prevents concurrent double-release.
         with self._close_lock:
+            del self._messages[:]
             conn_handle, self.conn_handle = self.conn_handle, None
             db_handle, self.db_handle = self.db_handle, None
 
@@ -495,12 +422,12 @@ class Connection:
 
     @property
     @pep249
-    def messages(self) -> list[tuple[type[Exception], dict[str, str | bool]]]:
+    def messages(self) -> list[tuple[type[Exception], ErrorValue]]:
         """List of (exception class, exception value) tuples received from the database."""
         return self._messages
 
     @messages.setter
-    def messages(self, value: list[tuple[type[Exception], dict[str, str | bool]]]) -> None:
+    def messages(self, value: list[tuple[type[Exception], ErrorValue]]) -> None:
         self._messages = value
 
     @pep249
@@ -567,14 +494,15 @@ class Connection:
         value = self._get_session_parameter("AUTOCOMMIT")
         return value is not None and value.lower() == "true"
 
+    @_requires_open
     def set_autocommit(self, autocommit: bool) -> None:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
+        # FIXME: set autocommit via core
         if not isinstance(autocommit, bool):
-            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+            raise ProgrammingError(msg=f"Invalid autocommit parameter: {autocommit!r}", errno=ER_INVALID_VALUE)
         cur = self.cursor()
         try:
             cur.execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")
-        # TODO: Narrow exception handling once proper error propagation is implemented
         except Error as e:
             logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
         finally:
@@ -609,6 +537,20 @@ class Connection:
             # Handle released or FFI unavailable — connection is closed
             return True
 
+    def is_valid(self) -> bool:
+        """Check whether the connection is still usable for sending queries.
+
+        Validates both the network transport and the Snowflake session by sending a heartbeat to the server.
+        """
+        if self.is_closed():
+            return False
+        try:
+            request = ConnectionHeartbeatRequest(conn_handle=self.conn_handle)
+            response = self.db_api.connection_heartbeat(request)
+            return response.valid
+        except Exception:
+            return False
+
     def _get_session_parameter(self, name: str) -> str | None:
         """
         Get a session parameter value (internal method).
@@ -640,7 +582,7 @@ class Connection:
         elif isinstance(value, str):
             self.__paramstyle = ParamStyle.from_string(value)
         else:
-            raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+            raise ProgrammingError(msg=f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
 
     @property
     @backward_compatibility
@@ -798,7 +740,7 @@ class Connection:
         """The Snowflake session ID for this connection."""
         info = self._get_connection_info()
         if not info.HasField("session_id"):
-            raise InterfaceError("Session ID is not available; connection may not be initialized")
+            raise InterfaceError(msg="Session ID is not available; connection may not be initialized")
         return info.session_id
 
     @property
@@ -856,9 +798,14 @@ class Connection:
 
     @errorhandler.setter
     def errorhandler(self, value: Callable | None) -> None:
+        # Bare raise: we need a working errorhandler to route errors through the protocol.
         if value is None:
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
+
+    @property
+    def _errorhandler_connection(self) -> Connection:
+        return self
 
     @property
     def is_pyformat(self) -> bool:
@@ -918,13 +865,15 @@ class Connection:
     def arrow_number_to_decimal(self, value: bool) -> None:
         self._arrow_number_to_decimal = bool(value)
 
-    @backward_compatibility
     @arrow_number_to_decimal.setter  # type: ignore[attr-defined, untyped-decorator]
+    @backward_compatibility
     def arrow_number_to_decimal_setter(self, value: bool) -> None:
         """Set arrow_number_to_decimal field. Deprecated.
 
-        Allows setting this field through `cursor.connection.arrow_number_to_decimal_setter = True`.
-        Added only because of backwards compatibility, correct setter should be used.
+        Kept so legacy code that writes
+        ``cursor.connection.arrow_number_to_decimal_setter = True`` keeps
+        working; new code should assign to ``arrow_number_to_decimal``
+        directly.
         """
         self.arrow_number_to_decimal = value
 

@@ -1,0 +1,411 @@
+name: Build Python Wheels
+
+on:
+  workflow_call:
+    inputs:
+      targets:
+        type: string
+        required: true
+        description: >
+          JSON object mapping platform keys to Python version arrays.
+          Example: {"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12"], "windows_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
+          Supported platforms: linux_x86, linux_aarch, windows_x86, windows_arm.
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Expand targets into detailed build matrices ────────────────────
+  configure:
+    runs-on: ubuntu-latest
+    outputs:
+      sf-core-matrix: ${{ steps.expand.outputs.sf-core-matrix }}
+      cibw-matrix: ${{ steps.expand.outputs.cibw-matrix }}
+      win-arm-matrix: ${{ steps.expand.outputs.win-arm-matrix }}
+    steps:
+      - name: Expand targets into build matrices
+        id: expand
+        shell: python3 {0}
+        run: |
+          import json, os
+
+          PLATFORMS = {
+              "linux_x86": {
+                  "target": "linux-x86_64",
+                  "os": "ubuntu-latest",
+                  "container": "quay.io/pypa/manylinux_2_28_x86_64",
+                  "lib_name": "libsf_core.so",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "manylinux_x86_64",
+                  "artifact_id": "manylinux_x86_64",
+              },
+              "linux_aarch": {
+                  "target": "linux-aarch64",
+                  "os": "ubuntu-24.04-arm",
+                  "container": "quay.io/pypa/manylinux_2_28_aarch64",
+                  "lib_name": "libsf_core.so",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "manylinux_aarch64",
+                  "artifact_id": "manylinux_aarch64",
+              },
+              "windows_x86": {
+                  "target": "windows-x86_64",
+                  "os": "windows-latest",
+                  "container": "",
+                  "lib_name": "sf_core.dll",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "win_amd64",
+                  "artifact_id": "win_amd64",
+              },
+              "windows_arm": {
+                  "target": "windows-arm64",
+                  "os": "windows-11-arm",
+                  "container": "",
+                  "lib_name": "sf_core.dll",
+                  "cargo_extra_args": "--config profile.release.opt-level=2 --config profile.release.strip=false",
+                  "wheel_method": "manual",
+                  "artifact_id": "win_arm64",
+              },
+          }
+
+          targets = json.loads("""${{ inputs.targets }}""")
+
+          sf_core = []
+          cibw = []
+          wheel = []
+          seen_targets = set()
+
+          for key, versions in targets.items():
+              if key not in PLATFORMS:
+                  raise ValueError(f"Unknown platform: {key}. Supported: {list(PLATFORMS)}")
+              p = PLATFORMS[key]
+
+              if p["target"] not in seen_targets:
+                  seen_targets.add(p["target"])
+                  sf_core.append({
+                      "target": p["target"],
+                      "os": p["os"],
+                      "container": p["container"],
+                      "lib_name": p["lib_name"],
+                      "cargo_extra_args": p["cargo_extra_args"],
+                  })
+
+              if p["wheel_method"] == "cibuildwheel":
+                  for v in versions:
+                      shortver = v.replace(".", "")
+                      cibw.append({
+                          "target": p["target"],
+                          "os": p["os"],
+                          "py": v,
+                          "cibw_build": f"cp{shortver}-{p['cibw_arch']}",
+                          "sf_core_artifact": f"sf-core-{p['target']}",
+                          "artifact_name": f"{p['artifact_id']}_py{v}",
+                      })
+              else:
+                  for v in versions:
+                      wheel.append({
+                          "os": p["os"],
+                          "py": v,
+                          "sf_core_artifact": f"sf-core-{p['target']}",
+                          "artifact_name": f"{p['artifact_id']}_py{v}",
+                      })
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"sf-core-matrix={json.dumps(sf_core)}\n")
+              f.write(f"cibw-matrix={json.dumps(cibw)}\n")
+              f.write(f"win-arm-matrix={json.dumps(wheel)}\n")
+
+          # Log for debugging
+          print("sf-core-matrix:", json.dumps(sf_core, indent=2))
+          print("cibw-matrix:", json.dumps(cibw, indent=2))
+          print("win-arm-matrix:", json.dumps(wheel, indent=2))
+
+  # ── Build sf_core (Rust shared library) ────────────────────────────
+  # One build per target platform. Python-version-independent.
+  build_sf_core:
+    needs: configure
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.configure.outputs.sf-core-matrix) }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    name: build_sf_core (${{ matrix.target }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Linux container setup ──
+      - name: Install Rust toolchain (container)
+        if: matrix.container != ''
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install vendored OpenSSL build deps (container)
+        if: matrix.container != ''
+        run: yum install -y perl-IPC-Cmd perl-Time-Piece
+
+      - name: Setup OpenSSL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: arm64
+
+      # ── Cargo cache & build ──
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sf-core-release
+
+      - name: Build sf_core (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Build sf_core (Windows x86_64)
+        if: matrix.os == 'windows-latest'
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Build sf_core (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Upload sf_core library
+        uses: actions/upload-artifact@v4
+        with:
+          name: sf-core-${{ matrix.target }}
+          path: target/release/${{ matrix.lib_name }}
+
+      - name: Save Rust cache
+        if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sf-core-release
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  # ── Generate protobuf Python code (platform-independent, runs once) ─
+  generate_proto:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore proto-target cache
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-proto-target-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Generate protobuf code
+        working-directory: python
+        run: |
+          uv run --with hatch hatch build --hooks-only
+        env:
+          SKIP_CORE_BUILD: "true"
+          SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSIONS: "true"
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Upload protobuf artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: protobuf-gen
+          path: python/src/snowflake/connector/_internal/protobuf_gen/
+
+  # ── Build source distribution (platform-independent, runs once) ────
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache proto generator target
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-proto-target-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Build sdist
+        working-directory: ./python
+        run: >
+          uv run --python 3.13
+          --with hatch --with cython --with setuptools --with "virtualenv<21.0.0"
+          hatch build --target sdist
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Inspect sdist
+        working-directory: ./python
+        run: tar tzf dist/*.tar.gz | head -40
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist/*.tar.gz
+
+  # ── Build wheels via cibuildwheel (Linux/macOS) ────────────────────
+  build_wheels:
+    needs: [configure, build_sf_core, generate_proto]
+    if: fromJSON(needs.configure.outputs.cibw-matrix)[0] != null
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.configure.outputs.cibw-matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: build_wheels (${{ matrix.os }}, py${{ matrix.py }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download pre-built sf_core
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.sf_core_artifact }}
+          path: python/src/snowflake/connector/_core
+
+      - name: Ensure sf_core is executable
+        if: runner.os == 'Linux'
+        run: chmod +x python/src/snowflake/connector/_core/*
+
+      - name: Download pre-built protobuf code
+        uses: actions/download-artifact@v4
+        with:
+          name: protobuf-gen
+          path: python/src/snowflake/connector/_internal/protobuf_gen
+
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v3.4
+        with:
+          package-dir: python
+          output-dir: python/dist
+        env:
+          CIBW_BUILD: ${{ matrix.cibw_build }}
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_ENVIRONMENT_LINUX: >-
+            SKIP_CORE_BUILD=true
+            SKIP_PROTO_GENERATION=true
+          CIBW_ENVIRONMENT_WINDOWS: >-
+            SKIP_CORE_BUILD=true
+            SKIP_PROTO_GENERATION=true
+
+      - name: Check wheels with auditwheel
+        if: runner.os == 'Linux'
+        run: |
+          pip install auditwheel
+          for whl in python/dist/*.whl; do
+            echo "=== $(basename $whl) ==="
+            auditwheel show "$whl"
+            # Enforce manylinux_2_28 tag
+            if ! auditwheel show "$whl" 2>&1 | grep -q 'manylinux_2_28'; then
+              echo "::error::Wheel $(basename $whl) does not meet manylinux_2_28 policy"
+              exit 1
+            fi
+          done
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: python/dist/*.whl
+
+  # ── Build wheels manually per (os, py) pair (Windows ARM64) ────────
+  build_wheel:
+    needs: [configure, build_sf_core, generate_proto]
+    if: fromJSON(needs.configure.outputs.win-arm-matrix)[0] != null
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.configure.outputs.win-arm-matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
+    env:
+      CMAKE_GENERATOR_PLATFORM: ARM64
+      SKIP_CORE_BUILD: "true"
+      SKIP_PROTO_GENERATION: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download pre-built sf_core
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.sf_core_artifact }}
+          path: python/src/snowflake/connector/_core
+
+      - name: Download pre-built protobuf code
+        uses: actions/download-artifact@v4
+        with:
+          name: protobuf-gen
+          path: python/src/snowflake/connector/_internal/protobuf_gen
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
+
+      - name: Setup OpenSSL (Windows ARM64)
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: arm64
+
+      # ── Build ──
+      - name: Build python wheel
+        working-directory: ./python
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+
+      - name: Inspect wheel
+        working-directory: ./python
+        shell: pwsh
+        run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
+
+      - name: Upload Python wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: python/dist/*.whl

@@ -4,6 +4,8 @@ pytest configuration and fixtures for PEP 249 tests.
 
 from __future__ import annotations
 
+import os
+
 from typing import Any
 from urllib.parse import urlparse
 
@@ -189,6 +191,15 @@ def pytest_runtest_setup(item):
         marker = item.get_closest_marker("skip_reference")
         reason = marker.kwargs.get("reason", "Skipping test for reference driver")
         pytest.skip(reason)
+    marker = item.get_closest_marker("skip_for_json_result_set")
+    if marker is not None:
+        result_format = os.getenv("QUERY_RESULT_FORMAT")
+        if result_format and result_format.upper() == "JSON":
+            reason = marker.kwargs.get("reason", "Test requires Arrow format precision")
+            pytest.skip(f"Skipped for JSON result format: {reason}")
+
+    if item.get_closest_marker("require_vpn") and os.environ.get("JENKINS_URL") is None:
+        pytest.skip("Requires VPN (run on Jenkins)")
 
 
 from tests.helpers.fixtures import core_proxy as core_proxy  # noqa: E402

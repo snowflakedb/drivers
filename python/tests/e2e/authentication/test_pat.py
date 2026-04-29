@@ -70,7 +70,7 @@ class TestPATAuthentication:
             connection_factory(authenticator=authenticator, token=invalid_token)
 
         # Then There is error returned
-        verify_login_error(exception)
+        verify_login_error(exception, keywords=["token", "invalid"])
 
 
 class PAT:

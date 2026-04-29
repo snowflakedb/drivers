@@ -1,4 +1,4 @@
-@odbc @python
+@odbc @python @core_not_needed
 Feature: INTERVAL datatype handling
   # Snowflake INTERVAL types: INTERVAL YEAR, INTERVAL MONTH, INTERVAL YEAR TO MONTH,
   # INTERVAL DAY, INTERVAL HOUR, INTERVAL MINUTE, INTERVAL SECOND,

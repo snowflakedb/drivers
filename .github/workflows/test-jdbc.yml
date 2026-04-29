@@ -23,13 +23,18 @@ jobs:
   jdbc_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
-    name: JDBC Tests (full suite)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        java-version: ['8']
+        include:
+          - os: ubuntu-latest
+            java-version: '8'
+            result_format: default
+          - os: ubuntu-latest
+            java-version: '8'
+            result_format: json
     runs-on: ${{ matrix.os }}
+    name: JDBC Tests (${{ matrix.result_format }} format)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -79,6 +84,7 @@ jobs:
           ls -l target/debug/
           export PARAMETER_PATH=$(pwd)/parameters.json
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+          export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           cd jdbc
           ./gradlew test jacocoTestReport --stacktrace
         env:
@@ -107,6 +113,9 @@ jobs:
 
       - name: Save Rust cache
         if: always()
+        # timeout-minutes is enforced here because it isn't supported on
+        # composite action steps. Bounds slim + registry save + target save.
+        timeout-minutes: 20
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -116,6 +125,12 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: |
@@ -188,6 +203,12 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache-ref.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: |
