@@ -677,7 +677,7 @@ How `DRIVER_VERSION` is determined for each driver:
 | Driver | Universal Implementation | Old Implementation |
 |--------|-------------------------|-------------------|
 | **Core** | Uses compile-time `CARGO_PKG_VERSION` macro from `Cargo.toml` (`0.1.0`) | N/A (no old implementation) |
-| **Python** | Uses `importlib.metadata.version("snowflake-connector-python-ud")` from installed package (`0.1.0`) | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package |
+| **Python** | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package (`0.1.0`) | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package |
 | **ODBC** | `"UNKNOWN"` (SQLGetInfo not yet implemented) | Retrieved via `SQLGetInfo(SQL_DRIVER_VER)` from installed driver |
 
 ---
@@ -699,6 +699,6 @@ This creates an intermediate image containing Core libraries:
 - `libsfodbc.so` - ODBC wrapper around `sf_core`
 
 These libraries are copied into the final driver images:
-- **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python-ud` package
+- **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
 
