@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
+pub use crate::logging::callback_layer::disable_callback;
 pub use crate::logging::error::LogError;
 pub use crate::logging::log_manager::LogManager;
 use tracing::Subscriber;
