@@ -172,8 +172,11 @@ impl<'a> QueryInput<'a> {
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
     let base = format!(
-        "{}/{} ({})",
-        client_info.application, client_info.version, client_info.os
+        "{}/{} ({}-{})",
+        client_info.application,
+        client_info.version,
+        client_info.os,
+        std::env::consts::ARCH
     );
     match (&client_info.runtime_name, &client_info.runtime_version) {
         (Some(name), Some(ver)) => format!("{base} {name}/{ver}"),
@@ -2157,6 +2160,8 @@ mod tests {
     mod user_agent_tests {
         use super::*;
 
+        const ARCH: &str = std::env::consts::ARCH;
+
         #[test]
         fn user_agent_without_runtime_info() {
             let info = ClientInfo {
@@ -2165,7 +2170,7 @@ mod tests {
                 os: "Linux".to_string(),
                 ..test_client_info()
             };
-            assert_eq!(user_agent(&info), "MyApp/1.0.0 (Linux)");
+            assert_eq!(user_agent(&info), format!("MyApp/1.0.0 (Linux-{ARCH})"));
         }
 
         #[test]
@@ -2180,7 +2185,7 @@ mod tests {
             };
             assert_eq!(
                 user_agent(&info),
-                "PythonConnector/3.15.0 (Darwin) CPython/3.11.6"
+                format!("PythonConnector/3.15.0 (Darwin-{ARCH}) CPython/3.11.6")
             );
         }
 
