@@ -559,40 +559,39 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
     .fail()
 }
 
-/// Disconnect from the database
+/// Disconnect from the database, performing logout and releasing sf_core handles.
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
     let dbc = conn_from_handle(connection_handle)?;
-    let old_state = {
-        let mut connection = dbc.connection.lock();
-        std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
+    let mut connection = dbc.connection.lock();
+    let (db_handle, conn_handle) = match &connection.state {
+        ConnectionState::Connected {
+            db_handle,
+            conn_handle,
+        } => (*db_handle, *conn_handle),
+        ConnectionState::Disconnected => {
+            return DisconnectedSnafu.fail();
+        }
     };
-    if let ConnectionState::Connected {
-        db_handle,
-        conn_handle,
-    } = old_state
-    {
-        global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-            if let Err(e) = c
-                .connection_release(ConnectionReleaseRequest {
-                    conn_handle: Some(conn_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release core connection handle: {e:?}");
-            }
-            if let Err(e) = c
-                .database_release(DatabaseReleaseRequest {
-                    db_handle: Some(db_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release core database handle: {e:?}");
-            }
-        });
-    }
 
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.connection_close(ConnectionCloseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await?;
+        c.connection_release(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await?;
+        c.database_release(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        })
+        .await?;
+        Ok::<_, crate::api::OdbcError>(())
+    })?;
+
+    connection.state = ConnectionState::Disconnected;
     Ok(())
 }
 
