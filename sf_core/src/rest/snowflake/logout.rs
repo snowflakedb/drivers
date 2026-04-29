@@ -10,7 +10,7 @@ use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::error::map_http_error;
 use crate::rest::snowflake::{
     AsyncQuerySnafu, LogoutFailedSnafu, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
-    SnowflakeResponseError, UrlJoinSnafu, build_user_agent,
+    SnowflakeResponseError, UrlJoinSnafu, user_agent,
 };
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, header};
@@ -62,7 +62,7 @@ pub async fn logout_session(
         "Logout request parameters"
     );
 
-    let user_agent = build_user_agent(client_info);
+    let user_agent = user_agent(client_info);
 
     // Logout is POST but idempotent server-side (safe to retry)
     let ctx = HttpContext::new(Method::POST, "/session")

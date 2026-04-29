@@ -136,7 +136,7 @@ mod integration_tests {
             os: "Darwin".to_string(),
             ..test_client_info()
         };
-        let user_agent = snowflake::build_user_agent(&client_info);
+        let user_agent = snowflake::user_agent(&client_info);
 
         assert!(user_agent.contains("PythonConnector"));
         assert!(user_agent.contains("3.15.0"));

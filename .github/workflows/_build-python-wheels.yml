@@ -8,8 +8,8 @@ on:
         required: true
         description: >
           JSON object mapping platform keys to Python version arrays.
-          Example: {"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12"], "windows_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
-          Supported platforms: linux_x86, linux_aarch, windows_x86, windows_arm.
+          Example: {"linux_x86": ["3.11","3.12","3.13","3.14"], "macos_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
+          Supported platforms: linux_x86, linux_aarch, macos_x86, macos_arm, windows_x86, windows_arm.
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,6 +49,26 @@ jobs:
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_aarch64",
                   "artifact_id": "manylinux_aarch64",
+              },
+              "macos_x86": {
+                  "target": "macos-x86_64",
+                  "os": "macos-15-intel",
+                  "container": "",
+                  "lib_name": "libsf_core.dylib",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "macosx_x86_64",
+                  "artifact_id": "macosx_x86_64",
+              },
+              "macos_arm": {
+                  "target": "macos-arm64",
+                  "os": "macos-latest",
+                  "container": "",
+                  "lib_name": "libsf_core.dylib",
+                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "wheel_method": "cibuildwheel",
+                  "cibw_arch": "macosx_arm64",
+                  "artifact_id": "macosx_arm64",
               },
               "windows_x86": {
                   "target": "windows-x86_64",
@@ -166,6 +186,12 @@ jobs:
       - name: Build sf_core (Linux)
         if: runner.os == 'Linux'
         run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Build sf_core (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'macos-arm64' && '11.0' || '10.14' }}
 
       - name: Build sf_core (Windows x86_64)
         if: matrix.os == 'windows-latest'
@@ -303,7 +329,7 @@ jobs:
           path: python/src/snowflake/connector/_core
 
       - name: Ensure sf_core is executable
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         run: chmod +x python/src/snowflake/connector/_core/*
 
       - name: Download pre-built protobuf code
@@ -327,8 +353,12 @@ jobs:
           CIBW_ENVIRONMENT_WINDOWS: >-
             SKIP_CORE_BUILD=true
             SKIP_PROTO_GENERATION=true
+          CIBW_ENVIRONMENT_MACOS: >-
+            SKIP_CORE_BUILD=true
+            SKIP_PROTO_GENERATION=true
+            MACOSX_DEPLOYMENT_TARGET=${{ contains(matrix.cibw_build, 'x86_64') && '10.14' || '11.0' }}
 
-      - name: Check wheels with auditwheel
+      - name: Check wheels with auditwheel (Linux)
         if: runner.os == 'Linux'
         run: |
           pip install auditwheel
@@ -340,6 +370,16 @@ jobs:
               echo "::error::Wheel $(basename $whl) does not meet manylinux_2_28 policy"
               exit 1
             fi
+          done
+
+      - name: Check wheels with delocate (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pip install delocate
+          for whl in python/dist/*.whl; do
+            echo "=== $(basename $whl) ==="
+            delocate-listdeps "$whl"
+            delocate-wheel --require-archs ${{ contains(matrix.cibw_build, 'x86_64') && 'x86_64' || 'arm64' }} --check-archs "$whl" && echo "✓ arch check passed"
           done
 
       - name: Upload wheel
@@ -409,3 +449,20 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: python/dist/*.whl
+
+  # ── Clean up intermediate build artifacts ──────────────────────────
+  cleanup_build_artifacts:
+    needs: [build_wheels, build_wheel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete intermediate artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate -q '.artifacts[] | select(.name == "protobuf-gen" or (.name | startswith("sf-core-"))) | .id' |
+          while read id; do
+            echo "Deleting artifact $id"
+            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+          done

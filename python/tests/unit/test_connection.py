@@ -350,6 +350,28 @@ class TestConnectionSetOptions:
         assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
 
 
+class TestDriverIdentity:
+    """Unit tests for driver identity fields in ConnectionInitRequest."""
+
+    def test_driver_identity_in_connection_init(self, mock_db_api):
+        """Driver identity fields should be passed via WrapperIdentity in ConnectionInitRequest."""
+        import platform
+
+        from snowflake.connector.connection import Connection
+        from snowflake.connector.version import __version__
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a")
+
+        init_request = mock_db_api.connection_init.call_args[0][0]
+        identity = init_request.wrapper_identity
+        assert identity.driver_name == "PythonConnector"
+        assert identity.driver_version == __version__
+        assert identity.language_runtime == platform.python_implementation()
+        assert identity.language_version == platform.python_version()
+        assert identity.language_compiler == platform.python_compiler()
+
+
 class TestClose:
     """Unit tests for Connection.close() and handle release."""
 

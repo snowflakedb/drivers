@@ -117,11 +117,14 @@ fn load_parameters(path: &PathBuf) -> Result<Parameters, Box<dyn std::error::Err
 
 fn default_client_info() -> ClientInfo {
     ClientInfo {
-        application: "PythonConnector".to_string(),
-        version: "3.15.0".to_string(),
-        os: "Darwin".to_string(),
-        os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+        application: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        os_version: sf_core::telemetry::environment::detect_os_version(),
         ocsp_mode: Some("FAIL_OPEN".to_string()),
+        runtime_name: None,
+        runtime_version: None,
+        compiler: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
         platforms: Vec::new(),

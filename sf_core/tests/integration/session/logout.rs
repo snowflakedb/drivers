@@ -162,8 +162,8 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
         .get("user-agent")
         .expect("Should have User-Agent header");
     assert!(
-        user_agent.to_str().unwrap().contains("UD/"),
-        "User-Agent should contain UD version, got: {}",
+        user_agent.to_str().unwrap().contains("/"),
+        "User-Agent should contain app/version, got: {}",
         user_agent.to_str().unwrap()
     );
 

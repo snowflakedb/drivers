@@ -74,8 +74,10 @@ from .version import __version__
 # uncast.
 DEFAULT_CONFIGURATION: dict[str, tuple[Any, tuple[type, ...]]] = {}
 
-CLIENT_NAME = "snowflake-connector-python"
 _APPLICATION_NAME = "PythonConnector"
+# Kept as a public alias for backward compatibility — external packages
+# (e.g. snowflake-sqlalchemy) may import this symbol.
+CLIENT_NAME = _APPLICATION_NAME
 # The old connector used re.match(r"[\w\d_]+") without anchors, so any string
 # starting with a word character was accepted (dots, hyphens, etc. in the tail
 # were silently ignored).  We keep a start-anchored pattern without $ so that
@@ -233,7 +235,7 @@ class Connection(ErrorHandlerMixin):
                 conn_handle=self.conn_handle,
                 db_handle=self.db_handle,
                 wrapper_identity=WrapperIdentity(
-                    driver_name=CLIENT_NAME,
+                    driver_name=_APPLICATION_NAME,
                     driver_version=__version__,
                     language_runtime=platform.python_implementation(),
                     language_version=platform.python_version(),

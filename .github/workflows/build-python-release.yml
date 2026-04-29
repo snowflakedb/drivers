@@ -14,7 +14,7 @@ jobs:
   build_wheels:
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: '{"linux_x86": ["3.11","3.12","3.13","3.14"], "linux_aarch": ["3.11","3.12","3.13","3.14"], "macos_x86": ["3.11","3.12","3.13","3.14"], "macos_arm": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.13","3.14"], "windows_arm": ["3.11","3.12"]}'
 
   # ── Test wheels and sdist against cloud providers ───────────────────
   # Each Python version tested once per env, cloud providers distributed evenly.
@@ -49,6 +49,30 @@ jobs:
           - { os: ubuntu-24.04-arm, py: "3.12", hatch_env: "test-pandas", cloud_provider: "gcp"   }
           - { os: ubuntu-24.04-arm, py: "3.13", hatch_env: "test-pandas", cloud_provider: "azure" }
           - { os: ubuntu-24.04-arm, py: "3.14", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          # macOS x86_64 (Intel) — test env
+          - { os: macos-15-intel,        py: "3.10", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: macos-15-intel,        py: "3.12", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.13", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: macos-15-intel,        py: "3.14", hatch_env: "test",        cloud_provider: "aws"   }
+          # macOS x86_64 (Intel) — test-pandas env
+          - { os: macos-15-intel,        py: "3.10", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: macos-15-intel,        py: "3.11", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: macos-15-intel,        py: "3.12", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: macos-15-intel,        py: "3.13", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: macos-15-intel,        py: "3.14", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          # macOS ARM64 (Apple Silicon) — test env
+          - { os: macos-latest,    py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: macos-latest,    py: "3.11", hatch_env: "test",        cloud_provider: "gcp"   }
+          - { os: macos-latest,    py: "3.12", hatch_env: "test",        cloud_provider: "azure" }
+          - { os: macos-latest,    py: "3.13", hatch_env: "test",        cloud_provider: "aws"   }
+          - { os: macos-latest,    py: "3.14", hatch_env: "test",        cloud_provider: "gcp"   }
+          # macOS ARM64 (Apple Silicon) — test-pandas env
+          - { os: macos-latest,    py: "3.10", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: macos-latest,    py: "3.11", hatch_env: "test-pandas", cloud_provider: "azure" }
+          - { os: macos-latest,    py: "3.12", hatch_env: "test-pandas", cloud_provider: "aws"   }
+          - { os: macos-latest,    py: "3.13", hatch_env: "test-pandas", cloud_provider: "gcp"   }
+          - { os: macos-latest,    py: "3.14", hatch_env: "test-pandas", cloud_provider: "azure" }
           # Windows x86_64 — test env
           - { os: windows-latest,  py: "3.10", hatch_env: "test",        cloud_provider: "azure" }
           - { os: windows-latest,  py: "3.11", hatch_env: "test",        cloud_provider: "aws"   }
@@ -104,6 +128,13 @@ jobs:
           name: ${{ (matrix.os == 'ubuntu-24.04-arm' && 'manylinux_aarch64' || 'manylinux_x86_64') }}_py${{ matrix.py }}
           path: python/dist
 
+      - name: Download wheel (macOS)
+        if: runner.os == 'macOS' && matrix.py != '3.10'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ (matrix.os == 'macos-15-intel' && 'macosx_x86_64' || 'macosx_arm64') }}_py${{ matrix.py }}
+          path: python/dist
+
       - name: Download wheel (Windows)
         if: runner.os == 'Windows' && matrix.py != '3.10'
         uses: actions/download-artifact@v4
@@ -155,8 +186,8 @@ jobs:
       - name: Install Hatch
         run: uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Install snowflake ud driver from wheel (Linux)
-        if: runner.os == 'Linux' && matrix.py != '3.10'
+      - name: Install snowflake ud driver from wheel (Linux/macOS)
+        if: runner.os != 'Windows' && matrix.py != '3.10'
         working-directory: python
         run: |
           WHEELS=(dist/*.whl)
@@ -179,8 +210,8 @@ jobs:
           $env:WHEEL_PATH = $wheels[0].FullName
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
-      - name: Install snowflake ud driver from sdist (Linux)
-        if: runner.os == 'Linux' && matrix.py == '3.10'
+      - name: Install snowflake ud driver from sdist (Linux/macOS)
+        if: runner.os != 'Windows' && matrix.py == '3.10'
         working-directory: python
         run: |
           SDISTS=(dist/*.tar.gz)
@@ -208,8 +239,8 @@ jobs:
         env:
           SKIP_CORE_BUILD: "false"
 
-      - name: Run tests (Linux)
-        if: runner.os == 'Linux'
+      - name: Run tests (Linux/macOS)
+        if: runner.os != 'Windows'
         working-directory: python
         run: |
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
@@ -285,23 +316,6 @@ jobs:
             --junitxml=reports/reference-${{ matrix.hatch_env }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-
-  # ── Clean up intermediate artifacts ────────────────────────────────
-  cleanup:
-    needs: [build_wheels, test, test_reference]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete sf-core artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
-            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
-          | while read id; do
-              echo "Deleting artifact $id"
-              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
-            done
 
   # ── Status gate ────────────────────────────────────────────────────
   release_status:

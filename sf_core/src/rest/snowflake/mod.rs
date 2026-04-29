@@ -179,25 +179,44 @@ impl<'a> QueryInput<'a> {
     }
 }
 
-// TODO(SNOW-2872349): DD §3 target format is:
-//   {app}/{ver} ({os}) {impl}/{runtime_ver} UD/{ud_ver} Rust/{rust_ver}
-// e.g. PythonConnector/3.15.0 (Darwin) CPython/3.11.6 UD/0.0.0 Rust/1.88
-// The {impl}/{runtime_ver} segment is omitted until ClientInfo is dynamically
-// populated by each wrapper (currently hardcoded in rest_parameters.rs).
-pub fn build_user_agent(client_info: &ClientInfo) -> String {
-    let ud_version = env!("CARGO_PKG_VERSION");
-    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
-    format!(
-        "{}/{} ({}) UD/{} Rust/{}",
-        client_info.application, client_info.version, client_info.os, ud_version, rust_version
-    )
+pub fn user_agent(client_info: &ClientInfo) -> String {
+    let base = format!(
+        "{}/{} ({})",
+        client_info.application, client_info.version, client_info.os
+    );
+    match (&client_info.runtime_name, &client_info.runtime_version) {
+        (Some(name), Some(ver)) => format!("{base} {name}/{ver}"),
+        _ => base,
+    }
+}
+
+/// Strip non-numeric suffixes from a version string so the server accepts it.
+///
+/// The Snowflake server validates `CLIENT_APP_VERSION` against
+/// `[0-9]+\.[0-9]+\.[0-9]+` — alphabetic suffixes like "dev" or "rc1"
+/// cause the version to fail validation and disable feature gates.
+/// Example: `"5.0.0dev"` → `"5.0.0"`, `"4.0.0"` → `"4.0.0"`.
+fn strip_version_suffix(version: &str) -> String {
+    version
+        .split('.')
+        .map(|seg| {
+            let numeric: String = seg.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if numeric.is_empty() {
+                "0".to_owned()
+            } else {
+                numeric
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
     AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
-        client_app_version: login_parameters.client_info.version.clone(),
+        client_app_version: strip_version_suffix(&login_parameters.client_info.version),
+        client_app_version_full: login_parameters.client_info.version.clone(),
         client_capabilities: AuthRequestClientCapabilities {
             smk_id_as_string: true,
         },
@@ -207,9 +226,9 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
             platforms: login_parameters.client_info.platforms.clone(),
-            python_version: Some("3.11.6".to_string()),
-            python_runtime: Some("CPython".to_string()),
-            python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+            runtime_version: login_parameters.client_info.runtime_version.clone(),
+            runtime_name: login_parameters.client_info.runtime_name.clone(),
+            compiler: login_parameters.client_info.compiler.clone(),
             os_details: login_parameters.client_info.os_details.clone(),
         },
         ..Default::default()
@@ -404,7 +423,7 @@ async fn send_login_request(
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
 
-    let user_agent = build_user_agent(&login_parameters.client_info);
+    let user_agent = user_agent(&login_parameters.client_info);
 
     let build_request = || {
         client
@@ -683,7 +702,7 @@ pub async fn refresh_session(
             format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
-        .header("User-Agent", build_user_agent(client_info))
+        .header("User-Agent", user_agent(client_info))
         .json(&body)
         .build()
         .context(RequestConstructionSnafu {
@@ -795,7 +814,7 @@ pub async fn token_request(
             format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
-        .header("User-Agent", build_user_agent(client_info))
+        .header("User-Agent", user_agent(client_info))
         .json(&body)
         .build()
         .context(RequestConstructionSnafu {
@@ -1463,7 +1482,7 @@ pub(crate) fn apply_query_headers(
     builder
         .header(header::AUTHORIZATION, authorization_header(session_token))
         .header(header::ACCEPT, json_header_value())
-        .header("User-Agent", build_user_agent(client_info))
+        .header("User-Agent", user_agent(client_info))
 }
 
 pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -2148,6 +2167,72 @@ mod tests {
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
             );
+        }
+    }
+
+    mod user_agent_tests {
+        use super::*;
+
+        #[test]
+        fn user_agent_without_runtime_info() {
+            let info = ClientInfo {
+                application: "MyApp".to_string(),
+                version: "1.0.0".to_string(),
+                os: "Linux".to_string(),
+                ..test_client_info()
+            };
+            assert_eq!(user_agent(&info), "MyApp/1.0.0 (Linux)");
+        }
+
+        #[test]
+        fn user_agent_with_runtime_info() {
+            let info = ClientInfo {
+                application: "PythonConnector".to_string(),
+                version: "3.15.0".to_string(),
+                os: "Darwin".to_string(),
+                runtime_name: Some("CPython".to_string()),
+                runtime_version: Some("3.11.6".to_string()),
+                ..test_client_info()
+            };
+            assert_eq!(
+                user_agent(&info),
+                "PythonConnector/3.15.0 (Darwin) CPython/3.11.6"
+            );
+        }
+
+        #[test]
+        fn user_agent_with_only_runtime_name_no_version() {
+            let info = ClientInfo {
+                runtime_name: Some("CPython".to_string()),
+                runtime_version: None,
+                ..test_client_info()
+            };
+            // Only appended when both name and version are present
+            assert!(!user_agent(&info).contains("CPython"));
+        }
+    }
+
+    mod strip_version_suffix_tests {
+        use super::*;
+
+        #[test]
+        fn clean_version_unchanged() {
+            assert_eq!(strip_version_suffix("5.0.0"), "5.0.0");
+        }
+
+        #[test]
+        fn dev_suffix_stripped() {
+            assert_eq!(strip_version_suffix("5.0.0dev"), "5.0.0");
+        }
+
+        #[test]
+        fn rc_suffix_stripped() {
+            assert_eq!(strip_version_suffix("3.12.1rc2"), "3.12.1");
+        }
+
+        #[test]
+        fn four_segment_preserved() {
+            assert_eq!(strip_version_suffix("2.21.8.1"), "2.21.8.1");
         }
     }
 
