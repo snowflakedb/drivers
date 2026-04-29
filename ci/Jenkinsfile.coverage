@@ -32,6 +32,20 @@ def dockerSetup() {
 }
 
 def installSystemDeps() {
+    // Refresh dnf metadata cache before installing.
+    //
+    // The Docker image (rhel8-universal-driver-coverage) ships with a pre-built
+    // dnf cache whose `repomd.xml` references content-addressed metadata blobs
+    // (hashes like df44af0...-modules.yaml.xz). Rocky Linux rotates these hashes
+    // on every repo update (~weekly) and deletes the old blobs from mirrors
+    // after a brief grace period — at which point any `yum install` from the
+    // image fails with cascading 404s across every mirror in the world.
+    //
+    // `dnf clean all` wipes the stale cache; `dnf makecache` redownloads the
+    // current `repomd.xml` and metadata blobs. This adds ~30s but makes the
+    // install resilient to mirror rotation. Long-term fix: bake `unzip` into
+    // the Docker image so no runtime install is needed.
+    sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
     sh label: 'Install system dependencies', script: 'yum install -y unzip'
 }
 

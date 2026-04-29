@@ -12,10 +12,21 @@ WORKSPACE="${WORKSPACE:-${DRIVER_ROOT}}"
 
 echo "[Info] Starting revocation validation tests"
 
-# Ensure unzip is available (needed by protoc installer during cargo build)
+# Ensure unzip is available (needed by protoc installer during cargo build).
+# Refresh dnf/apt cache first — pre-built Docker images often ship with stale
+# package metadata that gets rotated upstream weekly (Rocky/Debian both do this),
+# leading to cascading 404s on package mirrors. The cache refresh is cheap (~30s)
+# compared to debugging a mirror-rotation outage.
 if ! command -v unzip >/dev/null 2>&1; then
     echo "[Info] Installing unzip..."
-    yum install -y unzip || apt-get install -y unzip || true
+    if command -v dnf >/dev/null 2>&1; then
+        dnf clean all >/dev/null 2>&1 || true
+        dnf makecache --refresh -y >/dev/null 2>&1 || true
+        yum install -y unzip || true
+    elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update -y >/dev/null 2>&1 || true
+        apt-get install -y unzip || true
+    fi
 fi
 
 # Clone revocation-validation framework.
