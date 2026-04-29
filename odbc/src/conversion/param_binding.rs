@@ -13,9 +13,11 @@ use odbc_sys as sql;
 use super::binary::SnowflakeBinary;
 use super::boolean::SnowflakeBoolean;
 use super::date::SnowflakeDate;
+#[cfg(not(windows))]
+use super::error::InvalidUtf8Snafu;
 use super::error::{
-    BindingNumericOutOfRangeSnafu, InvalidParameterIndicesSnafu, InvalidUtf8Snafu,
-    JsonBindingError, NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidParameterIndicesSnafu, JsonBindingError,
+    NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
     UnsupportedParameterTypeSnafu, WCharConversionSnafu,
 };
 use super::number::{NumericSqlType, SnowflakeNumber};
