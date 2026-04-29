@@ -809,12 +809,12 @@ fn put_get_columns(command: Option<&str>) -> Vec<ColumnMetadata> {
     }
 }
 
-/// Build a `ResolvedResultSet` from a Snowflake HTTP response by fetching the query result
-/// by query_id and building the Arrow stream.
-async fn fetch_and_resolve_result_set(
+/// Fetch a query result from Snowflake by query_id via the connection,
+/// returning the raw response `Data` for further processing.
+async fn fetch_query_response_data(
     conn_ptr: &Arc<Mutex<Connection>>,
     query_id: &str,
-) -> Result<ResolvedResultSet, ApiError> {
+) -> Result<(Data, reqwest::Client), ApiError> {
     let (query_parameters, http_client, retry_policy) = {
         let conn = conn_ptr.lock().await;
         (
@@ -861,13 +861,45 @@ async fn fetch_and_resolve_result_set(
         .await;
     }
 
-    let descriptor = response_to_descriptor(&response.data);
-    let query_result = process_query_response(&response.data, &http_client)
+    Ok((response.data, http_client))
+}
+
+/// Build a `ResolvedResultSet` from a Snowflake HTTP response by fetching the query result by query_id and building the Arrow stream.
+async fn fetch_and_resolve_result_set(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    query_id: &str,
+) -> Result<ResolvedResultSet, ApiError> {
+    let (data, http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
+
+    let descriptor = response_to_descriptor(&data);
+    let query_result = process_query_response(&data, &http_client)
         .await
         .context(QueryResponseProcessingSnafu)?;
     let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
 
     Ok(ResolvedResultSet { descriptor, stream })
+}
+
+/// Fetch chunk metadata for a query_id using the connection (no statement handle needed).
+async fn fetch_chunk_info_by_query_id(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    query_id: &str,
+) -> Result<StoredChunkInfo, ApiError> {
+    let (data, _http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
+
+    let descriptor = response_to_descriptor(&data);
+    let format = response_chunk_format(&data)?;
+
+    Ok(StoredChunkInfo {
+        query_id: descriptor.query_id.clone(),
+        descriptor,
+        format,
+        inline: response_inline_data(&data, format),
+        chunks: data.to_chunk_download_data().unwrap_or_default(),
+        prebuilt_stream: None, // prebuilt stream is not cloneable; chunks path only
+        number_of_binds: data.number_of_binds.unwrap_or(0),
+        stream_consumed: false,
+    })
 }
 
 impl DatabaseDriverV1 {
@@ -919,6 +951,22 @@ impl DatabaseDriverV1 {
         })?;
 
         fetch_and_resolve_result_set(&conn_ptr, &query_id).await
+    }
+
+    /// Fetch chunk metadata by query_id using the connection (no statement handle required).
+    pub async fn connection_result_chunks(
+        &self,
+        conn_handle: Handle,
+        query_id: String,
+    ) -> Result<StoredChunkInfo, ApiError> {
+        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        fetch_chunk_info_by_query_id(&conn_ptr, &query_id).await
     }
 }
 

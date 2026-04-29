@@ -14,14 +14,33 @@ from .protobuf_gen.database_driver_v1_pb2 import (
     StatementReleaseRequest,
     StatementSetSqlQueryRequest,
 )
+from .sqlstate import SQLSTATE_SUCCESS
 
 
 if TYPE_CHECKING:
     from ..connection import Connection
 
 
+def new_stmt(connection: Connection) -> StatementHandle:
+    statement_request = StatementNewRequest(conn_handle=connection.conn_handle)
+    stmt = connection.db_api.statement_new(request=statement_request)
+    return stmt.stmt_handle
+
+
+def set_query(connection: Connection, stmt_handle: StatementHandle, query: str) -> None:
+    sql_query_request = StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+    connection.db_api.statement_set_sql_query(sql_query_request)
+
+
+def release_stmt(connection: Connection, stmt_handle: StatementHandle | None) -> StatementHandle | None:
+    if stmt_handle:
+        release_request = StatementReleaseRequest(stmt_handle=stmt_handle)
+        connection.db_api.statement_release(release_request)
+    return None
+
+
 @contextmanager
-def create_statement(connection: Connection, query: str) -> Generator[StatementHandle]:
+def statement(connection: Connection, query: str) -> Generator[StatementHandle]:
     """Context manager that owns the full lifecycle of a statement handle.
 
     Allocates a new statement on the server, binds the given SQL query to it,
@@ -37,37 +56,12 @@ def create_statement(connection: Connection, query: str) -> Generator[StatementH
         StatementHandle: A handle that can be passed to ``statement_execute``
         or other statement-level APIs.
     """
-    statement_request = StatementNewRequest(conn_handle=connection.conn_handle)
-    statement = connection.db_api.statement_new(request=statement_request)
-    stmt_handle = statement.stmt_handle
-    sql_query_request = StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+    stmt_handle = new_stmt(connection)
     try:
-        connection.db_api.statement_set_sql_query(sql_query_request)
+        set_query(connection, stmt_handle, query)
         yield stmt_handle
     finally:
-        release_request = StatementReleaseRequest(stmt_handle=stmt_handle)
-        connection.db_api.statement_release(release_request)
-
-
-def extract_sqlstate(result: PrepareResult | None) -> str | None:
-    """Return the SQLSTATE code from an execute result, if meaningful.
-
-    SQLSTATE ``"00000"`` (successful completion) is normalised to ``None``
-    for backwards compatibility with the legacy connector, which omits
-    the code on success.
-
-    Args:
-        result: The protobuf response returned by ``statement_execute``,
-            or ``None`` if no result is available.
-
-    Returns:
-        A five-character SQLSTATE string for warnings/errors, or ``None``
-        on success or when *result* is ``None``.
-    """
-    sql_state = result.sql_state if result else None
-    if sql_state and sql_state != "00000":
-        return sql_state
-    return None
+        release_stmt(connection, stmt_handle)
 
 
 def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetResponse | None) -> int:
@@ -115,7 +109,28 @@ def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSe
     return stream_ptr
 
 
-def extract_rowcount_from_descriptor(descriptor: ResultSetDescriptor | None) -> int:
+def extract_sqlstate(result: PrepareResult | ResultSetDescriptor | None) -> str | None:
+    """Return the SQLSTATE code from an execute result, if meaningful.
+
+    SQLSTATE ``"00000"`` (successful completion) is normalized to ``None``
+    for backwards compatibility with the legacy connector, which omits
+    the code on success.
+
+    Args:
+        result: A ``PrepareResult`` or ``ResultSetDescriptor``,
+            or ``None`` if no result is available.
+
+    Returns:
+        A five-character SQLSTATE string for warnings/errors, or ``None``
+        on success or when *result* is ``None``.
+    """
+    sql_state = result.sql_state if result else None
+    if sql_state and sql_state != SQLSTATE_SUCCESS:
+        return sql_state
+    return None
+
+
+def extract_rowcount(descriptor: ResultSetDescriptor | None) -> int:
     """Return the number of rows affected from a ResultSetDescriptor.
 
     Returns the rows_affected value from the server if present, otherwise -1.
@@ -134,21 +149,3 @@ def extract_rowcount_from_descriptor(descriptor: ResultSetDescriptor | None) -> 
         return descriptor.rows_affected
 
     return -1
-
-
-def extract_sqlstate_from_descriptor(descriptor: ResultSetDescriptor | None) -> str | None:
-    """Return the SQLSTATE code from a descriptor, if meaningful.
-
-    SQLSTATE ``"00000"`` (successful completion) is normalised to ``None``
-    for backwards compatibility.
-
-    Args:
-        descriptor: The ResultSetDescriptor from a proto response.
-
-    Returns:
-        A five-character SQLSTATE string for warnings/errors, or ``None`` on success.
-    """
-    sql_state = descriptor.sql_state if descriptor else None
-    if sql_state and sql_state != "00000":
-        return sql_state
-    return None

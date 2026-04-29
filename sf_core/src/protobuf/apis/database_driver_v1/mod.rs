@@ -37,6 +37,70 @@ fn not_implemented(message: &str) -> DriverException {
     }
 }
 
+#[allow(clippy::result_large_err)]
+fn chunk_info_to_result_chunks_result(
+    chunk_info: crate::apis::database_driver_v1::StoredChunkInfo,
+) -> Result<ResultChunksResult, DriverException> {
+    let columns: Vec<ColumnMetadata> = chunk_info
+        .descriptor
+        .columns
+        .iter()
+        .cloned()
+        .map(|c| c.into())
+        .collect();
+
+    let mut chunks = Vec::new();
+
+    let inline_base64 = match &chunk_info.inline {
+        InlineData::Json(rowset) => {
+            let row_types: Vec<crate::query_types::RowType> = chunk_info
+                .descriptor
+                .columns
+                .iter()
+                .map(column_metadata_to_row_type)
+                .collect::<Result<Vec<_>, _>>()
+                .to_protobuf()?;
+            Some(
+                json_rowset_to_arrow_ipc_base64(rowset, &row_types)
+                    .context(InlineJsonEncodingSnafu)
+                    .to_protobuf()?,
+            )
+        }
+        InlineData::ArrowIpc(b64) => Some(b64.clone()),
+        InlineData::None => None,
+    };
+
+    if let Some(base64_data) = inline_base64 {
+        let remote_rows: i32 = chunk_info.chunks.iter().map(|c| c.row_count).sum();
+        let inline_row_count = chunk_info
+            .descriptor
+            .rows_affected
+            .map(|total| (total as i32).saturating_sub(remote_rows))
+            .unwrap_or(0);
+
+        chunks.push(ResultChunk {
+            format: ChunkFormat::ArrowIpc as i32,
+            data: Some(result_chunk::Data::Inline(base64_data)),
+            row_count: inline_row_count,
+        });
+    }
+
+    for c in &chunk_info.chunks {
+        chunks.push(ResultChunk {
+            format: ChunkFormat::from(chunk_info.format) as i32,
+            data: Some(result_chunk::Data::Remote(RemoteChunk {
+                url: c.url.clone(),
+                headers: c.headers.clone(),
+                compressed_size: c.compressed_size,
+                uncompressed_size: c.uncompressed_size,
+            })),
+            row_count: c.row_count,
+        });
+    }
+
+    Ok(ResultChunksResult { chunks, columns })
+}
+
 pub struct DatabaseDriverImpl {
     driver: DatabaseDriverV1,
 }
@@ -776,67 +840,28 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .await
             .to_protobuf()?;
 
-        let columns: Vec<ColumnMetadata> = chunk_info
-            .descriptor
-            .columns
-            .iter()
-            .cloned()
-            .map(|c| c.into())
-            .collect();
-
-        let mut chunks = Vec::new();
-
-        // Inline chunks are always normalized to Arrow IPC on the wire.
-        let inline_base64 = match &chunk_info.inline {
-            InlineData::Json(rowset) => {
-                let row_types: Vec<RowType> = chunk_info
-                    .descriptor
-                    .columns
-                    .iter()
-                    .map(column_metadata_to_row_type)
-                    .collect::<Result<Vec<_>, _>>()
-                    .to_protobuf()?;
-                Some(
-                    json_rowset_to_arrow_ipc_base64(rowset, &row_types)
-                        .context(InlineJsonEncodingSnafu)
-                        .to_protobuf()?,
-                )
-            }
-            InlineData::ArrowIpc(b64) => Some(b64.clone()),
-            InlineData::None => None,
-        };
-
-        if let Some(base64_data) = inline_base64 {
-            // Inline chunk row count = total rows - rows in remote chunks.
-            let remote_rows: i32 = chunk_info.chunks.iter().map(|c| c.row_count).sum();
-            let inline_row_count = chunk_info
-                .descriptor
-                .rows_affected
-                .map(|total| (total as i32).saturating_sub(remote_rows))
-                .unwrap_or(0);
-
-            chunks.push(ResultChunk {
-                format: ChunkFormat::ArrowIpc as i32,
-                data: Some(result_chunk::Data::Inline(base64_data)),
-                row_count: inline_row_count,
-            });
-        }
-
-        for c in &chunk_info.chunks {
-            chunks.push(ResultChunk {
-                format: ChunkFormat::from(chunk_info.format) as i32,
-                data: Some(result_chunk::Data::Remote(RemoteChunk {
-                    url: c.url.clone(),
-                    headers: c.headers.clone(),
-                    compressed_size: c.compressed_size,
-                    uncompressed_size: c.uncompressed_size,
-                })),
-                row_count: c.row_count,
-            });
-        }
-
+        let result = chunk_info_to_result_chunks_result(chunk_info)?;
         Ok(StatementResultChunksResponse {
-            result: Some(ResultChunksResult { chunks, columns }),
+            result: Some(result),
+        })
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_result_chunks", skip(self, input))]
+    async fn connection_result_chunks(
+        &self,
+        input: ConnectionResultChunksRequest,
+    ) -> Result<ConnectionResultChunksResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let chunk_info = self
+            .driver
+            .connection_result_chunks(conn_handle.into(), input.query_id)
+            .await
+            .to_protobuf()?;
+
+        let result = chunk_info_to_result_chunks_result(chunk_info)?;
+        Ok(ConnectionResultChunksResponse {
+            result: Some(result),
         })
     }
 
@@ -1032,6 +1057,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementResultChunksRequest,
     ) -> BlockingProtoResult<StatementResultChunksResponse>;
+    fn connection_result_chunks_blocking(
+        &self,
+        input: ConnectionResultChunksRequest,
+    ) -> BlockingProtoResult<ConnectionResultChunksResponse>;
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
@@ -1131,6 +1160,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementResultChunksRequest,
     ) -> BlockingProtoResult<StatementResultChunksResponse> {
         block_on_client_call(self.statement_result_chunks(input))
+    }
+
+    fn connection_result_chunks_blocking(
+        &self,
+        input: ConnectionResultChunksRequest,
+    ) -> BlockingProtoResult<ConnectionResultChunksResponse> {
+        block_on_client_call(self.connection_result_chunks(input))
     }
 
     fn database_fetch_chunk_blocking(
