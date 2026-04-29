@@ -454,6 +454,16 @@ class TestLogoutRetryBehavior:
             )
 
 
+def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
+    """Assert subprocess exited cleanly; xfail on py3.11 SIGABRT (SNOW-3416420)."""
+    try:
+        assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
+    except AssertionError:
+        if sys.version_info[:2] == (3, 11) and result.returncode == -6:
+            pytest.xfail("SNOW-3416420: Rust log callback SIGABRT during Py_Finalize on py3.11")
+        raise
+
+
 @pytest.mark.skip_reference(reason="subprocess imports Connection (not SnowflakeConnection)")
 @pytest.mark.skipif(
     sys.version_info[:2] in ((3, 9), (3, 10)),
@@ -513,7 +523,7 @@ class TestAutoCleanup:
                 text=True,
                 timeout=120,
             )
-            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
+            _assert_subprocess_ok(result)
             assert "ATEXIT_REGISTERED" in result.stdout, "Subprocess must confirm atexit registration"
 
             # When close() is called explicitly
@@ -573,7 +583,7 @@ class TestAutoCleanup:
                 text=True,
                 timeout=120,
             )
-            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
+            _assert_subprocess_ok(result)
 
             # Then atexit handler calls close(retry=False)
             logout_requests = wiremock.get_logout_requests()
@@ -601,9 +611,7 @@ class TestAutoCleanup:
                 text=True,
                 timeout=120,
             )
-            assert result_b.returncode == 0, (
-                f"Process must exit cleanly despite 500 on logout.\nstderr: {result_b.stderr}"
-            )
+            _assert_subprocess_ok(result_b)
             assert len(wiremock2.get_logout_requests()) >= 1, (
                 "Phase B must reach the logout endpoint to prove exception suppression"
             )
@@ -721,7 +729,7 @@ class TestAutoCleanup:
                 text=True,
                 timeout=120,
             )
-            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
+            _assert_subprocess_ok(result)
 
             # Then No atexit handler was registered
             logout_requests = wiremock.get_logout_requests()
