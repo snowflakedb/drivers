@@ -101,6 +101,13 @@ const STATEMENT_TYPE_ID_DELETE: i64 = 0x3300;
 const STATEMENT_TYPE_ID_MERGE: i64 = 0x3400;
 const STATEMENT_TYPE_ID_MULTI_TABLE_INSERT: i64 = 0x3500;
 
+// Statement type IDs for PUT / GET, mirroring `odbc::api::query_type::QueryType`.
+// Snowflake's REST response for these commands does not always carry a
+// `statementTypeId`, so `response_to_descriptor` falls back to these when
+// the `command` field indicates an UPLOAD / DOWNLOAD.
+const STATEMENT_TYPE_ID_GET_FILES: i64 = 0x7101;
+const STATEMENT_TYPE_ID_PUT_FILES: i64 = 0x7102;
+
 /// Check if a statement type ID represents a DML operation
 fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
     if let Some(type_id) = statement_type_id {
@@ -771,11 +778,20 @@ fn response_to_descriptor(data: &Data) -> ResultSetDescriptor {
         })
         .unwrap_or_else(|| put_get_columns(data.command.as_deref()));
 
+    // Snowflake's REST response for PUT / GET does not always carry a `statementTypeId`,
+    // wrapper classifiers need a client-side fallback to recognise the synthesized PUT / GET cursor.
+    // Preserve any server-provided value and only infer it from the `command` field when absent.
+    let statement_type_id = data.statement_type_id.or(match data.command.as_deref() {
+        Some("UPLOAD") => Some(STATEMENT_TYPE_ID_PUT_FILES),
+        Some("DOWNLOAD") => Some(STATEMENT_TYPE_ID_GET_FILES),
+        _ => None,
+    });
+
     ResultSetDescriptor {
         query_id,
         columns,
         rows_affected,
-        statement_type_id: data.statement_type_id,
+        statement_type_id,
         sql_state: data.sql_state.clone(),
         stats: data.stats.clone(),
         number_of_binds: data.number_of_binds.unwrap_or(0),
