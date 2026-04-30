@@ -651,6 +651,15 @@ impl From<SqlType> for sql::SqlDataType {
 /// timestamp with a `±HH:MM` offset suffix.
 pub const SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE: sql::ULen = 35;
 
+/// Snowflake vendor SQL type codes as `odbc_sys::SqlDataType` constants. Match
+/// the legacy 3.16.0 driver's macros from `Source/sf_odbc.h` and the
+/// corresponding `SqlType::SqlSfTimestamp{Ltz,Tz,Ntz}` enum variants. Use
+/// these forms in `match` patterns against `sql::SqlDataType` and as the
+/// reported type in `WriteODBCType::sql_type()`.
+pub const SQL_SF_TIMESTAMP_LTZ: sql::SqlDataType = sql::SqlDataType(2000);
+pub const SQL_SF_TIMESTAMP_TZ: sql::SqlDataType = sql::SqlDataType(2001);
+pub const SQL_SF_TIMESTAMP_NTZ: sql::SqlDataType = sql::SqlDataType(2002);
+
 /// Application Row Descriptor (ARD).
 ///
 /// Stores column binding information and block-cursor header fields.

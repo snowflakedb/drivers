@@ -610,7 +610,8 @@ impl OdbcError {
                 | JsonBindingError::BindingNumericOutOfRange { .. } => {
                     SqlState::NumericValueOutOfRange
                 }
-                JsonBindingError::UnsupportedCDataType { .. } => {
+                JsonBindingError::UnsupportedCDataType { .. }
+                | JsonBindingError::UnsupportedParameterType { .. } => {
                     SqlState::RestrictedDataTypeAttributeViolation
                 }
                 JsonBindingError::InvalidBooleanValue { .. }
@@ -821,7 +822,7 @@ mod tests {
     use super::*;
     use crate::conversion::error::{
         BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, InvalidNumericLiteralSnafu,
-        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
     };
 
     #[test]
@@ -1026,6 +1027,28 @@ mod tests {
     fn unsupported_c_data_type_maps_to_07006() {
         let json_err = UnsupportedCDataTypeSnafu {
             c_type: crate::api::CDataType::Char,
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
+    }
+
+    #[test]
+    fn unsupported_parameter_type_maps_to_07006() {
+        // Per the MS ODBC spec, "Restricted data type attribute violation"
+        // (07006) is the right code when `ParameterType` is a valid driver
+        // SQL type for which no conversion from the supplied `ValueType` is
+        // available -- for example binding any C type to
+        // `SQL_SF_TIMESTAMP_TZ` (2001), which the new driver does not yet
+        // support.
+        let json_err = UnsupportedParameterTypeSnafu {
+            sql_type: odbc_sys::SqlDataType(2001),
         }
         .build();
         let odbc_err = OdbcError::JsonBinding {
