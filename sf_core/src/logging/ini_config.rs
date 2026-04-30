@@ -136,6 +136,65 @@ pub fn find_odbc_ini() -> Option<PathBuf> {
     None
 }
 
+/// Overlay a [`LoggingConfig`] with values from the process environment.
+///
+/// Honored variables:
+///   - `SF_ODBC_LOG_PATH` — path the appender writes to. May be either a
+///     directory (existing behavior) or a full file path; if a file path is
+///     given and its parent exists, the parent becomes `log_path` and the
+///     basename becomes `log_file_name`. Setting this also forces
+///     `enabled = true` so a caller who has an otherwise disabled INI can
+///     still turn logging on from the environment.
+///   - `SF_ODBC_LOG_LEVEL` — one of `OFF|ERROR|WARN|INFO|DEBUG|TRACE` (any
+///     casing). Overrides `LogLevel` from the INI.
+///   - `RUST_LOG` — convenience fallback for users already setting the
+///     standard `tracing_subscriber` env var. We accept either a bare level
+///     (`trace`) or a comma-separated directive list (`sf_core=trace,odbc=trace`)
+///     and apply the first directive's level. Full per-crate filtering is not
+///     wired up; INI / `SF_ODBC_LOG_LEVEL` remain the authoritative controls.
+///
+/// The env vars are opt-in: when a variable is unset or empty, the existing
+/// config value is preserved.
+pub fn apply_env_overrides(mut config: LoggingConfig) -> LoggingConfig {
+    if let Ok(raw) = std::env::var("SF_ODBC_LOG_PATH")
+        && !raw.is_empty()
+    {
+        let path = PathBuf::from(&raw);
+        if path.is_dir() {
+            config.log_path = Some(path);
+        } else if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            config.log_path = Some(parent.to_path_buf());
+            if let Some(name) = path.file_name() {
+                config.log_file_name = Some(name.to_string_lossy().into_owned());
+            }
+        } else {
+            // Bare filename with no directory component: treat as a file in
+            // the current working directory.
+            config.log_path = Some(PathBuf::from("."));
+            config.log_file_name = Some(raw);
+        }
+        config.enabled = true;
+    }
+
+    if let Ok(level) = std::env::var("SF_ODBC_LOG_LEVEL")
+        && let Ok(parsed) = parse_level(&level)
+    {
+        config.level = parsed;
+    } else if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        // Walk the directive list and pick the first level we can parse.
+        // Directive shapes accepted: "trace", "sf_core=trace", "warn,odbc=debug".
+        for part in rust_log.split(',') {
+            let candidate = part.rsplit('=').next().unwrap_or(part).trim();
+            if let Ok(parsed) = parse_level(candidate) {
+                config.level = parsed;
+                break;
+            }
+        }
+    }
+
+    config
+}
+
 fn parse_level(s: &str) -> Result<LevelFilter, LogError> {
     match s.to_uppercase().as_str() {
         "OFF" => Ok(LevelFilter::OFF),
@@ -565,5 +624,162 @@ LOGENABLED=false
                 Some(Path::new("/nonexistent/sf.odbc.ini"))
             );
         });
+    }
+
+    // ========================================================================
+    // apply_env_overrides — env-var overlay on top of INI/TOML config
+    // ========================================================================
+
+    /// `SF_ODBC_LOG_PATH` pointing at a directory is taken verbatim as
+    /// `log_path` and enables logging.
+    #[test]
+    fn env_override_path_directory_sets_log_path_and_enables() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path().to_path_buf();
+        let dir_str = dir_path.to_string_lossy().into_owned();
+        let cfg = LoggingConfig {
+            enabled: false,
+            ..LoggingConfig::default()
+        };
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", Some(dir_str.as_str())),
+                ("SF_ODBC_LOG_LEVEL", None),
+                ("RUST_LOG", None),
+            ],
+            || {
+                let out = apply_env_overrides(cfg);
+                assert_eq!(out.log_path.as_deref(), Some(dir_path.as_path()));
+                assert!(out.enabled);
+            },
+        );
+    }
+
+    /// A full file path is split into `log_path` (parent dir) + `log_file_name`.
+    #[test]
+    fn env_override_path_file_splits_parent_and_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("odbc.log");
+        let file_str = file_path.to_string_lossy().into_owned();
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", Some(file_str.as_str())),
+                ("SF_ODBC_LOG_LEVEL", None),
+                ("RUST_LOG", None),
+            ],
+            || {
+                let out = apply_env_overrides(LoggingConfig::default());
+                assert_eq!(out.log_path.as_deref(), Some(dir.path()));
+                assert_eq!(out.log_file_name.as_deref(), Some("odbc.log"));
+            },
+        );
+    }
+
+    /// Bare filename (no directory component) falls back to "." so the
+    /// appender writes to the process CWD.
+    #[test]
+    fn env_override_path_bare_filename_uses_cwd() {
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", Some("odbc.log")),
+                ("SF_ODBC_LOG_LEVEL", None),
+                ("RUST_LOG", None),
+            ],
+            || {
+                let out = apply_env_overrides(LoggingConfig::default());
+                assert_eq!(out.log_path.as_deref(), Some(Path::new(".")));
+                assert_eq!(out.log_file_name.as_deref(), Some("odbc.log"));
+            },
+        );
+    }
+
+    /// An empty env var must be ignored — it should NOT clobber an existing
+    /// INI-provided path.
+    #[test]
+    fn env_override_empty_path_is_ignored() {
+        let cfg = LoggingConfig {
+            log_path: Some(PathBuf::from("/from/ini")),
+            ..LoggingConfig::default()
+        };
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", Some("")),
+                ("SF_ODBC_LOG_LEVEL", None),
+                ("RUST_LOG", None),
+            ],
+            || {
+                let out = apply_env_overrides(cfg);
+                assert_eq!(out.log_path.as_deref(), Some(Path::new("/from/ini")));
+            },
+        );
+    }
+
+    /// `SF_ODBC_LOG_LEVEL` (any casing) overrides the level.
+    #[test]
+    fn env_override_level_parses_and_overrides() {
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", None),
+                ("SF_ODBC_LOG_LEVEL", Some("trace")),
+                ("RUST_LOG", None),
+            ],
+            || {
+                let out = apply_env_overrides(LoggingConfig::default());
+                assert_eq!(out.level, LevelFilter::TRACE);
+            },
+        );
+    }
+
+    /// `RUST_LOG` is honored only when `SF_ODBC_LOG_LEVEL` is absent.
+    #[test]
+    fn env_override_rust_log_fallback_parses_first_directive() {
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", None),
+                ("SF_ODBC_LOG_LEVEL", None),
+                ("RUST_LOG", Some("sf_core=debug,odbc=trace")),
+            ],
+            || {
+                let out = apply_env_overrides(LoggingConfig::default());
+                // First directive: sf_core=debug.
+                assert_eq!(out.level, LevelFilter::DEBUG);
+            },
+        );
+    }
+
+    /// `SF_ODBC_LOG_LEVEL` wins over `RUST_LOG` when both are set.
+    #[test]
+    fn env_override_sf_level_wins_over_rust_log() {
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", None),
+                ("SF_ODBC_LOG_LEVEL", Some("warn")),
+                ("RUST_LOG", Some("trace")),
+            ],
+            || {
+                let out = apply_env_overrides(LoggingConfig::default());
+                assert_eq!(out.level, LevelFilter::WARN);
+            },
+        );
+    }
+
+    /// Unparseable level strings leave the config alone.
+    #[test]
+    fn env_override_invalid_level_is_ignored() {
+        let cfg = LoggingConfig {
+            level: LevelFilter::INFO,
+            ..LoggingConfig::default()
+        };
+        temp_env::with_vars(
+            [
+                ("SF_ODBC_LOG_PATH", None),
+                ("SF_ODBC_LOG_LEVEL", Some("bogus")),
+                ("RUST_LOG", None),
+            ],
+            || {
+                let out = apply_env_overrides(cfg);
+                assert_eq!(out.level, LevelFilter::INFO);
+            },
+        );
     }
 }
