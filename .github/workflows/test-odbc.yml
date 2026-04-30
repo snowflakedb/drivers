@@ -355,8 +355,8 @@ jobs:
         shell: pwsh
         run: |
           $dir = "target/${{ matrix.cargo_target }}/debug"
-          Rename-Item "$dir/sfodbc.dll" "sfodbc32.dll"
-          if (Test-Path "$dir/sfodbc.pdb") { Rename-Item "$dir/sfodbc.pdb" "sfodbc32.pdb" }
+          Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
+          if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
 
       - name: Save Rust cache
         if: always()
@@ -853,8 +853,8 @@ jobs:
         shell: pwsh
         run: |
           $dir = ".cargo-target-msi/${{ matrix.cargo_target }}/${{ matrix.config }}"
-          Rename-Item "$dir/sfodbc.dll" "sfodbc32.dll"
-          if (Test-Path "$dir/sfodbc.pdb") { Rename-Item "$dir/sfodbc.pdb" "sfodbc32.pdb" }
+          Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
+          if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
 
       - name: Compute ODBC version
         id: odbc-version
