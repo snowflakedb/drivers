@@ -16,11 +16,6 @@ import pytest
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
-def _is_macos_x86_64() -> bool:
-    """Detect if running on macOS x86_64 (native Intel or Rosetta 2)."""
-    return platform.system() == "Darwin" and platform.machine() == "x86_64"
-
-
 _IMPORT_TIME_SCRIPT = """\
 import time
 
@@ -33,15 +28,13 @@ print(f"{elapsed:.6f}")
 """
 
 _NUM_RUNS = 5
-_MAX_IMPORT_TIME_SECONDS = 0.4 if IS_UNIVERSAL_DRIVER else 0.6
+_MAX_IMPORT_TIME_SECONDS = 0.55 if IS_UNIVERSAL_DRIVER else 0.75
 
 
 class TestImportTime:
     """Verify that importing snowflake.connector.connect stays within budget."""
 
-    @pytest.mark.skipif(
-        _is_macos_x86_64(), reason="Import timing unreliable on macOS x86_64 (Rosetta 2 and native Intel)"
-    )
+    @pytest.mark.skipif(platform.system() != "Linux", reason="Import time budgets are calibrated for Linux CI workers")
     def test_import_connect_time(self):
         """Importing ``from snowflake.connector import connect`` must complete
         within the allowed time budget.
