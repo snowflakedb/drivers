@@ -361,13 +361,13 @@ impl DatabaseDriverV1 {
                             conn.tokens.clone(),
                             conn.http_client
                                 .clone()
-                                .expect("http_client must be set after initialize"),
+                                .context(ConnectionNotInitializedSnafu)?,
                             conn.server_url
                                 .clone()
-                                .expect("server_url must be set after initialize"),
+                                .context(ConnectionNotInitializedSnafu)?,
                             conn.client_info
                                 .clone()
-                                .expect("client_info must be set after initialize"),
+                                .context(ConnectionNotInitializedSnafu)?,
                             interval,
                         );
                         conn.heartbeat_handle = Some(handle);
@@ -1832,11 +1832,13 @@ impl DatabaseDriverV1 {
 /// Clear tokens, HTTP client, and stop background tasks.
 async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
     let mut conn = conn_ptr.lock().await;
+    if let Some(mut hb) = conn.heartbeat_handle.take() {
+        hb.cancel_and_wait().await;
+    }
     *conn.tokens.write().await = None;
     conn.http_client = None;
     tracing::debug!("Cleared session tokens and HTTP client");
 
-    // TODO: SNOW-2881763 - Stop heartbeat thread
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
 
