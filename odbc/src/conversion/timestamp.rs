@@ -2,7 +2,7 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
 
@@ -23,6 +23,30 @@ use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+
+/// Wire-protocol bias for TIMESTAMP_TZ offset minutes.
+///
+/// The Snowflake server expects the JSON `value` for a TIMESTAMP_TZ binding
+/// in the form `"<epoch_nanoseconds> <offset_minutes_plus_1440>"`. The 1440
+/// (= 24 * 60) bias keeps the second token non-negative for any legal
+/// timezone offset and matches the legacy 3.16.0 ODBC and Python connectors.
+const TZ_OFFSET_BIAS_MINUTES: i32 = 1440;
+
+/// A TIMESTAMP_TZ value carrying both the UTC instant and its original
+/// timezone offset in minutes.
+///
+/// `utc` is the wall-clock representation **at UTC** (`offset_minutes == 0`
+/// means "this naive datetime is already UTC"). `offset_minutes` records the
+/// offset that produced the *local* wall-clock the user originally saw, so
+/// CHAR/WCHAR formatting and JSON binding can reconstruct it without losing
+/// information. `SQL_C_TYPE_TIMESTAMP` reads ignore `offset_minutes` because
+/// the ODBC struct has no field to store it (matches the spec rule that
+/// "datetime with timezone -> datetime without timezone" converts to UTC).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TzInstant {
+    pub utc: NaiveDateTime,
+    pub offset_minutes: i32,
+}
 
 // =============================================================================
 // Arrow reading helpers
@@ -157,28 +181,25 @@ fn read_scaled_timestamp(
         })
 }
 
-/// Read a TIMESTAMP_TZ value from a StructArray.
+/// Read a TIMESTAMP_TZ value (UTC instant + original offset) from a StructArray.
 ///
 /// Snowflake uses different StructArray layouts depending on the declared scale:
 ///   - Scale 6-9: 3 columns `{epoch_sec: Int64, fraction_nanos: Int32, tz_offset_min: Int32}`
 ///   - Scale 0-5: 2 columns `{epoch_scaled: Int64, tz_offset_min: Int32}`
 ///
-/// In both cases, the epoch value already represents the UTC instant. The
-/// `tz_offset_min` column carries the original timezone offset in minutes but
-/// is intentionally **not** applied to the returned `NaiveDateTime`. This
-/// matches the old driver behavior: `SQL_TIMESTAMP_STRUCT` has no field for
-/// timezone, so callers always receive the UTC wall-clock time. When values
-/// are fetched as `SQL_C_CHAR`/`SQL_C_WCHAR` through this Arrow-based
-/// conversion path, the formatted string likewise reflects the UTC instant and
-/// does not include the original timezone offset. Applications that need to
-/// preserve or reconstruct the original offset must obtain it by other means
-/// (for example, by reading the offset column explicitly or using an API that
-/// exposes the server-formatted string with offset).
+/// In both cases the epoch value already represents the UTC instant; the
+/// `tz_offset_min` column carries the original timezone offset (Snowflake
+/// pre-biases by +1440 on the wire, so we subtract here to recover the signed
+/// offset in minutes). The offset is preserved alongside the UTC datetime so
+/// downstream conversions can reconstruct the local wall-clock for
+/// `SQL_C_CHAR`/`SQL_C_WCHAR` (with `+/-HH:MM` suffix) without losing
+/// information. `SQL_C_TYPE_TIMESTAMP` ignores the offset because the ODBC
+/// struct has no field to store it.
 fn read_struct_timestamp_tz(
     array: &StructArray,
     row_idx: usize,
     scale: u32,
-) -> Result<NaiveDateTime, ReadArrowError> {
+) -> Result<TzInstant, ReadArrowError> {
     if array.is_null(row_idx) {
         return Err(ReadArrowError::NullValue {
             location: snafu::location!(),
@@ -186,9 +207,8 @@ fn read_struct_timestamp_tz(
     }
 
     let num_columns = array.num_columns();
-
-    if num_columns == 3 {
-        read_struct_timestamp(array, row_idx)
+    let utc = if num_columns == 3 {
+        read_struct_timestamp(array, row_idx)?
     } else if num_columns == 2 {
         let epoch_array = array
             .column(0)
@@ -213,13 +233,36 @@ fn read_struct_timestamp_tz(
                     ),
                 }
                 .build()
-            })
+            })?
     } else {
-        InvalidArrowValueSnafu {
+        return InvalidArrowValueSnafu {
             reason: format!("TIMESTAMP_TZ struct has {num_columns} columns, expected 2 or 3"),
         }
-        .fail()
-    }
+        .fail();
+    };
+
+    // Offset always lives in the last column. The wire value is the
+    // signed offset in minutes plus 1440 (Snowflake's positive-only
+    // encoding); subtract the bias here so callers see the true offset.
+    let offset_col_idx = num_columns - 1;
+    let offset_array = array
+        .column(offset_col_idx)
+        .as_any()
+        .downcast_ref::<PrimitiveArray<Int32Type>>()
+        .ok_or_else(|| {
+            InvalidArrowValueSnafu {
+                reason: format!(
+                    "TIMESTAMP_TZ struct column {offset_col_idx} is not Int32 (expected tz_offset_min)"
+                ),
+            }
+            .build()
+        })?;
+    let offset_minutes = offset_array.value(row_idx) - TZ_OFFSET_BIAS_MINUTES;
+
+    Ok(TzInstant {
+        utc,
+        offset_minutes,
+    })
 }
 
 // =============================================================================
@@ -481,17 +524,202 @@ fn write_timestamp_json(value: NaiveDateTime) -> Result<Value, JsonBindingError>
 }
 
 // =============================================================================
-// Macro to generate the five trait impls shared by NTZ, LTZ, and TZ.
+// TIMESTAMP_TZ-specific helpers
 //
-// The only variation is:
-//   - The struct reader for StructArray (NTZ/LTZ use `read_struct_timestamp`;
-//     TZ uses `read_struct_timestamp_tz` which needs `self.scale`).
-//   - The `SnowflakeLogicalType` returned by `sf_type()`.
+// TZ differs from NTZ/LTZ on two axes:
+//   1. CHAR/WCHAR formatting must include a `+/-HH:MM` offset suffix so the
+//      value is round-trippable as text (NTZ/LTZ have no offset to emit).
+//   2. JSON binding must emit `<epoch_nanos> <offset_minutes + 1440>` so the
+//      server stores the original instant *and* its offset (NTZ/LTZ only need
+//      the epoch).
+// `SQL_C_TYPE_TIMESTAMP` reads/writes intentionally drop the offset because
+// the ODBC struct can't carry it -- the spec rule is "datetime with timezone
+// -> datetime without timezone converts to UTC".
 // =============================================================================
 
-macro_rules! impl_snowflake_timestamp {
-    // NTZ/LTZ path: StructArray reader ignores scale; column_size is scale-aware.
-    ($name:ident, standard, $logical_type:expr, $sql_type:expr) => {
+/// Apply an offset (in minutes) to a UTC `NaiveDateTime`, producing the local
+/// wall-clock the user originally observed. Returns `None` if the resulting
+/// year falls outside chrono's representable range.
+fn local_wall_clock(utc: &NaiveDateTime, offset_minutes: i32) -> Option<NaiveDateTime> {
+    let offset = FixedOffset::east_opt(offset_minutes * 60)?;
+    Some(DateTime::<FixedOffset>::from_naive_utc_and_offset(*utc, offset).naive_local())
+}
+
+/// Format a `TzInstant` as `YYYY-MM-DD HH:MM:SS[.fffffffff] +/-HH:MM` into a
+/// stack buffer with no heap allocation, returning the filled slice as `&str`.
+///
+/// 64 bytes is sufficient: 48 for the bare timestamp portion (see
+/// `format_timestamp_string_into`) plus ` +HH:MM` (7 bytes) and headroom.
+fn format_timestamp_tz_string_into<'a>(
+    value: &TzInstant,
+    buf: &'a mut [u8; 64],
+) -> Result<&'a str, WriteOdbcError> {
+    let local = local_wall_clock(&value.utc, value.offset_minutes).ok_or_else(|| {
+        NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "TIMESTAMP_TZ offset {} minutes pushes datetime out of representable range",
+                value.offset_minutes
+            ),
+        }
+        .build()
+    })?;
+
+    // Reuse the bare-timestamp formatter into a 48-byte scratch then copy the
+    // result into our wider buffer alongside the offset suffix.
+    let mut bare = [0u8; 48];
+    let bare_str = format_timestamp_string_into(&local, &mut bare)?;
+    let bare_bytes = bare_str.as_bytes();
+
+    let offset_total = value.offset_minutes;
+    let sign = if offset_total < 0 { '-' } else { '+' };
+    let abs_minutes = offset_total.unsigned_abs();
+    let off_hours = abs_minutes / 60;
+    let off_mins = abs_minutes % 60;
+
+    let mut cur = Cursor::new(&mut buf[..]);
+    let res = cur
+        .write_all(bare_bytes)
+        .and_then(|()| write!(cur, " {sign}{off_hours:02}:{off_mins:02}"));
+    if res.is_err() {
+        return NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "TIMESTAMP_TZ value does not fit in the {}-byte format buffer",
+                buf.len()
+            ),
+        }
+        .fail();
+    }
+    let len = cur.position() as usize;
+    // SAFETY: only ASCII digits, '-', '+', ':', ' ', and '.' were written.
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
+}
+
+fn write_timestamp_tz_to_odbc(
+    value: &TzInstant,
+    binding: &Binding,
+    get_data_offset: &mut Option<usize>,
+) -> Result<Warnings, WriteOdbcError> {
+    match binding.target_type {
+        // CHAR/WCHAR: render with `+/-HH:MM` suffix (offset preserved).
+        CDataType::Char => {
+            // Minimum buffer: bare timestamp (>=20) + space + 6-byte suffix = 27.
+            if binding.buffer_length > 0 && binding.buffer_length < 27 {
+                return NumericValueOutOfRangeSnafu {
+                    reason: "Buffer too small for SQL_C_CHAR TIMESTAMP_TZ (minimum 27 bytes)"
+                        .to_string(),
+                }
+                .fail();
+            }
+            let mut buf = [0u8; 64];
+            let s = format_timestamp_tz_string_into(value, &mut buf)?;
+            Ok(binding.write_char_string(s, get_data_offset))
+        }
+        CDataType::WChar => {
+            if binding.buffer_length > 0 && binding.buffer_length < 54 {
+                return NumericValueOutOfRangeSnafu {
+                    reason: "Buffer too small for SQL_C_WCHAR TIMESTAMP_TZ (minimum 54 bytes)"
+                        .to_string(),
+                }
+                .fail();
+            }
+            let mut buf = [0u8; 64];
+            let s = format_timestamp_tz_string_into(value, &mut buf)?;
+            Ok(binding.write_wchar_string(s, get_data_offset))
+        }
+        // For every other target type (TYPE_TIMESTAMP, BINARY, DATE, TIME),
+        // delegate to the offset-less writer with the UTC wall-clock. This
+        // preserves the established TZ -> SQL_C_TYPE_TIMESTAMP behavior
+        // (return UTC, drop offset) which matches the ODBC spec rule for
+        // "datetime with timezone -> datetime without timezone".
+        _ => write_timestamp_to_odbc(&value.utc, binding, get_data_offset),
+    }
+}
+
+/// Read a TIMESTAMP_TZ value from a parameter binding. Captures both the UTC
+/// instant and the offset so `write_timestamp_tz_json` can emit the legacy
+/// two-token wire format.
+///
+/// Bind paths:
+/// - `SQL_C_TYPE_TIMESTAMP` / `SQL_C_BINARY`: the struct has no offset field,
+///   so we treat the wall-clock as UTC (offset = 0). Matches the legacy
+///   Python connector's treatment of a naive `datetime` bound to TIMESTAMP_TZ.
+/// - `SQL_C_CHAR` / `SQL_C_WCHAR`: parse `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM`;
+///   if no offset suffix is present, fall back to the offset-less parser and
+///   treat as UTC (offset = 0). A genuinely unparseable string surfaces as
+///   `UnsupportedCDataType` (mapped to SQLSTATE HY000) so the caller learns
+///   the bind failed instead of silently storing the Unix epoch.
+fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, JsonBindingError> {
+    match binding.value_type {
+        CDataType::Char => {
+            let s = read_char_str(binding)?;
+            parse_tz_string_with_fallback(s.trim(), binding.value_type)
+        }
+        CDataType::WChar => {
+            let s = read_wchar_str(binding)?;
+            parse_tz_string_with_fallback(s.trim(), binding.value_type)
+        }
+        _ => {
+            // Reuse the existing offset-less reader (handles
+            // SQL_C_TYPE_TIMESTAMP, SQL_C_BINARY, etc.) and treat the
+            // result as UTC + offset 0.
+            let utc = read_timestamp_odbc(binding)?;
+            Ok(TzInstant {
+                utc,
+                offset_minutes: 0,
+            })
+        }
+    }
+}
+
+/// Try `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM` first, then fall back to the
+/// offset-less formats (treated as UTC). Returns `UnsupportedCDataType` if
+/// neither parse succeeds.
+fn parse_tz_string_with_fallback(
+    s: &str,
+    c_type: CDataType,
+) -> Result<TzInstant, JsonBindingError> {
+    for fmt in &["%Y-%m-%d %H:%M:%S%.f %:z", "%Y-%m-%d %H:%M:%S%.f%:z"] {
+        if let Ok(dt) = DateTime::<FixedOffset>::parse_from_str(s, fmt) {
+            return Ok(TzInstant {
+                utc: dt.naive_utc(),
+                offset_minutes: dt.offset().local_minus_utc() / 60,
+            });
+        }
+    }
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+        .map(|utc| TzInstant {
+            utc,
+            offset_minutes: 0,
+        })
+        .map_err(|_| UnsupportedCDataTypeSnafu { c_type }.build())
+}
+
+fn write_timestamp_tz_json(value: TzInstant) -> Result<Value, JsonBindingError> {
+    let epoch_nanos = value.utc.and_utc().timestamp_nanos_opt().ok_or_else(|| {
+        UnsupportedCDataTypeSnafu {
+            c_type: CDataType::TypeTimestamp,
+        }
+        .build()
+    })?;
+    let biased_offset = value.offset_minutes + TZ_OFFSET_BIAS_MINUTES;
+    Ok(Value::String(format!("{epoch_nanos} {biased_offset}")))
+}
+
+// =============================================================================
+// Macro for the NTZ/LTZ trait impls (shared offset-less representation).
+//
+// TZ is implemented manually below because its `Representation` is `TzInstant`
+// (UTC datetime + offset minutes) rather than the bare `NaiveDateTime` used
+// by NTZ/LTZ.
+// =============================================================================
+
+macro_rules! impl_snowflake_timestamp_standard {
+    ($name:ident, $logical_type:expr, $sql_type:expr) => {
+        impl SnowflakeType for $name {
+            type Representation<'a> = NaiveDateTime;
+        }
+
         impl ReadArrowType<StructArray> for $name {
             fn read_arrow_type<'a>(
                 &self,
@@ -499,6 +727,16 @@ macro_rules! impl_snowflake_timestamp {
                 row_idx: usize,
             ) -> Result<Self::Representation<'a>, ReadArrowError> {
                 read_struct_timestamp(array, row_idx)
+            }
+        }
+
+        impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
+            fn read_arrow_type<'a>(
+                &self,
+                array: &'a PrimitiveArray<Int64Type>,
+                row_idx: usize,
+            ) -> Result<Self::Representation<'a>, ReadArrowError> {
+                read_scaled_timestamp(array, row_idx, self.scale)
             }
         }
 
@@ -526,64 +764,6 @@ macro_rules! impl_snowflake_timestamp {
                 get_data_offset: &mut Option<usize>,
             ) -> Result<Warnings, WriteOdbcError> {
                 write_timestamp_to_odbc(&snowflake_value, binding, get_data_offset)
-            }
-        }
-
-        impl_snowflake_timestamp!(@shared $name, $logical_type);
-    };
-
-    // TZ path: StructArray reader uses scale; column_size is fixed at 35 to
-    // accommodate the `±HH:MM` offset suffix appended in the CHAR/WCHAR paths.
-    ($name:ident, tz, $logical_type:expr, $sql_type:expr) => {
-        impl ReadArrowType<StructArray> for $name {
-            fn read_arrow_type<'a>(
-                &self,
-                array: &'a StructArray,
-                row_idx: usize,
-            ) -> Result<Self::Representation<'a>, ReadArrowError> {
-                read_struct_timestamp_tz(array, row_idx, self.scale)
-            }
-        }
-
-        impl WriteODBCType for $name {
-            fn sql_type(&self) -> sql::SqlDataType {
-                $sql_type.into()
-            }
-
-            fn column_size(&self) -> sql::ULen {
-                SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE
-            }
-
-            fn decimal_digits(&self) -> sql::SmallInt {
-                self.scale as sql::SmallInt
-            }
-
-            fn write_odbc_type(
-                &self,
-                snowflake_value: Self::Representation<'_>,
-                binding: &Binding,
-                get_data_offset: &mut Option<usize>,
-            ) -> Result<Warnings, WriteOdbcError> {
-                write_timestamp_to_odbc(&snowflake_value, binding, get_data_offset)
-            }
-        }
-
-        impl_snowflake_timestamp!(@shared $name, $logical_type);
-    };
-
-    // Trait impls that don't differ between NTZ/LTZ/TZ.
-    (@shared $name:ident, $logical_type:expr) => {
-        impl SnowflakeType for $name {
-            type Representation<'a> = NaiveDateTime;
-        }
-
-        impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
-            fn read_arrow_type<'a>(
-                &self,
-                array: &'a PrimitiveArray<Int64Type>,
-                row_idx: usize,
-            ) -> Result<Self::Representation<'a>, ReadArrowError> {
-                read_scaled_timestamp(array, row_idx, self.scale)
             }
         }
 
@@ -619,9 +799,8 @@ pub(crate) struct SnowflakeTimestampNtz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(
+impl_snowflake_timestamp_standard!(
     SnowflakeTimestampNtz,
-    standard,
     SnowflakeLogicalType::TimestampNtz,
     SqlType::SqlSfTimestampNtz
 );
@@ -630,9 +809,8 @@ pub(crate) struct SnowflakeTimestampLtz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(
+impl_snowflake_timestamp_standard!(
     SnowflakeTimestampLtz,
-    standard,
     SnowflakeLogicalType::TimestampLtz,
     SqlType::SqlSfTimestampLtz
 );
@@ -641,12 +819,80 @@ pub(crate) struct SnowflakeTimestampTz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(
-    SnowflakeTimestampTz,
-    tz,
-    SnowflakeLogicalType::TimestampTz,
-    SqlType::SqlSfTimestampTz
-);
+impl SnowflakeType for SnowflakeTimestampTz {
+    type Representation<'a> = TzInstant;
+}
+
+impl ReadArrowType<StructArray> for SnowflakeTimestampTz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a StructArray,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        read_struct_timestamp_tz(array, row_idx, self.scale)
+    }
+}
+
+// TZ never actually arrives as a flat Int64 array in practice -- Snowflake
+// always sends it as a Struct with the offset column. The trait impl exists
+// only to satisfy `make_timestamp_converter!`, which compiles a flat-Int64
+// branch for every timestamp type. If TZ ever did show up flat, treating the
+// epoch as UTC + offset 0 is the safe fallback (matches what NTZ does).
+impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTimestampTz {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a PrimitiveArray<Int64Type>,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        let utc = read_scaled_timestamp(array, row_idx, self.scale)?;
+        Ok(TzInstant {
+            utc,
+            offset_minutes: 0,
+        })
+    }
+}
+
+impl WriteODBCType for SnowflakeTimestampTz {
+    fn sql_type(&self) -> sql::SqlDataType {
+        SqlType::SqlSfTimestampTz.into()
+    }
+
+    fn column_size(&self) -> sql::ULen {
+        SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        self.scale as sql::SmallInt
+    }
+
+    fn write_odbc_type(
+        &self,
+        snowflake_value: Self::Representation<'_>,
+        binding: &Binding,
+        get_data_offset: &mut Option<usize>,
+    ) -> Result<Warnings, WriteOdbcError> {
+        write_timestamp_tz_to_odbc(&snowflake_value, binding, get_data_offset)
+    }
+}
+
+impl ReadODBC for SnowflakeTimestampTz {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        read_timestamp_tz_odbc(binding)
+    }
+}
+
+impl WriteJson for SnowflakeTimestampTz {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        write_timestamp_tz_json(value)
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::TimestampTz
+    }
+}
 
 #[cfg(test)]
 mod format_timestamp_string_into_tests {

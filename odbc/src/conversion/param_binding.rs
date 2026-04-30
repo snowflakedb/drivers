@@ -24,7 +24,7 @@ use super::error::{
 use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
 use super::time::SnowflakeTime;
-use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz};
+use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz, SnowflakeTimestampTz};
 use super::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use super::varchar::SnowflakeVarchar;
 
@@ -192,22 +192,17 @@ fn make_converter(
             snowflake_type: SnowflakeTimestampLtz { scale: 9 },
         })),
 
-        // SQL_SF_TIMESTAMP_TZ (2001) is rejected explicitly: faithfully binding
-        // TIMESTAMP_TZ requires preserving the offset (legacy emits a
-        // `<epoch_ns> <offset_minutes>` pair), which the new driver doesn't
-        // emit yet. Returning a clear error -- mapped to SQLSTATE 07006 by
-        // `JsonBindingError -> SqlState` -- is safer than silently dropping
-        // the offset and storing a wrong instant.
-        SQL_SF_TIMESTAMP_TZ => {
-            tracing::error!(
-                "TIMESTAMP_TZ parameter binding is not supported yet; \
-                 binding the offset is required to avoid a lossy conversion."
-            );
-            UnsupportedParameterTypeSnafu {
-                sql_type: *sql_type,
-            }
-            .fail()
-        }
+        // Snowflake-specific TZ vendor code: emits the legacy two-token wire
+        // format `"<epoch_nanoseconds> <offset_minutes_plus_1440>"` so the
+        // server stores the original instant *and* its timezone offset.
+        // SQL_C_TYPE_TIMESTAMP / SQL_C_BINARY binds (no offset field) are
+        // serialised as UTC + offset 0, matching the legacy Python connector's
+        // handling of naive `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR
+        // / SQL_C_WCHAR binds parse a `+/-HH:MM` suffix from the string and
+        // preserve that offset on the wire.
+        SQL_SF_TIMESTAMP_TZ => Ok(Box::new(JsonParamConverter {
+            snowflake_type: SnowflakeTimestampTz { scale: 9 },
+        })),
 
         _ => {
             tracing::error!("Unsupported SQL data type for JSON binding: {:?}", sql_type);
@@ -1823,11 +1818,11 @@ mod tests {
     }
 
     #[test]
-    fn tz_vendor_code_is_explicitly_rejected() {
-        // TIMESTAMP_TZ binding requires preserving the offset; the new driver
-        // doesn't emit it yet, so it must reject the bind rather than silently
-        // store a wrong instant. See PR D / the legacy "<epoch_ns> <offset>"
-        // wire format.
+    fn tz_vendor_code_routes_to_timestamp_tz_logical_type() -> TestResult {
+        // SQL_C_TYPE_TIMESTAMP has no offset field; the converter treats the
+        // wall-clock as UTC (offset = 0) and emits the legacy two-token wire
+        // format. The logical type must be TimestampTz so the server stores
+        // the value with the offset side-channel rather than as plain NTZ.
         let ts = sql::Timestamp {
             year: 2024,
             month: 6,
@@ -1844,10 +1839,39 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(matches!(
-            make_converter(&binding.sql_data_type),
-            Err(JsonBindingError::UnsupportedParameterType { .. })
-        ));
+        let (ty, value) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampTz);
+        let s = value.as_str().expect("TZ JSON value should be a string");
+        // Wire token shape: "<epoch_nanos> <offset_minutes_plus_1440>".
+        let parts: Vec<&str> = s.split(' ').collect();
+        assert_eq!(parts.len(), 2, "expected `<epoch_ns> <offset>`, got {s}");
+        // Naive struct -> offset 0 -> wire token = bias = 1440.
+        assert_eq!(parts[1], "1440");
+        Ok(())
+    }
+
+    #[test]
+    fn tz_vendor_code_with_char_input_parses_offset_suffix() -> TestResult {
+        // SQL_C_CHAR with a `+/-HH:MM` suffix: the offset must round-trip into
+        // the second wire token (signed offset + 1440 bias).
+        let s = b"2024-01-15 14:30:45 +05:30";
+        let mut ind: sql::Len = s.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Char,
+            SQL_SF_TIMESTAMP_TZ,
+            s.as_ptr() as sql::Pointer,
+            s.len() as sql::Len,
+            &mut ind as *mut sql::Len,
+        );
+        let (ty, value) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampTz);
+        let wire = value.as_str().unwrap();
+        let parts: Vec<&str> = wire.split(' ').collect();
+        // 2024-01-15 14:30:45 +05:30 -> 09:00:45 UTC -> 1705309245000000000 ns
+        // offset 330 + 1440 = 1770
+        assert_eq!(parts[0], "1705309245000000000");
+        assert_eq!(parts[1], "1770");
+        Ok(())
     }
 
     // -- end-to-end pipeline tests -------------------------------------------

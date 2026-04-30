@@ -16,43 +16,45 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR", "[timestamp_tz][conversion][c_wchar]") 
   Connection conn;
 
   // When TIMESTAMP_TZ values are fetched as SQL_C_WCHAR
-  (void)0;
-  // Then Wide string representation matches UTC time
+  // Then The wide-string representation preserves the local wall-clock and
+  // the original `+/-HH:MM` offset suffix (the WCHAR path mirrors the CHAR
+  // path; only the encoding differs).
   {
-    INFO("UTC timestamp");
+    INFO("UTC timestamp keeps +00:00 suffix");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-01-15 14:30:45 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == u"2024-01-15 14:30:45");
+    CHECK(result == u"2024-01-15 14:30:45 +00:00");
   }
 
   {
-    INFO("timestamp with positive offset returns UTC");
+    INFO("positive offset preserves the local wall-clock and suffix");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-01-15 14:30:45 +05:30'::TIMESTAMP_TZ"), 1);
-    CHECK(result == u"2024-01-15 09:00:45");
+    CHECK(result == u"2024-01-15 14:30:45 +05:30");
   }
 
   {
-    INFO("timestamp with fractional seconds");
+    INFO("fractional seconds are preserved alongside the offset");
     auto result =
         check_wchar_success(conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == u"2024-01-15 10:30:00.123456789");
+    CHECK(result == u"2024-01-15 10:30:00.123456789 +00:00");
   }
 
   {
-    INFO("pre-epoch timestamp");
+    INFO("pre-epoch timestamp keeps suffix");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '1960-06-15 12:00:00 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == u"1960-06-15 12:00:00");
+    CHECK(result == u"1960-06-15 12:00:00 +00:00");
   }
 
   {
-    INFO("midnight UTC");
+    INFO("midnight UTC keeps suffix");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-06-15 00:00:00 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == u"2024-06-15 00:00:00");
+    CHECK(result == u"2024-06-15 00:00:00 +00:00");
   }
 
   {
-    INFO("timezone offset crosses date boundary");
+    // Same as the CHAR test: offset is preserved, not re-anchored to UTC.
+    INFO("offset is preserved verbatim, not re-anchored to UTC");
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-01-15 02:00:00 +05:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == u"2024-01-14 21:00:00");
+    CHECK(result == u"2024-01-15 02:00:00 +05:00");
   }
 }
 
@@ -60,7 +62,9 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR buffer too small", "[timestamp_tz][conver
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIMESTAMP_TZ value is fetched into a WCHAR buffer smaller than 20 characters
+  // When A TIMESTAMP_TZ value is fetched into a WCHAR buffer smaller than the
+  // 27-char minimum ("YYYY-MM-DD HH:MM:SS +/-HH:MM" + null terminator, 27
+  // chars * 2 bytes each = 54 bytes). The 5-char buffer fails on size.
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 14:30:45 +00:00'::TIMESTAMP_TZ");
   char16_t buffer[5] = {};
   SQLLEN indicator = 0;
@@ -78,9 +82,12 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR truncation", "[timestamp_tz][conversion][
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIMESTAMP_TZ with fractional seconds is fetched into a WCHAR buffer of 21 characters
+  // When A TIMESTAMP_TZ with fractional seconds is fetched into a 28-char
+  // WCHAR buffer. Full string is `2024-01-15 10:30:00.123456789 +00:00` =
+  // 35 chars + null terminator; the 28-char buffer truncates partway through
+  // the fractional digits.
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +00:00'::TIMESTAMP_TZ");
-  char16_t buffer[21] = {};
+  char16_t buffer[28] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 

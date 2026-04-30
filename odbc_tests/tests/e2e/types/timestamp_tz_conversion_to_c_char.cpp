@@ -17,43 +17,54 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR", "[timestamp_tz][conversion][c_char]") {
   Connection conn;
 
   // When TIMESTAMP_TZ values are fetched as SQL_C_CHAR
-  (void)0;
-  // Then String representation matches UTC time
+  // Then The string representation preserves the local wall-clock and the
+  // original `+/-HH:MM` offset suffix (matches legacy 3.16.0 driver and the
+  // ISO-8601 formatting most BI tools expect for TIMESTAMP_TZ).
   {
-    INFO("UTC timestamp");
+    INFO("UTC timestamp keeps +00:00 suffix");
     auto result = check_char_success(conn.execute_fetch("SELECT '2024-01-15 14:30:45 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == "2024-01-15 14:30:45");
+    CHECK(result == "2024-01-15 14:30:45 +00:00");
   }
 
   {
-    INFO("timestamp with positive offset returns UTC");
+    INFO("positive offset preserves the local wall-clock and suffix");
     auto result = check_char_success(conn.execute_fetch("SELECT '2024-01-15 14:30:45 +05:30'::TIMESTAMP_TZ"), 1);
-    CHECK(result == "2024-01-15 09:00:45");
+    CHECK(result == "2024-01-15 14:30:45 +05:30");
   }
 
   {
-    INFO("timestamp with fractional seconds");
+    INFO("negative offset preserves the local wall-clock and suffix");
+    auto result = check_char_success(conn.execute_fetch("SELECT '2024-01-15 14:30:45 -08:00'::TIMESTAMP_TZ"), 1);
+    CHECK(result == "2024-01-15 14:30:45 -08:00");
+  }
+
+  {
+    INFO("fractional seconds are preserved alongside the offset");
     auto result =
         check_char_success(conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == "2024-01-15 10:30:00.123456789");
+    CHECK(result == "2024-01-15 10:30:00.123456789 +00:00");
   }
 
   {
-    INFO("pre-epoch timestamp");
+    INFO("pre-epoch timestamp keeps suffix");
     auto result = check_char_success(conn.execute_fetch("SELECT '1960-06-15 12:00:00 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == "1960-06-15 12:00:00");
+    CHECK(result == "1960-06-15 12:00:00 +00:00");
   }
 
   {
-    INFO("midnight UTC");
+    INFO("midnight UTC keeps suffix");
     auto result = check_char_success(conn.execute_fetch("SELECT '2024-06-15 00:00:00 +00:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == "2024-06-15 00:00:00");
+    CHECK(result == "2024-06-15 00:00:00 +00:00");
   }
 
   {
-    INFO("timezone offset crosses date boundary");
+    // The local wall-clock stays at 02:00 (the literal the user wrote);
+    // SELECT'ing into SQL_C_CHAR is *not* a UTC conversion -- the offset is
+    // exposed instead. This is the behavior every TIMESTAMP_TZ-aware
+    // database driver (and the legacy Snowflake ODBC driver) provides.
+    INFO("offset is preserved verbatim, not re-anchored to UTC");
     auto result = check_char_success(conn.execute_fetch("SELECT '2024-01-15 02:00:00 +05:00'::TIMESTAMP_TZ"), 1);
-    CHECK(result == "2024-01-14 21:00:00");
+    CHECK(result == "2024-01-15 02:00:00 +05:00");
   }
 }
 
@@ -62,26 +73,31 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR fractional truncation", "[timestamp_tz][co
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIMESTAMP_TZ with fractional seconds is fetched into a 21-byte buffer
+  // When A TIMESTAMP_TZ with fractional seconds is fetched into a 28-byte
+  // buffer that fits the date/time but cuts off the fractional portion
+  // *before* the offset suffix (full string is
+  // `2024-01-15 10:30:00.123456789 +00:00` = 35 chars + null).
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +00:00'::TIMESTAMP_TZ");
-  char buffer[21] = {};
+  char buffer[28] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004 and fractional part truncated
+  // Then SQL_SUCCESS_WITH_INFO with SQLSTATE 01004; indicator reports the full
+  // length the driver tried to write (35), and the buffer holds the prefix.
   CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(indicator == 29);
+  CHECK(indicator == 35);
   auto records = get_diag_rec(stmt);
   CHECK(!records.empty());
   CHECK(records[0].sqlState == "01004");
-  CHECK(std::string(buffer) == "2024-01-15 10:30:00.");
+  CHECK(std::string(buffer) == "2024-01-15 10:30:00.123456");
 }
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR buffer too small", "[timestamp_tz][conversion][c_char][22003]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIMESTAMP_TZ value is fetched into a buffer smaller than 20 bytes
+  // When A TIMESTAMP_TZ value is fetched into a buffer smaller than 27 bytes
+  // (the minimum for "YYYY-MM-DD HH:MM:SS +/-HH:MM" + null terminator).
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 14:30:45 +00:00'::TIMESTAMP_TZ");
   char buffer[10] = {};
   SQLLEN indicator = 0;

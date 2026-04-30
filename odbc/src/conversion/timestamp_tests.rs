@@ -429,10 +429,16 @@ mod tests {
         assert_eq!(&buffer[..19], b"2023-06-15 10:30:45");
     }
 
-    fn make_tz_struct_array_3col(epoch: i64, fraction: i32, tz_offset: i32) -> StructArray {
+    /// Build a 3-column TIMESTAMP_TZ Arrow struct as Snowflake sends it on the
+    /// wire. `offset_minutes` is the *signed* offset in minutes (e.g. -480 for
+    /// UTC-08:00); the helper applies the +1440 bias the server actually puts
+    /// in the column so tests can read naturally.
+    fn make_tz_struct_array_3col(epoch: i64, fraction: i32, offset_minutes: i32) -> StructArray {
         let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(epoch)]));
         let frac_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(fraction)]));
-        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(tz_offset)]));
+        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(
+            offset_minutes + 1440,
+        )]));
         StructArray::from(vec![
             (
                 Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
@@ -441,6 +447,28 @@ mod tests {
             (
                 Arc::new(ArrowField::new("fraction", DataType::Int32, false)),
                 frac_col,
+            ),
+            (
+                Arc::new(ArrowField::new("tz_offset", DataType::Int32, false)),
+                tz_col,
+            ),
+        ])
+    }
+
+    /// Build a 2-column TIMESTAMP_TZ Arrow struct (the layout Snowflake uses
+    /// for scales 0-5, where epoch and fraction are pre-combined into a single
+    /// scaled Int64). `offset_minutes` is the signed offset; the helper
+    /// applies the +1440 server bias.
+    fn make_tz_struct_array_2col(scaled_epoch: i64, offset_minutes: i32) -> StructArray {
+        let epoch_col: ArrayRef =
+            Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(scaled_epoch)]));
+        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(
+            offset_minutes + 1440,
+        )]));
+        StructArray::from(vec![
+            (
+                Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
+                epoch_col,
             ),
             (
                 Arc::new(ArrowField::new("tz_offset", DataType::Int32, false)),
@@ -462,15 +490,45 @@ mod tests {
         let sn = tz(9);
         let array = make_tz_struct_array_3col(1_700_000_000, 0, 0);
         let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.and_utc().timestamp(), 1_700_000_000);
+        assert_eq!(value.utc.and_utc().timestamp(), 1_700_000_000);
+        assert_eq!(value.offset_minutes, 0);
+    }
+
+    #[test]
+    fn read_tz_3col_struct_preserves_offset() {
+        // Positive offset: e.g. UTC+05:30 (India) is +330 minutes.
+        let sn = tz(9);
+        let array = make_tz_struct_array_3col(1_700_000_000, 0, 330);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value.utc.and_utc().timestamp(), 1_700_000_000);
+        assert_eq!(value.offset_minutes, 330);
+    }
+
+    #[test]
+    fn read_tz_3col_struct_preserves_negative_offset() {
+        // Negative offset: e.g. UTC-08:00 (PST) is -480 minutes. Server biases
+        // by +1440 so the wire value is 960; we recover -480 here.
+        let sn = tz(9);
+        let array = make_tz_struct_array_3col(1_700_000_000, 0, -480);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value.offset_minutes, -480);
     }
 
     #[test]
     fn read_tz_2col_struct_valid() {
         let sn = tz(0);
-        let array = make_struct_array(1_700_000_000, 0);
+        let array = make_tz_struct_array_2col(1_700_000_000, 0);
         let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value.and_utc().timestamp(), 1_700_000_000);
+        assert_eq!(value.utc.and_utc().timestamp(), 1_700_000_000);
+        assert_eq!(value.offset_minutes, 0);
+    }
+
+    #[test]
+    fn read_tz_2col_struct_preserves_offset() {
+        let sn = tz(0);
+        let array = make_tz_struct_array_2col(1_700_000_000, 330);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value.offset_minutes, 330);
     }
 
     #[test]
@@ -559,5 +617,180 @@ mod tests {
             let sn = ntz(scale);
             assert_eq!(sn.decimal_digits(), scale as sql::SmallInt);
         }
+    }
+
+    // ---- TZ-specific write/read/json round-trip tests ------------------------
+    //
+    // The helpers under test live in timestamp.rs; we exercise them here through
+    // the public `WriteODBCType` / `ReadODBC` / `WriteJson` traits to keep the
+    // tests resilient against private function renames.
+
+    use crate::api::ParameterBinding;
+    use crate::conversion::traits::{ReadODBC, WriteJson};
+
+    fn make_naive(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+            .expect("valid timestamp literal in test")
+    }
+
+    fn tz_value(utc: &str, offset_minutes: i32) -> crate::conversion::timestamp::TzInstant {
+        crate::conversion::timestamp::TzInstant {
+            utc: make_naive(utc),
+            offset_minutes,
+        }
+    }
+
+    #[test]
+    fn write_tz_char_appends_positive_offset_suffix() {
+        // UTC instant 09:00:45 with offset +05:30 -> local wall-clock 14:30:45
+        // and the formatted string carries `+05:30` so callers can round-trip.
+        let sn = tz(9);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        let warnings = sn
+            .write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 +05:30");
+    }
+
+    #[test]
+    fn write_tz_char_appends_negative_offset_suffix() {
+        let sn = tz(9);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 22:30:45", -480), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 -08:00");
+    }
+
+    #[test]
+    fn write_tz_char_zero_offset_uses_plus_sign() {
+        // Convention: zero offset prints as "+00:00", matching legacy and ISO.
+        let sn = tz(9);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 14:30:45", 0), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 +00:00");
+    }
+
+    #[test]
+    fn write_tz_type_timestamp_returns_utc_ignoring_offset() {
+        // `SQL_C_TYPE_TIMESTAMP` has no offset field; the spec requires returning
+        // the UTC wall-clock. The `+05:30` info is intentionally dropped.
+        let sn = tz(9);
+        let mut value = sql::Timestamp::default();
+        let mut str_len: sql::Len = 0;
+        let binding =
+            binding_for_value::<sql::Timestamp>(CDataType::TypeTimestamp, &mut value, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        assert_eq!(value.year, 2024);
+        assert_eq!(value.hour, 9);
+        assert_eq!(value.minute, 0);
+        assert_eq!(value.second, 45);
+    }
+
+    /// Build a `ParameterBinding` over a borrowed byte buffer + indicator slot,
+    /// suitable for exercising the `read_odbc` path on string inputs.
+    fn tz_param_binding(s: &mut [u8], str_len: &mut sql::Len) -> ParameterBinding {
+        ParameterBinding {
+            sql_data_type: sql::SqlDataType(2001),
+            value_type: CDataType::Char,
+            parameter_value_ptr: s.as_mut_ptr() as sql::Pointer,
+            buffer_length: s.len() as sql::Len,
+            str_len_or_ind_ptr: str_len as *mut sql::Len,
+        }
+    }
+
+    #[test]
+    fn read_tz_char_parses_offset_suffix() {
+        // `read_odbc` must recover the offset from the trailing `+/-HH:MM` so
+        // the JSON binding can re-emit it on the wire.
+        let sn = tz(9);
+        let mut s = b"2024-01-15 14:30:45 +05:30".to_vec();
+        let mut str_len: sql::Len = s.len() as sql::Len;
+        let binding = tz_param_binding(&mut s, &mut str_len);
+        let value = sn.read_odbc(&binding).unwrap();
+        assert_eq!(value.utc, make_naive("2024-01-15 09:00:45"));
+        assert_eq!(value.offset_minutes, 330);
+    }
+
+    #[test]
+    fn read_tz_char_negative_offset() {
+        let sn = tz(9);
+        let mut s = b"2024-01-15 14:30:45 -08:00".to_vec();
+        let mut str_len: sql::Len = s.len() as sql::Len;
+        let binding = tz_param_binding(&mut s, &mut str_len);
+        let value = sn.read_odbc(&binding).unwrap();
+        assert_eq!(value.utc, make_naive("2024-01-15 22:30:45"));
+        assert_eq!(value.offset_minutes, -480);
+    }
+
+    #[test]
+    fn read_tz_char_without_offset_falls_back_to_utc() {
+        // Spec-grey-area: bare timestamps with no offset are treated as UTC
+        // (matches legacy Python connector for naive datetimes bound to TZ).
+        let sn = tz(9);
+        let mut s = b"2024-01-15 14:30:45".to_vec();
+        let mut str_len: sql::Len = s.len() as sql::Len;
+        let binding = tz_param_binding(&mut s, &mut str_len);
+        let value = sn.read_odbc(&binding).unwrap();
+        assert_eq!(value.utc, make_naive("2024-01-15 14:30:45"));
+        assert_eq!(value.offset_minutes, 0);
+    }
+
+    #[test]
+    fn read_tz_char_unparseable_returns_error() {
+        // Genuinely garbage input must surface an error so the bind fails
+        // visibly rather than silently storing the Unix epoch.
+        let sn = tz(9);
+        let mut s = b"not a timestamp".to_vec();
+        let mut str_len: sql::Len = s.len() as sql::Len;
+        let binding = tz_param_binding(&mut s, &mut str_len);
+        assert!(sn.read_odbc(&binding).is_err());
+    }
+
+    #[test]
+    fn write_tz_json_emits_two_token_format() {
+        // Wire format: `<epoch_nanos> <offset_minutes + 1440>`. Server
+        // subtracts the bias to recover the signed offset; legacy Python and
+        // ODBC drivers use the same encoding.
+        let sn = tz(9);
+        let json = sn.write_json(tz_value("2024-01-15 09:00:45", 330)).unwrap();
+        // 2024-01-15 09:00:45 UTC -> epoch_nanos = 1705309245000000000
+        // offset 330 + 1440 = 1770
+        assert_eq!(
+            json,
+            serde_json::Value::String("1705309245000000000 1770".into())
+        );
+    }
+
+    #[test]
+    fn write_tz_json_negative_offset_stays_positive_on_wire() {
+        // -480 + 1440 = 960; the bias guarantees the second token is always
+        // non-negative for any legal offset.
+        let sn = tz(9);
+        let json = sn
+            .write_json(tz_value("2024-01-15 22:30:45", -480))
+            .unwrap();
+        let s = json.as_str().unwrap();
+        let parts: Vec<&str> = s.split(' ').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1], "960");
+    }
+
+    #[test]
+    fn write_tz_json_zero_offset_emits_bias() {
+        // Naive bind path (offset = 0 -> wire token = 1440).
+        let sn = tz(9);
+        let json = sn.write_json(tz_value("2024-01-15 14:30:45", 0)).unwrap();
+        let s = json.as_str().unwrap();
+        assert!(s.ends_with(" 1440"), "expected bias-only suffix, got {s}");
     }
 }
