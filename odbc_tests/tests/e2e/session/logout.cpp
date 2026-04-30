@@ -10,6 +10,10 @@
 
 // WiremockClient is POSIX-only (fork/exec); on Windows these tests are skipped.
 #ifndef _WIN32
+#include <atomic>
+#include <thread>
+#include <vector>
+
 #include "WiremockClient.hpp"
 #endif
 
