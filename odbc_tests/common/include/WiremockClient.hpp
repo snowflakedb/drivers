@@ -21,6 +21,7 @@
 
 #include <netinet/in.h>
 
+#include "test_setup.hpp"
 #include "utils.hpp"
 
 /// Lightweight C++ wrapper around the WireMock standalone JAR.
@@ -210,8 +211,11 @@ inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
   key_ss << key_file.rdbuf();
   std::string key_pem = key_ss.str();
 
-  // Separate statements to avoid clang-format version divergence on chained << operators.
-  std::ostringstream ss;
+  // configure_driver_string registers the ODBC driver with the Driver Manager
+  // and prepends DRIVER={...} (Unix) or DSN=... (Windows) to the connection string.
+  // Without it, unixODBC returns IM002 "Data source name not found".
+  std::stringstream ss;
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "PORT=" << wm.port() << ";";
   ss << "ACCOUNT=testaccount;";
