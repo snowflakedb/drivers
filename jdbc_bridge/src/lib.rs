@@ -10,6 +10,7 @@ use sf_core::protobuf::apis::database_driver_v1::DriverProviders;
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
 
 static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
+static JDBC_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
 struct JdbcBridge {
     runtime: tokio::runtime::Runtime,
@@ -74,6 +75,20 @@ pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jin
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnUnload(_jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
     0
+}
+
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_net_snowflake_client_internal_unicore_JNICoreTransport_nativeInit(
+    mut env: JNIEnv,
+    _class: JClass,
+    version: JString,
+) {
+    if let Ok(v) = env.get_string(&version) {
+        let version_str = v.to_string_lossy().to_string();
+        tracing::info!("JDBC driver starting v{version_str}");
+        *JDBC_VERSION.lock().unwrap_or_else(|e| e.into_inner()) = Some(version_str);
+    }
 }
 
 /// Handle a protobuf message
