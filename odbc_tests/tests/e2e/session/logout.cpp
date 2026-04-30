@@ -12,6 +12,7 @@
 // WiremockClient is POSIX-only (fork/exec); on Windows these tests are skipped.
 #ifndef _WIN32
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -94,7 +95,10 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
   for (int i = 0; i < num_threads; ++i) {
     threads.emplace_back([&, i]() {
       ready_count.fetch_add(1, std::memory_order_release);
+      // Timeout prevents infinite hang on slow CI runners.
+      auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
       while (ready_count.load(std::memory_order_acquire) < num_threads) {
+        if (std::chrono::steady_clock::now() > deadline) break;
       }
       results[i] = SQLDisconnect(dbc.getHandle());
     });
