@@ -2,7 +2,6 @@
 Feature: VECTOR type support
   # Snowflake VECTOR type stores fixed-size arrays of numeric values.
   # Subtypes: INT (integer) and FLOAT (32-bit floating-point).
-  # Values are returned as Python lists (list[int] or list[float]).
   # Maximum dimension: 4096.
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 
@@ -34,11 +33,16 @@ Feature: VECTOR type support
       | FLOAT-5d  | FLOAT    | [1.8, -3.4, 6.7, 0.0, 2.3] |
 
   @python_e2e
-  Scenario: should select vector special values
-    # Special values: NULL vectors and max-dimension (4096) vector
+  Scenario: should handle NULL vector values
     Given Snowflake client is logged in
-    When Query selecting special vector values is executed
-    Then NULL vectors should return None and max-dimension vector should be valid
+    When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)" is executed
+    Then Result should contain [[1, 2, 3], NULL, NULL]
+
+  @python_e2e
+  Scenario: should select max-dimension vector
+    Given Snowflake client is logged in
+    When Query selecting 4096-element float vector is executed
+    Then Result should be a valid 4096-element float vector
 
   # =========================================================================== #
   #                           Table operations                                  #
@@ -54,7 +58,7 @@ Feature: VECTOR type support
   @python_e2e
   Scenario: should handle NULL vector values from table
     Given Snowflake client is logged in
-    And Table with VECTOR columns exists containing NULLs and values
+    And Table with VECTOR columns exist containing NULLs and values
     When Query "SELECT * FROM <table> ORDER BY id" is executed
     Then Result should contain both vector values and NULLs
 
@@ -64,7 +68,6 @@ Feature: VECTOR type support
 
   @python_e2e
   Scenario: should download vector data in multiple chunks
-    # skip_for_json_result_set
     Given Snowflake client is logged in
     When Query generating 20000 integer vectors is executed
     Then All 20000 rows should be fetched with valid 3-element integer vectors

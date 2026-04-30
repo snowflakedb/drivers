@@ -10,11 +10,8 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 
 import pytest
 
-from .utils import assert_sequential_values, assert_type
+from .utils import assert_floats_equal, assert_sequential_values, assert_type
 
-
-# VECTOR(FLOAT) uses 32-bit floats — need relaxed tolerance vs 64-bit assert_floats_equal.
-FLOAT32_APPROX = {"rel": 1e-6}
 
 # =============================================================================
 # INT VECTOR TEST VALUES
@@ -42,12 +39,10 @@ MAX_DIMENSION_SIZE = 4096
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 20_000
 
-
-def _vec_sql(values: list, subtype: str) -> str:
-    """Build a VECTOR SQL literal, e.g. ``[1, 2, 3]::VECTOR(INT, 3)``."""
-    return f"{values}::VECTOR({subtype}, {len(values)})"
+SKIP_JSON = pytest.mark.skip_for_json_result_set(reason="VECTOR type is not supported in JSON result format")
 
 
+@SKIP_JSON
 class TestVectorTypeCasting:
     """Tests for VECTOR type casting to appropriate type."""
 
@@ -56,17 +51,18 @@ class TestVectorTypeCasting:
         pass
 
         # When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), [1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)" is executed
-        sql = f"SELECT {_vec_sql(INT_VEC_3D, 'INT')}, {_vec_sql(FLOAT_VEC_3D, 'FLOAT')}"
+        sql = f"SELECT {INT_VEC_3D}::VECTOR(INT, 3), {FLOAT_VEC_3D}::VECTOR(FLOAT, 3)"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
         assert_type(result, list)
         assert result[0] == INT_VEC_3D
         assert_type(result[0], int)
-        assert result[1] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
+        assert_floats_equal(result[1], FLOAT_VEC_3D)
         assert_type(result[1], float)
 
 
+@SKIP_JSON
 class TestVectorLiteral:
     """Tests for VECTOR type using SELECT with literals (no tables)."""
 
@@ -86,42 +82,51 @@ class TestVectorLiteral:
         pass
 
         # When Query "SELECT <expected_value>::VECTOR(<vec_type>, ...)" is executed
-        sql = f"SELECT {_vec_sql(expected_value, vec_type)}"
+        sql = f"SELECT {expected_value}::VECTOR({vec_type}, {len(expected_value)})"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain <subtype> vector <expected_value>
         assert isinstance(result[0], list)
         assert len(result[0]) == len(expected_value)
         if vec_type == "FLOAT":
-            assert result[0] == pytest.approx(expected_value, **FLOAT32_APPROX)
+            assert_floats_equal(result[0], expected_value)
             assert_type(result[0], float)
         else:
             assert result[0] == expected_value
             assert_type(result[0], int)
 
-    def test_should_select_vector_special_values(self, execute_query):
+    def test_should_handle_null_vector_values(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
-        # When Query selecting special vector values is executed
-        null_result = execute_query(
-            f"SELECT {_vec_sql(INT_VEC_3D, 'INT')}, NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)",
+        # When Query "SELECT [1, 2, 3]::VECTOR(INT, 3), NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)" is executed
+        result = execute_query(
+            f"SELECT {INT_VEC_3D}::VECTOR(INT, 3), NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)",
             single_row=True,
         )
+
+        # Then Result should contain [[1, 2, 3], NULL, NULL]
+        assert result[0] == INT_VEC_3D
+        assert result[1] is None
+        assert result[2] is None
+
+    def test_should_select_max_dimension_vector(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query selecting 4096-element float vector is executed
         expected = [float(i) for i in range(MAX_DIMENSION_SIZE)]
         values = ", ".join(str(v) for v in expected)
-        max_dim_result = execute_query(f"SELECT [{values}]::VECTOR(FLOAT, {MAX_DIMENSION_SIZE})", single_row=True)
+        result = execute_query(f"SELECT [{values}]::VECTOR(FLOAT, {MAX_DIMENSION_SIZE})", single_row=True)
 
-        # Then NULL vectors should return None and max-dimension vector should be valid
-        assert null_result[0] == INT_VEC_3D
-        assert null_result[1] is None
-        assert null_result[2] is None
-        assert isinstance(max_dim_result[0], list)
-        assert len(max_dim_result[0]) == MAX_DIMENSION_SIZE
-        assert_type(max_dim_result[0], float)
-        assert max_dim_result[0] == pytest.approx(expected, **FLOAT32_APPROX)
+        # Then Result should be a valid 4096-element float vector
+        assert isinstance(result[0], list)
+        assert len(result[0]) == MAX_DIMENSION_SIZE
+        assert_type(result[0], float)
+        assert_floats_equal(result[0], expected)
 
 
+@SKIP_JSON
 class TestVectorTable:
     """Tests for VECTOR type using table operations."""
 
@@ -136,8 +141,8 @@ class TestVectorTable:
         )
         execute_query(
             f"INSERT INTO {table_name} "
-            f"SELECT 1, {_vec_sql(INT_VEC_3D, 'INT')}, {_vec_sql(FLOAT_VEC_5D, 'FLOAT')} "
-            f"UNION ALL SELECT 2, {_vec_sql(INT_VEC_3D_B, 'INT')}, {_vec_sql(FLOAT_VEC_5D_B, 'FLOAT')}"
+            f"SELECT 1, {INT_VEC_3D}::VECTOR(INT, 3), {FLOAT_VEC_5D}::VECTOR(FLOAT, 5) "
+            f"UNION ALL SELECT 2, {INT_VEC_3D_B}::VECTOR(INT, 3), {FLOAT_VEC_5D_B}::VECTOR(FLOAT, 5)"
         )
 
         # When Query "SELECT * FROM <table> ORDER BY id" is executed
@@ -147,17 +152,17 @@ class TestVectorTable:
         assert len(rows) == 2
         assert rows[0][1] == INT_VEC_3D
         assert_type(rows[0][1], int)
-        assert rows[0][2] == pytest.approx(FLOAT_VEC_5D, **FLOAT32_APPROX)
+        assert_floats_equal(rows[0][2], FLOAT_VEC_5D)
         assert_type(rows[0][2], float)
         assert rows[1][1] == INT_VEC_3D_B
         assert_type(rows[1][1], int)
-        assert rows[1][2] == pytest.approx(FLOAT_VEC_5D_B, **FLOAT32_APPROX)
+        assert_floats_equal(rows[1][2], FLOAT_VEC_5D_B)
         assert_type(rows[1][2], float)
 
     def test_should_handle_null_vector_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         pass
-        # And Table with VECTOR columns exists containing NULLs and values
+        # And Table with VECTOR columns exist containing NULLs and values
         table_name = f"{tmp_schema}.vector_null_table"
         execute_query(
             f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
@@ -165,8 +170,8 @@ class TestVectorTable:
         )
         execute_query(
             f"INSERT INTO {table_name} "
-            f"SELECT 1, {_vec_sql(INT_VEC_3D, 'INT')}, NULL::VECTOR(FLOAT, 3) "
-            f"UNION ALL SELECT 2, NULL::VECTOR(INT, 3), {_vec_sql(FLOAT_VEC_3D, 'FLOAT')} "
+            f"SELECT 1, {INT_VEC_3D}::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3) "
+            f"UNION ALL SELECT 2, NULL::VECTOR(INT, 3), {FLOAT_VEC_3D}::VECTOR(FLOAT, 3) "
             f"UNION ALL SELECT 3, NULL::VECTOR(INT, 3), NULL::VECTOR(FLOAT, 3)"
         )
 
@@ -178,17 +183,15 @@ class TestVectorTable:
         assert rows[0][1] == INT_VEC_3D
         assert rows[0][2] is None
         assert rows[1][1] is None
-        assert rows[1][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
+        assert_floats_equal(rows[1][2], FLOAT_VEC_3D)
         assert rows[2][1] is None
         assert rows[2][2] is None
 
 
+@SKIP_JSON
 class TestVectorMultipleChunks:
     """Tests for VECTOR type with multiple chunks downloading."""
 
-    @pytest.mark.skip_for_json_result_set(
-        reason="Multichunk vector generates dynamic data that may not round-trip identically in JSON format"
-    )
     def test_should_download_vector_data_in_multiple_chunks(self, execute_query):
         # Given Snowflake client is logged in
         pass
