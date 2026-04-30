@@ -6,6 +6,7 @@
 
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
+#include "snowflake_odbc_constants.hpp"
 
 TEST_CASE("CLIENT_TIMESTAMP_TYPE_MAPPING=TIMESTAMP_NTZ maps untyped timestamp to NTZ", "[timestamp][type_mapping]") {
   // Given Snowflake client is logged in with NTZ timestamp mapping
@@ -58,6 +59,8 @@ TEST_CASE("TIMESTAMP_TYPE_MAPPING changes column type for TIMESTAMP", "[timestam
                                  &decimal_digits, &nullable);
   REQUIRE_ODBC(ret, stmt);
 
-  // Then The SQL data type should be SQL_TYPE_TIMESTAMP
-  CHECK(data_type == SQL_TYPE_TIMESTAMP);
+  // Then The SQL data type should be the Snowflake vendor code
+  // SQL_SF_TIMESTAMP_NTZ (2002), reflecting that the unqualified TIMESTAMP
+  // resolves to TIMESTAMP_NTZ under this session mapping.
+  CHECK(data_type == SQL_SF_TIMESTAMP_NTZ);
 }

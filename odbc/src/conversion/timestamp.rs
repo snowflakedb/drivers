@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::api::types::{SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE, SqlType};
 use crate::conversion::error::{
     BindingNumericOutOfRangeSnafu, JsonBindingError, NumericValueOutOfRangeSnafu,
     UnsupportedCDataTypeSnafu,
@@ -489,8 +490,8 @@ fn write_timestamp_json(value: NaiveDateTime) -> Result<Value, JsonBindingError>
 // =============================================================================
 
 macro_rules! impl_snowflake_timestamp {
-    // NTZ/LTZ path: StructArray reader ignores scale.
-    ($name:ident, standard, $logical_type:expr) => {
+    // NTZ/LTZ path: StructArray reader ignores scale; column_size is scale-aware.
+    ($name:ident, standard, $logical_type:expr, $sql_type:expr) => {
         impl ReadArrowType<StructArray> for $name {
             fn read_arrow_type<'a>(
                 &self,
@@ -501,42 +502,9 @@ macro_rules! impl_snowflake_timestamp {
             }
         }
 
-        impl_snowflake_timestamp!(@common $name, $logical_type);
-    };
-
-    // TZ path: StructArray reader uses scale to handle 2- vs 3-column layouts.
-    ($name:ident, tz, $logical_type:expr) => {
-        impl ReadArrowType<StructArray> for $name {
-            fn read_arrow_type<'a>(
-                &self,
-                array: &'a StructArray,
-                row_idx: usize,
-            ) -> Result<Self::Representation<'a>, ReadArrowError> {
-                read_struct_timestamp_tz(array, row_idx, self.scale)
-            }
-        }
-
-        impl_snowflake_timestamp!(@common $name, $logical_type);
-    };
-
-    (@common $name:ident, $logical_type:expr) => {
-        impl SnowflakeType for $name {
-            type Representation<'a> = NaiveDateTime;
-        }
-
-        impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
-            fn read_arrow_type<'a>(
-                &self,
-                array: &'a PrimitiveArray<Int64Type>,
-                row_idx: usize,
-            ) -> Result<Self::Representation<'a>, ReadArrowError> {
-                read_scaled_timestamp(array, row_idx, self.scale)
-            }
-        }
-
         impl WriteODBCType for $name {
             fn sql_type(&self) -> sql::SqlDataType {
-                sql::SqlDataType::TIMESTAMP
+                $sql_type.into()
             }
 
             fn column_size(&self) -> sql::ULen {
@@ -558,6 +526,64 @@ macro_rules! impl_snowflake_timestamp {
                 get_data_offset: &mut Option<usize>,
             ) -> Result<Warnings, WriteOdbcError> {
                 write_timestamp_to_odbc(&snowflake_value, binding, get_data_offset)
+            }
+        }
+
+        impl_snowflake_timestamp!(@shared $name, $logical_type);
+    };
+
+    // TZ path: StructArray reader uses scale; column_size is fixed at 35 to
+    // accommodate the `±HH:MM` offset suffix appended in the CHAR/WCHAR paths.
+    ($name:ident, tz, $logical_type:expr, $sql_type:expr) => {
+        impl ReadArrowType<StructArray> for $name {
+            fn read_arrow_type<'a>(
+                &self,
+                array: &'a StructArray,
+                row_idx: usize,
+            ) -> Result<Self::Representation<'a>, ReadArrowError> {
+                read_struct_timestamp_tz(array, row_idx, self.scale)
+            }
+        }
+
+        impl WriteODBCType for $name {
+            fn sql_type(&self) -> sql::SqlDataType {
+                $sql_type.into()
+            }
+
+            fn column_size(&self) -> sql::ULen {
+                SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE
+            }
+
+            fn decimal_digits(&self) -> sql::SmallInt {
+                self.scale as sql::SmallInt
+            }
+
+            fn write_odbc_type(
+                &self,
+                snowflake_value: Self::Representation<'_>,
+                binding: &Binding,
+                get_data_offset: &mut Option<usize>,
+            ) -> Result<Warnings, WriteOdbcError> {
+                write_timestamp_to_odbc(&snowflake_value, binding, get_data_offset)
+            }
+        }
+
+        impl_snowflake_timestamp!(@shared $name, $logical_type);
+    };
+
+    // Trait impls that don't differ between NTZ/LTZ/TZ.
+    (@shared $name:ident, $logical_type:expr) => {
+        impl SnowflakeType for $name {
+            type Representation<'a> = NaiveDateTime;
+        }
+
+        impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
+            fn read_arrow_type<'a>(
+                &self,
+                array: &'a PrimitiveArray<Int64Type>,
+                row_idx: usize,
+            ) -> Result<Self::Representation<'a>, ReadArrowError> {
+                read_scaled_timestamp(array, row_idx, self.scale)
             }
         }
 
@@ -596,7 +622,8 @@ pub(crate) struct SnowflakeTimestampNtz {
 impl_snowflake_timestamp!(
     SnowflakeTimestampNtz,
     standard,
-    SnowflakeLogicalType::TimestampNtz
+    SnowflakeLogicalType::TimestampNtz,
+    SqlType::SqlSfTimestampNtz
 );
 
 pub(crate) struct SnowflakeTimestampLtz {
@@ -606,14 +633,20 @@ pub(crate) struct SnowflakeTimestampLtz {
 impl_snowflake_timestamp!(
     SnowflakeTimestampLtz,
     standard,
-    SnowflakeLogicalType::TimestampLtz
+    SnowflakeLogicalType::TimestampLtz,
+    SqlType::SqlSfTimestampLtz
 );
 
 pub(crate) struct SnowflakeTimestampTz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(SnowflakeTimestampTz, tz, SnowflakeLogicalType::TimestampTz);
+impl_snowflake_timestamp!(
+    SnowflakeTimestampTz,
+    tz,
+    SnowflakeLogicalType::TimestampTz,
+    SqlType::SqlSfTimestampTz
+);
 
 #[cfg(test)]
 mod format_timestamp_string_into_tests {

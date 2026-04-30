@@ -549,6 +549,20 @@ pub enum SqlType {
     // sqlext.h
     Guid = -11, // SQL_GUID
 
+    // Snowflake-specific vendor SQL type codes for TIMESTAMP variants.
+    //
+    // Reported by `SQLDescribeCol` and `SQLColAttribute` so applications can
+    // distinguish `TIMESTAMP_LTZ` / `_TZ` / `_NTZ` columns that would otherwise
+    // all surface as the standard `SQL_TYPE_TIMESTAMP` (93). The values match
+    // the legacy 3.16.0 Snowflake ODBC driver (`Source/sf_odbc.h`) and fall in
+    // the vendor-reserved range (≥ 2000) per the MS ODBC spec
+    // ("Driver-specific data types"). A follow-up PR adds the matching
+    // `SQLBindParameter` `ParameterType` routing for these codes; for now they
+    // are output-only.
+    SqlSfTimestampLtz = 2000, // SQL_SF_TIMESTAMP_LTZ
+    SqlSfTimestampTz = 2001,  // SQL_SF_TIMESTAMP_TZ
+    SqlSfTimestampNtz = 2002, // SQL_SF_TIMESTAMP_NTZ
+
     // sqlext.h — ODBC 3.x interval types (100 + subcode)
     IntervalYear = 101,
     IntervalMonth = 102,
@@ -611,6 +625,9 @@ impl TryFrom<sql::SmallInt> for SqlType {
             111 => Ok(SqlType::IntervalHourToMinute),
             112 => Ok(SqlType::IntervalHourToSecond),
             113 => Ok(SqlType::IntervalMinuteToSecond),
+            2000 => Ok(SqlType::SqlSfTimestampLtz),
+            2001 => Ok(SqlType::SqlSfTimestampTz),
+            2002 => Ok(SqlType::SqlSfTimestampNtz),
             _ => {
                 tracing::error!("Invalid SQL data type: {value}");
                 Err(OdbcError::InvalidSqlDataType {
@@ -627,6 +644,12 @@ impl From<SqlType> for sql::SqlDataType {
         sql::SqlDataType(value as i16)
     }
 }
+
+/// Column size (display width) for `TIMESTAMP_TZ` reported via `SQLDescribeCol`
+/// and `SQLColAttribute`. Matches the legacy 3.16.0 driver's
+/// `SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE` and is large enough for a fully-precise
+/// timestamp with a `±HH:MM` offset suffix.
+pub const SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE: sql::ULen = 35;
 
 /// Application Row Descriptor (ARD).
 ///

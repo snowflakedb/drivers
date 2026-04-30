@@ -7,6 +7,7 @@
 #include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "snowflake_odbc_constants.hpp"
 
 // =============================================================================
 // Tests for SQLDescribeCol based on ODBC specification:
@@ -255,10 +256,16 @@ TEST_CASE("SQLDescribeCol returns SQL_TYPE_DATE for DATE column.", "[query]") {
   CHECK(nullable == SQL_NULLABLE);
 }
 
-TEST_CASE("SQLDescribeCol returns SQL_TYPE_TIMESTAMP for TIMESTAMP_NTZ column.", "[query]") {
+TEST_CASE("SQLDescribeCol returns SQL_SF_TIMESTAMP_NTZ for TIMESTAMP_NTZ column.", "[query]") {
   // Doc: "In ODBC 3.x, SQL_TYPE_DATE, SQL_TYPE_TIME, or SQL_TYPE_TIMESTAMP is
   //       returned in *DataTypePtr for date, time, or timestamp data, respectively."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
+  //
+  // The Snowflake driver returns the vendor-reserved type code
+  // SQL_SF_TIMESTAMP_NTZ (2002) instead of the standard SQL_TYPE_TIMESTAMP (93)
+  // so applications can distinguish NTZ from LTZ (2000) and TZ (2001) columns.
+  // Vendor codes >= 2000 are explicitly permitted by the MS ODBC specification
+  // ("Driver-specific data types").
 
   // Given Snowflake client is logged in
   Connection conn(get_readonly_db_connection_string());
@@ -275,10 +282,10 @@ TEST_CASE("SQLDescribeCol returns SQL_TYPE_TIMESTAMP for TIMESTAMP_NTZ column.",
                                  &decimal_digits, &nullable);
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the data type should be SQL_TYPE_TIMESTAMP
+  // Then the data type should be SQL_SF_TIMESTAMP_NTZ
   CHECK(std::string((char*)col_name) == "VAL");
   CHECK(name_length == 3);
-  CHECK(data_type == SQL_TYPE_TIMESTAMP);
+  CHECK(data_type == SQL_SF_TIMESTAMP_NTZ);
   CHECK(col_size == 29);
   CHECK(decimal_digits == 9);
   CHECK(nullable == SQL_NULLABLE);

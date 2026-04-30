@@ -9,6 +9,7 @@ mod tests {
     use odbc_sys as sql;
 
     use crate::api::CDataType;
+    use crate::api::types::SqlType;
     use crate::conversion::error::{ConversionError, ReadArrowError};
     use crate::conversion::test_utils::helpers::{binding_for_char_buffer, binding_for_value};
     use crate::conversion::timestamp::{
@@ -516,20 +517,40 @@ mod tests {
     }
 
     #[test]
-    fn sql_type_is_timestamp_for_all_variants() {
-        assert_eq!(ntz(0).sql_type(), sql::SqlDataType::TIMESTAMP);
-        assert_eq!(ltz(3).sql_type(), sql::SqlDataType::TIMESTAMP);
-        assert_eq!(tz(9).sql_type(), sql::SqlDataType::TIMESTAMP);
+    fn sql_type_returns_distinct_vendor_codes_per_variant() {
+        // NTZ/LTZ/TZ surface as Snowflake-specific vendor SQL type codes
+        // (`SQL_SF_TIMESTAMP_NTZ/LTZ/TZ`) so applications can distinguish them
+        // via `SQLDescribeCol`. Values match the legacy 3.16.0 driver.
+        assert_eq!(ntz(0).sql_type(), SqlType::SqlSfTimestampNtz.into());
+        assert_eq!(ltz(3).sql_type(), SqlType::SqlSfTimestampLtz.into());
+        assert_eq!(tz(9).sql_type(), SqlType::SqlSfTimestampTz.into());
     }
 
     #[test]
-    fn column_size_scale_0_is_19() {
+    fn column_size_ntz_scale_0_is_19() {
         assert_eq!(ntz(0).column_size(), 19);
     }
 
     #[test]
-    fn column_size_scale_9_is_29() {
+    fn column_size_ntz_scale_9_is_29() {
         assert_eq!(ntz(9).column_size(), 29); // 20 + 9
+    }
+
+    #[test]
+    fn column_size_ltz_matches_ntz() {
+        // LTZ has the same wall-clock string layout as NTZ on the wire (no
+        // offset suffix), so it shares NTZ's scale-aware column size.
+        assert_eq!(ltz(0).column_size(), 19);
+        assert_eq!(ltz(9).column_size(), 29);
+    }
+
+    #[test]
+    fn column_size_tz_is_fixed_at_35() {
+        // TZ reserves room for the `±HH:MM` offset suffix at every scale,
+        // matching legacy `SQL_SF_TIMESTAMP_TZ_COLUMN_SIZE`.
+        assert_eq!(tz(0).column_size(), 35);
+        assert_eq!(tz(3).column_size(), 35);
+        assert_eq!(tz(9).column_size(), 35);
     }
 
     #[test]
