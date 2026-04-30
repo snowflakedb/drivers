@@ -1,4 +1,4 @@
 mod connection_is_closed;
-mod logout;
 mod heartbeat;
+mod logout;
 mod session_refresh;
