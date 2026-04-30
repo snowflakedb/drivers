@@ -178,39 +178,44 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      # cargo-llvm-cov flag semantics:
+      # cargo-llvm-cov flag semantics + combination rules:
+      #
       #   `cargo llvm-cov ... --no-report`  → build instrumented binaries + run tests +
       #                                       accumulate coverage data; skip report.
-      #   `cargo llvm-cov ... --no-clean --no-report`
-      #                                     → same, but preserve any prior instrumented
-      #                                       artifacts in target/llvm-cov-target/ so
-      #                                       coverage data merges across invocations.
+      #                                       Implicitly disables the pre-build clean
+      #                                       so subsequent invocations merge coverage.
       #   `cargo llvm-cov report --lcov`    → emit lcov from accumulated coverage data;
       #                                       no build, no run.
       #
-      # `--no-run` and `--no-report` are mutually exclusive in cargo-llvm-cov (the
-      # former is also deprecated). So unlike tarpaulin's clean two-phase build/run
-      # separation, llvm-cov forces build+run into a single invocation. This means we
-      # don't have a separate "build" step — the `Run tests with coverage` step below
-      # builds AND runs in one shot. Compile errors vs. test failures are still
-      # distinguishable in the cargo log output of that step.
+      # MUTUALLY EXCLUSIVE flags (the CLI rejects any pair of these):
+      #   --no-report, --no-clean, --no-run
+      # All three are "skip a phase" modifiers and only one applies at a time. In
+      # particular, do NOT combine `--no-report --no-clean` (rejected at runtime)
+      # — `--no-report` already implies the clean-skip per the upstream README:
+      #   "[clean] behavior is disabled when --no-clean, --no-report, or
+      #    --no-run is passed".
       #
-      # The generated lcov.info is intentionally not uploaded from GHA; coverage reporting
-      # is owned by the dedicated Jenkins coverage pipeline (ci/Jenkinsfile.coverage), which
-      # surfaces results as Jenkins build status + archived artifacts — no external upload.
-
+      # Unlike tarpaulin's clean two-phase build/run separation, llvm-cov forces
+      # build+run into a single invocation. So there's no separate "build" step
+      # below — `Run tests with coverage` builds AND runs. Compile errors vs.
+      # test failures are still readable in cargo's own output.
+      #
+      # The generated lcov.info is intentionally not uploaded from GHA; coverage
+      # reporting is owned by the dedicated Jenkins coverage pipeline
+      # (ci/Jenkinsfile.coverage), which surfaces results as Jenkins build status
+      # + archived artifacts — no external upload.
       - name: Run tests with coverage
         id: run_rust_tests
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --no-clean --no-report --no-fail-fast --package sf_core --all-features
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core --all-features
 
       - name: Rerun tests with coverage
         if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --no-clean --no-report --no-fail-fast --package sf_core --all-features
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core --all-features
 
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
