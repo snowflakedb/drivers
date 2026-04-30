@@ -253,11 +253,6 @@ class Connection(ErrorHandlerMixin):
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
 
-    @pep249
-    @api_telemetry
-    def close(self) -> None:
-        """Close the connection now.
-
     def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> None:
         """Parse and extract all special params from kwargs in-place.
 
@@ -309,6 +304,7 @@ class Connection(ErrorHandlerMixin):
                 warnings.warn(warning.message, stacklevel=2)
 
     @pep249
+    @api_telemetry
     def close(self, retry: bool = True) -> None:
         """
         Close the connection, send logout, and release handles.
