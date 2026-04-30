@@ -294,20 +294,20 @@ impl DatabaseDriverV1 {
                     // session_id are routed to /telemetry/send.
                     let telemetry_enabled = self.telemetry_sessions().is_some()
                         && conn
-                        .session_parameters
-                        .read()
-                        .await
-                        .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
-                        .map(|v| v.eq_ignore_ascii_case("true"))
-                        .unwrap_or(true);
+                            .session_parameters
+                            .read()
+                            .await
+                            .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
+                            .map(|v| v.eq_ignore_ascii_case("true"))
+                            .unwrap_or(true);
 
                     if telemetry_enabled {
                         use crate::telemetry::snowflake_exporter::ExporterSession;
 
                         let Some(http_client) = conn.http_client.clone() else {
                             tracing::warn!(
-                            "Skipping telemetry: http_client not set after connection init"
-                        );
+                                "Skipping telemetry: http_client not set after connection init"
+                            );
                             drop(conn);
                             return Ok(());
                         };
