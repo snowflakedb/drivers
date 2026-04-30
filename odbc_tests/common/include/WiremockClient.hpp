@@ -1,6 +1,11 @@
 #ifndef WIREMOCK_CLIENT_HPP
 #define WIREMOCK_CLIENT_HPP
 
+// WiremockClient is POSIX-only: fork/exec/setsid/kill have no Windows equivalents.
+// On Windows, logout.cpp skips these tests via SKIP().
+#ifndef _WIN32
+
+#include <fcntl.h>
 #include <picojson.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -73,8 +78,6 @@ class WiremockClient {
   ///
   /// Uses WireMock's POST /__admin/requests/count admin endpoint.
   int get_request_count(const std::string& method, const std::string& url_path) const {
-    // Build request body for WireMock's count endpoint.
-    // url_path matches the path only (e.g. "/session"), query params checked separately.
     std::string body = R"({"method":")" + method + R"(","urlPath":")" + url_path + R"("})";
     std::string cmd = "curl -s -X POST " + admin_url("/__admin/requests/count") +
                       " -H 'Content-Type: application/json'" + " -d '" + body + "'";
@@ -152,7 +155,7 @@ class WiremockClient {
     if (pid_ == 0) {
       // Child: create new process group so we can kill it by group.
       setsid();
-      // Suppress WireMock stdout/stderr.
+      // Suppress WireMock stdout/stderr via /dev/null redirect.
       int dev_null = open("/dev/null", O_WRONLY);
       if (dev_null >= 0) {
         dup2(dev_null, STDOUT_FILENO);
@@ -184,7 +187,10 @@ class WiremockClient {
     char buf[256];
     while (fgets(buf, sizeof(buf), pipe))
       ss << buf;
-    pclose(pipe);
+    int status = pclose(pipe);
+    if (status == -1) {
+      throw std::runtime_error("pclose failed for: " + cmd);
+    }
     return ss.str();
   }
 };
@@ -195,7 +201,6 @@ class WiremockClient {
 /// (same key used by sf_core Rust integration tests). WireMock accepts any
 /// JWT-formatted auth request via login_success_jwt.json — no signature validation.
 inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
-  // Read the test private key and base64-encode it.
   auto key_path = test_utils::repo_root() / "tests" / "test_data" / "invalid_rsa_key.p8";
   std::ifstream key_file(key_path);
   if (!key_file) {
@@ -205,15 +210,18 @@ inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
   key_ss << key_file.rdbuf();
   std::string key_pem = key_ss.str();
 
+  // Separate statements to avoid clang-format version divergence on chained << operators.
   std::ostringstream ss;
-  ss << "SERVER=localhost;"
-     << "PORT=" << wm.port() << ";"
-     << "ACCOUNT=testaccount;"
-     << "UID=testuser;"
-     << "PROTOCOL=http;"
-     << "AUTHENTICATOR=SNOWFLAKE_JWT;"
-     << "PRIV_KEY_BASE64=" << test_utils::base64_encode(key_pem) << ";";
+  ss << "SERVER=localhost;";
+  ss << "PORT=" << wm.port() << ";";
+  ss << "ACCOUNT=testaccount;";
+  ss << "UID=testuser;";
+  ss << "PROTOCOL=http;";
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(key_pem) << ";";
   return ss.str();
 }
+
+#endif  // !_WIN32
 
 #endif  // WIREMOCK_CLIENT_HPP

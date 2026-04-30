@@ -1,21 +1,22 @@
 #include <sql.h>
 #include <sqlext.h>
 
-#include <atomic>
-#include <thread>
-#include <vector>
-
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "WiremockClient.hpp"
 #include "compatibility.hpp"
 #include "odbc_matchers.hpp"
+
+// WiremockClient is POSIX-only (fork/exec); on Windows these tests are skipped.
+#ifndef _WIN32
+#include "WiremockClient.hpp"
+#endif
 
 /// Connect directly to a WireMock instance without using the RAII Connection
 /// class, whose destructor calls SQLDisconnect.  For logout tests we need to
 /// control exactly when and how many times SQLDisconnect is called.
+#ifndef _WIN32
 static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env, const WiremockClient& wm) {
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
   auto conn_str = get_wiremock_connection_string(wm);
@@ -24,9 +25,13 @@ static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env
   REQUIRE_ODBC(ret, dbc);
   return dbc;
 }
+#endif
 
 TEST_CASE("should be idempotent when close called multiple times", "[session][logout]") {
   SKIP_OLD_DRIVER("BD#000", "Old driver does not support WireMock-based logout testing");
+#ifdef _WIN32
+  SKIP("WireMock subprocess requires POSIX (fork/exec)");
+#else
 
   WiremockClient wm;
   wm.add_mapping_file("auth/login_success_jwt.json");
@@ -41,10 +46,12 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
   REQUIRE_ODBC(first_ret, dbc);
 
   // And Connection is closed again
-  SQLDisconnect(dbc.getHandle());  // ODBC spec: returns SQL_ERROR/08003 — expected
+  SQLRETURN second_ret = SQLDisconnect(dbc.getHandle());
+  CHECK(second_ret == SQL_ERROR);  // ODBC spec: 08003 on already-disconnected handle
 
   // And Connection is closed a third time
-  SQLDisconnect(dbc.getHandle());  // ODBC spec: returns SQL_ERROR/08003 — expected
+  SQLRETURN third_ret = SQLDisconnect(dbc.getHandle());
+  CHECK(third_ret == SQL_ERROR);  // ODBC spec: 08003 on already-disconnected handle
 
   // Then Only one logout request is sent
   CHECK(wm.get_request_count("POST", "/session") == 1);
@@ -53,10 +60,15 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
   // SQL_ERROR — not a bug.  The first close is the meaningful one; verify it succeeded.
   // And No errors are thrown
   CHECK(first_ret == SQL_SUCCESS);
+
+#endif  // !_WIN32
 }
 
 TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
   SKIP_OLD_DRIVER("BD#000", "Old driver does not support WireMock-based logout testing");
+#ifdef _WIN32
+  SKIP("WireMock subprocess requires POSIX (fork/exec)");
+#else
 
   WiremockClient wm;
   wm.add_mapping_file("auth/login_success_jwt.json");
@@ -95,4 +107,6 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
     if (r == SQL_SUCCESS) success_count++;
   }
   CHECK(success_count == 1);
+
+#endif  // !_WIN32
 }
