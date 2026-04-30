@@ -42,20 +42,30 @@ def assert_type(values: Iterable, expected_type: type, can_be_none: bool = False
         )
 
 
-def assert_datetime_type(values: Iterable, can_be_none: bool = False, require_tzinfo: bool = False) -> None:
-    """Assert all values are datetime instances.
-
-    Args:
-        values: Iterable of values to check.
-        can_be_none: If True, None values are allowed.
-        require_tzinfo: If True, datetime values must have timezone info (tzinfo is not None).
-    """
+def assert_datetime_type(values: Iterable, can_be_none: bool = False) -> None:
+    """Assert all values are datetime instances."""
     for i, value in enumerate(values):
         if can_be_none and value is None:
             continue
         assert isinstance(value, datetime), f"Value at index {i} should be datetime, got {type(value).__name__}"
-        if require_tzinfo:
+
+
+def assert_timezone(values: Iterable, expected_tz: str | None, can_be_none: bool = False) -> None:
+    """Assert all values have the expected timezone.
+
+    When expected_tz is set, every value must carry matching tzinfo.
+    When expected_tz is None, every value must be naive (tzinfo is None).
+    """
+    for i, value in enumerate(values):
+        if can_be_none and value is None:
+            continue
+        if expected_tz:
             assert value.tzinfo is not None, f"Value at index {i} should have timezone info (tzinfo is None)"
+            assert value.tzinfo.zone == expected_tz, (
+                f"Value at index {i}: expected tz '{expected_tz}', got '{value.tzinfo.zone}'"
+            )
+        else:
+            assert value.tzinfo is None, f"Value at index {i} should not have timezone info, got {value.tzinfo}"
 
 
 def assert_float_equal(actual: float, expected: float | None, msg: str = "") -> None:
