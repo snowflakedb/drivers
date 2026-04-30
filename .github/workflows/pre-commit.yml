@@ -33,6 +33,15 @@ jobs:
           mode: restore
           shared-key: "precommit"
 
+      - name: Restore tests-format-validator Rust cache
+        id: validator-cache
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "format-validator"
+          target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
+
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
 
@@ -96,3 +105,15 @@ jobs:
           shared-key: "precommit"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save tests-format-validator Rust cache
+        if: always()
+        timeout-minutes: 20
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "format-validator"
+          target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
+          registry-cache-hit: ${{ steps.validator-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.validator-cache.outputs.target-cache-hit }}
