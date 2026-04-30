@@ -882,7 +882,10 @@ jobs:
         run: rustup target add ${{ matrix.cargo_target }}
 
       - name: Install WiX Toolset v7
-        run: dotnet tool install --global wix
+        run: |
+          dotnet tool install --global wix
+          wix extension add WixToolset.UI.wixext
+          wix extension add WixToolset.Util.wixext
 
       - name: Build ODBC driver
         run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
