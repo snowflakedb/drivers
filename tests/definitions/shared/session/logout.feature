@@ -1,4 +1,4 @@
-@core @python
+@core @odbc @python
 Feature: Session Logout
 
   # Core-level HTTP protocol details are in core/session/logout.feature
@@ -24,7 +24,7 @@ Feature: Session Logout
       | True                      |
       | None                      |
 
-  @core_e2e @python_e2e
+  @core_e2e @odbc_e2e @python_e2e
   Scenario: should be idempotent when close called multiple times
     Given Snowflake client is logged in
     When Connection is closed
@@ -65,7 +65,7 @@ Feature: Session Logout
   #                        Concurrency
   # ===========================================================================
 
-  @core_e2e @python_e2e
+  @core_e2e @odbc_e2e @python_e2e
   Scenario: should handle concurrent close calls safely
     Given Snowflake client is logged in
     When Connection is closed from multiple threads concurrently
