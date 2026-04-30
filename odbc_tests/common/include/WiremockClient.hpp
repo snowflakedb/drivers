@@ -162,9 +162,12 @@ class WiremockClient {
         dup2(dev_null, STDERR_FILENO);
         close(dev_null);
       }
-      execl("/usr/bin/java", "java", "-jar", jar.string().c_str(), "--root-dir", root_dir.string().c_str(), "--port",
-            port_str.c_str(), "--proxy-pass-through", "false", "--no-request-journal", "false",
-            static_cast<char*>(nullptr));
+      // Use execlp (not execl) so Java is found via PATH — /usr/bin/java
+      // doesn't exist on macOS with Homebrew Java.
+      // Do NOT pass --no-request-journal: it's a boolean flag (presence = disable),
+      // and we need the journal for /__admin/requests/count.
+      execlp("java", "java", "-jar", jar.string().c_str(), "--root-dir", root_dir.string().c_str(), "--port",
+             port_str.c_str(), "--proxy-pass-through", "false", static_cast<char*>(nullptr));
       _exit(1);
     }
     // Parent: pid_ is now the child's PID.
