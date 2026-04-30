@@ -280,6 +280,22 @@ macro_rules! make_timestamp_converter {
     };
 }
 
+/// Snowflake transmits TIME columns as either Int32 (scale 0-3, value fits in
+/// 32 bits) or Int64 (scale 4-9). Dispatch on the physical Arrow type so the
+/// downcast matches what the server actually sent.
+macro_rules! make_time_converter {
+    ($snowflake_type:expr, $field:expr, $nullable:expr) => {
+        match $field.data_type() {
+            DataType::Int32 => {
+                make_primitive_data_converter!(Int32Type, $snowflake_type, $nullable)
+            }
+            _ => {
+                make_primitive_data_converter!(Int64Type, $snowflake_type, $nullable)
+            }
+        }
+    };
+}
+
 fn get_field_metadata(field: &Field, key: &str) -> Result<u32, ConversionError> {
     let metadata = field.metadata().get(key).ok_or(
         MissingFieldMetadataSnafu {
@@ -513,7 +529,7 @@ pub fn make_converter(
             make_primitive_data_converter!(Date32Type, snowflake_type, nullable)
         }
         SnowflakeFieldType::Time(snowflake_type) => {
-            make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
+            make_time_converter!(snowflake_type, field, nullable)
         }
         SnowflakeFieldType::TimestampNtz(snowflake_type) => {
             make_timestamp_converter!(snowflake_type, field, nullable)

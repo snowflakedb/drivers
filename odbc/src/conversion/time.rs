@@ -1,7 +1,7 @@
 use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray};
-use arrow::datatypes::Int64Type;
+use arrow::datatypes::{Int32Type, Int64Type};
 use chrono::{Datelike, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
@@ -69,37 +69,59 @@ impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
                 location: snafu::location!(),
             });
         }
-        if self.scale > 9 {
-            return InvalidArrowValueSnafu {
-                reason: format!("TIME scale {} exceeds maximum of 9", self.scale),
-            }
-            .fail();
-        }
-        let raw = array.value(row_idx);
-        if raw < 0 {
-            return InvalidArrowValueSnafu {
-                reason: format!("negative TIME value: {raw}"),
-            }
-            .fail();
-        }
-        let divisor = 10i64.pow(self.scale);
-        let secs_i64 = raw / divisor;
-        if !(0..86_400).contains(&secs_i64) {
-            return InvalidArrowValueSnafu {
-                reason: format!("TIME seconds {secs_i64} out of range 0..86399"),
-            }
-            .fail();
-        }
-        let secs = secs_i64 as u32;
-        let frac = (raw % divisor) as u32;
-        let nanos = frac * 10u32.pow(9 - self.scale);
-        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or_else(|| {
-            InvalidArrowValueSnafu {
-                reason: format!("out-of-range TIME: secs={secs}, nanos={nanos}"),
-            }
-            .build()
-        })
+        naive_time_from_scaled(array.value(row_idx), self.scale)
     }
+}
+
+/// Snowflake transmits TIME values with scale 0-3 as `Int32` (to save space —
+/// seconds or milliseconds since midnight fit in 32 bits), and scale 4-9 as
+/// `Int64`. Support both physical types; dispatch happens in
+/// `make_time_converter!` at the field level.
+impl ReadArrowType<PrimitiveArray<Int32Type>> for SnowflakeTime {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a PrimitiveArray<Int32Type>,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        if array.is_null(row_idx) {
+            return Err(ReadArrowError::NullValue {
+                location: snafu::location!(),
+            });
+        }
+        naive_time_from_scaled(i64::from(array.value(row_idx)), self.scale)
+    }
+}
+
+fn naive_time_from_scaled(raw: i64, scale: u32) -> Result<NaiveTime, ReadArrowError> {
+    if scale > 9 {
+        return InvalidArrowValueSnafu {
+            reason: format!("TIME scale {scale} exceeds maximum of 9"),
+        }
+        .fail();
+    }
+    if raw < 0 {
+        return InvalidArrowValueSnafu {
+            reason: format!("negative TIME value: {raw}"),
+        }
+        .fail();
+    }
+    let divisor = 10i64.pow(scale);
+    let secs_i64 = raw / divisor;
+    if !(0..86_400).contains(&secs_i64) {
+        return InvalidArrowValueSnafu {
+            reason: format!("TIME seconds {secs_i64} out of range 0..86399"),
+        }
+        .fail();
+    }
+    let secs = secs_i64 as u32;
+    let frac = (raw % divisor) as u32;
+    let nanos = frac * 10u32.pow(9 - scale);
+    NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or_else(|| {
+        InvalidArrowValueSnafu {
+            reason: format!("out-of-range TIME: secs={secs}, nanos={nanos}"),
+        }
+        .build()
+    })
 }
 
 impl WriteODBCType for SnowflakeTime {
