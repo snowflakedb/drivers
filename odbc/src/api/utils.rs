@@ -70,7 +70,23 @@ pub fn num_result_cols(
     Ok(())
 }
 
-/// Get the number of affected rows
+/// Get the number of affected rows.
+///
+/// Per ODBC spec (and matching the reference driver, `snowflake-odbc`
+/// `SFResults.cpp::SQLRowCount`):
+///
+/// - **DML** (INSERT / UPDATE / DELETE / MERGE / COPY-as-DML) — report the
+///   actual row count returned by the server in `rows_affected`.
+/// - **Cursor-producing statements** (SELECT, SHOW, DESCRIBE, CALL, etc.) —
+///   report `-1`. The row count is not determinable at `SQLRowCount` time
+///   because rows haven't been consumed by `SQLFetch` yet. Reporting `0`
+///   here (which was the previous behavior when `rows_affected` was `None`)
+///   lies to the caller: downstream consumers such as dtm-server's hyperq
+///   MSR-emulation accounting treat `0` as "the statement returned no rows"
+///   and skip activity-count aggregation that the reference driver's `-1`
+///   would have triggered.
+/// - **DDL / TCL / SET / MULTI_STMT parent** — report `-1` (unknown / not
+///   applicable).
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
     let stmt = stmt_from_handle(statement_handle);
@@ -80,8 +96,10 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     }
 
     let row_count = match stmt.state.as_ref() {
-        StatementState::QueryExecuted { rows_affected, .. }
-        | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
+        // Cursor-producing statements: SQLRowCount is not determinable
+        // before the cursor is fully consumed. Match the reference driver
+        // and return -1 rather than fabricating a zero.
+        StatementState::QueryExecuted { .. } | StatementState::Fetching { .. } => -1,
         StatementState::DmlExecuted { rows_affected, .. } => *rows_affected as sql::Len,
         StatementState::DdlExecuted { .. } => -1,
         _ => return StatementNotExecutedSnafu.fail(),
