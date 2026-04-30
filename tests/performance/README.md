@@ -11,6 +11,7 @@
 - [Metrics Reference](#metrics-reference)
     - [Core Instrumentation Metrics](#core-instrumentation-metrics)
 - [Docker Builds Approach](#docker-builds-approach)
+- [PR Regression Detection Smoke Tests](#pr-regression-detection-smoke-tests)
 
 ---
 
@@ -701,4 +702,66 @@ This creates an intermediate image containing Core libraries:
 These libraries are copied into the final driver images:
 - **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
+
+---
+
+## PR Regression Detection Smoke Tests
+
+The CI pipeline (`Jenkinsfile.pr-check`) automatically detects performance regressions on every PR.
+
+### Pipeline Structure
+
+Two parallel lanes run on dedicated performance nodes (`drivers-perf-regular-memory-node-snowos`).
+
+| Lane | Build | Test | Regression check |
+|------|-------|------|-----------------|
+| **Core** | Core + WireMock | Smoke test (1 iteration) | No |
+| **Python + ODBC** | Python + ODBC + WireMock | Recorded HTTP tests | Yes (PR only) |
+
+### Main vs PR Behavior
+
+| Branch | What happens | Benchstore target |
+|--------|-------------|-------------------|
+| **main** | Runs baseline tests with `--upload-to-benchstore` to populate baselines | `Universal_Driver` |
+| **PR** | Runs tests with `--regression-check` and compares against main baselines | `Universal_Driver_PR_Regression` |
+
+### Regression Detection Flow (PRs)
+
+1. **Screen** — run selected tests (10 iterations for fast tests, 3 for slow tests like `select_15columns_1M`)
+2. **Compare** — fetch the latest main branch baselines from Benchstore (median of last 3 runs) and compare PR medians against them
+3. **Confirm** — if any test exceeds the threshold (default: 5%), re-run only the regressed tests with more iterations (default: 10) up to 2 times. Regression is confirmed if it appears in at least 2 of 3 total runs (majority vote)
+4. **Report** — log a results table and upload all data to Benchstore with `REGRESSION_DETECTED` tag
+5. **Gate** — post a `performance/regression` GitHub commit status (`SUCCESS` or `FAILURE`)
+
+### Exit Code Handling
+
+The test stage distinguishes between functional test failures and performance regressions using exit codes:
+
+| Exit code | Meaning | Pipeline behavior |
+|-----------|---------|-------------------|
+| 0 | Tests passed, no regression | Post `SUCCESS` status |
+| 77 | Tests passed, regression confirmed | Post `FAILURE` status, proceed to Regression Gate |
+| Any other | Test error (crash, assertion, infra) | Fail the build immediately |
+
+### Relevant CLI Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--regression-check` | Enable regression detection | `false` |
+| `--regression-threshold` | Regression threshold percentage | `5.0` |
+| `--regression-rerun-iterations` | Iterations for confirmation re-runs | `10` |
+
+### ACCEPT_PERFORMANCE_CHANGES Label
+
+When a PR intentionally adds overhead (e.g., new functionality), the `performance/regression` status will block merging. To accept the regression:
+
+1. Add the `ACCEPT_PERFORMANCE_CHANGES` label to the PR
+2. Re-run the `Python + ODBC` lane in Jenkins
+3. The `Regression Gate` sub-stage sees the label and re-posts the GitHub status as `success`
+
+The regression is still detected, reported in logs, and uploaded to Benchstore for observability — only the merge gate is overridden.
+
+### Branch Protection Setup
+
+A repo admin must add `performance/regression` as a required status check in GitHub branch protection settings for this gate to block merges. Without this, the posted status is informational only.
 

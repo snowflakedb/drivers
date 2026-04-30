@@ -64,8 +64,11 @@ RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --pack
 
 # Re-copy Cargo.toml files that cargo-chef may have overwritten from the recipe,
 # which can strip the [lib] section (e.g. proc-macro = true).
+# Also restores the package version, which cargo-chef stubs as 0.0.1 — without
+# this, env!("CARGO_PKG_VERSION") compiles to "0.0.1" instead of the real version.
 COPY error_trace/Cargo.toml ./error_trace/Cargo.toml
 COPY error_trace_derive/Cargo.toml ./error_trace_derive/Cargo.toml
+COPY odbc/Cargo.toml ./odbc/Cargo.toml
 
 # Copy source files
 COPY sf_core/src/ ./sf_core/src/

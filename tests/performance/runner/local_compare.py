@@ -45,7 +45,7 @@ def _read_median(csv_path: Path, metric_col: str) -> Optional[float]:
         return None
 
 
-def _is_main_result_file(path: Path) -> bool:
+def is_main_result_file(path: Path) -> bool:
     """Return True if file is a main result CSV (not a record/memory/wiremock file)."""
     name = path.name
     if name.startswith("memory_timeline_"):
@@ -62,7 +62,7 @@ def _is_main_result_file(path: Path) -> bool:
 
 def _pick_main_file(files: list[Path]) -> Optional[Path]:
     return max(
-        (f for f in files if _is_main_result_file(f)),
+        (f for f in files if is_main_result_file(f)),
         key=lambda p: p.stat().st_mtime,
         default=None,
     )
@@ -81,7 +81,7 @@ def _find_result_file(
         pattern = f"{test_name}_{driver}_{driver_type}_*.csv"
     else:
         pattern = f"{test_name}_{driver}_*.csv"
-    candidates = [f for f in test_dir.glob(pattern) if _is_main_result_file(f)]
+    candidates = [f for f in test_dir.glob(pattern) if is_main_result_file(f)]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
