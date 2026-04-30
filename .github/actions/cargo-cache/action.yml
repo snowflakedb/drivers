@@ -28,6 +28,29 @@ inputs:
   target-cache-hit:
     description: Value of target-cache-hit from the restore step. If 'true', skip the save.
     default: ''
+  # Hard ceiling on the cached target/ size after slim. If post-slim size exceeds
+  # this value the save is skipped with a warning. Set to "0" to disable the cap.
+  # Default 6144 MB (6 GB) is sized to comfortably fit on the ~14 GB-free
+  # ubuntu-latest runners, preventing the "extract bricks the runner with ENOSPC"
+  # failure mode observed with tarpaulin-instrumented builds producing 13+ GB caches.
+  max-target-size-mb:
+    description: Skip target cache save if post-slim size exceeds this many MB. 0 disables the cap.
+    default: '6144'
+  # How aggressively to prune target/ before save:
+  #   "default":    remove incremental/, *.d, examples/, llvm-cov-target/,
+  #                 tarpaulin/, *.profraw, *.profdata. Safe for all jobs; keeps
+  #                 deps/*.rlib + .fingerprint/ + workspace binaries so warm
+  #                 builds reuse everything.
+  #   "aggressive": all of the above PLUS workspace-crate test/binary executables
+  #                 in deps/. The single biggest contributor for coverage builds
+  #                 (instrumented test binaries can be tens of GB combined). Next
+  #                 run rebuilds them from cached deps in 1-2 min, vs caching
+  #                 10+ GB of binaries that won't be reused anyway. Recommended
+  #                 for coverage jobs (e.g. tarpaulin) where every CI run produces
+  #                 fresh instrumented binaries.
+  slim-mode:
+    description: Slim aggressiveness — "default" or "aggressive".
+    default: 'default'
 
 outputs:
   rustc-hash:
@@ -55,18 +78,39 @@ runs:
       shell: bash
       run: echo "hash=$(rustc -vV | (sha256sum 2>/dev/null || shasum -a 256) | cut -d' ' -f1 | head -c 16)" >> $GITHUB_OUTPUT
 
+    # CACHE_VERSION is a hard kill-switch. Bumping this string invalidates EVERY
+    # existing Rust cache produced by this action — every shared-key, every OS,
+    # every branch. Use this when the cache shape (slim rules, what's included
+    # or excluded, layout) changes in a way that makes pre-existing caches a
+    # liability rather than an asset.
+    #
+    # History:
+    #   v1: initial cache action (Apr 17 2025)
+    #   v2: aggressive slim mode + size cap + tarpaulin-aware cleanup (Apr 30
+    #       2025) — busts pre-existing 13-15 GB tarpaulin caches that don't
+    #       honour the new 6 GB cap and would freeze runners on restore.
     - name: Compute cache keys
       id: keys
       shell: bash
       run: |
+        CACHE_VERSION='v2'
         LOCK_HASH="${{ hashFiles(inputs.lockfiles) }}"
-        echo "registry=${{ runner.os }}-cargo-registry-${LOCK_HASH}" >> $GITHUB_OUTPUT
-        echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
+        echo "registry=${{ runner.os }}-cargo-registry-${CACHE_VERSION}-${LOCK_HASH}" >> $GITHUB_OUTPUT
+        echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${CACHE_VERSION}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
 
     # ── Restore mode ──
+    # continue-on-error on restore: cache restore is a CI optimisation, not a
+    # correctness requirement. Network blips, GHA cache service errors, ENOSPC
+    # during extract, or zstd unpack hangs should not fail the job — the build
+    # can still run from scratch.
+    #
+    # restore-keys include the v2 prefix to avoid prefix-fallback to old v1
+    # caches shaped under the previous slim policy. If you bump CACHE_VERSION
+    # above, also bump it in both blocks below.
     - name: Restore Cargo registry cache
       id: restore-registry
       if: inputs.mode == 'restore'
+      continue-on-error: true
       uses: actions/cache/restore@v5
       with:
         path: |
@@ -74,18 +118,19 @@ runs:
           ~/.cargo/registry/cache
           ~/.cargo/git/db
         key: ${{ steps.keys.outputs.registry }}
-        restore-keys: ${{ runner.os }}-cargo-registry-
+        restore-keys: ${{ runner.os }}-cargo-registry-v2-
 
     - name: Restore Rust target cache
       id: restore-target
       if: inputs.mode == 'restore'
+      continue-on-error: true
       uses: actions/cache/restore@v5
       with:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}
         restore-keys: |
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v2-${{ steps.rustc.outputs.hash }}-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v2-
 
     # ── Save mode ──
     # Two-layer guard before calling actions/cache/save@v5 (which is the slow step — tar of
@@ -102,6 +147,7 @@ runs:
     - name: Pre-save check — registry cache already exists?
       id: precheck-registry
       if: inputs.mode == 'save' && inputs.registry-cache-hit != 'true'
+      continue-on-error: true
       uses: actions/cache/restore@v5
       with:
         path: |
@@ -147,6 +193,7 @@ runs:
     - name: Pre-save check — target cache already exists?
       id: precheck-target
       if: inputs.mode == 'save' && inputs.target-cache-hit != 'true'
+      continue-on-error: true
       uses: actions/cache/restore@v5
       with:
         path: ${{ inputs.target-dir }}
@@ -155,49 +202,175 @@ runs:
 
     # Slim the target/ tree before save: cargo accumulates regenerable artifacts
     # that bloat the cache without speeding up cross-runner builds. Without this
-    # cleanup, target caches routinely grow to 5-9 GB, producing 3-5 minute cache
-    # download/extract steps that often cancel any speedup the cache was meant to
-    # provide.
+    # cleanup, target caches routinely grow to 5-9 GB (or 13+ GB for tarpaulin
+    # coverage builds), producing 3-5 minute cache download/extract steps that
+    # cancel any speedup the cache was meant to provide.
     #
-    # What we remove:
+    # What we ALWAYS remove (default mode):
     # - incremental/: per-build incremental-compilation state. Useful for repeated
-    #   builds in the same workspace, useless across fresh CI runners. This is the
-    #   single biggest contributor (often multi-GB).
+    #   builds in the same workspace, useless across fresh CI runners. Often the
+    #   single biggest contributor (multi-GB).
     # - *.d: dependency-tracking files cargo rewrites on every build.
+    # - examples/: example binaries — we don't run any, they're rebuildable on
+    #   demand if anyone ever needs them.
+    # - llvm-cov-target/, tarpaulin/: coverage tools' build dirs. Per-coverage-run
+    #   instrumented binaries live here; they're stale across CI runs anyway
+    #   because the source changes. Keeping them is pure cache bloat. (Both are
+    #   removed defensively regardless of which coverage tool is in use.)
+    # - *.profraw, *.profdata: coverage runtime data, regenerated each run.
     #
-    # What we keep:
+    # AGGRESSIVE mode also removes:
+    # - target/<triple>/<profile>/deps/<workspace-pkg>-<hash>: workspace-crate
+    #   test/binary executables. For instrumented coverage builds (tarpaulin,
+    #   llvm-cov) these can be tens of GB combined. The next run rebuilds them
+    #   from cached deps/*.rlib in 1-2 min, vs caching 10+ GB of binaries that
+    #   won't be reused anyway (different rustc/coverage state across runs makes
+    #   cache hits unlikely).
+    #
+    # What we ALWAYS keep:
     # - deps/*.rlib, deps/*.rmeta: compiled dependency artifacts (the cache value).
     # - .fingerprint/: cargo uses these to decide which restored artifacts are
     #   fresh. Without them cargo conservatively recompiles, defeating the cache.
-    # - build/*/output: build script outputs (some are expensive, e.g. bindgen).
+    # - build/*/output: build script outputs (some are expensive, e.g. bindgen,
+    #   protobuf-codegen, aws-lc-sys).
     - name: Slim target dir before cache save
+      id: slim
       if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
+      # Cache hygiene step — never fail the job if slim cleanup hits an error.
+      continue-on-error: true
       shell: bash
       run: |
         set -e
         target_dir="${{ inputs.target-dir }}"
+        slim_mode="${{ inputs.slim-mode }}"
         if [ ! -d "$target_dir" ]; then
           echo "target dir not present, skipping slim"
+          echo "size_mb=0" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         size_before=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
-        # Use a while/read loop with find, which is portable across GNU find (Linux),
-        # BSD find (macOS), and Git Bash find (Windows). The find ... -prune -exec rm
-        # pattern has subtle implementation differences between these and is unreliable
-        # for directory deletion in CI; this loop is explicit and predictable.
-        while IFS= read -r dir; do
-          [ -n "$dir" ] && rm -rf "$dir"
-        done < <(find "$target_dir" -type d -name 'incremental' 2>/dev/null)
-        find "$target_dir" -type f -name '*.d' -delete 2>/dev/null || true
+
+        # Portable directory-removal helper. Uses while/read + find, which works
+        # consistently across GNU find (Linux), BSD find (macOS), and Git Bash
+        # find (Windows). The `find -prune -exec rm` pattern has subtle differences
+        # between these and is unreliable for directory deletion in CI.
+        delete_dirs_named() {
+          local name="$1"
+          while IFS= read -r dir; do
+            [ -n "$dir" ] && rm -rf "$dir"
+          done < <(find "$target_dir" -type d -name "$name" 2>/dev/null)
+        }
+
+        # Default-mode removals (always run):
+        delete_dirs_named 'incremental'
+        delete_dirs_named 'examples'
+        delete_dirs_named 'llvm-cov-target'
+        delete_dirs_named 'tarpaulin'
+        find "$target_dir" -type f -name '*.d'        -delete 2>/dev/null || true
+        find "$target_dir" -type f -name '*.profraw'  -delete 2>/dev/null || true
+        find "$target_dir" -type f -name '*.profdata' -delete 2>/dev/null || true
+
+        # Aggressive mode: drop workspace-crate executables in deps/. Under
+        # target/<triple>/<profile>/deps/, files come in a few flavors:
+        #   - lib<crate>-<hash>.rlib / .rmeta  → KEEP (libraries, expensive to rebuild)
+        #   - <crate>-<hash> (no extension)    → executable; usually a workspace test bin
+        #   - <crate>-<hash>.exe (Windows)     → same, with extension
+        # We delete the executables and let cargo rebuild them from the kept .rlib /
+        # .rmeta deps on the next run. For instrumented (tarpaulin/llvm-cov) builds
+        # this is the single biggest size win.
+        if [ "$slim_mode" = "aggressive" ]; then
+          echo "Aggressive slim: removing workspace test binaries from deps/"
+          while IFS= read -r f; do
+            [ -e "$f" ] || continue
+            case "$f" in
+              *.rlib|*.rmeta|*.so|*.so.*|*.dylib|*.dll|*.a|*.lib|*.pdb)
+                # Library artifacts — keep.
+                ;;
+              *.exe)
+                # Windows executables — drop.
+                rm -f "$f" 2>/dev/null || true
+                ;;
+              *)
+                # Unix: executables typically have no extension. Test for regular
+                # file + executable bit. Keeps misc non-executable files (e.g.
+                # *.json, *.toml metadata) untouched.
+                if [ -f "$f" ] && [ -x "$f" ]; then
+                  rm -f "$f" 2>/dev/null || true
+                fi
+                ;;
+            esac
+          done < <(find "$target_dir" -type f -path '*/deps/*' 2>/dev/null)
+        fi
+
         size_after=$(du -sh "$target_dir" 2>/dev/null | cut -f1 || echo "?")
-        echo "Slimmed ${target_dir}: ${size_before} -> ${size_after}"
+        # Capture post-slim size in MB for the cap check below. On any error,
+        # emit empty string — the cap step treats unmeasurable size as a reason
+        # to SKIP save (fail-closed), rather than defaulting to 0 which would
+        # let a potentially huge cache through silently.
+        size_mb=$(du -sm "$target_dir" 2>/dev/null | cut -f1)
+        case "$size_mb" in
+          ''|*[!0-9]*) size_mb='' ;;
+        esac
+        echo "Slimmed ${target_dir} (mode=${slim_mode}): ${size_before} -> ${size_after} (${size_mb:-?} MB)"
+        echo "size_mb=${size_mb}" >> "$GITHUB_OUTPUT"
+
+    # Hard size cap: if the post-slim target/ exceeds the configured ceiling we
+    # skip the save entirely. Caching a too-large target creates two problems:
+    #   1. Save: tar+zstd of a 10+ GB tree on a runner with ~14 GB free disk
+    #      regularly hangs or hits ENOSPC.
+    #   2. Restore: the next run downloads the blob successfully but extracting
+    #      it (single-threaded `unzstd | tar -x`) fills the workspace disk and
+    #      deadlocks both processes against ENOSPC, producing the freezes we
+    #      have observed on Linux Rust jobs.
+    # Skipping the save here means the next run rebuilds from registry cache
+    # only — slower, but reliably finishes.
+    #
+    # Policy: FAIL-CLOSED. If we can't reliably determine that target/ fits
+    # under the cap (size_mb missing/non-numeric, cap missing/non-numeric, slim
+    # step crashed), we skip the save. Pessimistic by design: a measurement
+    # failure shouldn't quietly let a multi-GB cache through. Cost of skipping
+    # is one cache miss; cost of letting an oversized cache through is a 30+
+    # minute runner freeze.
+    - name: Check target dir size against cap
+      id: cap
+      if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true' && inputs.max-target-size-mb != '0'
+      # Cache hygiene step — never fail the job if the size check itself errors.
+      continue-on-error: true
+      shell: bash
+      run: |
+        size_mb='${{ steps.slim.outputs.size_mb }}'
+        cap='${{ inputs.max-target-size-mb }}'
+
+        # Validate inputs are non-empty positive integers. POSIX `case` pattern:
+        # '' matches empty; *[!0-9]* matches anything containing a non-digit.
+        invalid=''
+        case "$size_mb" in
+          ''|*[!0-9]*) invalid="size_mb='${size_mb}'" ;;
+        esac
+        case "$cap" in
+          ''|*[!0-9]*) invalid="${invalid:+$invalid; }cap='${cap}'" ;;
+        esac
+
+        if [ -n "$invalid" ]; then
+          echo "::warning::cargo-cache: cap check inputs are not positive integers (${invalid}) — skipping save (fail-closed) to protect runner disk"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if [ "$size_mb" -gt "$cap" ]; then
+          echo "::warning::target/ size ${size_mb} MB exceeds cap ${cap} MB — skipping cache save to protect runner disk"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "target/ size ${size_mb} MB is under cap ${cap} MB — proceeding with save"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        fi
 
     # See comment above on Save Cargo registry cache: cache save is best-effort,
     # ZSTD_NBTHREADS prevents zstdmt thread thrash, and the wall-clock timeout
     # is enforced by the workflow-level callers (composite steps don't support
     # timeout-minutes).
     - name: Save Rust target cache
-      if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true'
+      if: inputs.mode == 'save' && inputs.target-cache-hit != 'true' && steps.precheck-target.outputs.cache-hit != 'true' && steps.cap.outputs.skip != 'true'
       continue-on-error: true
       env:
         ZSTD_NBTHREADS: '2'

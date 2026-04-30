@@ -28,6 +28,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -58,6 +60,8 @@ jobs:
 
       - name: Restore pre-commit hooks cache
         id: pre-commit-cache
+        # Cache restore failures never fail the job — fall back to clean install.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: ~/.cache/pre-commit
@@ -90,6 +94,8 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
