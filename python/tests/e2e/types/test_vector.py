@@ -10,7 +10,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-vector
 
 import pytest
 
-from .utils import assert_floats_equal, assert_sequential_values, assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -39,6 +39,9 @@ MAX_DIMENSION_SIZE = 4096
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 20_000
 
+# VECTOR(FLOAT) uses 32-bit floats — need relaxed tolerance vs 64-bit assert_floats_equal.
+FLOAT32_APPROX = {"rel": 1e-6}
+
 SKIP_JSON = pytest.mark.skip_for_json_result_set(reason="VECTOR type is not supported in JSON result format")
 
 
@@ -58,7 +61,7 @@ class TestVectorTypeCasting:
         assert_type(result, list)
         assert result[0] == INT_VEC_3D
         assert_type(result[0], int)
-        assert_floats_equal(result[1], FLOAT_VEC_3D)
+        assert result[1] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
         assert_type(result[1], float)
 
 
@@ -89,7 +92,7 @@ class TestVectorLiteral:
         assert isinstance(result[0], list)
         assert len(result[0]) == len(expected_value)
         if vec_type == "FLOAT":
-            assert_floats_equal(result[0], expected_value)
+            assert result[0] == pytest.approx(expected_value, **FLOAT32_APPROX)
             assert_type(result[0], float)
         else:
             assert result[0] == expected_value
@@ -123,7 +126,7 @@ class TestVectorLiteral:
         assert isinstance(result[0], list)
         assert len(result[0]) == MAX_DIMENSION_SIZE
         assert_type(result[0], float)
-        assert_floats_equal(result[0], expected)
+        assert result[0] == pytest.approx(expected, **FLOAT32_APPROX)
 
 
 @SKIP_JSON
@@ -152,11 +155,11 @@ class TestVectorTable:
         assert len(rows) == 2
         assert rows[0][1] == INT_VEC_3D
         assert_type(rows[0][1], int)
-        assert_floats_equal(rows[0][2], FLOAT_VEC_5D)
+        assert rows[0][2] == pytest.approx(FLOAT_VEC_5D, **FLOAT32_APPROX)
         assert_type(rows[0][2], float)
         assert rows[1][1] == INT_VEC_3D_B
         assert_type(rows[1][1], int)
-        assert_floats_equal(rows[1][2], FLOAT_VEC_5D_B)
+        assert rows[1][2] == pytest.approx(FLOAT_VEC_5D_B, **FLOAT32_APPROX)
         assert_type(rows[1][2], float)
 
     def test_should_handle_null_vector_values_from_table(self, execute_query, tmp_schema):
@@ -183,7 +186,7 @@ class TestVectorTable:
         assert rows[0][1] == INT_VEC_3D
         assert rows[0][2] is None
         assert rows[1][1] is None
-        assert_floats_equal(rows[1][2], FLOAT_VEC_3D)
+        assert rows[1][2] == pytest.approx(FLOAT_VEC_3D, **FLOAT32_APPROX)
         assert rows[2][1] is None
         assert rows[2][2] is None
 
