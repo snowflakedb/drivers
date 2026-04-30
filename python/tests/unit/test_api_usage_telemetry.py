@@ -7,6 +7,7 @@ import pytest
 from snowflake.connector._internal.decorators import _TRACKING
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
+    ConnectionIsClosedResponse,
     DatabaseHandle,
     ExecuteQueryResponse,
     ResultSetDescriptor,
@@ -26,6 +27,15 @@ def mock_db_api():
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
     db_api.connection_get_parameter.return_value = MagicMock(value="")
+
+    # connection_is_closed reports "closed" once the conn_handle has been
+    # released (Connection.close() swaps the handle to None, which ends up as
+    # id=0 after protobuf default initialization). Mirrors real Core behavior
+    # and lets tests call close() then assert is_closed() == True.
+    def _connection_is_closed(request):
+        return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
+
+    db_api.connection_is_closed.side_effect = _connection_is_closed
     # Provide a real StatementHandle so protobuf field validation passes
     db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
     # Mock the two-step execute flow: execute_query returns a descriptor,
