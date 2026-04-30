@@ -40,6 +40,13 @@ jobs:
         uses: astral-sh/setup-uv@v7.2.1
         with:
           version: "0.9.28"
+          # Cache UV_CACHE_DIR (~/.cache/uv) — all wheel downloads pulled in
+          # by `uv run hatch run precommit:check`. Without this every run
+          # re-downloads pytest + numpy + pandas + cryptography + ... cold.
+          # The cache key is derived from the dependency glob below; changes
+          # to python/uv.lock invalidate it.
+          enable-cache: true
+          cache-dependency-glob: python/uv.lock
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -65,6 +72,31 @@ jobs:
           restore-keys: |
             pre-commit-${{ runner.os }}-
 
+      # Hatch stores its project envs under ~/.local/share/hatch on Linux. The
+      # `python-checks` hook creates the `precommit` env on first use, which
+      # inherits features=[test, dev] from `[tool.hatch.envs.default]` — that
+      # pulls pytest, numpy, pandas, cryptography, ruff, mypy, …  Cold env
+      # creation dominates the pre-commit job wall time (~9 min). Cache the
+      # hatch env directory + mypy's incremental cache together.
+      #
+      # Key:
+      # - Invalidate on changes to python/pyproject.toml or python/uv.lock
+      #   (the only files that meaningfully change the env contents).
+      # - restore-keys falls back to older caches so mypy's `.mypy_cache`
+      #   stays useful even when a dep bump flips the exact key — stale
+      #   mypy-cache entries for unchanged files are still reused.
+      - name: Restore hatch envs and mypy cache
+        id: python-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.local/share/hatch
+            python/.mypy_cache
+          key: python-precommit-${{ runner.os }}-py3.13-${{ hashFiles('python/pyproject.toml', 'python/uv.lock') }}
+          restore-keys: |
+            python-precommit-${{ runner.os }}-py3.13-
+            python-precommit-${{ runner.os }}-
+
       - name: Run pre-commit on all files
         run: pre-commit run --all-files --show-diff-on-failure
 
@@ -84,6 +116,23 @@ jobs:
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # Only save when we didn't get an exact hit. On a partial `restore-keys`
+      # match the step output `cache-hit` is 'false', so the updated cache
+      # (with fresh .mypy_cache entries for changed files) still gets saved
+      # under the new key.
+      - name: Save hatch envs and mypy cache
+        if: always() && steps.python-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.local/share/hatch
+            python/.mypy_cache
+          key: python-precommit-${{ runner.os }}-py3.13-${{ hashFiles('python/pyproject.toml', 'python/uv.lock') }}
 
       - name: Save Rust cache
         if: always()
