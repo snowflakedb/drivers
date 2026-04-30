@@ -162,7 +162,7 @@ fn scan_json_row_sonic(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<()
 
 #[cfg(not(feature = "sonic-json"))]
 fn scan_json_row_serde(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
-    let arr: Vec<Option<String>> =
+    let arr: Vec<serde_json::Value> =
         serde_json::from_slice(line).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
 
     let expected_cols = builders.len();
@@ -178,10 +178,15 @@ fn scan_json_row_serde(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<()
         )));
     }
 
-    for (col_idx, cell) in arr.iter().enumerate() {
-        match cell {
-            None => builders[col_idx].push_null(),
-            Some(s) => builders[col_idx].push_value(s.as_bytes())?,
+    for (col_idx, value) in arr.iter().enumerate() {
+        if value.is_null() {
+            builders[col_idx].push_null();
+        } else if let Some(s) = value.as_str() {
+            builders[col_idx].push_value(s.as_bytes())?;
+        } else {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Expected string or null at column {col_idx}",
+            )));
         }
     }
 

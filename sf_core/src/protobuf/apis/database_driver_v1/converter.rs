@@ -57,25 +57,31 @@ impl From<*mut FFI_ArrowArrayStream> for ArrowArrayStreamPtr {
 
 // Convert protobuf BinaryDataPtr to internal DataPtr.
 // Both represent a raw pointer + length; this avoids leaking protobuf types into core.
-impl<'a> From<BinaryDataPtr> for DataPtr<'a> {
-    fn from(proto_ptr: BinaryDataPtr) -> Self {
+impl<'a> TryFrom<BinaryDataPtr> for DataPtr<'a> {
+    type Error = String;
+
+    fn try_from(proto_ptr: BinaryDataPtr) -> Result<Self, Self::Error> {
         let ptr_bytes: [u8; 8] = proto_ptr
             .value
             .as_slice()
             .try_into()
-            .expect("Pointer must be 8 bytes");
+            .map_err(|_| format!("Pointer must be 8 bytes, got {}", proto_ptr.value.len()))?;
         let ptr_value = u64::from_le_bytes(ptr_bytes);
-        let ptr = ptr_value as usize as *const u8;
-        DataPtr::new(ptr, proto_ptr.length)
+        let ptr = usize::try_from(ptr_value)
+            .map_err(|_| format!("Serialized pointer 0x{ptr_value:X} does not fit in usize"))?
+            as *const u8;
+        Ok(DataPtr::new(ptr, proto_ptr.length))
     }
 }
 
 // Convert protobuf QueryBindings variant to internal BindingType.
-impl<'a> From<query_bindings::BindingType> for BindingType<'a> {
-    fn from(proto: query_bindings::BindingType) -> Self {
+impl<'a> TryFrom<query_bindings::BindingType> for BindingType<'a> {
+    type Error = String;
+
+    fn try_from(proto: query_bindings::BindingType) -> Result<Self, Self::Error> {
         match proto {
-            query_bindings::BindingType::Json(ptr) => BindingType::Json(ptr.into()),
-            query_bindings::BindingType::Csv(ptr) => BindingType::Csv(ptr.into()),
+            query_bindings::BindingType::Json(ptr) => Ok(BindingType::Json(ptr.try_into()?)),
+            query_bindings::BindingType::Csv(ptr) => Ok(BindingType::Csv(ptr.try_into()?)),
         }
     }
 }
