@@ -19,9 +19,7 @@ def is_valid(c):
         if c["Arch"] == "x64": return False
         if c["Arch"] == "x86": return False
 
-    if c["OS"] == "windows":
-        # No Windows-ARM64 ODBC build today.
-        if c["Arch"] == "arm": return False
+    # Windows ARM64 is built on the windows-11-arm runner; no exclusion needed.
 
     return True
 

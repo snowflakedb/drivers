@@ -31,5 +31,6 @@ ODBC_PLATFORM: dict[tuple[str, str], dict[str, str]] = {
                          "vcpkg_triplet": "x64-windows"},
     ("windows", "x86"): {"driver_lib": "sfodbc32.dll",    "driver_artifact": "Windows x86",
                          "msvc_arch": "x86", "vcpkg_triplet": "x86-windows"},
-    ("windows", "arm"): {"driver_lib": "sfodbc.dll"},
+    ("windows", "arm"): {"driver_lib": "sfodbc.dll",      "driver_artifact": "Windows ARM64",
+                         "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows"},
 }

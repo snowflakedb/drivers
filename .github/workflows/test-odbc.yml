@@ -367,6 +367,11 @@ jobs:
             cargo_target: i686-pc-windows-msvc
             cargo_extra: "--no-default-features --features vendored-openssl"
             cache_key: odbc-x86
+          - os: windows-11-arm
+            name: Windows ARM64
+            driver_lib: sfodbc.dll
+            cargo_extra: "--features vendored-openssl"
+            cache_key: odbc-arm64
     runs-on: ${{ matrix.os }}
     name: build_odbc_driver (${{ matrix.name }})
     steps:
@@ -584,7 +589,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
           $triplet = "${{ matrix.vcpkg_triplet }}"
-          Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet openssl:$triplet }
+          if ("${{ matrix.msvc_arch }}" -eq "arm64") {
+            # ARM64 vcpkg builds require the ARM64 MSVC toolchain environment
+            cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet openssl:$triplet"
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
+          } else {
+            Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet openssl:$triplet }
+          }
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
@@ -792,30 +803,48 @@ jobs:
       matrix:
         include:
           - name: Windows x64 Release
+            os: windows-latest
             arch: x64
             config: release
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: ""
           - name: Windows x64 Debug
+            os: windows-latest
             arch: x64
             config: debug
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: ""
             cargo_extra: ""
           - name: Windows x86 Release
+            os: windows-latest
             arch: x86
             config: release
             cargo_target: i686-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: "--no-default-features"
           - name: Windows x86 Debug
+            os: windows-latest
             arch: x86
             config: debug
             cargo_target: i686-pc-windows-msvc
             cargo_profile: ""
             cargo_extra: "--no-default-features"
-    runs-on: windows-latest
+          - name: Windows ARM64 Release
+            os: windows-11-arm
+            arch: arm64
+            config: release
+            cargo_target: aarch64-pc-windows-msvc
+            cargo_profile: "--release"
+            cargo_extra: ""
+          - name: Windows ARM64 Debug
+            os: windows-11-arm
+            arch: arm64
+            config: debug
+            cargo_target: aarch64-pc-windows-msvc
+            cargo_profile: ""
+            cargo_extra: ""
+    runs-on: ${{ matrix.os }}
     name: build_msi (${{ matrix.name }})
     steps:
       - name: Checkout repository
@@ -849,8 +878,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
 
       - name: Install Rust target
-        if: matrix.cargo_target != 'x86_64-pc-windows-msvc'
+        if: matrix.arch == 'x86'
         run: rustup target add ${{ matrix.cargo_target }}
+
+      - name: Install WiX Toolset v7
+        run: dotnet tool install --global wix
 
       - name: Build ODBC driver
         run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
