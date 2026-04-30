@@ -32,7 +32,7 @@ public class JNICoreTransport implements CoreTransport {
         throw new RuntimeException("Failed to load jdbc native library", e2);
       }
     }
-    nativeInit(SnowflakeDriver.getDriverVersion());
+    logger.info("JDBC driver starting v{}", SnowflakeDriver.getDriverVersion());
   }
 
   @Override
@@ -58,8 +58,6 @@ public class JNICoreTransport implements CoreTransport {
         responseBytes == null ? -1 : responseBytes.length);
     return response;
   }
-
-  private static native void nativeInit(String version);
 
   private static native TransportResponse nativeHandleMessage(
       String serviceName, String methodName, byte[] requestBytes);
