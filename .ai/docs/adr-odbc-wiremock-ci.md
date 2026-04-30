@@ -110,6 +110,29 @@ Superseded: fixed in Iteration 1 with separate `ss <<` statements.
 **Change**:
 - File: `WiremockClient.hpp` — add `#include "test_setup.hpp"`, call `configure_driver_string(ss)` before appending `SERVER=localhost;...`, change `std::ostringstream` to `std::stringstream` (required by `configure_driver_string` signature)
 
+**Commit**: 84f99345
+
+**Observations afterwards**: Build passes on all platforms. Tests still fail with `SQLSTATE=01000 — [unixODBC][Driver Manager]Can't open lib 'SnowflakeDriver_fr55jsu9' : file not found`. The `configure_driver_string()` registers a logical driver name in odbcinst.ini pointing to `DRIVER_PATH` .so, but unixODBC can't open the lib at that name. Category: test assertion failure (driver library not found).
+
+**Conclusion**: partially supported — IM002 is gone (driver name IS found), but the registered .so path isn't loadable. The `configure_driver_string()` approach uses odbcinst.ini indirection that works for regular tests but fails for WireMock tests.
+
+**Next step**: Iteration 4 — use DRIVER_PATH directly in connection string, bypass odbcinst.ini.
+
+### Iteration 4 — Use DRIVER_PATH env var directly instead of odbcinst.ini
+
+**Motivation**: `Can't open lib 'SnowflakeDriver_fr55jsu9' : file not found` on Linux/macOS.
+
+**Observation**: `configure_driver_string()` registers a logical name `SnowflakeDriver_xxxx` in odbcinst.ini pointing to the .so from `DRIVER_PATH` env var. unixODBC finds the name but can't open the lib. Regular tests use the same mechanism and work — unclear why WireMock test differs.
+
+**Hypothesis**: Rather than debugging the odbcinst.ini registration, use `DRIVER={/path/to/.so}` directly from `DRIVER_PATH` env var. unixODBC supports both logical names and direct paths in the `DRIVER=` directive. Direct paths bypass odbcinst.ini entirely.
+
+**Fit**: `DRIVER_PATH` is set in CI and points to the built .so. Using it directly eliminates the registration layer entirely.
+
+**Falsification**: If using `DRIVER={$DRIVER_PATH}` resolves the "file not found" error, hypothesis confirmed.
+
+**Change**:
+- File: `WiremockClient.hpp` — remove `#include "test_setup.hpp"`, read `DRIVER_PATH` env var directly, use `DRIVER={path}` in connection string
+
 **Commit**: pending
 
 **Observations afterwards**: pending
