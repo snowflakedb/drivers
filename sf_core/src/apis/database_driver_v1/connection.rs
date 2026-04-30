@@ -10,9 +10,9 @@ use super::Setting;
 use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
+use super::heartbeat::{HeartbeatHandle, compute_heartbeat_interval, spawn_heartbeat_task};
 use super::logout;
 use super::spcs_token::read_spcs_token;
-use super::heartbeat::{HeartbeatHandle, compute_heartbeat_interval, spawn_heartbeat_task};
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
     normalize_host_underscores, resolve_options, validate_connection_seed_write,
@@ -269,8 +269,8 @@ impl DatabaseDriverV1 {
                     .unwrap_or(false);
 
                 {
-                    let logout_config =
-                        LogoutConfig::from_settings(&resolved_snapshot).context(ConfigurationSnafu)?;
+                    let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
+                        .context(ConfigurationSnafu)?;
                     let session_id = login_result.tokens.session_id;
                     let mut conn = conn_ptr.lock().await;
 
