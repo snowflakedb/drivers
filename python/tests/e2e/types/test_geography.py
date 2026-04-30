@@ -18,6 +18,9 @@ from ...conftest import with_paramstyle
 from .utils import assert_geojson, assert_sequential_values, assert_type
 
 
+SKIP_JSON = pytest.mark.skip_for_json_result_set(reason="GEOGRAPHY type is not supported in JSON result format")
+
+
 # =============================================================================
 # WKT TEST VALUES
 # =============================================================================
@@ -39,6 +42,7 @@ POLYGON_GEOJSON_COORDS = [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]
 LARGE_RESULT_SET_SIZE = 20_000
 
 
+@SKIP_JSON
 class TestGeographyLiteral:
     """Tests for GEOGRAPHY type using SELECT with literals (no tables)."""
 
@@ -81,6 +85,7 @@ class TestGeographyLiteral:
         assert_geojson(result[0], "Point", POINT_GEOJSON_COORDS)
 
 
+@SKIP_JSON
 class TestGeographyTypeCasting:
     """Tests for GEOGRAPHY type casting per output format.
 
@@ -117,6 +122,7 @@ class TestGeographyTypeCasting:
                 assert len(result[0]) > 0
 
 
+@SKIP_JSON
 class TestGeographyTable:
     """Tests for GEOGRAPHY type using table operations."""
 
@@ -163,12 +169,10 @@ class TestGeographyTable:
         assert rows[1][1] is None
 
 
+@SKIP_JSON
 class TestGeographyMultipleChunks:
     """Tests for GEOGRAPHY type with multiple chunks downloading."""
 
-    @pytest.mark.skip_for_json_result_set(
-        reason="Multichunk geography generates dynamic WKT that may not round-trip identically in JSON format"
-    )
     def test_should_download_geography_data_in_multiple_chunks(self, execute_query):
         # Given Snowflake client is logged in
         pass
@@ -202,6 +206,7 @@ class TestGeographyMultipleChunks:
 
 
 @with_paramstyle("qmark")
+@SKIP_JSON
 class TestGeographyBinding:
     """Tests for GEOGRAPHY type using parameter binding."""
 
