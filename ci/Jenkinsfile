@@ -268,6 +268,11 @@ pipeline {
                     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
                       sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
                     }
+                    // Refresh dnf metadata before yum install — Rocky Linux rotates
+                    // metadata hashes weekly, breaking pre-built Docker images that
+                    // ship with stale dnf caches. See Jenkinsfile.coverage installSystemDeps
+                    // for full rationale.
+                    sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
                     sh label: 'Install system dependencies', script: 'yum install -y unzip'
 
                     try {
@@ -303,6 +308,11 @@ pipeline {
                     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
                       sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
                     }
+                    // Refresh dnf metadata before yum install — Rocky Linux rotates
+                    // metadata hashes weekly, breaking pre-built Docker images that
+                    // ship with stale dnf caches. See Jenkinsfile.coverage installSystemDeps
+                    // for full rationale.
+                    sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
                     sh label: 'Install system dependencies', script: 'yum install -y unzip'
 
                     try {
@@ -351,6 +361,11 @@ pipeline {
                     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
                       sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
                     }
+                    // Refresh dnf metadata before yum install — Rocky Linux rotates
+                    // metadata hashes weekly, breaking pre-built Docker images that
+                    // ship with stale dnf caches. See Jenkinsfile.coverage installSystemDeps
+                    // for full rationale.
+                    sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
                     sh label: 'Install system dependencies', script: '''
                       yum install -y unzip \
                         libffi-devel openssl-devel zlib-devel bzip2-devel \

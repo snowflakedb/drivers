@@ -28,6 +28,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -65,40 +67,25 @@ jobs:
         run: |
           pip install pre-commit hatch "virtualenv<21.0.0"
 
-      - name: Restore pre-commit hooks cache
-        id: pre-commit-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
-          restore-keys: |
-            pre-commit-${{ runner.os }}-
+      # NOTE: no pre-commit hook cache. Every hook in .pre-commit-config.yaml
+      # uses `language: system` (cargo, clang-format, gradlew, etc.), so
+      # pre-commit doesn't manage virtualenvs or clone hook repos — the only
+      # thing in ~/.cache/pre-commit is a ~1KB SQLite ledger that's regenerated
+      # locally in <0.1s. Caching it costs more (a network roundtrip per run)
+      # than skipping it. Re-add this cache only if a future hook switches to
+      # language: python / language: node / etc., where pre-commit would
+      # actually install something cacheable.
 
       - name: Run pre-commit on all files
         run: pre-commit run --all-files --show-diff-on-failure
-
-      - name: Save pre-commit hooks cache
-        # Skip when the exact key was already restored — saving would just
-        # repackage the same data and fail to reserve an existing key.
-        if: steps.pre-commit-cache.outputs.cache-hit != 'true'
-        # continue-on-error: cache save is best-effort. ENOSPC, throttling, or
-        # cache-key races shouldn't fail an otherwise-green build; the next run
-        # rebuilds from scratch. timeout-minutes + ZSTD_NBTHREADS guard against
-        # tar+zstdmt hangs that have caused 30+ minute stalls.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

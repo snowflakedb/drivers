@@ -47,6 +47,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -63,6 +65,8 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -80,6 +84,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -104,6 +110,8 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -134,58 +142,103 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
           shared-key: "core-test"
 
-      - name: Capture rustc version for tarpaulin cache key
+      - name: Capture rustc version for coverage tool cache key
         id: rustc-version
         run: echo "version=$(rustc --version | awk '{print $2}')" >> $GITHUB_OUTPUT
 
-      - name: Cache tarpaulin binary
-        id: tarpaulin-cache
+      # cargo-llvm-cov uses rustc's native source-based coverage (-C instrument-coverage).
+      # Migrated from cargo-tarpaulin (PR ref: TBD) because tarpaulin's binary instrumentation
+      # produced 13+ GB target/ trees that exceeded GitHub-hosted runner disk budgets and
+      # caused intermittent cache-restore freezes (tar+zstd deadlock on ENOSPC). llvm-cov is
+      # the de-facto standard in the Rust ecosystem since 2024 — same lcov output format,
+      # smaller artifacts (~3-5 GB target/), faster builds.
+      - name: Cache cargo-llvm-cov binary
+        id: llvm-cov-cache
+        # Cache failures never fail the job — fall back to fresh `cargo install`.
+        continue-on-error: true
         uses: actions/cache@v5
         with:
-          path: ~/.cargo/bin/cargo-tarpaulin
-          key: tarpaulin-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: cargo-llvm-cov-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
 
-      - name: Install tarpaulin
-        if: steps.tarpaulin-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-tarpaulin
+      - name: Install cargo-llvm-cov
+        if: steps.llvm-cov-cache.outputs.cache-hit != 'true'
+        # --locked uses Cargo.lock for reproducible installs.
+        run: cargo install cargo-llvm-cov --locked
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      # Two-phase tarpaulin invocation (build, then run) provides clearer CI signal:
-      # a failure in "Build" → compilation error; a failure in "Run tests" → test failure.
-      # --skip-clean ensures the second invocation reuses the first's build artifacts.
-      # The generated lcov.info is intentionally not uploaded from GHA; coverage reporting
-      # is owned by the dedicated Jenkins coverage pipeline (ci/Jenkinsfile.coverage), which
-      # surfaces results as Jenkins build status + archived artifacts — no external upload.
-      - name: Build sf_core with tarpaulin
-        run: |
-          export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --no-run --out lcov --output-dir .
-
+      # cargo-llvm-cov flag semantics + combination rules:
+      #
+      #   `cargo llvm-cov ... --no-report`  → build instrumented binaries + run tests +
+      #                                       accumulate coverage data; skip report.
+      #                                       Implicitly disables the pre-build clean
+      #                                       so subsequent invocations merge coverage.
+      #   `cargo llvm-cov report --lcov`    → emit lcov from accumulated coverage data;
+      #                                       no build, no run.
+      #
+      # MUTUALLY EXCLUSIVE flags (the CLI rejects any pair of these):
+      #   --no-report, --no-clean, --no-run
+      # All three are "skip a phase" modifiers and only one applies at a time. In
+      # particular, do NOT combine `--no-report --no-clean` (rejected at runtime)
+      # — `--no-report` already implies the clean-skip per the upstream README:
+      #   "[clean] behavior is disabled when --no-clean, --no-report, or
+      #    --no-run is passed".
+      #
+      # Unlike tarpaulin's clean two-phase build/run separation, llvm-cov forces
+      # build+run into a single invocation. So there's no separate "build" step
+      # below — `Run tests with coverage` builds AND runs. Compile errors vs.
+      # test failures are still readable in cargo's own output.
+      #
+      # The generated lcov.info is intentionally not uploaded from GHA; coverage
+      # reporting is owned by the dedicated Jenkins coverage pipeline
+      # (ci/Jenkinsfile.coverage), which surfaces results as Jenkins build status
+      # + archived artifacts — no external upload.
       - name: Run tests with coverage
         id: run_rust_tests
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          # --timeout 300: Gherkin-required logout tests sleep 50s; tarpaulin's
-          # ptrace default (60s) kills idle processes too early on Linux.
-          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --timeout 300 --out lcov --output-dir .
-          mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core --all-features
 
       - name: Rerun tests with coverage
         if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --timeout 300 --out lcov --output-dir .
-          mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core --all-features
+
+      # Report step is best-effort and gated on actually having coverage data. If the
+      # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
+      # contains no *.profraw files; running `cargo llvm-cov report` then fails with
+      # "not found *.profraw files". The shell guard checks first and emits a clean
+      # skip message instead.
+      #
+      # Scoping the report to `--package sf_core --all-features` mirrors the build/run
+      # invocation. Without it, llvm-cov walks the entire workspace's source files,
+      # including crates we never instrumented (jdbc_bridge, odbc, sf_core_macros,
+      # proto_generator) — they appear at 0% coverage and deflate the aggregate number
+      # parsed by the Jenkins coverage pipeline.
+      - name: Generate lcov coverage report
+        if: always()
+        continue-on-error: true
+        run: |
+          if find target/llvm-cov-target -name '*.profraw' 2>/dev/null | grep -q .; then
+            cargo llvm-cov report --package sf_core --all-features --lcov --output-path lcov.info
+            echo "lcov report written to lcov.info (scoped to sf_core --all-features)"
+          else
+            echo "No *.profraw files in target/llvm-cov-target — skipping report"
+            echo "(this is expected if the build failed before any test executed)"
+          fi
 
       - name: Cleanup test PATs
         if: always()
@@ -195,27 +248,28 @@ jobs:
           python scripts/cleanup_env.py \
             --parameter-path $(pwd)/parameters.json
 
-      - name: Trim tarpaulin artifacts before cache save
-        if: always()
-        shell: bash
-        run: |
-          # Tarpaulin instruments every build artifact which roughly doubles
-          # the target/ size (~14 GB).  These instrumented binaries are not
-          # reusable across runs, so strip them to keep the cache under the
-          # GitHub Actions runner disk budget (~14 GB free).
-          rm -rf target/tarpaulin || true
-          # Also remove profraw files left by coverage runs
-          find target -name '*.profraw' -delete 2>/dev/null || true
+      # NOTE: profraw/profdata cleanup and llvm-cov-target/ removal happen inside
+      # the cargo-cache action's slim step (with slim-mode: aggressive below).
+      # Workspace test binaries are also stripped — they're rebuilt from cached
+      # deps/*.rlib on the next run in 1-2 min, vs caching ~50+ GB of stale
+      # instrumented binaries. This is the single biggest win for keeping the
+      # coverage cache under the 6 GB cap.
 
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
           shared-key: "core-test"
+          # Aggressive slim: this is the coverage job, where instrumented test
+          # binaries dominate target/ size. Drop them before save; deps remain
+          # cached so the next run rebuilds workspace tests in 1-2 min.
+          slim-mode: aggressive
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
@@ -244,6 +298,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -350,6 +406,8 @@ jobs:
       - name: Restore vcpkg ARM64 static OpenSSL cache (for cryptography)
         if: always()
         id: vcpkg-static-cache
+        # Cache restore failures never fail the job — fall back to clean install.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -364,6 +422,11 @@ jobs:
 
       - name: Save vcpkg ARM64 static OpenSSL cache (cache miss)
         if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        # Cache failures never fail the job — see cargo-cache action for rationale.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -387,6 +450,8 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

@@ -7,7 +7,11 @@ FROM rockylinux:8
 # Install EPEL first (needed for lcov and awscli)
 RUN dnf install -y epel-release
 
-# Install base development tools (including GCC 8 for Rust builds)
+# Install base development tools (including GCC 8 for Rust builds).
+# `unzip` is included so we don't need a runtime `yum install -y unzip` in the
+# Jenkins pipelines that consume this image — runtime installs from a pre-built
+# image break whenever Rocky rotates upstream repodata hashes (≈weekly), which
+# has caused full pipeline outages.
 RUN dnf install -y \
     gcc \
     gcc-c++ \
@@ -20,6 +24,7 @@ RUN dnf install -y \
     git \
     which \
     findutils \
+    unzip \
     openssl-devel \
     perl-IPC-Cmd \
     lcov \

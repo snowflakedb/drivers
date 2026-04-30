@@ -45,6 +45,8 @@ jobs:
 
       - name: Restore Rust cache
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -52,6 +54,8 @@ jobs:
 
       - name: Restore core-target cache
         id: core-target-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: core-target
@@ -60,6 +64,8 @@ jobs:
 
       - name: Restore proto-target cache
         id: proto-target-cache-pkg
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: proto-target
@@ -89,6 +95,8 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -176,9 +184,14 @@ jobs:
       # dependencies regardless of which cloud provider the E2E tests target, so sharing one
       # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
       # and improves hit rates.
+      # Restore uv cache for Linux + macOS (Unix runners). The id `uv-cache-unix`
+      # is referenced by the matching save step below — if you rename it here,
+      # rename it there too.
       - name: Restore uv cache (Linux/macOS)
         id: uv-cache-unix
         if: runner.os != 'Windows'
+        # Cache restore failures never fail the job — fall back to clean install.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
@@ -191,6 +204,8 @@ jobs:
       - name: Restore uv cache (Windows)
         id: uv-cache-windows
         if: runner.os == 'Windows'
+        # Cache restore failures never fail the job — fall back to clean install.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
@@ -222,6 +237,8 @@ jobs:
       - name: Restore Rust cache (sdist)
         if: matrix.py == '3.10'
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -415,6 +432,8 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
@@ -445,6 +464,8 @@ jobs:
           version: "0.9.28"
 
       - name: Restore uv cache
+        # Cache restore failures never fail the job — fall back to clean install.
+        continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
