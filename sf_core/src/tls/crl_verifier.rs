@@ -2,23 +2,106 @@ use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::validator::CrlValidator;
 use crate::crl::worker::CrlWorker;
 use crate::tls::x509_utils::load_system_root_store;
-use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::{WebPkiServerVerifier, verify_server_cert_signed_by_trust_anchor};
+use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
+use rustls::server::ParsedCertificate;
+use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
+use std::fmt;
 use std::sync::Arc;
 
+fn default_supported_algs() -> WebPkiSupportedAlgorithms {
+    rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms
+}
+
+/// Verifies the certificate chain/trust anchor but deliberately skips hostname
+/// verification. Used when `verify_hostname = false` with custom root stores
+/// (Path 2: CRL disabled + custom roots).
+pub(crate) struct NoHostnameVerifier {
+    roots: Arc<RootCertStore>,
+    supported_algs: WebPkiSupportedAlgorithms,
+}
+
+impl NoHostnameVerifier {
+    pub(crate) fn new(roots: Arc<RootCertStore>) -> Self {
+        Self {
+            roots,
+            supported_algs: default_supported_algs(),
+        }
+    }
+}
+
+impl fmt::Debug for NoHostnameVerifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NoHostnameVerifier")
+            .field("roots", &"...")
+            .field("supported_algs", &self.supported_algs)
+            .finish()
+    }
+}
+
+impl ServerCertVerifier for NoHostnameVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        let cert = ParsedCertificate::try_from(end_entity)?;
+        verify_server_cert_signed_by_trust_anchor(
+            &cert,
+            &self.roots,
+            intermediates,
+            now,
+            self.supported_algs.all,
+        )?;
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        verify_tls12_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        verify_tls13_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.supported_algs.supported_schemes()
+    }
+}
+
 #[derive(Debug)]
-pub struct CrlServerCertVerifier {
+pub(crate) struct CrlServerCertVerifier {
+    /// Used for cert validation when `verify_hostname` is true, and always used
+    /// for TLS 1.2/1.3 signature verification and supported scheme queries
+    /// regardless of `verify_hostname`.
     webpki_verifier: Arc<WebPkiServerVerifier>,
     crl_validator: Arc<CrlValidator>,
     crl_config: CrlConfig,
+    verify_hostname: bool,
+    root_store: Arc<RootCertStore>,
+    supported_algs: WebPkiSupportedAlgorithms,
 }
 
 impl CrlServerCertVerifier {
-    pub fn new_with_root_store(
+    pub(crate) fn new_with_root_store(
         crl_config: CrlConfig,
         custom_root_store: Option<rustls::RootCertStore>,
+        verify_hostname: bool,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let root_store = match custom_root_store {
             Some(store) => store,
@@ -26,6 +109,7 @@ impl CrlServerCertVerifier {
                 .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) })?,
         };
         let root_store = Arc::new(root_store);
+        let supported_algs = default_supported_algs();
         let webpki_verifier = WebPkiServerVerifier::builder(root_store.clone()).build()?;
         let crl_validator = Arc::new(CrlValidator::new_with_root_store(
             crl_config.clone(),
@@ -35,6 +119,9 @@ impl CrlServerCertVerifier {
             webpki_verifier,
             crl_validator,
             crl_config,
+            verify_hostname,
+            root_store,
+            supported_algs,
         })
     }
 }
@@ -48,15 +135,31 @@ impl ServerCertVerifier for CrlServerCertVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
-        // Helper closure to re-validate a path with fixed verifier inputs
+        // Parse once before the closure to avoid redundant ASN.1 parsing per
+        // chain iteration. Unconditional so the closure never needs to panic.
+        let parsed_cert = ParsedCertificate::try_from(end_entity)?;
+
+        // Helper closure to re-validate a path with fixed verifier inputs.
+        // When verify_hostname is false, use chain-only validation (skip hostname check).
         let verify_path = |inters: &[rustls::pki_types::CertificateDer<'_>]| {
-            self.webpki_verifier.verify_server_cert(
-                end_entity,
-                inters,
-                server_name,
-                ocsp_response,
-                now,
-            )
+            if self.verify_hostname {
+                self.webpki_verifier.verify_server_cert(
+                    end_entity,
+                    inters,
+                    server_name,
+                    ocsp_response,
+                    now,
+                )
+            } else {
+                verify_server_cert_signed_by_trust_anchor(
+                    &parsed_cert,
+                    &self.root_store,
+                    inters,
+                    now,
+                    self.supported_algs.all,
+                )?;
+                Ok(ServerCertVerified::assertion())
+            }
         };
 
         // Validate the handshake path
@@ -179,7 +282,8 @@ mod tests {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store)).unwrap();
+        let ver =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true).unwrap();
 
         let ee_der = rustls::pki_types::CertificateDer::from(ee_cert.to_der().unwrap());
         let inter_der = rustls::pki_types::CertificateDer::from(inter_cert.to_der().unwrap());
@@ -234,7 +338,8 @@ mod tests {
             ..Default::default()
         };
         let ver =
-            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store.clone())).unwrap();
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store.clone()), true)
+                .unwrap();
         let ee_der = rustls::pki_types::CertificateDer::from(ee_cert.to_der().unwrap());
         let inter_der = rustls::pki_types::CertificateDer::from(inter_cert.to_der().unwrap());
         let server_name = ServerName::try_from("test.example.com").unwrap();
@@ -252,7 +357,8 @@ mod tests {
             allow_certificates_without_crl_url: false,
             ..Default::default()
         };
-        let ver2 = CrlServerCertVerifier::new_with_root_store(crl_cfg2, Some(root_store)).unwrap();
+        let ver2 =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg2, Some(root_store), true).unwrap();
         let res2 = ver2.verify_server_cert(
             &ee_der,
             std::slice::from_ref(&inter_der),
@@ -314,7 +420,8 @@ mod tests {
             allow_certificates_without_crl_url: true,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store)).unwrap();
+        let ver =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true).unwrap();
 
         // Presented intermediates include both InterA variants
         let ee_der = rustls::pki_types::CertificateDer::from(ee.to_der().unwrap());
@@ -361,7 +468,8 @@ mod tests {
             ..Default::default()
         };
         let ver =
-            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store.clone())).unwrap();
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store.clone()), true)
+                .unwrap();
 
         // Seed outcome: Inter revoked under Root
         let cfg = crate::crl::config::CrlConfig {
@@ -404,7 +512,8 @@ mod tests {
             check_mode: crate::crl::config::CertRevocationCheckMode::Enabled,
             ..Default::default()
         };
-        let ver2 = CrlServerCertVerifier::new_with_root_store(crl_cfg2, Some(root_store)).unwrap();
+        let ver2 =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg2, Some(root_store), true).unwrap();
         let res2 = ver2.verify_server_cert(
             &ee_der,
             std::slice::from_ref(&inter_der),
@@ -470,7 +579,8 @@ mod tests {
             allow_certificates_without_crl_url: true,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store)).unwrap();
+        let ver =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true).unwrap();
 
         let ee_der = rustls::pki_types::CertificateDer::from(ee.to_der().unwrap());
         let inters = vec![
@@ -562,7 +672,8 @@ mod tests {
             allow_certificates_without_crl_url: true,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store)).unwrap();
+        let ver =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true).unwrap();
 
         let ee_der = rustls::pki_types::CertificateDer::from(ee.to_der().unwrap());
         let inters = vec![
@@ -575,6 +686,78 @@ mod tests {
         assert!(
             res.is_ok(),
             "Anchored clean path should succeed even when another anchored path is revoked"
+        );
+    }
+
+    #[test]
+    fn hostname_bypass_allows_mismatched_server_name_in_advisory() {
+        th::test_setup();
+        th::clear_all_crl_caches();
+        let root_key = th::gen_key();
+        let root_cert = th::sign_cert(
+            &th::gen_req("R", &root_key),
+            &th::make_name("R"),
+            &root_key,
+            true,
+        );
+        let inter_key = th::gen_key();
+        let inter_cert = th::sign_cert(
+            &th::gen_req("I", &inter_key),
+            root_cert.subject_name(),
+            &root_key,
+            true,
+        );
+        let ee_key = th::gen_key();
+        let ee_cert = th::sign_cert(
+            &th::gen_req("E", &ee_key),
+            inter_cert.subject_name(),
+            &inter_key,
+            false,
+        );
+        let root_store = th::make_root_store(&root_cert.to_der().unwrap());
+        th::seed_not_determined(&ee_cert, &inter_cert, 5);
+
+        let crl_cfg = crate::crl::config::CrlConfig {
+            check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
+            allow_certificates_without_crl_url: true,
+            ..Default::default()
+        };
+
+        // verify_hostname=false should succeed despite mismatched server_name
+        let ver = CrlServerCertVerifier::new_with_root_store(
+            crl_cfg.clone(),
+            Some(root_store.clone()),
+            false,
+        )
+        .unwrap();
+        let ee_der = rustls::pki_types::CertificateDer::from(ee_cert.to_der().unwrap());
+        let inter_der = rustls::pki_types::CertificateDer::from(inter_cert.to_der().unwrap());
+        let mismatched_name = ServerName::try_from("wrong.host.example.com").unwrap();
+        let res = ver.verify_server_cert(
+            &ee_der,
+            std::slice::from_ref(&inter_der),
+            &mismatched_name,
+            &[],
+            UnixTime::now(),
+        );
+        assert!(
+            res.is_ok(),
+            "verify_hostname=false should skip hostname check"
+        );
+
+        // verify_hostname=true should fail with the same mismatched server_name
+        let ver2 =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true).unwrap();
+        let res2 = ver2.verify_server_cert(
+            &ee_der,
+            std::slice::from_ref(&inter_der),
+            &mismatched_name,
+            &[],
+            UnixTime::now(),
+        );
+        assert!(
+            res2.is_err(),
+            "verify_hostname=true should reject mismatched hostname"
         );
     }
 }

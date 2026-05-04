@@ -1,6 +1,7 @@
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::TlsConfig;
+use crate::tls::crl_verifier::NoHostnameVerifier;
 use crate::tls::error::{
     ClientBuildSnafu, PemParseSnafu, RootStoreAddSnafu, TlsError, VerifierBuildSnafu,
 };
@@ -44,43 +45,72 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
         CertRevocationCheckMode::Disabled => {
             if let Some(root_store) = custom_root_store {
                 tracing::debug!("CRL disabled, applying custom root store without CRL");
-                let tls_config = ClientConfig::builder()
-                    .with_root_certificates(Arc::new(root_store))
-                    .with_no_client_auth();
+                let root_store = Arc::new(root_store);
+                let rustls_config = if tls_config.verify_hostname {
+                    ClientConfig::builder()
+                        .with_root_certificates(root_store)
+                        .with_no_client_auth()
+                } else {
+                    tracing::warn!("Hostname verification disabled (custom root store path)");
+                    let verifier = NoHostnameVerifier::new(root_store);
+                    ClientConfig::builder()
+                        .dangerous()
+                        .with_custom_certificate_verifier(Arc::new(verifier))
+                        .with_no_client_auth()
+                };
                 configure_http_client(Client::builder())
-                    .use_preconfigured_tls(tls_config)
+                    .use_preconfigured_tls(rustls_config)
                     .build()
                     .context(ClientBuildSnafu)
             } else {
                 tracing::debug!("CRL disabled, using default system roots");
-                configure_http_client(Client::builder())
-                    .build()
-                    .context(ClientBuildSnafu)
+                if tls_config.verify_hostname {
+                    configure_http_client(Client::builder())
+                        .build()
+                        .context(ClientBuildSnafu)
+                } else {
+                    tracing::warn!("Hostname verification disabled (default roots path)");
+                    configure_http_client(Client::builder())
+                        .danger_accept_invalid_hostnames(true)
+                        .build()
+                        .context(ClientBuildSnafu)
+                }
             }
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!(
                 "CRL validation enabled, creating client with full TLS handshake validation"
             );
-            create_crl_tls_client_with_root_store(tls_config.crl_config, custom_root_store)
+            create_crl_tls_client_with_root_store(
+                tls_config.crl_config,
+                custom_root_store,
+                tls_config.verify_hostname,
+            )
         }
     }
 }
 
 /// Create a reqwest client with custom rustls configuration and optional custom root store
-pub fn create_crl_tls_client_with_root_store(
+pub(crate) fn create_crl_tls_client_with_root_store(
     crl_config: CrlConfig,
     custom_root_store: Option<rustls::RootCertStore>,
+    verify_hostname: bool,
 ) -> Result<Client, TlsError> {
     tracing::debug!("Creating custom TLS client with CRL handshake validation");
+    if !verify_hostname {
+        tracing::warn!("Hostname verification disabled (CRL path)");
+    }
 
     // Install default crypto provider for rustls (aws-lc-rs)
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // Create custom certificate verifier with CRL validation
-    let crl_verifier =
-        CrlServerCertVerifier::new_with_root_store(crl_config.clone(), custom_root_store)
-            .context(VerifierBuildSnafu)?;
+    let crl_verifier = CrlServerCertVerifier::new_with_root_store(
+        crl_config.clone(),
+        custom_root_store,
+        verify_hostname,
+    )
+    .context(VerifierBuildSnafu)?;
 
     // Create rustls client configuration with our custom verifier
     let tls_config = ClientConfig::builder()
