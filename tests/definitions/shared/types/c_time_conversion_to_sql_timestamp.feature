@@ -63,6 +63,8 @@ Feature: SQL_C_TYPE_TIME bound via SQLBindParameter to SQL_TYPE_TIMESTAMP
     When the time carries minute=60 which is out of the legal range
     Then SQLExecute fails with SQLSTATE 22007
 
+  # BD#49: skipped against the legacy reference driver, which silently
+  # accepts second=60 instead of returning 22007.
   @odbc_e2e
   Scenario: should reject SQL_C_TYPE_TIME with second=60 bound to SQL_TYPE_TIMESTAMP
     Given a TIMESTAMP_NTZ column

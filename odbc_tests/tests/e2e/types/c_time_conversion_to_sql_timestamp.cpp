@@ -16,6 +16,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -226,6 +227,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with minute=6
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with second=60 bound to SQL_TYPE_TIMESTAMP",
                  "[c_time][conversion][sql_timestamp][invalid]") {
+  SKIP_OLD_DRIVER("BD#49", "Old driver accepts second=60 in SQL_C_TYPE_TIME; new driver rejects per ODBC spec");
   // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
