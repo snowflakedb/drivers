@@ -22,6 +22,22 @@ from .private_key_helper import get_test_private_key_path
 Row = tuple[Any, ...]
 
 
+def pytest_configure(config):
+    # scripts/ is not a Python package (no __init__.py, not on sys.path), so
+    # load setup_local_reg.py by file path via importlib. bootstrap() is a
+    # no-op unless SNOWFLAKE_TEST_HOST points at a *.reg.local instance.
+    import importlib.util
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("setup_local_reg", repo_root / "scripts" / "setup_local_reg.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
+    module.bootstrap(parameters_path=param_path)
+
+
 @pytest.mark.optionalhook
 def pytest_metadata(metadata):
     metadata["Version of snowflake.connector"] = "Universal" if IS_UNIVERSAL_DRIVER else "Old"
