@@ -24,6 +24,13 @@ void bind_date_and_execute(StatementHandleWrapper& stmt, SQL_DATE_STRUCT& val, S
   REQUIRE_ODBC(ret, stmt);
 }
 
+SQLRETURN bind_date_and_try_execute(StatementHandleWrapper& stmt, SQL_DATE_STRUCT& val, SQLLEN& ind) {
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_TYPE_TIMESTAMP, 0, 0,
+                                   &val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  return SQLExecute(stmt.getHandle());
+}
+
 }  // namespace
 
 // ============================================================================
@@ -195,4 +202,97 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE with NULL indic
   // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_TYPE_TIMESTAMP>(fetch_stmt, 1) == std::nullopt);
+}
+
+// ============================================================================
+// Invalid-struct-field rejection — SQLSTATE 22007 (Invalid datetime format)
+//
+// Per ODBC Appendix D ("C to SQL: Date"), a SQL_C_TYPE_DATE struct whose
+// fields are outside their legal range (year < 1, month not in 1..12,
+// day outside 1..days-in-month) must surface SQL_ERROR with SQLSTATE
+// 22007 — distinct from the 22008 "Datetime field overflow" diagnostic
+// used for narrowing conversions.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with month=13 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_date][conversion][sql_timestamp][invalid]") {
+  // Given a TIMESTAMP_NTZ column
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When the date carries month=13 (out of legal 1..12 range)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_DATE_STRUCT val = {2024, 13, 1};
+  SQLLEN ind = sizeof(val);
+  ret = bind_date_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007 (Invalid datetime format)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with month=0 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_date][conversion][sql_timestamp][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When month=0 (zero is not a valid month index)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_DATE_STRUCT val = {2024, 0, 15};
+  SQLLEN ind = sizeof(val);
+  ret = bind_date_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=32 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_date][conversion][sql_timestamp][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When day=32 is bound for any month (no month has 32 days)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_DATE_STRUCT val = {2024, 1, 32};
+  SQLLEN ind = sizeof(val);
+  ret = bind_date_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=0 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_date][conversion][sql_timestamp][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When day=0 is bound (zero is not a valid day-of-month)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_DATE_STRUCT val = {2024, 1, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_date_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should reject SQL_C_TYPE_DATE with non-leap-year Feb 29 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_date][conversion][sql_timestamp][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When Feb 29 is bound for a non-leap year (2023 is not a leap year)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_DATE_STRUCT val = {2023, 2, 29};
+  SQLLEN ind = sizeof(val);
+  ret = bind_date_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007 (calendar-aware day-in-month
+  // validation, not just upper-bound 31)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }

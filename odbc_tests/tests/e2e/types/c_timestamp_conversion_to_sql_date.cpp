@@ -165,3 +165,67 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // Then SQLExecute fails with SQLSTATE 22008
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
 }
+
+// ============================================================================
+// Invalid-struct-field rejection — SQLSTATE 22007 (Invalid datetime format)
+//
+// Per ODBC Appendix D ("C to SQL: Timestamp"), a SQL_C_TYPE_TIMESTAMP
+// struct whose fields are outside their legal range must surface
+// SQLSTATE 22007. 22007 takes precedence over the narrowing 22008
+// diagnostic — the *_invalid_*_takes_precedence_over_22008 unit tests
+// in odbc/src/conversion/param_binding.rs pin this for the conversion
+// layer; these e2e tests pin the same contract end-to-end.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with month=13 bound to SQL_TYPE_DATE",
+                 "[c_timestamp][conversion][sql_date][invalid]") {
+  // Given a DATE column
+  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
+
+  // When the timestamp carries month=13 (out of legal 1..12 range)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIMESTAMP_STRUCT val = {2024, 13, 1, 0, 0, 0, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007 (Invalid datetime format)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with day=32 bound to SQL_TYPE_DATE",
+                 "[c_timestamp][conversion][sql_date][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
+
+  // When the timestamp carries day=32 (no month has 32 days)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIMESTAMP_STRUCT val = {2024, 1, 32, 0, 0, 0, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(
+    ConnSchemaFixture,
+    "should prefer SQLSTATE 22007 over 22008 when SQL_C_TYPE_TIMESTAMP has invalid month and non-zero time",
+    "[c_timestamp][conversion][sql_date][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
+
+  // When the timestamp has BOTH an invalid date field AND a non-zero time
+  // portion (which would otherwise trigger 22008): the struct-validity
+  // error must take precedence.
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIMESTAMP_STRUCT val = {2024, 13, 1, 14, 30, 45, 500000000};
+  SQLLEN ind = sizeof(val);
+  ret = bind_timestamp_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007, NOT 22008
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}

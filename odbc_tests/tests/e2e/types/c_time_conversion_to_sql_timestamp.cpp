@@ -59,6 +59,13 @@ void bind_time_and_execute(StatementHandleWrapper& stmt, SQL_TIME_STRUCT& val, S
   REQUIRE_ODBC(ret, stmt);
 }
 
+SQLRETURN bind_time_and_try_execute(StatementHandleWrapper& stmt, SQL_TIME_STRUCT& val, SQLLEN& ind) {
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_TYPE_TIMESTAMP, 0, 0,
+                                   &val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  return SQLExecute(stmt.getHandle());
+}
+
 }  // namespace
 
 // ============================================================================
@@ -175,4 +182,61 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME with NULL indic
   // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_TYPE_TIMESTAMP>(fetch_stmt, 1) == std::nullopt);
+}
+
+// ============================================================================
+// Invalid-struct-field rejection — SQLSTATE 22007 (Invalid datetime format)
+//
+// Per ODBC Appendix D ("C to SQL: Time"), a SQL_C_TYPE_TIME struct whose
+// fields are outside their legal range (hour not in 0..23, minute or
+// second not in 0..59) must surface SQL_ERROR with SQLSTATE 22007.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with hour=24 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_time][conversion][sql_timestamp][invalid]") {
+  // Given a TIMESTAMP_NTZ column
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When the time carries hour=24 (out of legal 0..23 range)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIME_STRUCT val = {24, 0, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_time_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007 (Invalid datetime format)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with minute=60 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_time][conversion][sql_timestamp][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When minute=60 (out of legal 0..59 range)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIME_STRUCT val = {12, 60, 0};
+  SQLLEN ind = sizeof(val);
+  ret = bind_time_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with second=60 bound to SQL_TYPE_TIMESTAMP",
+                 "[c_time][conversion][sql_timestamp][invalid]") {
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
+
+  // When second=60 (Snowflake does not honor leap-seconds; 60 is invalid)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_TIME_STRUCT val = {12, 0, 60};
+  SQLLEN ind = sizeof(val);
+  ret = bind_time_and_try_execute(stmt, val, ind);
+
+  // Then SQLExecute fails with SQLSTATE 22007
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
