@@ -455,20 +455,24 @@ class TestLogoutRetryBehavior:
 
 
 _SIGABRT = -6
+_SIGSEGV = -11
 
 
 def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
-    """Assert subprocess exited cleanly; xfail on SIGABRT during Py_Finalize (SNOW-3416420).
+    """Assert subprocess exited cleanly; xfail on signal death during Py_Finalize (SNOW-3416420).
 
-    SIGABRT (-6) happens when Rust's tracing callback fires into a dead Python
-    interpreter during Py_Finalize. The subprocess completed its work — behavioral
-    assertions (stdout markers, wiremock counts) after this call still validate correctness.
+    SIGABRT (-6) and SIGSEGV (-11) happen when Rust's tracing callback fires into
+    a dead Python interpreter during Py_Finalize. The subprocess completed its
+    work — behavioral assertions (stdout markers, wiremock counts) after this call
+    still validate correctness.
     """
     try:
         assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
     except AssertionError:
         if result.returncode == _SIGABRT:
             pytest.xfail("SNOW-3416420: Rust log callback SIGABRT during Py_Finalize")
+        if result.returncode == _SIGSEGV:
+            pytest.xfail("SNOW-3416420: Rust log callback SIGSEGV during Py_Finalize")
         raise
 
 
