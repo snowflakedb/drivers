@@ -18,6 +18,9 @@ from ...conftest import with_paramstyle
 from .utils import assert_geojson, assert_sequential_values, assert_type
 
 
+pytestmark = pytest.mark.skip_for_json_result_set(reason="GEOMETRY type is not supported in JSON result format")
+
+
 # =============================================================================
 # WKT TEST VALUES
 # =============================================================================
@@ -38,10 +41,7 @@ POLYGON_GEOJSON_COORDS = [[[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0], [0.0,
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 20_000
 
-SKIP_JSON = pytest.mark.skip_for_json_result_set(reason="GEOMETRY type is not supported in JSON result format")
 
-
-@SKIP_JSON
 class TestGeometryLiteral:
     """Tests for GEOMETRY type using SELECT with literals (no tables)."""
 
@@ -71,7 +71,6 @@ class TestGeometryLiteral:
         assert_geojson(result[0], expected_type, expected_coords)
 
 
-@SKIP_JSON
 class TestGeometryTypeCasting:
     """Tests for GEOMETRY type casting per output format.
 
@@ -108,7 +107,6 @@ class TestGeometryTypeCasting:
                 assert len(result[0]) > 0
 
 
-@SKIP_JSON
 class TestGeometryTable:
     """Tests for GEOMETRY type using table operations."""
 
@@ -154,7 +152,6 @@ class TestGeometryTable:
         assert rows[1][1] is None
 
 
-@SKIP_JSON
 class TestGeometryMultipleChunks:
     """Tests for GEOMETRY type with multiple chunks downloading."""
 
@@ -187,7 +184,6 @@ class TestGeometryMultipleChunks:
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=expected_row, compare=compare_row)
 
 
-@SKIP_JSON
 @with_paramstyle("qmark")
 class TestGeometryBinding:
     """Tests for GEOMETRY type using parameter binding."""
