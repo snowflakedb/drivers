@@ -11,8 +11,6 @@ Hierarchy:
 
 from __future__ import annotations
 
-from typing import Union
-
 from ._base import (
     DictRow,
     FetchMode,
@@ -24,8 +22,8 @@ from ._result_metadata import QueryResultStats, ResultMetadata, ResultMetadataV2
 from ._snowflake_cursor import SnowflakeCursor
 
 
-CursorType = Union[type[SnowflakeCursor], type[DictCursor]]
-CursorInstance = Union[SnowflakeCursor, DictCursor]
+CursorType = type[SnowflakeCursor] | type[DictCursor]
+CursorInstance = SnowflakeCursor | DictCursor
 
 
 __all__ = [

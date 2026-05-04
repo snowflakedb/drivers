@@ -7,8 +7,6 @@ including the native sf_core library logs.
 
 import logging
 
-from typing import Optional
-
 
 # Logger names
 CONNECTOR_LOGGER_NAME = "snowflake.connector"
@@ -41,8 +39,8 @@ def _needs_handler(logger: logging.Logger) -> bool:
 def setup_logging(
     level: int = logging.INFO,
     sf_core_level: int = logging.INFO,
-    format_string: Optional[str] = None,
-    stream: Optional[object] = None,
+    format_string: str | None = None,
+    stream: object | None = None,
 ) -> None:
     """
     Configure basic logging for the snowflake.connector module.

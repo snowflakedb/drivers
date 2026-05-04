@@ -35,10 +35,10 @@ RUN dnf install -y \
 RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 
 # ============================================================
-# Python 3.9 (for Python driver tests)
+# Python 3.11 (for Python driver tests)
 # ============================================================
-RUN dnf install -y python39 python39-pip python39-devel && \
-    alternatives --set python3 /usr/bin/python3.9 && \
+RUN dnf install -y python3.11 python3.11-pip python3.11-devel && \
+    alternatives --set python3 /usr/bin/python3.11 && \
     pip3 install --upgrade pip setuptools wheel uv hatch tox
 
 # ============================================================

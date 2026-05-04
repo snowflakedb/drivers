@@ -3,7 +3,7 @@
 ## Setup
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [Hatch](https://hatch.pypa.io/) build tool
 - Rust toolchain (core library is built automatically during the build process)
@@ -95,11 +95,11 @@ hatch run reference:compare --py 3.13 --os ubuntu-latest --universal reports/uni
 
 Run tests across all supported Python versions:
 ```bash
-hatch run test.py3.9:all
 hatch run test.py3.10:all
 hatch run test.py3.11:all
 hatch run test.py3.12:all
 hatch run test.py3.13:all
+hatch run test.py3.14:all
 ```
 
 ### Code Quality

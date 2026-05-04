@@ -13,8 +13,9 @@ from __future__ import annotations
 import functools
 import inspect
 
+from collections.abc import Callable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Callable, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from ..errors import Error
 
