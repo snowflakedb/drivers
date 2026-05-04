@@ -115,9 +115,19 @@ impl ParamConverter for DecimalParamConverter {
 // Factory
 // =============================================================================
 
-// `odbc_sys::SqlDataType` does not expose the SQL_INTERVAL_* concise type
-// constants (codes 101..=113), so we declare them locally for use in the
-// match below. Values come directly from the ODBC spec / sql.h.
+// `odbc_sys::SqlDataType` does not expose the SQL_INTERVAL_* concise
+// type constants (codes 101..=113), so we declare them locally as
+// `sql::SqlDataType`-typed consts for use in the FFI-typed match below.
+// Values come directly from the ODBC spec / sql.h.
+//
+// The parallel `SqlType::Interval*` variants in
+// `odbc/src/api/types/odbc_types.rs` are the *internal* enum
+// representation of the same numeric codes; they cannot be used here
+// because this match arms over the FFI-side `sql::SqlDataType` newtype.
+// Re-routing through `SqlType::try_from(sql_type.0)` would only swap one
+// pair of names for another and would force every numeric/binary arm in
+// `make_converter` to convert too, so we keep both definitions in sync
+// by holding the same numeric values from the ODBC spec.
 const SQL_INTERVAL_YEAR: sql::SqlDataType = sql::SqlDataType(101);
 const SQL_INTERVAL_MONTH: sql::SqlDataType = sql::SqlDataType(102);
 const SQL_INTERVAL_DAY: sql::SqlDataType = sql::SqlDataType(103);
