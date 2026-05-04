@@ -92,8 +92,9 @@ $WixVersion = ($versionParts[0..2]) -join '.'
 
 # --- Driver DLL ---
 $DriverBinDir = (Resolve-Path $DriverBinDir).Path
-if (-not (Test-Path (Join-Path $DriverBinDir "sfodbc.dll"))) {
-    throw "sfodbc.dll not found in $DriverBinDir. Build the driver first."
+$driverDll = if ($Arch -eq "x86") { "sfodbc32.dll" } else { "sfodbc.dll" }
+if (-not (Test-Path (Join-Path $DriverBinDir $driverDll))) {
+    throw "$driverDll not found in $DriverBinDir. Build the driver first."
 }
 
 # --- VC++ Redistributable ---

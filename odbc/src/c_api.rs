@@ -11,14 +11,14 @@ use odbc_sys as sql;
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::RetCode {
     api::handle_allocation::sql_alloc_handle(sql::HandleType::Env, 0 as sql::Handle, output_handle)
         .to_sql_code()
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLAllocConnect(
+pub unsafe extern "system" fn SQLAllocConnect(
     environment_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn SQLAllocConnect(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLAllocHandle(
+pub unsafe extern "system" fn SQLAllocHandle(
     handle_type: sql::HandleType,
     input_handle: sql::Handle,
     output_handle: *mut sql::Handle,
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn SQLAllocHandle(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLExecDirect(
+pub unsafe extern "system" fn SQLExecDirect(
     statement_handle: sql::Handle,
     statement_text: *const sql::Char,
     text_length: sql::Integer,
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn SQLExecDirect(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLExecDirectW(
+pub unsafe extern "system" fn SQLExecDirectW(
     statement_handle: sql::Handle,
     statement_text: *const sql::WChar,
     text_length: sql::Integer,
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn SQLExecDirectW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLFreeHandle(
+pub unsafe extern "system" fn SQLFreeHandle(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> sql::RetCode {
@@ -82,7 +82,7 @@ pub unsafe extern "C" fn SQLFreeHandle(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLFreeStmt(
+pub unsafe extern "system" fn SQLFreeStmt(
     statement_handle: sql::Handle,
     option: sql::USmallInt,
 ) -> sql::RetCode {
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn SQLFreeStmt(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLCloseCursor(statement_handle: sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> sql::RetCode {
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn SQLCloseCursor(statement_handle: sql::Handle) -> sql::R
 /// cross-thread. Same-thread cancel must clear_diag_info and post its own
 /// diagnostic records per spec. Only cross-thread cancel skips diagnostics.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCod
 /// SQLSTATE HY092 per the ODBC 3.8 spec. Any truly unknown handle
 /// type returns `SQL_INVALID_HANDLE`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLCancelHandle(
+pub unsafe extern "system" fn SQLCancelHandle(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> sql::RetCode {
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn SQLCancelHandle(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLConnect(
+pub unsafe extern "system" fn SQLConnect(
     connection_handle: sql::Handle,
     server_name: *const sql::Char,
     name_length1: sql::SmallInt,
@@ -231,7 +231,7 @@ pub unsafe extern "C" fn SQLConnect(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLConnectW(
+pub unsafe extern "system" fn SQLConnectW(
     connection_handle: sql::Handle,
     server_name: *const sql::WChar,
     name_length1: sql::SmallInt,
@@ -257,7 +257,7 @@ pub unsafe extern "C" fn SQLConnectW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetEnvAttr(
+pub unsafe extern "system" fn SQLSetEnvAttr(
     environment_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn SQLSetEnvAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetEnvAttr(
+pub unsafe extern "system" fn SQLGetEnvAttr(
     environment_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetInfo(
+pub unsafe extern "system" fn SQLGetInfo(
     connection_handle: sql::Handle,
     info_type: sql::USmallInt,
     info_value_ptr: sql::Pointer,
@@ -323,7 +323,7 @@ pub unsafe extern "C" fn SQLGetInfo(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetInfoW(
+pub unsafe extern "system" fn SQLGetInfoW(
     connection_handle: sql::Handle,
     info_type: sql::USmallInt,
     info_value_ptr: sql::Pointer,
@@ -345,7 +345,7 @@ pub unsafe extern "C" fn SQLGetInfoW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetConnectAttr(
+pub unsafe extern "system" fn SQLSetConnectAttr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
@@ -375,7 +375,7 @@ pub unsafe extern "C" fn SQLSetConnectAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetConnectAttrW(
+pub unsafe extern "system" fn SQLSetConnectAttrW(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
@@ -405,7 +405,7 @@ pub unsafe extern "C" fn SQLSetConnectAttrW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetConnectAttr(
+pub unsafe extern "system" fn SQLGetConnectAttr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
@@ -437,7 +437,7 @@ pub unsafe extern "C" fn SQLGetConnectAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetConnectAttrW(
+pub unsafe extern "system" fn SQLGetConnectAttrW(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
@@ -469,12 +469,13 @@ pub unsafe extern "C" fn SQLGetConnectAttrW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLDriverConnect(
+pub unsafe extern "system" fn SQLDriverConnect(
     connection_handle: sql::Handle,
     _window_handle: sql::Handle,
     in_connection_string: *const sql::Char,
     in_string_length: sql::SmallInt,
     _out_connection_string: *mut sql::Char,
+    _buffer_length: sql::SmallInt,
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
@@ -491,12 +492,13 @@ pub unsafe extern "C" fn SQLDriverConnect(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLDriverConnectW(
+pub unsafe extern "system" fn SQLDriverConnectW(
     connection_handle: sql::Handle,
     _window_handle: sql::Handle,
     in_connection_string: *const sql::WChar,
     in_string_length: sql::SmallInt,
     _out_connection_string: *mut sql::WChar,
+    _buffer_length: sql::SmallInt,
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
@@ -513,13 +515,13 @@ pub unsafe extern "C" fn SQLDriverConnectW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
     api::connection::disconnect(connection_handle).to_sql_code()
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLFetch(statement_handle: sql::Handle) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
     let result = api::data::fetch(statement_handle, &mut warnings);
@@ -535,7 +537,7 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> sql::RetCode
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLFetchScroll(
+pub unsafe extern "system" fn SQLFetchScroll(
     statement_handle: sql::Handle,
     fetch_orientation: sql::SmallInt,
     _fetch_offset: sql::Len,
@@ -555,7 +557,7 @@ pub unsafe extern "C" fn SQLFetchScroll(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLExtendedFetch(
+pub unsafe extern "system" fn SQLExtendedFetch(
     statement_handle: sql::Handle,
     fetch_orientation: sql::SmallInt,
     fetch_offset: sql::Len,
@@ -584,7 +586,7 @@ pub unsafe extern "C" fn SQLExtendedFetch(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetData(
+pub unsafe extern "system" fn SQLGetData(
     statement_handle: sql::Handle,
     col_or_param_num: sql::USmallInt,
     target_type: CDataType,
@@ -615,7 +617,7 @@ pub unsafe extern "C" fn SQLGetData(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLColAttribute(
+pub unsafe extern "system" fn SQLColAttribute(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
@@ -648,7 +650,7 @@ pub unsafe extern "C" fn SQLColAttribute(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLColAttributeW(
+pub unsafe extern "system" fn SQLColAttributeW(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
@@ -681,7 +683,7 @@ pub unsafe extern "C" fn SQLColAttributeW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLDescribeCol(
+pub unsafe extern "system" fn SQLDescribeCol(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     column_name: *mut sql::Char,
@@ -718,7 +720,7 @@ pub unsafe extern "C" fn SQLDescribeCol(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLDescribeColW(
+pub unsafe extern "system" fn SQLDescribeColW(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     column_name: *mut sql::WChar,
@@ -755,7 +757,7 @@ pub unsafe extern "C" fn SQLDescribeColW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLNumResultCols(
+pub unsafe extern "system" fn SQLNumResultCols(
     statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
@@ -768,7 +770,7 @@ pub unsafe extern "C" fn SQLNumResultCols(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLNumParams(
+pub unsafe extern "system" fn SQLNumParams(
     statement_handle: sql::Handle,
     param_count_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
@@ -781,7 +783,7 @@ pub unsafe extern "C" fn SQLNumParams(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLDescribeParam(
+pub unsafe extern "system" fn SQLDescribeParam(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
     data_type_ptr: *mut sql::SmallInt,
@@ -805,7 +807,7 @@ pub unsafe extern "C" fn SQLDescribeParam(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLRowCount(
+pub unsafe extern "system" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,
 ) -> sql::RetCode {
@@ -818,7 +820,7 @@ pub unsafe extern "C" fn SQLRowCount(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLBindParameter(
+pub unsafe extern "system" fn SQLBindParameter(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
     input_output_type: sql::SmallInt,
@@ -850,7 +852,7 @@ pub unsafe extern "C" fn SQLBindParameter(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLPrepare(
+pub unsafe extern "system" fn SQLPrepare(
     statement_handle: sql::Handle,
     statement_text: *const sql::Char,
     text_length: sql::Integer,
@@ -864,7 +866,7 @@ pub unsafe extern "C" fn SQLPrepare(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLPrepareW(
+pub unsafe extern "system" fn SQLPrepareW(
     statement_handle: sql::Handle,
     statement_text: *const sql::WChar,
     text_length: sql::Integer,
@@ -878,7 +880,7 @@ pub unsafe extern "C" fn SQLPrepareW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::execute(statement_handle);
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
@@ -888,7 +890,7 @@ pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCo
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetDiagRec(
+pub unsafe extern "system" fn SQLGetDiagRec(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -918,7 +920,7 @@ pub unsafe extern "C" fn SQLGetDiagRec(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetDiagRecW(
+pub unsafe extern "system" fn SQLGetDiagRecW(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -948,7 +950,7 @@ pub unsafe extern "C" fn SQLGetDiagRecW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetDiagField(
+pub unsafe extern "system" fn SQLGetDiagField(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -971,7 +973,7 @@ pub unsafe extern "C" fn SQLGetDiagField(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetDiagFieldW(
+pub unsafe extern "system" fn SQLGetDiagFieldW(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -995,7 +997,7 @@ pub unsafe extern "C" fn SQLGetDiagFieldW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLBindCol(
+pub unsafe extern "system" fn SQLBindCol(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     target_type: CDataType,
@@ -1017,7 +1019,7 @@ pub unsafe extern "C" fn SQLBindCol(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetStmtAttr(
+pub unsafe extern "system" fn SQLSetStmtAttr(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
@@ -1044,7 +1046,7 @@ pub unsafe extern "C" fn SQLSetStmtAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetStmtAttrW(
+pub unsafe extern "system" fn SQLSetStmtAttrW(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
@@ -1071,7 +1073,7 @@ pub unsafe extern "C" fn SQLSetStmtAttrW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetStmtAttr(
+pub unsafe extern "system" fn SQLGetStmtAttr(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
@@ -1103,7 +1105,7 @@ pub unsafe extern "C" fn SQLGetStmtAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetStmtAttrW(
+pub unsafe extern "system" fn SQLGetStmtAttrW(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
@@ -1135,7 +1137,7 @@ pub unsafe extern "C" fn SQLGetStmtAttrW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::RetCode {
+pub unsafe extern "system" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::RetCode {
     if statement_handle.is_null() {
         return sql::SqlReturn::INVALID_HANDLE.0;
     }
@@ -1148,7 +1150,7 @@ pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::R
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLNativeSql(
+pub unsafe extern "system" fn SQLNativeSql(
     connection_handle: sql::Handle,
     in_statement_text: *const sql::Char,
     text_length1: sql::Integer,
@@ -1182,7 +1184,7 @@ pub unsafe extern "C" fn SQLNativeSql(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLNativeSqlW(
+pub unsafe extern "system" fn SQLNativeSqlW(
     connection_handle: sql::Handle,
     in_statement_text: *const sql::WChar,
     text_length1: sql::Integer,
@@ -1216,7 +1218,7 @@ pub unsafe extern "C" fn SQLNativeSqlW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetDescField(
+pub unsafe extern "system" fn SQLGetDescField(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
     field_identifier: sql::SmallInt,
@@ -1237,7 +1239,7 @@ pub unsafe extern "C" fn SQLGetDescField(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLGetDescFieldW(
+pub unsafe extern "system" fn SQLGetDescFieldW(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
     field_identifier: sql::SmallInt,
@@ -1259,7 +1261,7 @@ pub unsafe extern "C" fn SQLGetDescFieldW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetDescField(
+pub unsafe extern "system" fn SQLSetDescField(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
     field_identifier: sql::SmallInt,
@@ -1279,7 +1281,7 @@ pub unsafe extern "C" fn SQLSetDescField(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn SQLSetDescFieldW(
+pub unsafe extern "system" fn SQLSetDescFieldW(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
     field_identifier: sql::SmallInt,

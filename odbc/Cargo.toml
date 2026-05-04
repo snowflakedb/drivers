@@ -8,7 +8,7 @@ name = "sfodbc"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sf_core = { path = "../sf_core" }
+sf_core = { path = "../sf_core", default-features = false, features = ["protobuf"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 snafu = "0.8.7"
@@ -29,6 +29,8 @@ rust-ini = "0.21.3"
 # Forwarded to sf_core so that libsfodbc.so includes compiled-in perf spans.
 # Only used by performance tests.
 [features]
+default = ["sonic-json"]
+sonic-json = ["sf_core/sonic-json"]
 perf_timing = ["sf_core/perf_timing"]
 vendored-openssl = ["sf_core/vendored-openssl"]
 
