@@ -1,0 +1,103 @@
+name: Import mirror PR
+
+# Imports a labeled PR from snowflake-eng/universal-driver-mirror-test back
+# into the internal repo as an internal PR so it can run against internal
+# CI before merge.
+#
+# Flow:
+#   1. Maintainer reviews the mirror PR and adds the `ok-to-import` label.
+#   2. Dispatch this workflow with the mirror PR number.
+#   3. Copybara opens a matching PR on this repo; reviewer merges it
+#      after internal CI passes.
+#   4. Outbound mirror (mirror.yml) pushes the merge back to the mirror
+#      on its next scheduled run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Mirror PR number to import (must carry the `ok-to-import` label)."
+        required: true
+
+concurrency:
+  # Per-PR concurrency so two dispatches for the same PR can't race.
+  group: mirror-inbound-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_REPO_URL: https://github.com/snowflake-eng/universal-driver
+  COPYBARA_RELEASE: v20260504
+
+jobs:
+  import-pr:
+    name: Import mirror PR #${{ github.event.inputs.pr_number }}
+    runs-on: ubuntu-latest
+    # Same environment as outbound mirror — approval gate for dispatch.
+    environment: mirror-public
+    steps:
+      - name: Checkout config
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download Copybara
+        run: |
+          set -euo pipefail
+          curl -fsSL -o copybara_deploy.jar \
+            "https://github.com/google/copybara/releases/download/${COPYBARA_RELEASE}/copybara_deploy.jar"
+          expected=$(curl -fsSL \
+            "https://github.com/google/copybara/releases/download/${COPYBARA_RELEASE}/copybara_deploy.jar.sha256" \
+            | tr -d '[:space:]')
+          echo "${expected}  copybara_deploy.jar" > copybara_deploy.jar.sha256
+          sha256sum -c copybara_deploy.jar.sha256
+
+      - name: Configure git for Copybara
+        env:
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Mirror Bot"
+          git config --global user.email "mirror-bot@snowflake.com"
+          # Copybara shells out to `git fetch` on both the mirror origin
+          # (to read the PR) and the internal destination (to push the
+          # import branch). The same token needs read on the mirror and
+          # contents:write on the internal repo.
+          git config --global credential.helper store
+          umask 077
+          printf 'https://x-access-token:%s@github.com\n' "${GITHUB_TOKEN}" > "${HOME}/.git-credentials"
+
+      - name: Run Copybara (import)
+        env:
+          # Copybara reads GITHUB_TOKEN to call the mirror's API for the
+          # PR metadata (labels, title, body, author).
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          java -jar copybara_deploy.jar migrate copy.bara.sky import "${PR_NUMBER}" \
+            --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+            --force
+
+      - name: Write run summary
+        if: always()
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          {
+            echo "## Import PR #${PR_NUMBER}"
+            echo ""
+            echo "- **Dispatched by:** ${{ github.actor }}"
+            echo "- **Source PR:** https://github.com/snowflake-eng/universal-driver-mirror-test/pull/${PR_NUMBER}"
+            echo "- **Result:** ${{ job.status }}"
+            echo ""
+            echo "If successful, a matching \`import-mirror-pr-${PR_NUMBER}\` PR now exists on the internal repo. Review, run internal CI, and merge — the outbound mirror will push the change back to the public repo on its next run."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -6,6 +6,28 @@ to production-ready.
 
 ## Outstanding items
 
+### Validate the inbound (external PR) flow end-to-end
+
+`copy.bara.sky` now has an `import` workflow and
+`.github/workflows/mirror-inbound.yml` dispatches it. Before relying on
+this in production:
+
+- Confirm the `SNOWFLAKE_EMU_TOKEN` used by the workflow has read on the
+  mirror repo *and* `contents:write` + PR create rights on the internal
+  repo. The outbound mirror only needs one of those; inbound needs both.
+- Walk one real PR end-to-end: open test PR on mirror → label
+  `ok-to-import` → dispatch `mirror-inbound.yml` with the PR number →
+  verify the imported PR appears on the internal repo with the external
+  contributor's authorship preserved → run internal CI → merge →
+  confirm the outbound mirror pushes the merge back and the original
+  mirror PR can be closed with a link to the mirrored commit.
+- Decide on the label name. Using `ok-to-import` per the design doc;
+  if the mirror uses a different convention, update
+  `required_labels` in `copy.bara.sky`.
+- Consider adding a mirror-side GitHub Actions workflow that comments
+  on the imported PR once the internal merge lands, to close the loop
+  automatically instead of manually.
+
 ### Mirror `.github/` once the bot has the `workflow` scope
 
 `.github/` (workflows, composite actions, labeler, copilot-instructions,
