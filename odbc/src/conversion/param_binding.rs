@@ -2667,8 +2667,10 @@ mod tests {
 
     #[test]
     fn convert_interval_day_to_second_with_fraction() -> TestResult {
-        // 10 days, 12 hours, 30 minutes, 59.5 seconds.
-        let iv = ds_interval(0, 10, 12, 30, 59, 500_000_000);
+        // 10 days, 12 hours, 30 minutes, 59.5 seconds. `fraction` is in
+        // microseconds (matches the unit produced by
+        // `numeric_helpers::compute_interval_fraction`).
+        let iv = ds_interval(0, 10, 12, 30, 59, 500_000);
         let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
         assert_eq!(v, Value::String("10 12:30:59.5".to_string()));
         Ok(())
@@ -2676,10 +2678,12 @@ mod tests {
 
     #[test]
     fn convert_interval_second_full_precision() -> TestResult {
-        // 1.000000001s — verify nanosecond precision is preserved.
+        // 1.000001s — verify microsecond precision is preserved (the unit
+        // chosen by the rest of the conversion path; see
+        // `numeric_helpers::compute_interval_fraction`).
         let iv = ds_interval(0, 0, 0, 0, 1, 1);
         let (_, v) = convert_interval(CDataType::IntervalSecond, 106, &iv)?;
-        assert_eq!(v, Value::String("1.000000001".to_string()));
+        assert_eq!(v, Value::String("1.000001".to_string()));
         Ok(())
     }
 
