@@ -519,57 +519,61 @@ fn format_interval(binding: &ParameterBinding) -> String {
     let ym = || unsafe { iv.interval_value.year_month };
     let ds = || unsafe { iv.interval_value.day_second };
 
-    /// Render `<seconds>` or `<seconds>.<fraction>` with the fraction
-    /// zero-padded to 6 digits and trailing zeros trimmed (e.g.
-    /// 1.500_000 → "1.5"). The driver populates
-    /// `sql::DaySecond::fraction` in microseconds (see
-    /// `numeric_helpers::compute_interval_fraction`), so 6-digit padding
-    /// matches the unit chosen elsewhere in the conversion path. When
-    /// `pad_int` is true the integer part is also zero-padded to 2 digits —
-    /// used when seconds appears as a sub-field after a `:` (e.g.
-    /// `12:30:05`), per the ODBC spec.
+    /// Render `<seconds>.<fraction>` with the fraction zero-padded to 6
+    /// digits and the decimal point always present (e.g. 45 → "45.000000",
+    /// 45 + 500_000us → "45.500000"). Per the ODBC spec
+    /// (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/interval-data-type-length)
+    /// the seconds-precision component contributes "1 plus the express or
+    /// implied seconds precision" characters, defaulting to 6 fractional
+    /// digits — i.e. the canonical literal width is fixed, not trimmed.
+    /// The driver populates `sql::DaySecond::fraction` in microseconds (see
+    /// `numeric_helpers::compute_interval_fraction`), which is exactly the
+    /// 6-digit width the spec requires. When `pad_int` is true the integer
+    /// part is also zero-padded to 2 digits — used when seconds appears as
+    /// a sub-field after a `:` (e.g. `12:30:05.000000`); when `pad_int` is
+    /// false (INTERVAL_SECOND leading field) the integer is rendered as-is
+    /// since the leading-field precision can exceed two digits.
     fn fmt_seconds(second: u32, fraction: u32, pad_int: bool) -> String {
         let int_part = if pad_int {
             format!("{second:02}")
         } else {
             second.to_string()
         };
-        if fraction == 0 {
-            int_part
-        } else {
-            let frac = format!("{fraction:06}");
-            let frac_trimmed = frac.trim_end_matches('0');
-            format!("{int_part}.{frac_trimmed}")
-        }
+        format!("{int_part}.{fraction:06}")
     }
 
+    // ODBC spec ("Interval Data Type Length"): every non-leading field of
+    // an interval literal is rendered as exactly two characters. Below,
+    // every sub-field after a separator (`-`, ` `, or `:`) is `:02`-padded.
+    // The leading field is rendered as-is — its precision can be larger
+    // than 2 (default 2, but explicitly bounded by the leading-field
+    // precision the application declared on the qualifier).
     match binding.value_type {
         CDataType::IntervalYear => format!("{sign}{}", ym().year),
         CDataType::IntervalMonth => format!("{sign}{}", ym().month),
         CDataType::IntervalDay => format!("{sign}{}", ds().day),
         CDataType::IntervalHour => format!("{sign}{}", ds().hour),
         CDataType::IntervalMinute => format!("{sign}{}", ds().minute),
-        // `second` is the leading field here, so no zero-padding.
         CDataType::IntervalSecond => {
             let ds = ds();
             format!("{sign}{}", fmt_seconds(ds.second, ds.fraction, false))
         }
         CDataType::IntervalYearToMonth => {
             let ym = ym();
-            format!("{sign}{}-{}", ym.year, ym.month)
+            format!("{sign}{}-{:02}", ym.year, ym.month)
         }
         CDataType::IntervalDayToHour => {
             let ds = ds();
-            format!("{sign}{} {}", ds.day, ds.hour)
+            format!("{sign}{} {:02}", ds.day, ds.hour)
         }
         CDataType::IntervalDayToMinute => {
             let ds = ds();
-            format!("{sign}{} {}:{:02}", ds.day, ds.hour, ds.minute)
+            format!("{sign}{} {:02}:{:02}", ds.day, ds.hour, ds.minute)
         }
         CDataType::IntervalDayToSecond => {
             let ds = ds();
             format!(
-                "{sign}{} {}:{:02}:{}",
+                "{sign}{} {:02}:{:02}:{}",
                 ds.day,
                 ds.hour,
                 ds.minute,

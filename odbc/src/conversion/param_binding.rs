@@ -2677,12 +2677,14 @@ mod tests {
 
     #[test]
     fn convert_interval_day_to_second_with_fraction() -> TestResult {
-        // 10 days, 12 hours, 30 minutes, 59.5 seconds. `fraction` is in
-        // microseconds (matches the unit produced by
-        // `numeric_helpers::compute_interval_fraction`).
+        // 10 days, 12 hours, 30 minutes, 59.500000 seconds. `fraction` is
+        // in microseconds (matches the unit produced by
+        // `numeric_helpers::compute_interval_fraction`) and is rendered at
+        // the full 6-digit width per the ODBC "Interval Data Type Length"
+        // spec (default seconds precision = 6).
         let iv = ds_interval(0, 10, 12, 30, 59, 500_000);
         let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
-        assert_eq!(v, Value::String("10 12:30:59.5".to_string()));
+        assert_eq!(v, Value::String("10 12:30:59.500000".to_string()));
         Ok(())
     }
 
@@ -2699,9 +2701,12 @@ mod tests {
 
     #[test]
     fn convert_interval_negative_day_to_second() -> TestResult {
+        // Hour is a non-leading field (after a space), so it's zero-padded
+        // to 2 chars per the ODBC "Interval Data Type Length" spec; the
+        // seconds component is always rendered with a 6-digit fraction.
         let iv = ds_interval(1, 1, 2, 3, 4, 0);
         let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
-        assert_eq!(v, Value::String("-1 2:03:04".to_string()));
+        assert_eq!(v, Value::String("-1 02:03:04.000000".to_string()));
         Ok(())
     }
 
@@ -2716,10 +2721,13 @@ mod tests {
     #[test]
     fn convert_interval_minute_to_second_no_fraction() -> TestResult {
         // Sub-field seconds are zero-padded to 2 digits per ODBC spec
-        // (matches the formatting of HH:MM in HOUR_TO_MINUTE).
+        // (matches the formatting of HH:MM in HOUR_TO_MINUTE) and the
+        // seconds fraction is always emitted at the canonical 6-digit
+        // width — even when zero — so applications round-trip the literal
+        // through legacy ODBC and other spec-conforming consumers.
         let iv = ds_interval(0, 0, 0, 30, 7, 0);
         let (_, v) = convert_interval(CDataType::IntervalMinuteToSecond, 113, &iv)?;
-        assert_eq!(v, Value::String("30:07".to_string()));
+        assert_eq!(v, Value::String("30:07.000000".to_string()));
         Ok(())
     }
 
