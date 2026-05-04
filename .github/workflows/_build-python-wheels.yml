@@ -101,6 +101,8 @@ jobs:
           for key, versions in targets.items():
               if key not in PLATFORMS:
                   raise ValueError(f"Unknown platform: {key}. Supported: {list(PLATFORMS)}")
+              if not versions:
+                  continue
               p = PLATFORMS[key]
 
               if p["wheel_method"] == "cibuildwheel":
@@ -253,8 +255,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-v2-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-v2-
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-v2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-v2-
 
       - name: Build sf_core in manylinux container
         if: runner.os == 'Linux'
@@ -370,13 +372,6 @@ jobs:
           done
 
       # ── Upload individual wheel artifacts (preserves per-version names) ──
-      - name: Upload py3.10 wheel
-        if: contains(fromJSON(matrix.python_versions_json), '3.10')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_id }}_py3.10
-          path: python/dist/*cp310*.whl
-
       - name: Upload py3.11 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.11')
         uses: actions/upload-artifact@v4
@@ -482,7 +477,7 @@ jobs:
             echo === Building wheel for Python %%v ===
             uv python install cpython-%%v-windows-aarch64-none
             if errorlevel 1 exit /b 1
-            uv run --python %%v --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+            uv run --python %%v --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build -t wheel
             if errorlevel 1 exit /b 1
           )
         env:
@@ -501,13 +496,6 @@ jobs:
           }
 
       # ── Upload individual wheel artifacts (preserves per-version names) ──
-      - name: Upload py3.10 wheel
-        if: contains(fromJSON(matrix.python_versions_json), '3.10')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_id }}_py3.10
-          path: python/dist/*cp310*.whl
-
       - name: Upload py3.11 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.11')
         uses: actions/upload-artifact@v4
@@ -521,20 +509,6 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.12
           path: python/dist/*cp312*.whl
-
-      - name: Upload py3.13 wheel
-        if: contains(fromJSON(matrix.python_versions_json), '3.13')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_id }}_py3.13
-          path: python/dist/*cp313*.whl
-
-      - name: Upload py3.14 wheel
-        if: contains(fromJSON(matrix.python_versions_json), '3.14')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_id }}_py3.14
-          path: python/dist/*cp314*.whl
 
   # ── Clean up intermediate build artifacts ──────────────────────────
   cleanup_build_artifacts:
