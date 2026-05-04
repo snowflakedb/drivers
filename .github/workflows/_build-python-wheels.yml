@@ -378,6 +378,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.11
           path: python/dist/*cp311*.whl
+          if-no-files-found: error
 
       - name: Upload py3.12 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.12')
@@ -385,6 +386,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.12
           path: python/dist/*cp312*.whl
+          if-no-files-found: error
 
       - name: Upload py3.13 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.13')
@@ -392,6 +394,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.13
           path: python/dist/*cp313*.whl
+          if-no-files-found: error
 
       - name: Upload py3.14 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.14')
@@ -399,6 +402,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.14
           path: python/dist/*cp314*.whl
+          if-no-files-found: error
 
   # ── Build sf_core + wheels manually (Windows ARM64) ────────────────
   # cibuildwheel does not support Windows ARM64, so we build sf_core
@@ -477,8 +481,10 @@ jobs:
             echo === Building wheel for Python %%v ===
             uv python install cpython-%%v-windows-aarch64-none
             if errorlevel 1 exit /b 1
-            uv run --python %%v --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build -t wheel
+            uv run --python %%v --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build -t wheel --no-clean
             if errorlevel 1 exit /b 1
+            echo --- dist after %%v ---
+            dir dist\*.whl
           )
         env:
           SKIP_CORE_BUILD: "true"
@@ -502,6 +508,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.11
           path: python/dist/*cp311*.whl
+          if-no-files-found: error
 
       - name: Upload py3.12 wheel
         if: contains(fromJSON(matrix.python_versions_json), '3.12')
@@ -509,6 +516,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.12
           path: python/dist/*cp312*.whl
+          if-no-files-found: error
 
   # ── Clean up intermediate build artifacts ──────────────────────────
   cleanup_build_artifacts:
