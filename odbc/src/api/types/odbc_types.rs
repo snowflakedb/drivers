@@ -549,6 +549,24 @@ pub enum SqlType {
     // sqlext.h
     Guid = -11, // SQL_GUID
 
+    // Snowflake-specific vendor SQL type codes for TIMESTAMP variants.
+    //
+    // Defined here so applications can pass them as the `ParameterType`
+    // argument to `SQLBindParameter` and explicitly request that a bound
+    // value round-trip as `TIMESTAMP_LTZ` / `_TZ` / `_NTZ` instead of being
+    // routed by the standard `SQL_TYPE_TIMESTAMP` (93) which has no way to
+    // distinguish the three. The values match the legacy 3.16.0 Snowflake
+    // ODBC driver (`Source/sf_odbc.h`) for application compatibility.
+    //
+    // These are *not* returned from `SQLDescribeCol` or
+    // `SQLColAttribute(SQL_DESC_CONCISE_TYPE)`: per the MS ODBC spec, those
+    // descriptors must report the standard `SQL_TYPE_TIMESTAMP` (93) for
+    // ODBC 3.x output. Applications distinguish the three subtypes via
+    // `SQLColAttribute(SQL_DESC_TYPE_NAME)`.
+    SqlSfTimestampLtz = 2000, // SQL_SF_TIMESTAMP_LTZ
+    SqlSfTimestampTz = 2001,  // SQL_SF_TIMESTAMP_TZ
+    SqlSfTimestampNtz = 2002, // SQL_SF_TIMESTAMP_NTZ
+
     // sqlext.h — ODBC 3.x interval types (100 + subcode)
     IntervalYear = 101,
     IntervalMonth = 102,
@@ -611,6 +629,9 @@ impl TryFrom<sql::SmallInt> for SqlType {
             111 => Ok(SqlType::IntervalHourToMinute),
             112 => Ok(SqlType::IntervalHourToSecond),
             113 => Ok(SqlType::IntervalMinuteToSecond),
+            2000 => Ok(SqlType::SqlSfTimestampLtz),
+            2001 => Ok(SqlType::SqlSfTimestampTz),
+            2002 => Ok(SqlType::SqlSfTimestampNtz),
             _ => {
                 tracing::error!("Invalid SQL data type: {value}");
                 Err(OdbcError::InvalidSqlDataType {
