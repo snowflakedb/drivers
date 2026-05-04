@@ -83,6 +83,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE to TIMESTAMP_LT
   CHECK(result.hour == 0);
   CHECK(result.minute == 0);
   CHECK(result.second == 0);
+  CHECK(result.fraction == 0);
 }
 
 // ============================================================================
@@ -112,6 +113,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE to TIMESTAMP_TZ
   CHECK(result.hour == 0);
   CHECK(result.minute == 0);
   CHECK(result.second == 0);
+  CHECK(result.fraction == 0);
 }
 
 // ============================================================================
@@ -144,6 +146,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE leap day 2024-0
   CHECK(result.hour == 0);
   CHECK(result.minute == 0);
   CHECK(result.second == 0);
+  CHECK(result.fraction == 0);
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE epoch 1970-01-01 to SQL_TYPE_TIMESTAMP",
