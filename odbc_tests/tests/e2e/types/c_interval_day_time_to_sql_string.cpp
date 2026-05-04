@@ -9,21 +9,27 @@
 // SQL interval literal text. These tests exercise the round-trip:
 // SQLPrepare → SQLBindParameter → SQLExecute → SELECT → SQLGetData.
 //
-// Format reference (ODBC Appendix D, "C to SQL: Interval"):
+// Format reference, per ODBC "Interval Data Type Length" (every
+// non-leading datetime field is rendered as exactly two characters and
+// the seconds component carries "1 plus the express or implied seconds
+// precision" — defaulting to a 6-digit microsecond fraction):
 //   DAY                : [-]<day>
 //   HOUR               : [-]<hour>
 //   MINUTE             : [-]<minute>
-//   SECOND             : [-]<second>[.<fraction>]
-//   DAY_TO_HOUR        : [-]<day> <hour>
-//   DAY_TO_MINUTE      : [-]<day> <hour>:<minute(2)>
-//   DAY_TO_SECOND      : [-]<day> <hour>:<minute(2)>:<second(2)>[.<fraction>]
+//   SECOND             : [-]<second>.<fraction(6)>
+//   DAY_TO_HOUR        : [-]<day> <hour(2)>
+//   DAY_TO_MINUTE      : [-]<day> <hour(2)>:<minute(2)>
+//   DAY_TO_SECOND      : [-]<day> <hour(2)>:<minute(2)>:<second(2)>.<fraction(6)>
 //   HOUR_TO_MINUTE     : [-]<hour>:<minute(2)>
-//   HOUR_TO_SECOND     : [-]<hour>:<minute(2)>:<second(2)>[.<fraction>]
-//   MINUTE_TO_SECOND   : [-]<minute>:<second(2)>[.<fraction>]
+//   HOUR_TO_SECOND     : [-]<hour>:<minute(2)>:<second(2)>.<fraction(6)>
+//   MINUTE_TO_SECOND   : [-]<minute>:<second(2)>.<fraction(6)>
 //
 // `fraction` is in microseconds (matches the unit used elsewhere in the
-// driver — see `numeric_helpers::compute_interval_fraction`). Trailing
-// zeros are trimmed and the dot is omitted entirely when fraction == 0.
+// driver — see `numeric_helpers::compute_interval_fraction`) and is
+// always emitted at the canonical 6-digit width with the decimal point,
+// even when the value is zero. This matches both the spec literal width
+// and the legacy 3.16.0 driver, so applications can round-trip a value
+// through either driver and get an identical string.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -71,7 +77,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY to SQL_VARCH
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 15, 0, 0, 0, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 15, 0, 0, 0, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY, val, ind);
 
@@ -89,7 +95,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR to SQL_VARC
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 8, 0, 0, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 8, 0, 0, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_HOUR, val, ind);
 
@@ -108,7 +114,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE to SQL_VA
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 0, 30, 0, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 30, 0, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_MINUTE, val, ind);
 
@@ -127,7 +133,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with no f
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 0, 0, 45, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 0, 45, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, val, ind);
 
@@ -149,7 +155,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with micr
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 0, 0, 45, 500'000);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 0, 45, 500'000);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, val, ind);
 
@@ -174,7 +180,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with one-
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 0, 0, 1, 1);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 0, 1, 1);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, val, ind);
 
@@ -197,7 +203,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_HOUR to S
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 3, 7, 0, 0, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 3, 7, 0, 0, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_HOUR, val, ind);
 
@@ -219,7 +225,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_MINUTE to
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 3, 7, 5, 0, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 3, 7, 5, 0, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_MINUTE, val, ind);
 
@@ -239,7 +245,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_SECOND wi
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 10, 12, 30, 59, 500'000);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 10, 12, 30, 59, 500'000);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_SECOND, val, ind);
 
@@ -261,7 +267,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_DAY_TO_
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(1, 1, 2, 3, 4, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_TRUE, 1, 2, 3, 4, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_SECOND, val, ind);
 
@@ -281,7 +287,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR_TO_MINUTE t
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 14, 7, 0, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 14, 7, 0, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_HOUR_TO_MINUTE, val, ind);
 
@@ -300,7 +306,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR_TO_SECOND w
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 12, 30, 59, 250'000);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 12, 30, 59, 250'000);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_HOUR_TO_SECOND, val, ind);
 
@@ -321,7 +327,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE_TO_SECOND
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(0, 0, 0, 30, 7, 0);
+  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 30, 7, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_MINUTE_TO_SECOND, val, ind);
 

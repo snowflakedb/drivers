@@ -58,7 +58,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR to SQL_VARC
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ym_interval(0, 5, 0);
+  SQL_INTERVAL_STRUCT val = ym_interval(SQL_FALSE, 5, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR, val, ind);
 
@@ -76,7 +76,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_YEAR to
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ym_interval(1, 7, 0);
+  SQL_INTERVAL_STRUCT val = ym_interval(SQL_TRUE, 7, 0);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR, val, ind);
 
@@ -98,7 +98,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MONTH to SQL_VAR
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ym_interval(0, 0, 11);
+  SQL_INTERVAL_STRUCT val = ym_interval(SQL_FALSE, 0, 11);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_MONTH, val, ind);
 
@@ -122,14 +122,38 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR_TO_MONTH to
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ym_interval(0, 5, 11);
+  SQL_INTERVAL_STRUCT val = ym_interval(SQL_FALSE, 5, 11);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
 
-  // Then the "<year>-<month>" form is stored (no zero-padding on either
-  // field, per Appendix D)
+  // Then the "<year>-<month(2)>" form is stored — the year is the
+  // leading field (rendered as-is) and the month is non-leading (the
+  // case below with a single-digit month proves the zero-padding rule)
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "5-11");
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR_TO_MONTH with single-digit month to SQL_VARCHAR",
+                 "[c_interval][conversion][sql_string]") {
+  // Given a VARCHAR column
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
+
+  // When SQL_C_INTERVAL_YEAR_TO_MONTH carrying 4 years 7 months is
+  // bound and inserted (month < 10 — exercises the zero-padding rule
+  // on the positive-sign path; the negative-sign case below
+  // independently asserts the same behavior)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQL_INTERVAL_STRUCT val = ym_interval(SQL_FALSE, 4, 7);
+  SQLLEN ind = sizeof(val);
+  bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
+
+  // Then the trailing month sub-field is zero-padded to 2 digits per
+  // ODBC "Interval Data Type Length" (every non-leading field is
+  // rendered as exactly two characters), regardless of sign
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "4-07");
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_YEAR_TO_MONTH to SQL_VARCHAR",
@@ -142,7 +166,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_YEAR_TO
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ym_interval(1, 2, 3);
+  SQL_INTERVAL_STRUCT val = ym_interval(SQL_TRUE, 2, 3);
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
 
