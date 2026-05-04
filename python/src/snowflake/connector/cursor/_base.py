@@ -14,8 +14,8 @@ import enum
 import functools
 import logging
 
-from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
+from collections.abc import Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,

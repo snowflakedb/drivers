@@ -251,6 +251,41 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    /// Maps to SQLSTATE 22007 ("Invalid datetime format"). Use this when a
+    /// SQL_DATE_STRUCT / SQL_TIME_STRUCT / SQL_TIMESTAMP_STRUCT bound to a
+    /// temporal SQL target contains field values that don't form a valid
+    /// date/time (e.g. month = 13, hour = 25). Per ODBC Appendix D ("C to
+    /// SQL: Date / Time / Timestamp"), the spec-mandated SQLSTATE for
+    /// "Data value does not contain a valid date/time" is 22007 — distinct
+    /// from 22003 (numeric out of range) and 07006 (restricted data type
+    /// attribute violation, i.e. unsupported conversion).
+    #[snafu(display("Invalid datetime value: {reason}"))]
+    InvalidDatetimeValue {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// Maps to SQLSTATE 22008 ("Datetime field overflow"). Use this when a
+    /// SQL_C_TYPE_TIMESTAMP source is bound to a SQL_TYPE_DATE or
+    /// SQL_TYPE_TIME target and the discarded portion is non-zero. Per ODBC
+    /// Appendix D ("Converting Data from C to SQL Data Types"):
+    ///
+    ///   - TIMESTAMP → DATE: 22008 if the time portion of the timestamp is
+    ///     nonzero (any of hour / minute / second / fraction).
+    ///   - TIMESTAMP → TIME: 22008 if the fractional seconds portion is
+    ///     nonzero.
+    ///
+    /// This is distinct from 22007 (struct field outside the legal range,
+    /// e.g. month=13), 22003 (numeric magnitude overflow), and 07006
+    /// (unsupported conversion).
+    #[snafu(display("Datetime field overflow: {reason}"))]
+    DatetimeFieldOverflow {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid boolean value: {value}"))]
     InvalidBooleanValue {
         value: String,

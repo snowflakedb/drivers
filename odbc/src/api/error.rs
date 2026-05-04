@@ -610,6 +610,8 @@ impl OdbcError {
                 | JsonBindingError::BindingNumericOutOfRange { .. } => {
                     SqlState::NumericValueOutOfRange
                 }
+                JsonBindingError::InvalidDatetimeValue { .. } => SqlState::InvalidDatetimeFormat,
+                JsonBindingError::DatetimeFieldOverflow { .. } => SqlState::DatetimeFieldOverflow,
                 JsonBindingError::UnsupportedCDataType { .. } => {
                     SqlState::RestrictedDataTypeAttributeViolation
                 }

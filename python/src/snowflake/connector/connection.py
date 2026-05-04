@@ -14,10 +14,10 @@ import re
 import threading
 import warnings
 
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable
 from functools import cached_property
 from io import StringIO
-from typing import Any, Callable, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 
 from snowflake.connector._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
@@ -86,7 +86,7 @@ APPLICATION_RE = re.compile(r"^[\w\d_]+")
 LOG_MAX_QUERY_LENGTH = 80
 
 SessionParameters = dict[str, Any]
-ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
+ConnectionParamValue = int | str | float | bytes | bool | SessionParameters
 ConnectionParameters = dict[str, ConnectionParamValue]
 
 # Module-level logger

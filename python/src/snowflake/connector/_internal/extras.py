@@ -3,10 +3,11 @@ from __future__ import annotations
 import functools
 import importlib
 
+from collections.abc import Callable
 from importlib import metadata
 from logging import getLogger
 from types import ModuleType
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from snowflake.connector import errors
 from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW

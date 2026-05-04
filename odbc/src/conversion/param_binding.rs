@@ -2399,6 +2399,594 @@ mod tests {
         Ok(())
     }
 
+    // -- Cross-temporal binds (DATE↔TIMESTAMP, TIME↔TIMESTAMP) ----------------
+    //
+    // These mirror the legacy 3.16.0 behavior, which itself implements the
+    // ODBC spec (Appendix D, "Converting Data from C to SQL Data Types"):
+    //   - SQL_C_TYPE_TIMESTAMP → SQL_DATE: extract the date portion. SQLSTATE
+    //     22008 ("Datetime field overflow") if the time portion is nonzero.
+    //   - SQL_C_TYPE_TIMESTAMP → SQL_TIME: extract the whole-second time
+    //     portion. SQLSTATE 22008 if the fractional-seconds portion is
+    //     nonzero. The date portion is silently discarded.
+    //   - SQL_C_TYPE_DATE → SQL_TIMESTAMP*: combine the date with 00:00:00.
+    //   - SQL_C_TYPE_TIME → SQL_TIMESTAMP*: pair the time with the current
+    //     local date and zero fractional seconds.
+    //
+    // Two distinct error classes apply to the structs themselves:
+    //   - 22007 ("Invalid datetime format") — struct field outside its legal
+    //     range (e.g. month=13, hour=25), via JsonBindingError::InvalidDatetimeValue.
+    //   - 22008 ("Datetime field overflow") — discarded portion is non-zero
+    //     when narrowing TIMESTAMP → DATE/TIME, via
+    //     JsonBindingError::DatetimeFieldOverflow.
+    // Both are distinct from 07006 ("Restricted data type attribute
+    // violation"), which would incorrectly signal that the conversion itself
+    // is unsupported.
+
+    #[test]
+    fn convert_timestamp_as_date_extracts_date_part() -> TestResult {
+        // ODBC Appendix D: TIMESTAMP → DATE only succeeds when the discarded
+        // time portion is exactly zero. Use midnight so we exercise the
+        // happy-path date extraction; the 22008-on-nonzero-time behavior is
+        // covered by `convert_timestamp_as_date_rejects_nonzero_hour` and
+        // `convert_timestamp_as_date_rejects_nonzero_fraction`.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 12,
+            day: 25,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Date);
+        let expected_millis = (chrono::NaiveDate::from_ymd_opt(2024, 12, 25).unwrap()
+            - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days()
+            * 86_400_000;
+        assert_eq!(v, Value::String(expected_millis.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_extracts_time_part() -> TestResult {
+        // ODBC Appendix D: TIMESTAMP → TIME only succeeds when the discarded
+        // fractional-seconds portion is exactly zero. The whole-second h/m/s
+        // are preserved and the date portion is silently dropped.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 15,
+            hour: 12,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Time);
+        // 12:30:45 -> 45045s -> 45_045_000_000_000ns since midnight.
+        assert_eq!(v, Value::String("45045000000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_timestamp_combines_with_midnight() -> TestResult {
+        let d = sql::Date {
+            year: 2024,
+            month: 6,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::TIMESTAMP,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2024, 6, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
+        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_timestamp_rejects_invalid_date() {
+        let d = sql::Date {
+            year: 2024,
+            month: 13,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::TIMESTAMP,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Date"), an invalid date in a
+        // SQL_C_TYPE_DATE bound to a SQL_TYPE_TIMESTAMP target must surface
+        // as SQLSTATE 22007 (Invalid datetime format), not 07006 (restricted
+        // data type attribute violation).
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_time_as_timestamp_uses_current_date_and_zero_fraction() -> TestResult {
+        let t = sql::Time {
+            hour: 14,
+            minute: 30,
+            second: 45,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIMESTAMP,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+
+        let today_before = chrono::Local::now().date_naive();
+        let (ty, v) = convert_binding(&binding)?;
+        let today_after = chrono::Local::now().date_naive();
+
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+
+        let nanos_str = match v {
+            Value::String(s) => s,
+            other => panic!("expected Value::String, got {other:?}"),
+        };
+        let nanos: i64 = nanos_str.parse().expect("nanos must parse as i64");
+        let dt = chrono::DateTime::from_timestamp_nanos(nanos).naive_utc();
+
+        // The time component is preserved exactly with a zero fractional part.
+        assert_eq!(
+            dt.time(),
+            chrono::NaiveTime::from_hms_opt(14, 30, 45).unwrap()
+        );
+        // The date component is "current date" — anywhere in the window the
+        // call took to execute (handles midnight rollover gracefully).
+        assert!(
+            dt.date() >= today_before && dt.date() <= today_after,
+            "date {} not within [{}, {}]",
+            dt.date(),
+            today_before,
+            today_after
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_time_as_timestamp_rejects_invalid_time() {
+        let t = sql::Time {
+            hour: 25,
+            minute: 0,
+            second: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIMESTAMP,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Time"), an invalid time in a
+        // SQL_C_TYPE_TIME bound to a SQL_TYPE_TIMESTAMP target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_invalid_date() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Timestamp"), an invalid date in a
+        // SQL_C_TYPE_TIMESTAMP bound to a SQL_TYPE_DATE target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_rejects_invalid_time() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Timestamp"), an invalid time in a
+        // SQL_C_TYPE_TIMESTAMP bound to a SQL_TYPE_TIME target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    // -- TIMESTAMP → DATE / TIME truncation overflow (SQLSTATE 22008) --------
+    //
+    // Per ODBC Appendix D ("Converting Data from C to SQL Data Types"):
+    //   - TIMESTAMP → DATE: 22008 if the time portion of the timestamp is
+    //     nonzero (any of hour / minute / second / fraction).
+    //   - TIMESTAMP → TIME: 22008 if the fractional seconds portion is
+    //     nonzero.
+    // This matches the legacy 3.16.0 driver, which surfaces SQL_ERROR with
+    // SQLSTATE=22008 and NativeError=40520 in these cases.
+    //
+    // Error precedence: an out-of-range struct field always wins over the
+    // narrowing rule. If a SQL_TIMESTAMP_STRUCT has both an invalid field
+    // (e.g. hour=25, fraction>999_999_999) AND a non-zero discarded portion,
+    // the result must be 22007 (InvalidDatetimeValue), not 22008. The
+    // *_22007_takes_precedence_over_22008 tests below pin this down.
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_nonzero_hour() {
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("nonzero time must overflow");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_nonzero_fraction() {
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("nonzero fraction must overflow");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_rejects_nonzero_fraction() {
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 500_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("nonzero fraction must overflow");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    // -- 22007 takes precedence over 22008 (regression for SQLSTATE mapping) -
+
+    #[test]
+    fn convert_timestamp_as_date_invalid_hour_takes_precedence_over_22008() {
+        // hour=25 makes the struct itself malformed (22007), AND the time
+        // portion is non-zero which would also trigger the narrowing rule
+        // (22008). The struct-validity error must win.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid struct must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_invalid_fraction_takes_precedence_over_22008() {
+        // fraction = 3_000_000_000 ns is out of the legal [0, 999_999_999]
+        // range and is also non-zero (would trigger the 22008 narrowing
+        // rule). The struct-validity error must win.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 3_000_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid fraction must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_hour_takes_precedence_over_22008() {
+        // hour=25 + non-zero fraction: 22007 must win over 22008.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 500_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid struct must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_fraction_takes_precedence_over_22008() {
+        // fraction out of [0, 999_999_999] AND non-zero: 22007 wins.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 3_000_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid fraction must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_date_returns_22007() {
+        // The date portion is going to be silently discarded, but it must
+        // still be a syntactically valid Y/M/D — otherwise the *struct*
+        // itself is malformed and we must surface 22007. month=13 with an
+        // otherwise valid time would have silently succeeded before the
+        // date-validation step was added to this arm.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date in TS → TIME must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    // The same-type pass-through arms (DATE→DATE, TIME→TIME, TIMESTAMP→
+    // TIMESTAMP) must also report invalid struct fields as 22007 — not as
+    // 07006 — so the SQLSTATE is consistent with the cross-temporal arms.
+
+    #[test]
+    fn convert_date_as_date_rejects_invalid_date() {
+        let d = sql::Date {
+            year: 2024,
+            month: 13,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::DATE,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_time_as_time_rejects_invalid_time() {
+        let t = sql::Time {
+            hour: 25,
+            minute: 0,
+            second: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIME,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_timestamp_rejects_invalid_date() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_timestamp_rejects_invalid_time() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
     #[test]
     fn convert_numeric_as_varchar() -> TestResult {
         let n = sql::Numeric {

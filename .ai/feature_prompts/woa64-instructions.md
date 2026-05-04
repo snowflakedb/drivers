@@ -260,7 +260,7 @@ on the one above it.
 
 - [ ] No `# TEMPORARY` in `.github/workflows/`
 - [ ] No `print(..., file=sys.stderr)` in `python/src/`
-- [ ] Full Python version matrix restored: `["3.9", "3.10", "3.11", "3.12", "3.13"]`
+- [ ] Full Python version matrix restored: `["3.10", "3.11", "3.12", "3.13", "3.14"]`
 - [ ] Full OS matrix restored: `[ubuntu-latest, windows-11-arm]`
 - [ ] Rust Core ARM64 job re-enabled in `test-rust-core.yml` (`if: false` → standard condition) and in status gate
 - [ ] ADR updated with confirmed conclusions, reviewed by ADR pipeline

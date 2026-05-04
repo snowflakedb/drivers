@@ -11,7 +11,7 @@ from __future__ import annotations
 import functools
 import types
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextvars import ContextVar
 from typing import Any, Callable, TypeVar, cast
 

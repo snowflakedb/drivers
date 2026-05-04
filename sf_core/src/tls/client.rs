@@ -42,15 +42,21 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
     // Create client based on CRL configuration
     match tls_config.crl_config.check_mode {
         CertRevocationCheckMode::Disabled => {
-            tracing::debug!("CRL validation disabled, creating standard client");
-            if custom_root_store.is_some() {
-                tracing::warn!(
-                    "Custom root store specified but CRL validation disabled - custom roots will be ignored"
-                );
+            if let Some(root_store) = custom_root_store {
+                tracing::debug!("CRL disabled, applying custom root store without CRL");
+                let tls_config = ClientConfig::builder()
+                    .with_root_certificates(Arc::new(root_store))
+                    .with_no_client_auth();
+                configure_http_client(Client::builder())
+                    .use_preconfigured_tls(tls_config)
+                    .build()
+                    .context(ClientBuildSnafu)
+            } else {
+                tracing::debug!("CRL disabled, using default system roots");
+                configure_http_client(Client::builder())
+                    .build()
+                    .context(ClientBuildSnafu)
             }
-            configure_http_client(Client::builder())
-                .build()
-                .context(ClientBuildSnafu)
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!(

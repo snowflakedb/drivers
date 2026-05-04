@@ -2,16 +2,16 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Int64Type;
-use chrono::{Datelike, NaiveTime, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, InvalidArrowValueSnafu, JsonBindingError,
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedCDataTypeSnafu,
-    UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidArrowValueSnafu,
+    InvalidDatetimeValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError,
+    UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
     read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
@@ -224,8 +224,12 @@ impl ReadODBC for SnowflakeTime {
                 let time = read_unaligned::<sql::Time>(binding);
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
                     .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid time in SQL_C_TYPE_TIME for TIME target: \
+                                 hour={}, minute={}, second={}",
+                                time.hour, time.minute, time.second
+                            ),
                         }
                         .build()
                     })
@@ -264,6 +268,61 @@ impl ReadODBC for SnowflakeTime {
                         }
                         .build()
                     })
+            }
+            // Bind SQL_C_TYPE_TIMESTAMP into a TIME column by extracting the
+            // time portion of the timestamp. Per ODBC Appendix D, the
+            // conversion only succeeds when the discarded fractional-seconds
+            // portion is exactly zero; otherwise SQLSTATE 22008 ("Datetime
+            // field overflow") is returned. The whole-second time fields are
+            // always preserved; the date portion is silently discarded.
+            //
+            // Error precedence: validate the *whole struct* first (22007 —
+            // also catches fraction > 999_999_999, hour > 23, month=13, …)
+            // and only then enforce the 22008 fractional-seconds rule. Even
+            // though the date portion is silently dropped, it must still be
+            // a syntactically valid Y/M/D — otherwise an input like
+            // {year=2024, month=13, day=1, hour=14, ...} would silently
+            // succeed despite the struct being malformed.
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                    .ok_or_else(|| {
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                                 year={}, month={}, day={}",
+                                ts.year, ts.month, ts.day
+                            ),
+                        }
+                        .build()
+                    })?;
+                let time = NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIMESTAMP for TIME target: \
+                             hour={}, minute={}, second={}, fraction={}",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .build()
+                })?;
+                if ts.fraction != 0 {
+                    return DatetimeFieldOverflowSnafu {
+                        reason: format!(
+                            "SQL_C_TYPE_TIMESTAMP → SQL_TYPE_TIME: fractional seconds \
+                             must be zero (got fraction={})",
+                            ts.fraction
+                        ),
+                    }
+                    .fail();
+                }
+                Ok(time)
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,

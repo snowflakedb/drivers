@@ -117,7 +117,7 @@ def assert_floats_equal(actual: Iterable[float], expected: Iterable[float]) -> N
     actual_list = list(actual)
     expected_list = list(expected)
     assert len(actual_list) == len(expected_list), f"Length mismatch: {len(actual_list)} != {len(expected_list)}"
-    for i, (a, e) in enumerate(zip(actual_list, expected_list)):
+    for i, (a, e) in enumerate(zip(actual_list, expected_list, strict=True)):
         assert_float_equal(a, e, f"Mismatch at index {i}: expected {e}, got {a}")
 
 

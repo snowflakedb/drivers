@@ -2516,7 +2516,7 @@ class TestCursorDescribe:
 
         assert describe_result is not None
         assert cursor.description is not None
-        for d, e in zip(describe_result, cursor.description):
+        for d, e in zip(describe_result, cursor.description, strict=True):
             assert d.name == e.name
             assert d.type_code == e.type_code
 

@@ -6,7 +6,7 @@ This module defines the type constructors and type objects as specified in PEP 2
 
 import datetime
 
-from typing import Any, Union
+from typing import Any
 
 
 # Type Constructors
@@ -97,7 +97,7 @@ def TimestampFromTicks(ticks: float) -> datetime.datetime:
     return datetime.datetime.fromtimestamp(ticks)
 
 
-def Binary(string: Union[str, bytes]) -> bytes:
+def Binary(string: str | bytes) -> bytes:
     """
     Construct an object capable of holding a binary (long) string value.
 
