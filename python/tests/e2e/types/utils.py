@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
+
 from collections.abc import Iterable
 from datetime import datetime
 from math import isinf, isnan
+
+
+def assert_geojson(value: str, expected_type: str, expected_coords: list) -> None:
+    """Parse a GeoJSON string and assert it has the expected type and coordinates."""
+    geo = json.loads(value)
+    assert geo["type"] == expected_type
+    assert geo["coordinates"] == expected_coords
 
 
 # Minimum normalized positive value (smallest normal number)
