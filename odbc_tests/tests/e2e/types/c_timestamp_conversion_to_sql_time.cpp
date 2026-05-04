@@ -56,7 +56,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYP
   SQLLEN ind = sizeof(val);
   bind_timestamp_and_execute(stmt, val, ind);
 
-  // Then only the time is preserved (date silently discarded)
+  // Then only the time is preserved and the date is silently discarded
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   SQL_TIME_STRUCT result = get_data<SQL_C_TYPE_TIME>(fetch_stmt, 1);
   CHECK(result.hour == 14);
@@ -69,9 +69,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non
   // Given a TIME column
   conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
-  // When the timestamp carries a half-second fractional component, ODBC
-  // Appendix D requires SQL_ERROR / SQLSTATE 22008 (the whole-second h/m/s
-  // would round-trip cleanly, but the fraction would be silently dropped).
+  // When the timestamp carries a half-second fractional component
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -79,7 +77,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non
   SQLLEN ind = sizeof(val);
   ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22008 (Datetime field overflow)
+  // Then SQLExecute fails with SQLSTATE 22008
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
 }
 
@@ -138,7 +136,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP at epoch d
   SQLLEN ind = sizeof(val);
   bind_timestamp_and_execute(stmt, val, ind);
 
-  // Then only the time matters; the epoch date is irrelevant
+  // Then only the time matters and the epoch date is irrelevant
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   SQL_TIME_STRUCT result = get_data<SQL_C_TYPE_TIME>(fetch_stmt, 1);
   CHECK(result.hour == 12);
@@ -183,7 +181,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with hou
   // Given a TIME column
   conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
-  // When the timestamp carries hour=24 (out of legal 0..23 range)
+  // When the timestamp carries hour=24 which is out of the legal range
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -191,15 +189,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with hou
   SQLLEN ind = sizeof(val);
   ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22007 (Invalid datetime format)
+  // Then SQLExecute fails with SQLSTATE 22007
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with minute=60 bound to SQL_TYPE_TIME",
                  "[c_timestamp][conversion][sql_time][invalid]") {
+  // Given a TIME column
   conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
-  // When the timestamp carries minute=60 (out of legal 0..59 range)
+  // When the timestamp carries minute=60 which is out of the legal range
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -214,13 +213,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with min
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should reject SQL_C_TYPE_TIMESTAMP with out-of-range fraction bound to SQL_TYPE_TIME",
                  "[c_timestamp][conversion][sql_time][invalid]") {
+  // Given a TIME column
   conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
-  // When the timestamp carries fraction=3_000_000_000 ns — well outside
-  // the legal ODBC range for SQL_TIMESTAMP_STRUCT::fraction (0..999_999_999;
-  // the slightly wider 0..1_999_999_999 chrono range exists only to model
-  // leap seconds, which Snowflake does not honor). Matches the matching
-  // 22007 unit test in odbc/src/conversion/param_binding.rs.
+  // When the timestamp carries fraction=3000000000 ns which is out of the legal range
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -232,15 +228,14 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should prefer SQLSTATE 22007 over 22008 when SQL_C_TYPE_TIMESTAMP has invalid hour and non-zero "
-                 "fraction",
-                 "[c_timestamp][conversion][sql_time][invalid]") {
+TEST_CASE_METHOD(
+    ConnSchemaFixture,
+    "should prefer SQLSTATE 22007 over 22008 when SQL_C_TYPE_TIMESTAMP has invalid hour and non-zero fraction",
+    "[c_timestamp][conversion][sql_time][invalid]") {
+  // Given a TIME column
   conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
-  // When the timestamp has BOTH an invalid hour AND a non-zero fraction
-  // (which would otherwise trigger 22008 for the narrowing TIMESTAMP→TIME
-  // conversion): the struct-validity error must take precedence.
+  // When the timestamp has both an invalid hour and a non-zero fraction
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -248,6 +243,6 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   SQLLEN ind = sizeof(val);
   ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22007, NOT 22008
+  // Then SQLExecute fails with SQLSTATE 22007 not 22008
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }

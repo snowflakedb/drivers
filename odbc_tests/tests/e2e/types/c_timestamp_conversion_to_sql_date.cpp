@@ -117,7 +117,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non
   // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When SQL_C_TYPE_TIMESTAMP 2026-04-13 14:30:45 is bound (non-zero h/m/s)
+  // When SQL_C_TYPE_TIMESTAMP 2026-04-13 14:30:45 with non-zero h/m/s is bound
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -125,7 +125,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non
   SQLLEN ind = sizeof(val);
   ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22008 (Datetime field overflow)
+  // Then SQLExecute fails with SQLSTATE 22008
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22008"));
 }
 
@@ -134,8 +134,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with non
   // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When the timestamp carries a non-zero nanosecond fraction (whole seconds
-  // are zero, so only `fraction` triggers the overflow)
+  // When the timestamp carries a non-zero nanosecond fraction with whole seconds zero
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -153,8 +152,7 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When 23:59:59 on 2026-04-13 is bound: per spec the conversion must NOT
-  // silently round up to 2026-04-14, it must error
+  // When 23:59:59 on 2026-04-13 is bound and the conversion must not silently round up
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -182,7 +180,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with mon
   // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When the timestamp carries month=13 (out of legal 1..12 range)
+  // When the timestamp carries month=13 which is out of the legal range
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -190,15 +188,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with mon
   SQLLEN ind = sizeof(val);
   ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22007 (Invalid datetime format)
+  // Then SQLExecute fails with SQLSTATE 22007
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP with day=32 bound to SQL_TYPE_DATE",
                  "[c_timestamp][conversion][sql_date][invalid]") {
+  // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When the timestamp carries day=32 (no month has 32 days)
+  // When the timestamp carries day=32 and no month has 32 days
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -214,11 +213,10 @@ TEST_CASE_METHOD(
     ConnSchemaFixture,
     "should prefer SQLSTATE 22007 over 22008 when SQL_C_TYPE_TIMESTAMP has invalid month and non-zero time",
     "[c_timestamp][conversion][sql_date][invalid]") {
+  // Given a DATE column
   conn.execute("CREATE TEMPORARY TABLE t (col DATE)");
 
-  // When the timestamp has BOTH an invalid date field AND a non-zero time
-  // portion (which would otherwise trigger 22008): the struct-validity
-  // error must take precedence.
+  // When the timestamp has both an invalid date field and a non-zero time portion
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -226,6 +224,6 @@ TEST_CASE_METHOD(
   SQLLEN ind = sizeof(val);
   ret = bind_timestamp_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22007, NOT 22008
+  // Then SQLExecute fails with SQLSTATE 22007 not 22008
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }

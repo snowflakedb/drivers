@@ -129,11 +129,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE to TIMESTAMP_TZ
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE leap day 2024-02-29 to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp]") {
-  // Given a TIMESTAMP_NTZ column with a known session timezone
-  // (TIMEZONE=UTC is required because the legacy 3.16.0 driver routes
-  // DATE → TIMESTAMP through a TZ-aware path; without pinning TZ the
-  // legacy driver would shift the day by the session's UTC offset.)
+  // TIMEZONE=UTC is required because the legacy 3.16.0 driver routes DATE →
+  // TIMESTAMP through a TZ-aware path; without pinning TZ the legacy driver
+  // would shift the day by the session's UTC offset.
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+  // Given a TIMESTAMP_NTZ column with a known session timezone
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When the leap day 2024-02-29 is bound and inserted
@@ -158,9 +158,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE leap day 2024-0
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_DATE epoch 1970-01-01 to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp]") {
-  // Given a TIMESTAMP_NTZ column with a known session timezone (see leap-day
-  // test above for rationale)
+  // See the leap-day test above for the TIMEZONE=UTC rationale.
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+  // Given a TIMESTAMP_NTZ column with a known session timezone
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When the Unix epoch date is bound and inserted
@@ -219,7 +219,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with month=13
   // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
-  // When the date carries month=13 (out of legal 1..12 range)
+  // When the date carries month=13 which is out of the legal range
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -227,15 +227,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with month=13
   SQLLEN ind = sizeof(val);
   ret = bind_date_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22007 (Invalid datetime format)
+  // Then SQLExecute fails with SQLSTATE 22007
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with month=0 bound to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp][invalid]") {
+  // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
-  // When month=0 (zero is not a valid month index)
+  // When the date carries month=0 which is not a valid month index
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -249,9 +250,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with month=0 
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=32 bound to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp][invalid]") {
+  // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
-  // When day=32 is bound for any month (no month has 32 days)
+  // When the date carries day=32 and no month has 32 days
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -265,9 +267,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=32 b
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=0 bound to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp][invalid]") {
+  // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
-  // When day=0 is bound (zero is not a valid day-of-month)
+  // When the date carries day=0 which is not a valid day of month
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -282,9 +285,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=0 bo
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should reject SQL_C_TYPE_DATE with non-leap-year Feb 29 bound to SQL_TYPE_TIMESTAMP",
                  "[c_date][conversion][sql_timestamp][invalid]") {
+  // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
-  // When Feb 29 is bound for a non-leap year (2023 is not a leap year)
+  // When the date carries Feb 29 for a non-leap year 2023
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -292,7 +296,6 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   SQLLEN ind = sizeof(val);
   ret = bind_date_and_try_execute(stmt, val, ind);
 
-  // Then SQLExecute fails with SQLSTATE 22007 (calendar-aware day-in-month
-  // validation, not just upper-bound 31)
+  // Then SQLExecute fails with SQLSTATE 22007
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
