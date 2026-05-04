@@ -202,10 +202,10 @@ core.workflow(
                + "with a link to the mirrored commit.",
         integrates = [],
     ),
-    # pass_thru_default preserves the external contributor's authorship on
-    # content commits; falls back to the mirror-bot identity only for
-    # metadata/rewrite commits Copybara generates itself.
-    authoring = authoring.pass_thru_default(
+    # pass_thru preserves the external contributor's authorship on
+    # imported commits. The string argument is the fallback identity used
+    # only when the origin commit has no author metadata.
+    authoring = authoring.pass_thru(
         "Mirror Bot <mirror-bot@snowflake.com>"
     ),
     # Same allowlist as outbound — anything outside it is silently dropped
