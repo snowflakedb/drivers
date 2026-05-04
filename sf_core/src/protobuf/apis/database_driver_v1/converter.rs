@@ -549,19 +549,18 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidArgument { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::Login {
-            source: RestError::LoginError { message, code, .. },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::LoginError(LoginError {
-                message: message.clone(),
-                code: *code,
-            })),
-        },
-        ApiError::Login { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: source.to_string(),
-            })),
+        ApiError::Login { source, .. } => match source.as_ref() {
+            RestError::LoginError { message, code, .. } => DriverError {
+                error_type: Some(driver_error::ErrorType::LoginError(LoginError {
+                    message: message.clone(),
+                    code: *code,
+                })),
+            },
+            _ => DriverError {
+                error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                    detail: source.to_string(),
+                })),
+            },
         },
         ApiError::ConnectionLocking { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
@@ -704,20 +703,16 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
-        ApiError::Query {
-            source: RestError::QueryFailed {
+        ApiError::Query { source, .. } => match source.as_ref() {
+            RestError::QueryFailed {
                 code, sql_state, ..
-            },
-            ..
-        } => (*code, sql_state.clone()),
-        ApiError::Query {
-            source:
-                RestError::AsyncQuery {
-                    source: SfError::SnowflakeBody { code, .. },
-                    ..
-                },
-            ..
-        } => (Some(*code), None),
+            } => (*code, sql_state.clone()),
+            RestError::AsyncQuery {
+                source: SfError::SnowflakeBody { code, .. },
+                ..
+            } => (Some(*code), None),
+            _ => (None, None),
+        },
         _ => (None, None),
     };
 
@@ -728,10 +723,10 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
 
 fn extract_query_id(error: &ApiError) -> Option<String> {
     match error {
-        ApiError::Query {
-            source: RestError::QueryFailed { query_id, .. },
-            ..
-        } => query_id.clone(),
+        ApiError::Query { source, .. } => match source.as_ref() {
+            RestError::QueryFailed { query_id, .. } => query_id.clone(),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -786,11 +781,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             ..
         } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
-        ApiError::Login {
-            source: RestError::LoginError { .. },
-            ..
-        } => StatusCode::LoginError,
-        ApiError::Login { .. } => StatusCode::AuthenticationError,
+        ApiError::Login { source, .. } => match source.as_ref() {
+            RestError::LoginError { .. } => StatusCode::LoginError,
+            _ => StatusCode::AuthenticationError,
+        },
         ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
@@ -909,27 +903,27 @@ mod tests {
     fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
         ApiError::Query {
             location: loc(),
-            source: RestError::QueryFailed {
+            source: Box::new(RestError::QueryFailed {
                 message: "test".to_owned(),
                 code,
                 sql_state: sql_state.map(|s| s.to_owned()),
                 query_id: None,
                 location: loc(),
-            },
+            }),
         }
     }
 
     fn async_query(code: i32) -> ApiError {
         ApiError::Query {
             location: loc(),
-            source: RestError::AsyncQuery {
+            source: Box::new(RestError::AsyncQuery {
                 location: loc(),
                 source: SfError::SnowflakeBody {
                     code,
                     message: "test".to_owned(),
                     location: loc(),
                 },
-            },
+            }),
         }
     }
 
