@@ -9,8 +9,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericValueOutOfRangeSnafu,
-    UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidDatetimeValueSnafu, JsonBindingError,
+    NumericValueOutOfRangeSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -392,8 +392,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
             let ts = read_unaligned::<sql::Timestamp>(binding);
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
                 .ok_or_else(|| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
+                             year={}, month={}, day={}",
+                            ts.year, ts.month, ts.day
+                        ),
                     }
                     .build()
                 })?;
@@ -404,8 +408,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                 ts.fraction,
             )
             .ok_or_else(|| {
-                UnsupportedCDataTypeSnafu {
-                    c_type: binding.value_type,
+                InvalidDatetimeValueSnafu {
+                    reason: format!(
+                        "invalid time in SQL_C_TYPE_TIMESTAMP for TIMESTAMP target: \
+                         hour={}, minute={}, second={}, fraction={}",
+                        ts.hour, ts.minute, ts.second, ts.fraction
+                    ),
                 }
                 .build()
             })?;
@@ -432,6 +440,45 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                     }
                     .build()
                 })
+        }
+        // Bind SQL_C_TYPE_DATE into a TIMESTAMP column by combining the date
+        // with midnight (matches the legacy 3.16.0 driver, which auto-promotes
+        // a DATE source to a TIMESTAMP at 00:00:00.000000000).
+        CDataType::Date | CDataType::TypeDate => {
+            let d = read_unaligned::<sql::Date>(binding);
+            let date = NaiveDate::from_ymd_opt(d.year as i32, d.month as u32, d.day as u32)
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid date in SQL_C_TYPE_DATE for TIMESTAMP target: \
+                             year={}, month={}, day={}",
+                            d.year, d.month, d.day
+                        ),
+                    }
+                    .build()
+                })?;
+            Ok(NaiveDateTime::new(date, NaiveTime::MIN))
+        }
+        // Bind SQL_C_TYPE_TIME into a TIMESTAMP column by pairing the time
+        // with the current local date and a zero fractional-seconds field.
+        // Per ODBC C-to-SQL spec (Appendix D, "C to SQL: Time"): "the date
+        // fields of the timestamp structure are set to the current date and
+        // the fractional seconds field is set to zero." This mirrors the
+        // SnowflakeTime → SQL_C_TYPE_TIMESTAMP path in `time.rs`.
+        CDataType::Time | CDataType::TypeTime => {
+            let t = read_unaligned::<sql::Time>(binding);
+            let time = NaiveTime::from_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIME for TIMESTAMP target: \
+                             hour={}, minute={}, second={}",
+                            t.hour, t.minute, t.second
+                        ),
+                    }
+                    .build()
+                })?;
+            Ok(NaiveDateTime::new(chrono::Local::now().date_naive(), time))
         }
         CDataType::Binary => {
             let ts = read_binary_struct::<sql::Timestamp>(binding, "SQL_TIMESTAMP_STRUCT")?;

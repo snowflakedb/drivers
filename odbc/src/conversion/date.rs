@@ -2,14 +2,15 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, JsonBindingError, UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidDatetimeValueSnafu,
+    JsonBindingError, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -177,8 +178,12 @@ impl ReadODBC for SnowflakeDate {
                 let date = read_unaligned::<sql::Date>(binding);
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_DATE for DATE target: \
+                                 year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
                         }
                         .build()
                     })
@@ -213,6 +218,60 @@ impl ReadODBC for SnowflakeDate {
                         }
                         .build()
                     })
+            }
+            // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the
+            // date portion of the timestamp. Per ODBC Appendix D ("Converting
+            // Data from C to SQL Data Types") and matching the legacy 3.16.0
+            // driver, the conversion only succeeds when the discarded time
+            // portion is exactly zero; otherwise SQLSTATE 22008 ("Datetime
+            // field overflow") is returned.
+            //
+            // Error precedence: validate the *struct* first (22007 for any
+            // out-of-range field — month=13, hour=25, fraction=3e9, …) and
+            // only then enforce the 22008 narrowing rule. Otherwise an input
+            // like {hour=25, minute=0, second=0, fraction=0} would surface
+            // as "datetime field overflow" when in fact the struct itself is
+            // malformed.
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                    .ok_or_else(|| {
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                             year={}, month={}, day={}",
+                                ts.year, ts.month, ts.day
+                            ),
+                        }
+                        .build()
+                    })?;
+                NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                             hour={}, minute={}, second={}, fraction={}",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .build()
+                })?;
+                if ts.hour != 0 || ts.minute != 0 || ts.second != 0 || ts.fraction != 0 {
+                    return DatetimeFieldOverflowSnafu {
+                        reason: format!(
+                            "SQL_C_TYPE_TIMESTAMP → SQL_TYPE_DATE: time portion must be \
+                             zero (got hour={}, minute={}, second={}, fraction={})",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .fail();
+                }
+                Ok(date)
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
