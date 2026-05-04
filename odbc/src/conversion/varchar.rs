@@ -508,16 +508,36 @@ impl ReadODBC for SnowflakeVarchar {
 /// fields come from `binding.value_type`, not the struct's
 /// `interval_type` field — drivers MUST trust the C type set on the binding
 /// (some applications never bother filling in `interval_type`).
+///
+/// We deliberately do NOT copy the whole `SQL_INTERVAL_STRUCT` up front:
+/// applications routinely populate only the active variant of the
+/// `interval_value` union (e.g. `year_month` for SQL_C_INTERVAL_YEAR),
+/// so a wholesale `read_unaligned::<IntervalStruct>` would touch the
+/// 20-byte `DaySecond` tail bytes the app never wrote. We instead read
+/// `interval_sign` and the active variant individually at the offsets
+/// fixed by the `repr(C)` layout in `odbc_sys::IntervalStruct`:
+///
+///   offset  0  interval_type   c_int  (4 bytes)
+///   offset  4  interval_sign   i16    (2 bytes)
+///   offset  6  padding                (2 bytes, before the 4-aligned union)
+///   offset  8  interval_value  union  (20 bytes; YearMonth = 8, DaySecond = 20)
 fn format_interval(binding: &ParameterBinding) -> String {
-    let iv = read_unaligned::<sql::IntervalStruct>(binding);
-    let sign = if iv.interval_sign != 0 { "-" } else { "" };
-    // Read only the union member required for the active C type below. Reading
-    // the inactive variant would access bytes the application never wrote
-    // (e.g. an app populating only `year_month` leaves the larger
-    // `day_second` tail uninitialized), which is undefined behavior in Rust
-    // even via unsafe.
-    let ym = || unsafe { iv.interval_value.year_month };
-    let ds = || unsafe { iv.interval_value.day_second };
+    // SAFETY: the caller has already routed us here via `make_converter`,
+    // which only dispatches to `SnowflakeVarchar` for SQL_INTERVAL_*
+    // parameter types; for those types ODBC requires the application to
+    // pass a buffer of at least `sizeof(SQL_INTERVAL_STRUCT)`, so reading
+    // `interval_sign` (i16 at offset 4) and either `YearMonth` (8 bytes
+    // at offset 8) or `DaySecond` (20 bytes at offset 8) stays within the
+    // application-supplied buffer without ever touching the inactive
+    // union tail.
+    let base = binding.parameter_value_ptr as *const u8;
+    let sign_raw: sql::SmallInt =
+        unsafe { std::ptr::read_unaligned(base.add(4) as *const sql::SmallInt) };
+    let sign = if sign_raw != 0 { "-" } else { "" };
+    let ym =
+        || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::YearMonth) };
+    let ds =
+        || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::DaySecond) };
 
     /// Render `<seconds>.<fraction>` with the fraction zero-padded to 6
     /// digits and the decimal point always present (e.g. 45 → "45.000000",

@@ -2719,6 +2719,37 @@ mod tests {
     }
 
     #[test]
+    fn convert_interval_day_to_hour() -> TestResult {
+        // Hour is non-leading (after the space separator) and zero-padded
+        // to 2 chars per ODBC "Interval Data Type Length".
+        let iv = ds_interval(0, 3, 7, 0, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalDayToHour, 108, &iv)?;
+        assert_eq!(v, Value::String("3 07".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_day_to_minute() -> TestResult {
+        // Both hour and minute sub-fields are zero-padded; the leading
+        // day field is rendered as-is.
+        let iv = ds_interval(0, 3, 7, 5, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalDayToMinute, 109, &iv)?;
+        assert_eq!(v, Value::String("3 07:05".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_hour_to_second_with_fraction() -> TestResult {
+        // Minute and second are zero-padded; the seconds fraction is
+        // emitted at the canonical 6-digit microsecond width per the
+        // ODBC spec (no trimming).
+        let iv = ds_interval(0, 0, 12, 30, 59, 250_000);
+        let (_, v) = convert_interval(CDataType::IntervalHourToSecond, 112, &iv)?;
+        assert_eq!(v, Value::String("12:30:59.250000".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn convert_interval_minute_to_second_no_fraction() -> TestResult {
         // Sub-field seconds are zero-padded to 2 digits per ODBC spec
         // (matches the formatting of HH:MM in HOUR_TO_MINUTE) and the
