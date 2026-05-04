@@ -523,15 +523,3 @@ behavior_differences:
       Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification). The MS ODBC specification (Appendix C, "numeric-literal" grammar) restricts character inputs bound to numeric SQL types to the ANSI SQL numeric literal syntax, which does not include the tokens "Infinity", "-Infinity", or "NaN".
     impact: |
       Applications that need to insert non-finite IEEE-754 values should bind SQL_C_FLOAT or SQL_C_DOUBLE (both spec-permitted and supported) rather than passing a string representation.
-
-  49:
-    name: "SQL_C_TYPE_TIME with second=60 rejected client-side with 22007"
-    status: unknown
-    type: bug
-    reviewed: false
-    old_driver_behavior: |
-      When SQLBindParameter is called with ValueType=SQL_C_TYPE_TIME and the SQL_TIME_STRUCT carries second=60 bound against a SQL_TYPE_TIMESTAMP parameter, the driver accepts the bind and either forwards the malformed value to the server or silently normalizes it. Other invalid struct fields (hour=24, minute=60, day=32, month=13, etc.) are correctly rejected — only second=60 slips through. The new driver applies the same calendar-aware validation uniformly across every field of the struct.
-    new_driver_behavior: |
-      Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22007 ("Invalid datetime format"). Per ODBC Appendix D ("Converting Data from C to SQL Data Types"), the SQL_TIME_STRUCT::second field is restricted to 0..59 — Snowflake does not honor leap seconds, so 60 is not a representable wall-clock value. This matches the existing struct-validity contract pinned by the convert_time_as_timestamp_rejects_invalid_time unit test in odbc/src/conversion/param_binding.rs.
-    impact: |
-      Applications that pass second=60 should clamp to 59 (or carry the extra second in the next minute's hour/minute fields) before binding. The behavior change closes a silent-corruption hole rather than introducing a new restriction, since the legacy driver had no documented contract for the value it produced from second=60. The corresponding e2e test ("should reject SQL_C_TYPE_TIME with second=60 bound to SQL_TYPE_TIMESTAMP" in odbc_tests/tests/e2e/types/c_time_conversion_to_sql_timestamp.cpp) is guarded with SKIP_OLD_DRIVER("BD#49") so the legacy reference suite continues to pass.

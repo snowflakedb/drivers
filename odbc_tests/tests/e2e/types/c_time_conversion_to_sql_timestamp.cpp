@@ -16,7 +16,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -225,20 +224,15 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with minute=6
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with second=60 bound to SQL_TYPE_TIMESTAMP",
-                 "[c_time][conversion][sql_timestamp][invalid]") {
-  SKIP_OLD_DRIVER("BD#49", "Old driver accepts second=60 in SQL_C_TYPE_TIME; new driver rejects per ODBC spec");
-  // Given a TIMESTAMP_NTZ column
-  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
-
-  // When the time carries second=60 and Snowflake does not honor leap seconds
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQL_TIME_STRUCT val = {12, 0, 60};
-  SQLLEN ind = sizeof(val);
-  ret = bind_time_and_try_execute(stmt, val, ind);
-
-  // Then SQLExecute fails with SQLSTATE 22007
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
-}
+// NOTE: Intentionally no `should reject SQL_C_TYPE_TIME with second=60`
+// case here. Per the MS ODBC spec ("Constraints of the Gregorian
+// Calendar", linked from the SQL_TIME_STRUCT C-data-types appendix),
+// the trailing seconds field of *datetime* structures is allowed to
+// range up to 61.9(n) inclusive specifically to accommodate up to two
+// leap seconds — only the trailing seconds field of *interval*
+// structures is capped at 59.9(n). second=60 is therefore a legal
+// SQL_C_TYPE_TIME value at the C-data-types layer; rejecting it with
+// 22007 would itself be a spec violation, not a guard. The new driver
+// currently over-rejects via chrono's interval-style from_hms_opt
+// validation and should be loosened in a follow-up; the legacy 3.16.0
+// driver is spec-compliant on this field.

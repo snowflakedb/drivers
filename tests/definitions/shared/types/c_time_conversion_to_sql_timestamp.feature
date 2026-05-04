@@ -63,10 +63,12 @@ Feature: SQL_C_TYPE_TIME bound via SQLBindParameter to SQL_TYPE_TIMESTAMP
     When the time carries minute=60 which is out of the legal range
     Then SQLExecute fails with SQLSTATE 22007
 
-  # BD#49: skipped against the legacy reference driver, which silently
-  # accepts second=60 instead of returning 22007.
-  @odbc_e2e
-  Scenario: should reject SQL_C_TYPE_TIME with second=60 bound to SQL_TYPE_TIMESTAMP
-    Given a TIMESTAMP_NTZ column
-    When the time carries second=60 and Snowflake does not honor leap seconds
-    Then SQLExecute fails with SQLSTATE 22007
+  # NOTE: There is intentionally no `second=60` rejection scenario here.
+  # Per the MS ODBC spec ("Constraints of the Gregorian Calendar"), the
+  # trailing seconds field of *datetime* structures may range up to
+  # 61.9(n) inclusive to accommodate up to two leap seconds; only the
+  # trailing seconds field of *interval* structures is capped at 59.9(n).
+  # second=60 is therefore a legal SQL_C_TYPE_TIME value, and rejecting
+  # it with 22007 would itself be the spec violation. The new driver is
+  # currently over-strict on this field (via chrono's interval-style
+  # from_hms_opt validation) and should be relaxed in a follow-up.
