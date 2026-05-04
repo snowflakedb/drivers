@@ -122,15 +122,11 @@ impl<'a> GenContext<'a> {
                 return;
             }
             match ht {
-                HandleType::Env => {
-                    if !implicit_envs.contains(&addr.to_string()) {
-                        implicit_envs.push(addr.to_string());
-                    }
+                HandleType::Env if !implicit_envs.contains(&addr.to_string()) => {
+                    implicit_envs.push(addr.to_string());
                 }
-                HandleType::Dbc => {
-                    if !implicit_dbcs.contains(&addr.to_string()) {
-                        implicit_dbcs.push(addr.to_string());
-                    }
+                HandleType::Dbc if !implicit_dbcs.contains(&addr.to_string()) => {
+                    implicit_dbcs.push(addr.to_string());
                 }
                 _ => {}
             }
