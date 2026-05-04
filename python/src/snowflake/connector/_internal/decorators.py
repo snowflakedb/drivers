@@ -13,7 +13,7 @@ import types
 
 from collections.abc import Callable, Generator
 from contextvars import ContextVar
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from .backward_compatibility import apply_backward_compatibility
 
