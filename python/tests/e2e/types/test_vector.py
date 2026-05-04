@@ -48,10 +48,9 @@ LARGE_RESULT_SET_SIZE = 20_000
 # VECTOR(FLOAT) uses 32-bit floats — need relaxed tolerance vs 64-bit assert_floats_equal.
 FLOAT32_APPROX = {"rel": 1e-6}
 
-SKIP_JSON = pytest.mark.skip_for_json_result_set(reason="VECTOR type is not supported in JSON result format")
+pytestmark = pytest.mark.skip_for_json_result_set(reason="VECTOR type is not supported in JSON result format")
 
 
-@SKIP_JSON
 class TestVectorTypeCasting:
     """Tests for VECTOR type casting to appropriate type."""
 
@@ -71,7 +70,6 @@ class TestVectorTypeCasting:
         assert_type(result[1], float)
 
 
-@SKIP_JSON
 class TestVectorLiteral:
     """Tests for VECTOR type using SELECT with literals (no tables)."""
 
@@ -161,7 +159,6 @@ class TestVectorLiteral:
         assert result[0] == pytest.approx(expected, **FLOAT32_APPROX)
 
 
-@SKIP_JSON
 class TestVectorTable:
     """Tests for VECTOR type using table operations."""
 
@@ -223,7 +220,6 @@ class TestVectorTable:
         assert rows[2][2] is None
 
 
-@SKIP_JSON
 class TestVectorMultipleChunks:
     """Tests for VECTOR type with multiple chunks downloading."""
 
