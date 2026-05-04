@@ -474,6 +474,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
 /// Advance `batch_idx` by `delta` rows within the current `RecordBatch`.
 /// Returns `OdbcError::InternalError` if advancing would cross the batch
 /// boundary or the statement is not in the `Fetching` state.
+#[allow(clippy::result_large_err)]
 fn bump_batch_idx(state: &mut crate::api::State<StatementState>, delta: usize) -> OdbcResult<()> {
     if delta == 0 {
         return Ok(());

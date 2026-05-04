@@ -39,7 +39,8 @@ pub enum ApiError {
     Login {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("Failed to lock connection"))]
     ConnectionLocking {
@@ -58,7 +59,8 @@ pub enum ApiError {
     },
     #[snafu(display("TLS client creation failed: {source}"))]
     TlsClientCreation {
-        source: TlsError,
+        #[snafu(source(from(TlsError, Box::new)))]
+        source: Box<TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -83,7 +85,8 @@ pub enum ApiError {
     SessionRefresh {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("Statement error: {source}"))]
     Statement {
@@ -95,7 +98,8 @@ pub enum ApiError {
     Query {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("HTTP request failed: {context}: {source}"))]
     HttpRequest {
@@ -108,7 +112,8 @@ pub enum ApiError {
     TokenRequest {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("Master token expired, full re-authentication required"))]
     MasterTokenExpired {
