@@ -428,18 +428,24 @@ fn apply_execute_response(
                 descriptor.rows_affected,
                 origin,
             )?;
-            let is_zero_dml = matches!(
-                &execute_state,
-                StatementState::DmlExecuted {
-                    rows_affected: 0,
-                    ..
-                }
-            );
             set_state(stmt, execute_state);
             stmt.last_query_id = Some(query_id).filter(|s| !s.is_empty());
-            if is_zero_dml {
-                return NoMoreDataSnafu.fail();
-            }
+            // Historically we returned SQL_NO_DATA when a DML statement
+            // affected 0 rows. The reference driver (`snowflake-odbc`
+            // `SFResults.cpp` — DML branch always calls
+            // `AddResult(new DSISimpleRowCountResult(totalRowCount))`)
+            // returns SQL_SUCCESS with row count 0 instead; it never raises
+            // SQL_NO_DATA from SQLExecDirect for a 0-row DML.
+            //
+            // Observed downstream impact (dtm-server parity investigation):
+            // inside MSR emulation, a SQL_NO_DATA return makes hyperq skip
+            // the per-statement activity-count aggregation, pushing an empty
+            // `[]` entry into `intermediate_activity_counts`. That produces
+            // the mixed-shape list `[[], proplist, proplist, []]` that
+            // crashes `pgv3_pxc:merge_activity/2` (pgv3_pxc.erl:2516) at the
+            // post-MERGE cleanup step. Returning SQL_SUCCESS here keeps
+            // hyperq's accumulator shape consistent with what it sees from
+            // Simba.
             Ok(())
         }
         execute_query_response::Result::Multi(multi) => {
