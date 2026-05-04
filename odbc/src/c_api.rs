@@ -1330,25 +1330,7 @@ pub unsafe extern "system" fn DllMain(
 mod setup {
     use std::ptr;
 
-    #[cfg_attr(
-        target_arch = "x86",
-        link(
-            name = "odbccp32",
-            kind = "raw-dylib",
-            import_name_type = "undecorated"
-        )
-    )]
-    #[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
-    unsafe extern "system" {
-        fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> i32;
-        fn SQLRemoveDSNFromIniW(lpszDSN: *const u16) -> i32;
-        fn SQLWritePrivateProfileStringW(
-            lpszSection: *const u16,
-            lpszEntry: *const u16,
-            lpszString: *const u16,
-            lpszFilename: *const u16,
-        ) -> i32;
-    }
+    use crate::setup_common::{self, SQLRemoveDSNFromIniW, to_wide};
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -1366,10 +1348,6 @@ mod setup {
     const ODBC_ADD_DSN: u16 = 1;
     const ODBC_CONFIG_DSN: u16 = 2;
     const ODBC_REMOVE_DSN: u16 = 3;
-
-    fn to_wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
-    }
 
     /// Convert a Windows ANSI code page byte slice to a Rust String.
     unsafe fn acp_to_string(bytes: &[u8]) -> String {
@@ -1463,35 +1441,6 @@ mod setup {
             .map(|(_, v)| v.as_str())
     }
 
-    unsafe fn write_dsn_silent(dsn: &str, driver: &str, attrs: &[(String, String)]) -> bool {
-        let dsn_w = to_wide(dsn);
-        let driver_w = to_wide(driver);
-        if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
-            return false;
-        }
-        let odbc_ini = to_wide("odbc.ini");
-        let mut ok = true;
-        for (key, value) in attrs {
-            if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
-                continue;
-            }
-            let key_w = to_wide(key);
-            let val_w = to_wide(value);
-            if unsafe {
-                SQLWritePrivateProfileStringW(
-                    dsn_w.as_ptr(),
-                    key_w.as_ptr(),
-                    val_w.as_ptr(),
-                    odbc_ini.as_ptr(),
-                )
-            } == 0
-            {
-                ok = false;
-            }
-        }
-        ok
-    }
-
     unsafe fn config_dsn_impl(
         hwnd_parent: *mut core::ffi::c_void,
         f_request: u16,
@@ -1510,8 +1459,6 @@ mod setup {
                 let dsn = find_dsn(attrs).unwrap_or("");
                 let is_add = f_request == ODBC_ADD_DSN;
 
-                // Show dialog when a parent window is provided (ODBC Administrator).
-                // Fall back to silent mode for programmatic DSN creation (null hwnd).
                 if !hwnd_parent.is_null() {
                     unsafe {
                         crate::setup_dialog::show_config_dialog(
@@ -1523,7 +1470,7 @@ mod setup {
                         )
                     }
                 } else if !dsn.is_empty() {
-                    unsafe { write_dsn_silent(dsn, driver, attrs) }
+                    unsafe { setup_common::write_dsn_values(dsn, driver, attrs) }
                 } else {
                     false
                 }
