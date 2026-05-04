@@ -34,6 +34,12 @@ FLOAT_VEC_5D_B = [10.5, 20.5, 30.5, 40.5, 50.5]
 # =============================================================================
 MAX_DIMENSION_SIZE = 4096
 
+# VECTOR(INT) is 32-bit signed; VECTOR(FLOAT) is IEEE 754 single-precision.
+INT32_MIN = -2_147_483_648
+INT32_MAX = 2_147_483_647
+FLOAT32_MAX = 3.4028235e38
+FLOAT32_MIN_POSITIVE = 1.1754944e-38
+
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
@@ -112,6 +118,32 @@ class TestVectorLiteral:
         assert result[0] == INT_VEC_3D
         assert result[1] is None
         assert result[2] is None
+
+    BOUNDARY_TEST_CASES = [
+        ("INT", "INT", [INT32_MIN, INT32_MAX, 0]),
+        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_MIN_POSITIVE, 0.0]),
+    ]
+
+    @pytest.mark.parametrize(
+        "subtype, vec_type, expected_value",
+        BOUNDARY_TEST_CASES,
+        ids=[c[0] for c in BOUNDARY_TEST_CASES],
+    )
+    def test_should_select_subtype_vector_boundary_values(self, execute_query, subtype, vec_type, expected_value):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT <expected_value>::VECTOR(<vec_type>, ...)" is executed
+        sql = f"SELECT {expected_value}::VECTOR({vec_type}, {len(expected_value)})"
+        result = execute_query(sql, single_row=True)
+
+        # Then Result should preserve <subtype> boundary values
+        if vec_type == "FLOAT":
+            assert result[0] == pytest.approx(expected_value, **FLOAT32_APPROX)
+            assert_type(result[0], float)
+        else:
+            assert result[0] == expected_value
+            assert_type(result[0], int)
 
     def test_should_select_max_dimension_vector(self, execute_query):
         # Given Snowflake client is logged in

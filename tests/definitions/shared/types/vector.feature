@@ -39,6 +39,19 @@ Feature: VECTOR type support
     Then Result should contain [[1, 2, 3], NULL, NULL]
 
   @python_e2e
+  Scenario Outline: should select <subtype> vector boundary values
+    # VECTOR(INT) stores 32-bit signed integers: [-2147483648, 2147483647]
+    # VECTOR(FLOAT) stores IEEE 754 single-precision floats (~3.4e38 max magnitude)
+    Given Snowflake client is logged in
+    When Query "SELECT <expected_value>::VECTOR(<vec_type>, ...)" is executed
+    Then Result should preserve <subtype> boundary values
+
+    Examples:
+      | subtype | vec_type | expected_value                                        |
+      | INT     | INT      | [-2147483648, 2147483647, 0]                          |
+      | FLOAT   | FLOAT    | [3.4028235e38, -3.4028235e38, 1.1754944e-38, 0.0]    |
+
+  @python_e2e
   Scenario: should select max-dimension vector
     Given Snowflake client is logged in
     When Query selecting 4096-element float vector is executed
