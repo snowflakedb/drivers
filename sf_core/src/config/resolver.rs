@@ -48,6 +48,29 @@ pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
     );
 }
 
+/// If neither `host` nor `server_url` is explicitly set but `account` is,
+/// derive the hostname from the account identifier — matching the legacy
+/// `snowflake-connector-python` driver behavior where `account="myaccount"`
+/// yields host `"myaccount.snowflakecomputing.com"`.
+///
+/// Account identifiers that already encode a region (e.g. `"myaccount.us-east-1"`)
+/// are passed through unchanged, producing `"myaccount.us-east-1.snowflakecomputing.com"`.
+pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
+    if store.get_string(param_names::HOST).is_some()
+        || store.get_string(param_names::SERVER_URL).is_some()
+    {
+        return;
+    }
+
+    let Some(account) = store.get_string(param_names::ACCOUNT) else {
+        return;
+    };
+
+    let host = format!("{account}.snowflakecomputing.com");
+    tracing::debug!(derived_host = %host, account = %account, "Derived host from account");
+    store.insert(param_names::HOST.into(), Setting::String(host));
+}
+
 /// Resolve final settings by merging explicit settings with file-based
 /// config and registry defaults.
 ///
@@ -93,6 +116,7 @@ pub fn resolve_with_paths(
     merged.extend_from(explicit);
 
     derive_account_from_host(&mut merged);
+    derive_host_from_account(&mut merged);
 
     Ok(merged)
 }
@@ -166,6 +190,72 @@ mod tests {
         derive_account_from_host(&mut store);
 
         assert_eq!(store.get(param_names::ACCOUNT), None);
+    }
+
+    // --- derive_host_from_account tests ---
+
+    #[test_case("myaccount", "myaccount.snowflakecomputing.com" ; "simple account")]
+    #[test_case("myaccount.us-east-1", "myaccount.us-east-1.snowflakecomputing.com" ; "account with region")]
+    #[test_case("myorg-myaccount", "myorg-myaccount.snowflakecomputing.com" ; "org-account format")]
+    fn derive_host_from_account_constructs_host(account: &str, expected_host: &str) {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String(account.to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String(expected_host.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_host_from_account_skips_when_host_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("myaccount".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("custom.host.com".to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String("custom.host.com".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_host_from_account_skips_when_server_url_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("myaccount".to_owned()),
+        );
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://custom.url".to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(store.get(param_names::HOST), None);
+    }
+
+    #[test]
+    fn derive_host_from_account_noop_when_no_account() {
+        let mut store = ParamStore::new();
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(store.get(param_names::HOST), None);
     }
 
     fn make_paths(dir: &TempDir) -> ConfigPaths {

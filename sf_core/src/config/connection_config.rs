@@ -1520,4 +1520,28 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn build_succeeds_with_account_only_no_host() {
+        use crate::config::path_resolver::ConfigPaths;
+        use crate::config::resolver;
+
+        let mut explicit = ParamStore::new();
+        explicit.insert("account".into(), Setting::String("myaccount".into()));
+        explicit.insert("user".into(), Setting::String("myuser".into()));
+        explicit.insert("password".into(), Setting::String("mypassword".into()));
+
+        let paths = ConfigPaths {
+            config_file: None,
+            connections_file: None,
+        };
+        let resolved = resolver::resolve_with_paths(&explicit, &paths).unwrap();
+        let config = ConnectionConfig::build(&resolved).unwrap();
+
+        assert_eq!(config.server.account, "myaccount");
+        assert_eq!(
+            config.server.server_url,
+            "https://myaccount.snowflakecomputing.com"
+        );
+    }
 }

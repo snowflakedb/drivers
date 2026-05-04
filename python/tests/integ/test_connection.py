@@ -28,6 +28,53 @@ class TestConnectionInfo:
         assert info is not None
 
 
+class TestConnectionParameters:
+    """Reference tests: minimum parameters required to establish a connection.
+
+    The old snowflake-connector-python driver accepts just ``account`` (plus
+    auth credentials) and derives the host as ``{account}.snowflakecomputing.com``.
+    These tests exercise that behavior against both drivers.
+    """
+
+    def test_connect_with_account_only_no_host_or_server_url(self, connection_factory):
+        """Connection succeeds when only ``account`` is given — host/server_url are derived.
+
+        Skipped when the test environment targets a non-production host (preprod,
+        localhost, or a dev deployment) — derivation only yields a valid URL for
+        accounts whose canonical host is ``{account}.snowflakecomputing.com``.
+
+        Passing ``None`` for host/server_url/port/protocol causes the connection
+        factory to omit those parameters entirely, forcing the driver to derive
+        them from ``account``.
+        """
+        from tests.config import get_test_parameters
+
+        test_params = get_test_parameters()
+        account = test_params.get("SNOWFLAKE_TEST_ACCOUNT")
+        if not account:
+            pytest.skip("SNOWFLAKE_TEST_ACCOUNT not configured")
+        custom_host = test_params.get("SNOWFLAKE_TEST_HOST") or ""
+        custom_server_url = test_params.get("SNOWFLAKE_TEST_SERVER_URL") or ""
+        expected_host = f"{account}.snowflakecomputing.com"
+        if (custom_host and custom_host != expected_host) or (
+            custom_server_url and expected_host not in custom_server_url
+        ):
+            pytest.skip(
+                "Test environment overrides host/server_url; account-name derivation "
+                f"yields '{expected_host}', not the configured target."
+            )
+
+        with connection_factory(host=None, server_url=None, port=None, protocol=None) as conn:
+            assert not conn.is_closed()
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT 1")
+                row = cur.fetchone()
+                assert row[0] == 1
+            finally:
+                cur.close()
+
+
 class TestConnectionInfoProperties:
     """Integration tests for Connection properties backed by _get_connection_info."""
 
