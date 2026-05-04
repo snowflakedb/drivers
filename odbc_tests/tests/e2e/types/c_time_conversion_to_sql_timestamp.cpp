@@ -10,7 +10,6 @@
 // captures the local date both before and after the bind and accepts
 // any value within that window.
 
-#include <chrono>
 #include <ctime>
 
 #include <catch2/catch_test_macros.hpp>
