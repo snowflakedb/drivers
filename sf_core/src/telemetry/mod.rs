@@ -10,18 +10,18 @@ pub mod snowflake_exporter;
 pub mod os_details;
 pub mod platform_detection;
 
-use opentelemetry::trace::TraceContextExt;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 /// Record a session_init event on the **current** tracing span.
 ///
 /// The caller must have entered the connection span before calling this.
-/// Uses the OTel API directly because `tracing::event!` does not support
-/// dotted field names (e.g. `service.name`).
+/// Uses `OpenTelemetrySpanExt::add_event` (rather than `tracing::event!`)
+/// because events with dotted field names (e.g. `service.name`) are not
+/// supported by the `event!` macro, and because
+/// `Span::current().context().span().add_event(...)` operates on a detached
+/// `SpanRef` and does not mutate the underlying tracing span.
 pub fn record_session_init(env: &environment::EnvironmentInfo) {
     let span = tracing::Span::current();
-    let otel_ctx = span.context();
-    let otel_span = otel_ctx.span();
     let mut attrs = vec![
         opentelemetry::KeyValue::new("service.name", env.driver_name.clone()),
         opentelemetry::KeyValue::new("service.version", env.driver_version.clone()),
@@ -37,15 +37,12 @@ pub fn record_session_init(env: &environment::EnvironmentInfo) {
             compiler.clone(),
         ));
     }
-    otel_span.add_event("session_init", attrs);
+    span.add_event("session_init", attrs);
 }
 
 /// Record an api_call event on the **current** tracing span.
 pub fn record_api_call(api_method: &str) {
-    let span = tracing::Span::current();
-    let otel_ctx = span.context();
-    let otel_span = otel_ctx.span();
-    otel_span.add_event(
+    tracing::Span::current().add_event(
         "api_call",
         vec![opentelemetry::KeyValue::new(
             "api_method",
@@ -56,10 +53,7 @@ pub fn record_api_call(api_method: &str) {
 
 /// Record an exception event on the **current** tracing span.
 pub fn record_exception(exception_type: &str, error_source: &str) {
-    let span = tracing::Span::current();
-    let otel_ctx = span.context();
-    let otel_span = otel_ctx.span();
-    otel_span.add_event(
+    tracing::Span::current().add_event(
         "exception",
         vec![
             opentelemetry::KeyValue::new("exception.type", exception_type.to_string()),
