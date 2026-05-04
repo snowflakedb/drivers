@@ -83,8 +83,16 @@ jobs:
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         run: |
           set -euo pipefail
+          # --nogit-destination-rebase: the mirror is a strict subset of
+          # the internal repo (no copy.bara.sky, implementation.md, adr/,
+          # .github/, …). Rebasing the mirror PR branch onto internal main
+          # fails with modify/delete conflicts on those internal-only
+          # files. Skipping the rebase applies the PR diff as-is on top
+          # of internal main — safe because the PR only touches files
+          # inside MIRRORED_PATHS.
           java -jar copybara_deploy.jar migrate copy.bara.sky import "${PR_NUMBER}" \
             --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+            --nogit-destination-rebase \
             --force
 
       - name: Write run summary
