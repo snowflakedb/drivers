@@ -36,18 +36,15 @@ class TestConnectionParameters:
     These tests exercise that behavior against both drivers.
     """
 
-    def test_connect_with_account_only_no_host_or_server_url(self, connection_factory):
+    def test_connect_with_account_only_no_host_or_server_url(self, connector_adapter, monkeypatch):
         """Connection succeeds when only ``account`` is given — host/server_url are derived.
 
         Skipped when the test environment targets a non-production host (preprod,
         localhost, or a dev deployment) — derivation only yields a valid URL for
         accounts whose canonical host is ``{account}.snowflakecomputing.com``.
-
-        Passing ``None`` for host/server_url/port/protocol causes the connection
-        factory to omit those parameters entirely, forcing the driver to derive
-        them from ``account``.
         """
         from tests.config import get_test_parameters
+        from tests.connector_factory import create_connection_with_adapter
 
         test_params = get_test_parameters()
         account = test_params.get("SNOWFLAKE_TEST_ACCOUNT")
@@ -64,7 +61,23 @@ class TestConnectionParameters:
                 f"yields '{expected_host}', not the configured target."
             )
 
-        with connection_factory(host=None, server_url=None, port=None, protocol=None) as conn:
+        # Patch get_test_parameters at its import site in connector_factory to
+        # return a copy with host/server_url/port/protocol stripped. This forces
+        # the driver to derive the host from `account` alone.
+        def _stripped_params():
+            p = dict(test_params)
+            for k in (
+                "SNOWFLAKE_TEST_HOST",
+                "SNOWFLAKE_TEST_SERVER_URL",
+                "SNOWFLAKE_TEST_PORT",
+                "SNOWFLAKE_TEST_PROTOCOL",
+            ):
+                p.pop(k, None)
+            return p
+
+        monkeypatch.setattr("tests.connector_factory.get_test_parameters", _stripped_params)
+
+        with create_connection_with_adapter(connector_adapter) as conn:
             assert not conn.is_closed()
             cur = conn.cursor()
             try:

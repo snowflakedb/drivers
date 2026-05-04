@@ -196,11 +196,14 @@ class TestErrorMessageFormat:
         error = excinfo.value
         msg = str(error)
         # Must start with zero-padded errno and sqlstate, e.g. "002003 (42S02): "
-        assert msg.startswith(f"{error.errno:06d} ({error.sqlstate}): "), (
-            f"Expected '<errno> (<sqlstate>): ...' prefix, got: {msg!r}"
-        )
+        prefix = f"{error.errno:06d} ({error.sqlstate}): "
+        assert msg.startswith(prefix), f"Expected '<errno> (<sqlstate>): ...' prefix, got: {msg!r}"
+        body = msg[len(prefix) :]
+        # At INFO/DEBUG log level the old driver injects "{sfqid}: " before the
+        # server message. Strip it if present so we can assert on the server text.
+        if error.sfqid and body.startswith(f"{error.sfqid}: "):
+            body = body[len(f"{error.sfqid}: ") :]
         # The body must start with the server's error class, not a wrapper.
-        body = msg[len(f"{error.errno:06d} ({error.sqlstate}): ") :]
         assert body.lower().startswith("sql compilation error"), (
             f"Expected body to start with 'SQL compilation error', got: {body!r}"
         )
