@@ -213,6 +213,78 @@ pub struct NativeOktaConfig {
     pub authentication_timeout_secs: u64,
 }
 
+/// OAuth 2.0 Authorization Code (with PKCE) flow configuration.
+///
+/// Mirrors the cross-driver configuration matrix in `analysis_feature_oauth.md` §9.
+/// All optional URL fields fall back to Snowflake-as-IdP defaults at flow time
+/// (see analysis §9 / §14): `https://{host}/oauth/authorize`,
+/// `https://{host}/oauth/token-request`, and an ephemeral `http://127.0.0.1:<random>`
+/// loopback redirect URI.
+#[derive(Debug)]
+pub struct OAuthAuthorizationCodeConfig {
+    /// Snowflake user name. Sent unchanged in the login-request body
+    /// (analysis §10.1: `LOGIN_NAME` is always set, unlike .NET's `loginName=""` quirk).
+    pub username: String,
+    /// IdP-issued client identifier. For Snowflake-as-IdP the wiring step
+    /// will substitute `LOCAL_APPLICATION` when this is empty (analysis §1, §9).
+    pub client_id: String,
+    /// IdP-issued client secret.
+    pub client_secret: SensitiveString,
+    /// Optional override for the IdP authorization endpoint.
+    /// `None` ⇒ default `https://{host}/oauth/authorize` (analysis §9).
+    pub authorization_url: Option<Url>,
+    /// Optional override for the IdP token endpoint.
+    /// `None` ⇒ default `https://{host}/oauth/token-request`. Also used to
+    /// derive the OAuth cache-key host (analysis §7.3).
+    pub token_url: Option<Url>,
+    /// Optional override for the loopback redirect URI advertised to the IdP.
+    /// `None` ⇒ ephemeral `http://127.0.0.1:<random>` (analysis §3.5; bind to
+    /// `127.0.0.1`, never `0.0.0.0` per §14 gotcha #11).
+    pub redirect_uri: Option<Url>,
+    /// OAuth scope string (space-separated). `None` ⇒ derived from role
+    /// (`session:role:<role>` per analysis §9).
+    pub scope: Option<String>,
+    /// Snowflake-as-IdP only: request single-use refresh-token rotation by
+    /// adding `enable_single_use_refresh_tokens=true` to the token body
+    /// (analysis §7.4). Defaults to `false`.
+    pub enable_single_use_refresh_tokens: bool,
+    /// Python-only escape hatch (analysis §9): disable PKCE S256.
+    /// All other drivers always run PKCE; defaults to `false` here.
+    pub disable_pkce: bool,
+    /// Enable RFC 9449 DPoP proof-of-possession on token + login requests.
+    /// Currently only JDBC has parity (analysis §5); defaults to `false`.
+    pub enable_dpop: bool,
+    /// Whether refresh tokens may be persisted to the OS-level token cache
+    /// (analysis §7.1; controls `client_store_temporary_credential`).
+    pub client_store_temporary_credential: bool,
+    /// End-to-end auth budget for the AC flow, mirroring
+    /// [`DEFAULT_AUTHENTICATION_TIMEOUT_SECS`] used by `NativeOktaConfig`.
+    pub authentication_timeout_secs: u64,
+}
+
+/// OAuth 2.0 Client Credentials flow configuration (external IdP only —
+/// Snowflake's GS does not issue tokens for `grant_type=client_credentials`,
+/// see analysis §4).
+#[derive(Debug)]
+pub struct OAuthClientCredentialsConfig {
+    /// Snowflake user name (sent in the Snowflake login-request body).
+    pub username: String,
+    /// IdP-issued client identifier (required for CC).
+    pub client_id: String,
+    /// IdP-issued client secret (required for CC).
+    pub client_secret: SensitiveString,
+    /// IdP token endpoint. **Required** for CC: there is no Snowflake default
+    /// because Snowflake-as-IdP does not support CC (analysis §4).
+    pub token_url: Url,
+    /// OAuth scope string (space-separated). `None` ⇒ derived from role.
+    pub scope: Option<String>,
+    /// Enable RFC 9449 DPoP proof-of-possession on the token + login
+    /// requests. Currently only JDBC has parity (analysis §5).
+    pub enable_dpop: bool,
+    /// End-to-end auth budget for the CC flow.
+    pub authentication_timeout_secs: u64,
+}
+
 #[derive(Debug)]
 pub enum LoginMethod {
     Password {
@@ -236,6 +308,18 @@ pub enum LoginMethod {
         passcode: Option<SensitiveString>,
         client_store_temporary_credential: bool,
     },
+    /// Pre-acquired OAuth access token (legacy `AUTHENTICATOR=OAUTH` with
+    /// raw `token=`). The driver forwards the token to Snowflake unchanged
+    /// (analysis §6). Production wiring + parsing land in step 2.3.
+    OAuthAccessToken {
+        username: String,
+        token: SensitiveString,
+    },
+    /// OAuth 2.0 Authorization Code with PKCE (S256). Multi-step flow
+    /// orchestrated outside of `create_credentials` (analysis §3).
+    OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
+    /// OAuth 2.0 Client Credentials. External IdP only (analysis §4).
+    OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
 
 impl LoginMethod {

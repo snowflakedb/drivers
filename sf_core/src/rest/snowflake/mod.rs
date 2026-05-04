@@ -5,6 +5,7 @@ pub mod error;
 pub mod heartbeat;
 pub mod logout;
 mod native_okta;
+mod oauth;
 pub mod query_request;
 pub mod query_response;
 pub mod sql_state;
@@ -364,6 +365,17 @@ pub async fn auth_request_data(
                 data.login_name = Some(username);
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+            }
+            Credentials::OAuth { .. } => {
+                // Legacy AUTHENTICATOR=OAUTH body wiring lands in step 2.3
+                // (analysis_feature_oauth.md §6 / §10.1). This skeleton
+                // surfaces a typed error so the variant remains constructible
+                // without smuggling in flow logic.
+                return crate::auth::OAuthFlowNotWiredSnafu {
+                    flow: "OAuthAccessToken",
+                }
+                .fail()
+                .context(AuthenticationSnafu);
             }
             Credentials::UserPasswordMfa {
                 username,

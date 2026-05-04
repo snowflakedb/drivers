@@ -40,6 +40,15 @@ pub enum Credentials {
         passcode_in_password: bool,
         passcode: Option<SensitiveString>,
     },
+    /// Pre-acquired OAuth access token forwarded to Snowflake unchanged
+    /// (analysis §6 — legacy `AUTHENTICATOR=OAUTH` with raw `token=`).
+    /// Fields are populated by `create_credentials` in step 2.1 but are
+    /// only read once `auth_request_data` is wired in step 2.3.
+    #[allow(dead_code)]
+    OAuth {
+        username: String,
+        access_token: SensitiveString,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +175,22 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             passcode: passcode.clone(),
             passcode_in_password: *passcode_in_password,
         }),
+        LoginMethod::OAuthAccessToken { username, token } => Ok(Credentials::OAuth {
+            username: username.clone(),
+            access_token: token.clone(),
+        }),
+        // OAuth Authorization Code and Client Credentials run their own multi-step
+        // flow (PKCE, browser/loopback, token exchange, refresh) outside of
+        // create_credentials — see analysis_feature_oauth.md §3 / §4. Mirror the
+        // NativeOkta arm above and surface a typed error rather than panicking.
+        LoginMethod::OAuthAuthorizationCode(_) => UnsupportedLoginMethodSnafu {
+            method: "OAuthAuthorizationCode",
+        }
+        .fail(),
+        LoginMethod::OAuthClientCredentials(_) => UnsupportedLoginMethodSnafu {
+            method: "OAuthClientCredentials",
+        }
+        .fail(),
     }
 }
 
@@ -176,6 +201,13 @@ pub enum AuthError {
     ))]
     UnsupportedLoginMethod {
         method: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("OAuth flow '{flow}' is not yet wired into the login pipeline"))]
+    #[snafu(visibility(pub(crate)))]
+    OAuthFlowNotWired {
+        flow: &'static str,
         #[snafu(implicit)]
         location: Location,
     },
