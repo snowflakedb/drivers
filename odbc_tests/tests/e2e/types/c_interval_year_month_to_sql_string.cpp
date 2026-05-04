@@ -146,9 +146,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_YEAR_TO
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
 
-  // Then the leading sign is applied once, before the year field
+  // Then the leading sign is applied once, before the year field, and
+  // the trailing month sub-field is zero-padded to 2 digits per ODBC
+  // "Interval Data Type Length" (every non-leading field is rendered
+  // as exactly two characters)
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-2-3");
+  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-2-03");
 }
 
 // ============================================================================
