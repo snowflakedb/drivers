@@ -209,16 +209,16 @@ class Connection(ErrorHandlerMixin):
 
         # Pop all special-purpose keys from kwargs in-place.
         # After this, kwargs contains only generic Core options.
-        self._parse_kwargs(kwargs, autocommit)
+        session_params = self._parse_kwargs(kwargs, autocommit)
 
         # All driver config → Core in a single RPC (generic kwargs + logout config)
         self._send_driver_options(kwargs)
 
         # Session params → Core (separate RPC: these are Snowflake server
         # SET commands (string→string), not driver config (typed ConfigSetting))
-        if self._session_params:
+        if session_params:
             self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=self._session_params)
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
         self._connect()
@@ -255,19 +255,20 @@ class Connection(ErrorHandlerMixin):
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
 
-    def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> None:
+    def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
         """Parse and extract all special params from kwargs in-place.
 
         After this call, kwargs contains only generic Core options
         suitable for connection_set_options. Special params are stored
-        on self (auto_cleanup, _session_params, _numpy, logout_config).
+        on self (auto_cleanup, _numpy, logout_config).
+        Session params are returned to the caller for a single-use RPC.
         """
         # Python-only (pop — never goes to Core)
         self.auto_cleanup: bool = pop_typed_kwarg(kwargs, "auto_cleanup", bool, True)
 
         # Session params use a dedicated RPC (connection_set_session_parameters),
         # not the generic connection_set_options path, so pop them from kwargs.
-        self._session_params = self._extract_session_params(kwargs, autocommit)
+        session_params = self._extract_session_params(kwargs, autocommit)
 
         # Transform in-place (stays in kwargs for generic path)
         if "private_key" in kwargs:
@@ -277,6 +278,8 @@ class Connection(ErrorHandlerMixin):
         # Init-time snapshot only; Core re-derives at close() time from connection_seed,
         # so post-init overrides like close(retry=False) won't be reflected here.
         self.logout_config = LogoutConfig.from_kwargs(kwargs)
+
+        return session_params
 
     @staticmethod
     def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
