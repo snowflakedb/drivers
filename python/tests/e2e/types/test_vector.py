@@ -38,7 +38,7 @@ MAX_DIMENSION_SIZE = 4096
 INT32_MIN = -2_147_483_648
 INT32_MAX = 2_147_483_647
 FLOAT32_MAX = 3.4028235e38
-FLOAT32_MIN_POSITIVE = 1.1754944e-38
+FLOAT32_SMALLEST_NORMAL = 1.1754944e-38
 
 # =============================================================================
 # LARGE RESULT SET SIZE
@@ -119,7 +119,7 @@ class TestVectorLiteral:
 
     BOUNDARY_TEST_CASES = [
         ("INT", "INT", [INT32_MIN, INT32_MAX, 0]),
-        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_MIN_POSITIVE, 0.0]),
+        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_SMALLEST_NORMAL, 0.0]),
     ]
 
     @pytest.mark.parametrize(
@@ -137,7 +137,9 @@ class TestVectorLiteral:
 
         # Then Result should preserve <subtype> boundary values
         if vec_type == "FLOAT":
-            assert result[0] == pytest.approx(expected_value, **FLOAT32_APPROX)
+            # abs=0 disables pytest.approx's default 1e-12 absolute tolerance so that
+            # subnormal/smallest-normal boundary values can't pass if the driver underflows them to 0.
+            assert result[0] == pytest.approx(expected_value, rel=1e-6, abs=0)
             assert_type(result[0], float)
         else:
             assert result[0] == expected_value
@@ -238,5 +240,9 @@ class TestVectorMultipleChunks:
 
         # Then All 20000 rows should be fetched with valid 3-element integer vectors
         assert len(rows) == LARGE_RESULT_SET_SIZE
-        assert_type([row[1] for row in rows], list)
+        vectors = [row[1] for row in rows]
+        assert_type(vectors, list)
+        # Python equality ([1,2,3] == [1.0,2.0,3.0]) can't catch int→float drift, so assert elements explicitly.
+        for vec in vectors:
+            assert_type(vec, int)
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=lambda i: (i, [i, i * 2, i * 3]))
