@@ -1,0 +1,230 @@
+name: Mirror to public repo
+
+# Mirrors snowflake-eng/universal-driver -> snowflake-eng/universal-driver-mirror-test
+# (will be flipped to snowflakedb/universal-driver once validated).
+#
+# Triggers:
+#   - schedule: daily at 07:17 UTC (unattended, no approval gate)
+#   - workflow_dispatch: manual run; requires approval via the `mirror-public`
+#     GitHub Environment (configured with required reviewers = snow-drivers-warsaw).
+#
+# Scope: main + every release/* branch.
+
+on:
+  schedule:
+    # Daily at 07:17 UTC — off-the-hour to avoid global cron stampede.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Single branch to mirror (default: main + all release/*)"
+        required: false
+        default: ""
+      last_rev:
+        description: "Origin SHA to anchor Copybara's replay at (--last-rev). Useful for the first run after a destination wipe, or to recover when GitOrigin-RevId tracking is lost. Leave blank to let Copybara resume from destination state."
+        required: false
+        default: ""
+
+concurrency:
+  group: mirror-public
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  MIRROR_DESTINATION_URL: https://github.com/snowflake-eng/universal-driver-mirror-test
+  # Pin to a specific Copybara snapshot release so mirror behavior is
+  # reproducible. Bump deliberately; verify SHA below when bumping.
+  COPYBARA_RELEASE: v20260504
+
+jobs:
+  mirror-main:
+    name: Mirror main
+    runs-on: ubuntu-latest
+    # `mirror-public` environment: configure required reviewers in repo
+    # settings so that workflow_dispatch runs require manual approval.
+    # Scheduled runs also go through the environment but reviewers can
+    # auto-approve via environment protection rules if desired.
+    environment: mirror-public
+    steps:
+      - name: Checkout source (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        # Copybara v20260504's jar is built for Java 21 (class file version 65).
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download Copybara
+        run: |
+          set -euo pipefail
+          curl -fsSL -o copybara_deploy.jar \
+            "https://github.com/google/copybara/releases/download/${COPYBARA_RELEASE}/copybara_deploy.jar"
+          # The published .sha256 is a bare hash (no filename), so build a
+          # `sha256sum -c`-compatible line ourselves before verifying.
+          expected=$(curl -fsSL \
+            "https://github.com/google/copybara/releases/download/${COPYBARA_RELEASE}/copybara_deploy.jar.sha256" \
+            | tr -d '[:space:]')
+          echo "${expected}  copybara_deploy.jar" > copybara_deploy.jar.sha256
+          sha256sum -c copybara_deploy.jar.sha256
+
+      - name: Configure git for Copybara
+        env:
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Mirror Bot"
+          git config --global user.email "mirror-bot@snowflake.com"
+          # Copybara shells out to `git fetch https://github.com/...` on the
+          # origin (private) repo — provide credentials via a credentials
+          # file so those fetches authenticate non-interactively.
+          git config --global credential.helper store
+          umask 077
+          printf 'https://x-access-token:%s@github.com\n' "${GITHUB_TOKEN}" > "${HOME}/.git-credentials"
+
+      - name: Run Copybara (main)
+        if: ${{ github.event.inputs.ref == '' || github.event.inputs.ref == 'main' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+          LAST_REV: ${{ github.event.inputs.last_rev }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ -n "${LAST_REV}" ]]; then
+            echo "Anchoring replay at --last-rev=${LAST_REV}"
+            extra_args+=(--last-rev "${LAST_REV}")
+          fi
+          java -jar copybara_deploy.jar migrate copy.bara.sky mirror \
+            --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver-mirror-test.git" \
+            --force \
+            "${extra_args[@]}"
+
+  mirror-release-branches:
+    name: Mirror release/* branches
+    needs: mirror-main
+    runs-on: ubuntu-latest
+    environment: mirror-public
+    # Skip when the user explicitly asked to mirror a single non-release ref.
+    if: ${{ github.event.inputs.ref == '' || startsWith(github.event.inputs.ref, 'release/') }}
+    steps:
+      - name: Checkout source (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        # Copybara v20260504's jar is built for Java 21 (class file version 65).
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download Copybara
+        run: |
+          set -euo pipefail
+          curl -fsSL -o copybara_deploy.jar \
+            "https://github.com/google/copybara/releases/download/${COPYBARA_RELEASE}/copybara_deploy.jar"
+          # The published .sha256 is a bare hash (no filename), so build a
+          # `sha256sum -c`-compatible line ourselves before verifying.
+          expected=$(curl -fsSL \
+            "https://github.com/google/copybara/releases/download/${COPYBARA_RELEASE}/copybara_deploy.jar.sha256" \
+            | tr -d '[:space:]')
+          echo "${expected}  copybara_deploy.jar" > copybara_deploy.jar.sha256
+          sha256sum -c copybara_deploy.jar.sha256
+
+      - name: Configure git for Copybara
+        env:
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Mirror Bot"
+          git config --global user.email "mirror-bot@snowflake.com"
+          # Copybara shells out to `git fetch https://github.com/...` on the
+          # origin (private) repo — provide credentials via a credentials
+          # file so those fetches authenticate non-interactively.
+          git config --global credential.helper store
+          umask 077
+          printf 'https://x-access-token:%s@github.com\n' "${GITHUB_TOKEN}" > "${HOME}/.git-credentials"
+
+      - name: Enumerate release branches
+        id: branches
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.inputs.ref }}" ]]; then
+            echo "branches=${{ github.event.inputs.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            # Space-separated list of release/* branches on origin.
+            branches=$(git branch -r --list 'origin/release/*' \
+              | sed 's|[[:space:]]*origin/||' \
+              | tr '\n' ' ' \
+              | sed 's/[[:space:]]*$//')
+            echo "branches=${branches}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Copybara per release branch
+        if: ${{ steps.branches.outputs.branches != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+          BRANCHES: ${{ steps.branches.outputs.branches }}
+          # `last_rev` only makes sense when mirroring a single branch:
+          # it's a SHA on that branch's source history. Applied only when
+          # the user dispatched with exactly one release/* ref.
+          LAST_REV: ${{ github.event.inputs.last_rev }}
+          SINGLE_REF: ${{ github.event.inputs.ref }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ -n "${LAST_REV}" && -n "${SINGLE_REF}" ]]; then
+            echo "Anchoring replay at --last-rev=${LAST_REV} for ${SINGLE_REF}"
+            extra_args+=(--last-rev "${LAST_REV}")
+          elif [[ -n "${LAST_REV}" ]]; then
+            echo "::warning::last_rev=${LAST_REV} ignored — only applied when a single branch is dispatched via the 'ref' input."
+          fi
+          for branch in ${BRANCHES}; do
+            echo "::group::Mirror ${branch}"
+            # Direct push: destination branch name matches the source branch
+            # (e.g. release/8.1 -> release/8.1 on the mirror).
+            java -jar copybara_deploy.jar migrate copy.bara.sky mirror \
+              --ref="${branch}" \
+              --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver-mirror-test.git" \
+              --git-destination-push="${branch}" \
+              --force \
+              "${extra_args[@]}" \
+              || echo "::warning::Copybara failed for ${branch}"
+            echo "::endgroup::"
+          done
+
+  audit:
+    name: Audit log
+    needs: [mirror-main, mirror-release-branches]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write run summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Mirror Sync Report"
+            echo ""
+            echo "- **Time (UTC):** $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "- **Trigger:** ${{ github.event_name }}"
+            echo "- **Actor:** ${{ github.actor }}"
+            echo "- **Source main SHA:** $(git rev-parse refs/remotes/origin/main)"
+            echo "- **Release branches:** $(git branch -r --list 'origin/release/*' | wc -l)"
+            echo "- **Destination:** ${MIRROR_DESTINATION_URL}"
+            echo ""
+            echo "- **mirror-main result:** ${{ needs.mirror-main.result }}"
+            echo "- **mirror-release-branches result:** ${{ needs.mirror-release-branches.result }}"
+            echo ""
+            echo "Commits were pushed directly to the destination repo — check its commit log to verify."
+          } >> "$GITHUB_STEP_SUMMARY"

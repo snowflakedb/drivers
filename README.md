@@ -36,10 +36,10 @@ export PARAMETER_PATH="$(pwd)/parameters.json"
 
 **Alternative:** If you don't have 1Password CLI installed you can provide encryption password via environment variable:
 ```bash
-PARAMETERS_SECRET=<encryption-password> ./scripts/decode_secrets.sh 
+PARAMETERS_SECRET=<encryption-password> ./scripts/decode_secrets.sh
 ```
 
-**Alternative:** If you want provide different credentials that the standard ones, you can provide parameters.json yourself:
+**Alternative:** If you want to provide different credentials than the standard ones, you can provide parameters.json yourself:
 
 ```json
 {
@@ -69,9 +69,9 @@ cargo build --package sf_core
 cargo build --package jdbc_bridge
 ```
 
-### 3. Java (required for Wiremock-based tests)
+### 3. Java (required for WireMock-based tests)
 
-Some integration tests use the Wiremock standalone JAR (started via `java -jar ...`) to mock Snowflake endpoints.
+Some integration tests use the WireMock standalone JAR (started via `java -jar ...`) to mock Snowflake endpoints.
 To run those tests, make sure **Java is installed and `java` is available on your PATH**:
 
 ```bash

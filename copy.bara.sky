@@ -1,0 +1,160 @@
+# Copybara config: mirror snowflake-eng/universal-driver -> snowflake-eng/universal-driver-mirror-test
+#
+# Initial rollout: destination is a TEST repository. Once validated, flip
+# the destination URL to snowflakedb/universal-driver.
+#
+# Invocation (see .github/workflows/mirror.yml):
+#   copybara migrate copy.bara.sky mirror        # main
+#   copybara migrate copy.bara.sky mirror --ref=release/X.Y  # release branches
+
+core.workflow(
+    name = "mirror",
+    # ITERATIVE preserves linear source history — one destination commit
+    # per origin commit, original author and message. Copybara still writes
+    # a `GitOrigin-RevId: <sha>` trailer on each commit for tracking.
+    mode = "ITERATIVE",
+    origin = git.github_origin(
+        url = "https://github.com/snowflake-eng/universal-driver",
+        ref = "main",
+    ),
+
+    # ── Destination: direct push ──
+    # Copybara pushes directly to the destination branch — no PR, no human
+    # gate. Content safety relies on the allowlist + verify_match checks
+    # below, plus the environment approval on workflow_dispatch runs.
+    # During the initial test phase this points at universal-driver-mirror-test;
+    # switch to snowflakedb/universal-driver once the flow is validated.
+    destination = git.github_destination(
+        url = "https://github.com/snowflake-eng/universal-driver-mirror-test",
+        push = "main",
+    ),
+
+    authoring = authoring.pass_thru(
+        "Mirror Bot <mirror-bot@snowflake.com>"
+    ),
+
+    # ALLOWLIST: only explicitly listed paths/extensions are mirrored.
+    # New dirs or file types must be added here — if forgotten, they stay internal (safe default).
+    #
+    # ⚠️  MARKDOWN FILES: .md files are NOT globbed (no **/*.md).
+    #     Each mirrored .md must be listed by exact path below to prevent
+    #     accidental exposure of internal ADRs or security assessments.
+    #     See "Allowed markdown files" section at the bottom.
+    origin_files = glob([
+        # ── Rust core & workspace crates ──
+        "sf_core/**/*.rs", "sf_core/**/Cargo.toml", "sf_core/**/*.def",
+        "sf_mini_core/**/*.rs", "sf_mini_core/**/Cargo.toml",
+        "sf_mini_core_static/**/*.rs", "sf_mini_core_static/**/Cargo.toml",
+        "error_trace/**/*.rs", "error_trace/**/Cargo.toml",
+        "error_trace_derive/**/*.rs", "error_trace_derive/**/Cargo.toml",
+        "proto_generator/**/*.rs", "proto_generator/**/Cargo.toml",
+        "proto_utils/**/*.rs", "proto_utils/**/Cargo.toml",
+        "protobuf/**/*.proto",
+
+        # ── Python wrapper (source, config, build, native bridge) ──
+        "python/**/*.py", "python/**/*.pyx", "python/**/*.pyi",
+        "python/**/*.toml", "python/**/*.lock",
+        "python/**/*.c", "python/**/*.cpp", "python/**/*.h", "python/**/*.hpp",
+        "python/**/*.txt", "python/**/*.yaml",
+        "python/**/*.sh", "python/**/*.sdist", "python/**/*.typed",
+        "python/**/.gitignore", "python/**/.clang-format",
+
+        # ── JDBC wrapper ──
+        "jdbc/**/*.java", "jdbc/**/*.gradle", "jdbc/**/*.properties", "jdbc/**/*.xml",
+        "jdbc/**/*.bat", "jdbc/**/*.jar",
+        "jdbc/**/gradlew", "jdbc/**/*.MockMaker", "jdbc/**/*.Driver",
+        "jdbc/**/*.rs", "jdbc/**/*.py", "jdbc/**/*.toml",
+        "jdbc_bridge/**/*.rs", "jdbc_bridge/**/Cargo.toml",
+
+        # ── ODBC wrapper & tests ──
+        "odbc/**/*.rs", "odbc/**/*.cpp", "odbc/**/*.hpp", "odbc/**/*.h",
+        "odbc/**/*.toml", "odbc/**/*.def",
+        "odbc/**/*.yaml", "odbc/**/*.txt", "odbc/**/*.sh", "odbc/**/*.ps1",
+        "odbc/**/*.py",
+        "odbc_tests/**/*.cpp", "odbc_tests/**/*.hpp",
+        "odbc_tests/**/*.yaml", "odbc_tests/**/*.txt",
+        "odbc_tests/**/*.rs", "odbc_tests/**/*.toml",
+        "odbc_trace_tool/**/*.rs", "odbc_trace_tool/**/Cargo.toml",
+
+        # ── CI & GitHub config ──
+        # NOTE: .github/ is intentionally NOT mirrored. Pushing with a PAT
+        # that lacks the `workflow` scope fails when .github/workflows/*
+        # files change ("refusing to allow a Personal Access Token to
+        # create or update workflow ... without `workflow` scope"). Revisit
+        # once the mirror bot uses a GitHub App or a token that carries the
+        # workflow scope. See implementation.md.
+        ".buildkite/**/*.yml",
+        ".cargo/**/*.toml",
+        "ci/**/Jenkinsfile", "ci/**/Jenkinsfile.*",
+        "ci/**/*.sh", "ci/**/*.py", "ci/**/*.yml",
+        "ci/**/Dockerfile", "ci/**/Dockerfile.*",
+        "ci/**/reference-odbc-*",
+
+        # ── Tests (data, fixtures, perf) ──
+        "tests/**/*.rs", "tests/**/*.py", "tests/**/*.java",
+        "tests/**/*.feature", "tests/**/*.json", "tests/**/*.csv",
+        "tests/**/*.sh", "tests/**/*.yaml",
+        "tests/**/*.toml", "tests/**/*.lock",
+        "tests/**/*.cpp", "tests/**/*.h", "tests/**/*.hpp",
+        "tests/**/*.txt", "tests/**/*.css",
+        "tests/**/*.crl", "tests/**/*.p8",
+        "tests/**/*.gz", "tests/**/*.br", "tests/**/*.bz2",
+        "tests/**/*.zst", "tests/**/*.xz",
+        "tests/**/*.deflate", "tests/**/*.raw_deflate",
+        "tests/**/*.gpg",
+        "tests/**/*.dockerignore", "tests/**/.gitignore",
+        "tests/**/Dockerfile", "tests/**/Dockerfile.*",
+        "tests/**/Jenkinsfile", "tests/**/Jenkinsfile.*",
+        "tests/**/*.jar",
+
+        # ── Scripts ──
+        "scripts/**/*.sh", "scripts/**/*.py", "scripts/**/*.bat",
+        "scripts/**/*.ps1", "scripts/**/*.sql",
+
+        # ── Root files (explicit, no globs) ──
+        "Cargo.toml", "Cargo.lock", "build_common.rs", "rust-toolchain.toml",
+        "codecov.yml", "LICENSE", "shell.nix",
+        ".clang-format", ".dockerignore", ".envrc",
+        ".gitattributes", ".gitignore", ".pre-commit-config.yaml",
+
+        # ── Allowed markdown files (explicit paths, NO globs) ──
+        # Every .md that should be public must be listed here individually.
+        # This prevents accidental exposure of internal ADRs, security
+        # assessments, or design docs added anywhere in the repo.
+        "README.md",
+        "sf_core/README.md",
+        "sf_core/src/bin/README.md",
+        "sf_mini_core/README.md",
+        "python/README.md",
+        "python/tests/README.md",
+        "jdbc/README.md",
+        "jdbc/tools/api-coverage/README.md",
+        "odbc/README.md",
+        "proto_generator/README.md",
+        "tests/definitions/README.md",
+        "tests/performance/README.md",
+        "tests/test_coverage_report/README.md",
+        "tests/test_data/generated_test_data/README.md",
+        "tests/tests_format_validator/README.md",
+        "tests/wiremock/README.md",
+        # NOTE: adr/, doc/, .ai/, .cursor/ markdown files are intentionally
+        # NOT listed — they may contain internal ADRs or security assessments.
+        # To mirror a new .md file, add its exact path here.
+    ]),
+
+    transformations = [
+        # Fail the sync if any mirrored file references the internal repo.
+        # The mirror workflow itself is excluded because it legitimately
+        # names the source repository.
+        core.verify_match(
+            regex = "snowflake-eng/universal-driver",
+            paths = glob(["**"], exclude = [".github/workflows/mirror*"]),
+            verify_no_match = True,
+        ),
+        # Fail the sync if any mirrored file references internal hostnames.
+        core.verify_match(
+            regex = "\\.snowflakecomputing\\.internal|\\.corp\\.snowflake",
+            verify_no_match = True,
+        ),
+    ],
+)
