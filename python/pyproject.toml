@@ -132,6 +132,7 @@ addopts = [
     "--strict-config",
     "-vv",
     "-n 16",
+    "--max-worker-restart=4",
     "--durations=0",
 ]
 # Default timeout for tests (2 minutes) - prevents hanging tests on CI
