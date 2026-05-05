@@ -188,12 +188,25 @@ core.workflow(
         branch = "main",
     ),
     # Create a PR on the internal repo so internal CI and reviewers see it.
+    #
+    # NOTE: pr_branch is intentionally omitted — Copybara's `pr_branch`
+    # field does NOT interpolate ${LABEL} placeholders, so templating a
+    # PR number into it leaves literal `${GITHUB_PR_NUMBER}` text. When
+    # omitted, github_pr_destination derives a branch name from the
+    # origin change, giving us a unique per-PR branch automatically.
+    #
+    # Only labels that git.github_pr_origin actually exposes may appear
+    # in title/body: GITHUB_PR_NUMBER, GITHUB_PR_TITLE, GITHUB_PR_BODY,
+    # GITHUB_PR_URL, GITHUB_PR_HEAD_SHA. Author login is NOT available
+    # as a label — Copybara carries it on the imported commit's author
+    # metadata instead (via authoring.pass_thru below), so reviewers see
+    # the original contributor in the commit header.
     destination = git.github_pr_destination(
         url = SOURCE_REPO,
         destination_ref = "main",
-        pr_branch = "import-mirror-pr-${GITHUB_PR_NUMBER}",
         title = "Import mirror PR #${GITHUB_PR_NUMBER}: ${GITHUB_PR_TITLE}",
-        body = "Imported from ${GITHUB_PR_URL} (author: @${GITHUB_PR_USER_LOGIN}).\n\n"
+        body = "Imported from ${GITHUB_PR_URL}.\n\n"
+               + "Original PR body:\n\n"
                + "${GITHUB_PR_BODY}\n\n"
                + "---\n"
                + "Internal CI validates this change before merge. "
