@@ -5,6 +5,7 @@ Integration tests for PEP 249 Connection objects.
 import uuid
 
 from io import StringIO
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -36,7 +37,7 @@ class TestConnectionParameters:
     These tests exercise that behavior against both drivers.
     """
 
-    def test_connect_with_account_only_no_host_or_server_url(self, connector_adapter, monkeypatch):
+    def test_connect_with_account_only_no_host_or_server_url(self, connector_adapter):
         """Connection succeeds when only ``account`` is given — host/server_url are derived.
 
         Skipped when the test environment targets a non-production host (preprod,
@@ -44,7 +45,7 @@ class TestConnectionParameters:
         accounts whose canonical host is ``{account}.snowflakecomputing.com``.
         """
         from tests.config import get_test_parameters
-        from tests.connector_factory import create_connection_with_adapter
+        from tests.connector_factory import setup_default_jwt_auth
 
         test_params = get_test_parameters()
         account = test_params.get("SNOWFLAKE_TEST_ACCOUNT")
@@ -61,23 +62,16 @@ class TestConnectionParameters:
                 f"yields '{expected_host}', not the configured target."
             )
 
-        # Patch get_test_parameters at its import site in connector_factory to
-        # return a copy with host/server_url/port/protocol stripped. This forces
-        # the driver to derive the host from `account` alone.
-        def _stripped_params():
-            p = dict(test_params)
-            for k in (
-                "SNOWFLAKE_TEST_HOST",
-                "SNOWFLAKE_TEST_SERVER_URL",
-                "SNOWFLAKE_TEST_PORT",
-                "SNOWFLAKE_TEST_PROTOCOL",
-            ):
-                p.pop(k, None)
-            return p
+        # Build a minimal connection params dict containing only ``account`` plus
+        # auth credentials. No host/server_url/port/protocol is supplied — the
+        # driver must derive ``host = {account}.snowflakecomputing.com``.
+        connection_params: dict[str, Any] = {
+            "account": account,
+            "user": test_params.get("SNOWFLAKE_TEST_USER"),
+        }
+        setup_default_jwt_auth(connection_params)
 
-        monkeypatch.setattr("tests.connector_factory.get_test_parameters", _stripped_params)
-
-        with create_connection_with_adapter(connector_adapter) as conn:
+        with connector_adapter.connect(**connection_params) as conn:
             assert not conn.is_closed()
             cur = conn.cursor()
             try:
