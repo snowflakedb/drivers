@@ -534,10 +534,8 @@ fn format_interval(binding: &ParameterBinding) -> String {
     let sign_raw: sql::SmallInt =
         unsafe { std::ptr::read_unaligned(base.add(4) as *const sql::SmallInt) };
     let sign = if sign_raw != 0 { "-" } else { "" };
-    let ym =
-        || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::YearMonth) };
-    let ds =
-        || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::DaySecond) };
+    let ym = || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::YearMonth) };
+    let ds = || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::DaySecond) };
 
     /// Render `<seconds>.<fraction>` with the fraction zero-padded to 6
     /// digits and the decimal point always present (e.g. 45 → "45.000000",
