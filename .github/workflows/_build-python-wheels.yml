@@ -96,7 +96,7 @@ jobs:
           targets = json.loads("""${{ inputs.targets }}""")
 
           cibw_entries = {}
-          manual_entries = {}
+          manual_entries = []
 
           for key, versions in targets.items():
               if key not in PLATFORMS:
@@ -119,17 +119,18 @@ jobs:
                       "python_versions_json": json.dumps(versions),
                   }
               else:
-                  manual_entries[key] = {
-                      "target": p["target"],
-                      "os": p["os"],
-                      "lib_name": p["lib_name"],
-                      "cargo_extra_args": p["cargo_extra_args"],
-                      "artifact_id": p["artifact_id"],
-                      "python_versions_json": json.dumps(versions),
-                  }
+                  for v in versions:
+                      manual_entries.append({
+                          "target": p["target"],
+                          "os": p["os"],
+                          "lib_name": p["lib_name"],
+                          "cargo_extra_args": p["cargo_extra_args"],
+                          "py": v,
+                          "artifact_name": f"{p['artifact_id']}_py{v}",
+                      })
 
           cibw_matrix = list(cibw_entries.values())
-          win_arm_matrix = list(manual_entries.values())
+          win_arm_matrix = manual_entries
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"cibw-matrix={json.dumps(cibw_matrix)}\n")
@@ -404,9 +405,9 @@ jobs:
           path: python/dist/*cp314*.whl
           if-no-files-found: error
 
-  # ── Build sf_core + wheels manually (Windows ARM64) ────────────────
+  # ── Build sf_core + wheel manually (Windows ARM64) ──────────────────
   # cibuildwheel does not support Windows ARM64, so we build sf_core
-  # inline and loop over Python versions with hatch build.
+  # inline and build a single wheel per worker with hatch.
   build_wheel:
     needs: [configure, generate_proto]
     if: fromJSON(needs.configure.outputs.win-arm-matrix)[0] != null
@@ -415,9 +416,11 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.configure.outputs.win-arm-matrix) }}
     runs-on: ${{ matrix.os }}
-    name: build_wheel (${{ matrix.artifact_id }})
+    name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
       CMAKE_GENERATOR_PLATFORM: ARM64
+      SKIP_CORE_BUILD: "true"
+      SKIP_PROTO_GENERATION: "true"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -471,52 +474,27 @@ jobs:
         with:
           version: "0.9.28"
 
-      # ── Build wheels for each Python version ──
-      - name: Build wheels for all Python versions
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
+
+      # ── Build ──
+      - name: Build python wheel
         working-directory: ./python
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          for %%v in (${{ join(fromJSON(matrix.python_versions_json), ' ') }}) do (
-            echo === Building wheel for Python %%v ===
-            uv python install cpython-%%v-windows-aarch64-none
-            if errorlevel 1 exit /b 1
-            uv run --python %%v --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build -t wheel --no-clean
-            if errorlevel 1 exit /b 1
-            echo --- dist after %%v ---
-            dir dist\*.whl
-          )
-        env:
-          SKIP_CORE_BUILD: "true"
-          SKIP_PROTO_GENERATION: "true"
+          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
-      - name: Inspect wheels
+      - name: Inspect wheel
         working-directory: ./python
         shell: pwsh
-        run: |
-          $versions = '${{ matrix.python_versions_json }}' | ConvertFrom-Json
-          $py = $versions[0]
-          foreach ($whl in (Get-ChildItem dist\*.whl)) {
-            Write-Host "=== $($whl.Name) ==="
-            uv run --python $py python -m zipfile -l $whl.FullName
-          }
+        run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
 
-      # ── Upload individual wheel artifacts (preserves per-version names) ──
-      - name: Upload py3.11 wheel
-        if: contains(fromJSON(matrix.python_versions_json), '3.11')
+      - name: Upload Python wheel
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_id }}_py3.11
-          path: python/dist/*cp311*.whl
-          if-no-files-found: error
-
-      - name: Upload py3.12 wheel
-        if: contains(fromJSON(matrix.python_versions_json), '3.12')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_id }}_py3.12
-          path: python/dist/*cp312*.whl
-          if-no-files-found: error
+          name: ${{ matrix.artifact_name }}
+          path: python/dist/*.whl
 
   # ── Clean up intermediate build artifacts ──────────────────────────
   cleanup_build_artifacts:
