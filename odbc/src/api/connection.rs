@@ -1233,48 +1233,128 @@ pub fn get_info<E: OdbcEncoding>(
             Ok(())
         }
         InfoType::ConvertGuid => {
-            // Per the ODBC spec for `SQL_CONVERT_<type>`, this bitmask
-            // enumerates the target SQL types the driver can reach FROM
-            // `SQL_GUID` via the `CONVERT` scalar function (and, by
-            // extension, the conversions the Microsoft Windows ODBC DM
-            // permits at `SQLBindParameter` time).  The bits are
-            // independent — each one is set only if that specific
-            // conversion is actually implemented; setting bits we do not
-            // support would violate the spec.
-            //
-            // The driver formats `SQL_C_GUID` parameters as the canonical
-            // 8-4-4-4-12 upper-case hex literal (see
-            // `varchar.rs::WriteODBCType for SnowflakeVarchar`), so every
-            // character target is reachable, plus identity
-            // (`SQL_CVT_GUID`).  Binary / varbinary routes are not
-            // implemented yet, so those bits stay off.
-            const SQL_CVT_CHAR: u32 = 0x0000_0001;
-            const SQL_CVT_VARCHAR: u32 = 0x0000_0100;
-            const SQL_CVT_LONGVARCHAR: u32 = 0x0000_0200;
-            const SQL_CVT_WCHAR: u32 = 0x0020_0000;
-            const SQL_CVT_WLONGVARCHAR: u32 = 0x0040_0000;
-            const SQL_CVT_WVARCHAR: u32 = 0x0080_0000;
-            const SQL_CVT_GUID: u32 = 0x0100_0000;
-            let mask: u32 = SQL_CVT_CHAR
-                | SQL_CVT_VARCHAR
-                | SQL_CVT_LONGVARCHAR
-                | SQL_CVT_WCHAR
-                | SQL_CVT_WVARCHAR
-                | SQL_CVT_WLONGVARCHAR
-                | SQL_CVT_GUID;
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = mask;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
+            write_u32_bitmask(convert_guid_mask(), info_value_ptr, string_length_ptr);
+            Ok(())
+        }
+        InfoType::ConvertChar
+        | InfoType::ConvertVarchar
+        | InfoType::ConvertLongVarchar
+        | InfoType::ConvertWChar
+        | InfoType::ConvertWVarchar
+        | InfoType::ConvertWLongVarchar => {
+            write_u32_bitmask(
+                convert_to_character_mask(),
+                info_value_ptr,
+                string_length_ptr,
+            );
             Ok(())
         }
     }
+}
+
+/// Write a 32-bit bitmask into the `SQLGetInfo` output buffer, following the
+/// ODBC contract that `*StringLengthPtr` reports the number of bytes written.
+fn write_u32_bitmask(
+    mask: u32,
+    info_value_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    if !info_value_ptr.is_null() {
+        unsafe {
+            *(info_value_ptr as *mut u32) = mask;
+        }
+    }
+    if !string_length_ptr.is_null() {
+        unsafe {
+            *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+        }
+    }
+}
+
+/// `SQL_CVT_*` bitmask values from `sqlext.h`. Per the ODBC spec these are
+/// the only legal bits in any `SQL_CONVERT_*` `SQLGetInfo` response — setting
+/// other bits is undefined.
+mod sql_cvt {
+    pub const CHAR: u32 = 0x0000_0001;
+    pub const NUMERIC: u32 = 0x0000_0002;
+    pub const DECIMAL: u32 = 0x0000_0004;
+    pub const INTEGER: u32 = 0x0000_0008;
+    pub const SMALLINT: u32 = 0x0000_0010;
+    pub const FLOAT: u32 = 0x0000_0020;
+    pub const REAL: u32 = 0x0000_0040;
+    pub const DOUBLE: u32 = 0x0000_0080;
+    pub const VARCHAR: u32 = 0x0000_0100;
+    pub const LONGVARCHAR: u32 = 0x0000_0200;
+    pub const BINARY: u32 = 0x0000_0400;
+    pub const VARBINARY: u32 = 0x0000_0800;
+    pub const BIT: u32 = 0x0000_1000;
+    pub const TINYINT: u32 = 0x0000_2000;
+    pub const BIGINT: u32 = 0x0000_4000;
+    pub const DATE: u32 = 0x0000_8000;
+    pub const TIME: u32 = 0x0001_0000;
+    pub const TIMESTAMP: u32 = 0x0002_0000;
+    pub const LONGVARBINARY: u32 = 0x0004_0000;
+    pub const INTERVAL_YEAR_MONTH: u32 = 0x0008_0000;
+    pub const INTERVAL_DAY_TIME: u32 = 0x0010_0000;
+    pub const WCHAR: u32 = 0x0020_0000;
+    pub const WLONGVARCHAR: u32 = 0x0040_0000;
+    pub const WVARCHAR: u32 = 0x0080_0000;
+    pub const GUID: u32 = 0x0100_0000;
+}
+
+/// Bitmask returned for `SQL_CONVERT_GUID`. Enumerates the SQL targets the
+/// driver can convert *from* `SQL_GUID`: every character SQL type (the driver
+/// formats `SQL_C_GUID` as the canonical 8-4-4-4-12 upper-case hex literal —
+/// see `varchar.rs::SnowflakeVarchar::read_odbc`), plus the identity
+/// conversion. Binary / varbinary routes are not implemented yet, so those
+/// bits stay off.
+fn convert_guid_mask() -> u32 {
+    sql_cvt::CHAR
+        | sql_cvt::VARCHAR
+        | sql_cvt::LONGVARCHAR
+        | sql_cvt::WCHAR
+        | sql_cvt::WVARCHAR
+        | sql_cvt::WLONGVARCHAR
+        | sql_cvt::GUID
+}
+
+/// Bitmask returned for `SQL_CONVERT_<character>` (CHAR / VARCHAR /
+/// LONGVARCHAR / WCHAR / WVARCHAR / WLONGVARCHAR). Enumerates the SQL source
+/// types the driver can convert *into* a character target. Mirrors every C
+/// type accepted by `varchar.rs::SnowflakeVarchar::read_odbc`, mapped through
+/// the standard C-type ↔ SQL-type correspondence in ODBC Appendix D.
+///
+/// This is also the bitmask the Microsoft Windows ODBC DM consults at
+/// `SQLBindParameter` time when the parameter SQL type is one of the
+/// character targets — without these bits set, the DM rejects binds like
+/// `SQLBindParameter(SQL_C_GUID, SQL_VARCHAR, …)` with `HYC00` before the
+/// call reaches the driver.
+fn convert_to_character_mask() -> u32 {
+    sql_cvt::CHAR
+        | sql_cvt::NUMERIC
+        | sql_cvt::DECIMAL
+        | sql_cvt::INTEGER
+        | sql_cvt::SMALLINT
+        | sql_cvt::FLOAT
+        | sql_cvt::REAL
+        | sql_cvt::DOUBLE
+        | sql_cvt::VARCHAR
+        | sql_cvt::LONGVARCHAR
+        | sql_cvt::BINARY
+        | sql_cvt::VARBINARY
+        | sql_cvt::BIT
+        | sql_cvt::TINYINT
+        | sql_cvt::BIGINT
+        | sql_cvt::DATE
+        | sql_cvt::TIME
+        | sql_cvt::TIMESTAMP
+        | sql_cvt::LONGVARBINARY
+        | sql_cvt::INTERVAL_YEAR_MONTH
+        | sql_cvt::INTERVAL_DAY_TIME
+        | sql_cvt::WCHAR
+        | sql_cvt::WLONGVARCHAR
+        | sql_cvt::WVARCHAR
+        | sql_cvt::GUID
 }
 
 #[cfg(test)]
@@ -1517,6 +1597,78 @@ Server = myserver
             let ini = "[mydsn]\nServer = foo\n";
             let params = parse_ini_section(ini, "MyDSN").unwrap();
             assert_eq!(params.get("SERVER").unwrap(), "foo");
+        }
+    }
+
+    /// `SQL_CONVERT_GUID` must contain `SQL_CVT_VARCHAR` so that the
+    /// Microsoft Windows DM accepts `SQLBindParameter(SQL_C_GUID,
+    /// SQL_VARCHAR, …)` — the rejection mechanism is observed empirically
+    /// in `e2e_types_c_guid_to_sql_string` on Windows runners (HYC00 from
+    /// the DM, before the call reaches the driver).
+    #[test]
+    fn convert_guid_mask_includes_every_character_target_and_identity() {
+        let mask = convert_guid_mask();
+        assert_ne!(mask & sql_cvt::CHAR, 0);
+        assert_ne!(mask & sql_cvt::VARCHAR, 0);
+        assert_ne!(mask & sql_cvt::LONGVARCHAR, 0);
+        assert_ne!(mask & sql_cvt::WCHAR, 0);
+        assert_ne!(mask & sql_cvt::WVARCHAR, 0);
+        assert_ne!(mask & sql_cvt::WLONGVARCHAR, 0);
+        assert_ne!(mask & sql_cvt::GUID, 0);
+        assert_eq!(
+            mask & sql_cvt::BINARY,
+            0,
+            "binary route is not implemented yet"
+        );
+        assert_eq!(
+            mask & sql_cvt::VARBINARY,
+            0,
+            "varbinary route is not implemented yet"
+        );
+    }
+
+    /// `SQL_CONVERT_<character>` must contain `SQL_CVT_GUID` so the DM
+    /// accepts the bind from the *target* side too — observed Windows DMs
+    /// probe both directions.
+    #[test]
+    fn convert_to_character_mask_includes_guid() {
+        assert_ne!(convert_to_character_mask() & sql_cvt::GUID, 0);
+    }
+
+    /// `convert_to_character_mask` should mirror every C type accepted by
+    /// `varchar.rs::SnowflakeVarchar::read_odbc`. Spot-check the breadth so
+    /// a future regression that drops a bit fails loudly.
+    #[test]
+    fn convert_to_character_mask_includes_every_implemented_source() {
+        let mask = convert_to_character_mask();
+        for bit in [
+            sql_cvt::CHAR,
+            sql_cvt::VARCHAR,
+            sql_cvt::LONGVARCHAR,
+            sql_cvt::WCHAR,
+            sql_cvt::WVARCHAR,
+            sql_cvt::WLONGVARCHAR,
+            sql_cvt::NUMERIC,
+            sql_cvt::DECIMAL,
+            sql_cvt::INTEGER,
+            sql_cvt::SMALLINT,
+            sql_cvt::TINYINT,
+            sql_cvt::BIGINT,
+            sql_cvt::FLOAT,
+            sql_cvt::REAL,
+            sql_cvt::DOUBLE,
+            sql_cvt::BIT,
+            sql_cvt::BINARY,
+            sql_cvt::VARBINARY,
+            sql_cvt::LONGVARBINARY,
+            sql_cvt::DATE,
+            sql_cvt::TIME,
+            sql_cvt::TIMESTAMP,
+            sql_cvt::INTERVAL_YEAR_MONTH,
+            sql_cvt::INTERVAL_DAY_TIME,
+            sql_cvt::GUID,
+        ] {
+            assert_ne!(mask & bit, 0, "missing SQL_CVT bit 0x{bit:08X}");
         }
     }
 }

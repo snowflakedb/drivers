@@ -179,12 +179,37 @@ pub enum InfoType {
     DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_CONVERT_CHAR` (35) — bitmask of conversions supported with the
+    /// `CONVERT` scalar function for `SQL_CHAR` source data.
+    ConvertChar = 35,
+    /// `SQL_CONVERT_LONGVARCHAR` (46) — bitmask of conversions supported with
+    /// the `CONVERT` scalar function for `SQL_LONGVARCHAR` source data.
+    ConvertLongVarchar = 46,
+    /// `SQL_CONVERT_VARCHAR` (48) — bitmask of conversions supported with the
+    /// `CONVERT` scalar function for `SQL_VARCHAR` source data.
+    ConvertVarchar = 48,
+    /// `SQL_CONVERT_WCHAR` (122) — bitmask of conversions supported with the
+    /// `CONVERT` scalar function for `SQL_WCHAR` source data.
+    ConvertWChar = 122,
+    /// `SQL_CONVERT_WLONGVARCHAR` (124) — bitmask of conversions supported
+    /// with the `CONVERT` scalar function for `SQL_WLONGVARCHAR` source data.
+    ConvertWLongVarchar = 124,
+    /// `SQL_CONVERT_WVARCHAR` (125) — bitmask of conversions supported with
+    /// the `CONVERT` scalar function for `SQL_WVARCHAR` source data.
+    ConvertWVarchar = 125,
     /// `SQL_CONVERT_GUID` (173) — bitmask of supported conversions from
-    /// `SQL_GUID` to other SQL types. The Microsoft Windows ODBC Driver
-    /// Manager consults this when validating `SQLBindParameter` calls with
-    /// `ValueType=SQL_C_GUID`; if the corresponding `SQL_CVT_<target>` bit
-    /// is unset the DM rejects the bind with `HYC00` ("Driver does not
-    /// support this parameter") before the call ever reaches the driver.
+    /// `SQL_GUID` to other SQL types.
+    ///
+    /// The Microsoft Windows ODBC Driver Manager consults the
+    /// `SQL_CONVERT_<source>` bitmask family at `SQLBindParameter` time:
+    /// for an `SQLBindParameter(C=X, SQL=Y)` call it looks at
+    /// `SQL_CONVERT_<X>` for the `SQL_CVT_<Y>` bit (and on at least some
+    /// configurations it additionally probes `SQL_CONVERT_<Y>` for the
+    /// `SQL_CVT_<X>` bit). If either consulted bit is unset the DM rejects
+    /// the bind with `HYC00` ("Driver does not support this parameter")
+    /// *before the call ever reaches the driver*. We therefore advertise
+    /// every `SQL_CONVERT_*` info type the driver actually implements
+    /// conversions for, on both directions.
     ConvertGuid = 173,
 }
 
@@ -198,6 +223,12 @@ impl TryFrom<u16> for InfoType {
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
+            35 => Ok(InfoType::ConvertChar),
+            46 => Ok(InfoType::ConvertLongVarchar),
+            48 => Ok(InfoType::ConvertVarchar),
+            122 => Ok(InfoType::ConvertWChar),
+            124 => Ok(InfoType::ConvertWLongVarchar),
+            125 => Ok(InfoType::ConvertWVarchar),
             173 => Ok(InfoType::ConvertGuid),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
