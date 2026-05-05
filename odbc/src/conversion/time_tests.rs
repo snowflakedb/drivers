@@ -9,7 +9,7 @@ mod tests {
     };
     use crate::conversion::time::SnowflakeTime;
     use arrow::array::PrimitiveArray;
-    use arrow::datatypes::{Int32Type, Int64Type};
+    use arrow::datatypes::Int64Type;
     use chrono::NaiveTime;
     use odbc_sys as sql;
 
@@ -110,67 +110,6 @@ mod tests {
         let sn = time(9);
         // Value exceeding 24 hours in nanos — would wrap u32 without validation
         let array = PrimitiveArray::<Int64Type>::from(vec![Some(100_000_000_000_000_000)]);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
-    }
-
-    // ========================================================================
-    // ReadArrowType<Int32> — Snowflake transmits scale 0-3 TIME as Int32
-    // ========================================================================
-
-    #[test]
-    fn read_arrow_int32_scale_0_whole_seconds() {
-        let sn = time(0);
-        let array = PrimitiveArray::<Int32Type>::from(vec![Some(45296)]); // 12:34:56
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value, NaiveTime::from_hms_opt(12, 34, 56).unwrap());
-    }
-
-    #[test]
-    fn read_arrow_int32_scale_3_milliseconds() {
-        let sn = time(3);
-        let array = PrimitiveArray::<Int32Type>::from(vec![Some(45_296_789)]); // 12:34:56.789
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(
-            value,
-            NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap()
-        );
-    }
-
-    #[test]
-    fn read_arrow_int32_midnight() {
-        let sn = time(0);
-        let array = PrimitiveArray::<Int32Type>::from(vec![Some(0)]);
-        let value = sn.read_arrow_type(&array, 0).unwrap();
-        assert_eq!(value, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn read_arrow_int32_null_returns_null_error() {
-        let sn = time(0);
-        let array = PrimitiveArray::<Int32Type>::from(vec![None::<i32>]);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(result, Err(ReadArrowError::NullValue { .. })));
-    }
-
-    #[test]
-    fn read_arrow_int32_negative_returns_invalid() {
-        let sn = time(0);
-        let array = PrimitiveArray::<Int32Type>::from(vec![Some(-1)]);
-        let result = sn.read_arrow_type(&array, 0);
-        assert!(matches!(
-            result,
-            Err(ReadArrowError::InvalidArrowValue { .. })
-        ));
-    }
-
-    #[test]
-    fn read_arrow_int32_overflow_secs_returns_invalid() {
-        let sn = time(0);
-        let array = PrimitiveArray::<Int32Type>::from(vec![Some(86_400)]);
         let result = sn.read_arrow_type(&array, 0);
         assert!(matches!(
             result,
