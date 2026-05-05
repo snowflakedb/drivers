@@ -4,8 +4,8 @@ use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu,
     DisconnectedSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu,
     InvalidHandleSnafu, InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu,
-    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu,
-    Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
+    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
@@ -110,21 +110,30 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let (bindings, _json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
     let stmt_handle = guard.stmt_handle;
 
-    inner.cancel_token = CancellationToken::new();
-    let _cancel_token = inner.cancel_token.clone();
-    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.statement_set_sql_query(StatementSetSqlQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            query: statement_text.to_string(),
-        })
-        .await?;
+    let token = CancellationToken::new();
+    *guard.active_cancel.lock() = Some(token.clone());
 
-        c.statement_execute_query(StatementExecuteQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            bindings,
-        })
-        .await
+    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            result = async {
+                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    query: statement_text.to_string(),
+                })
+                .await?;
+
+                c.statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings,
+                })
+                .await
+            } => result.map_err(Into::into),
+        }
     });
+
+    *guard.active_cancel.lock() = None;
 
     tracing::info!("exec_direct: response={:?}", response);
     let response = response?;
@@ -234,23 +243,31 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: query = {query}");
 
     let stmt_handle = guard.stmt_handle;
-    inner.cancel_token = CancellationToken::new();
-    let _cancel_token = inner.cancel_token.clone();
-    // TODO(SNOW-3258922): Wire _cancel_token into tokio::select!
-    // alongside the RPC future to support cancellation.
+
+    let token = CancellationToken::new();
+    *guard.active_cancel.lock() = Some(token.clone());
+
     let prepare_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.statement_set_sql_query(StatementSetSqlQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            query: query.to_string(),
-        })
-        .await?;
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            result = async {
+                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    query: query.to_string(),
+                })
+                .await?;
 
-        c.statement_prepare(StatementPrepareRequest {
-            stmt_handle: Some(stmt_handle),
-        })
-        .await
-    })?;
+                c.statement_prepare(StatementPrepareRequest {
+                    stmt_handle: Some(stmt_handle),
+                })
+                .await
+            } => result.map_err(Into::into),
+        }
+    });
 
+    *guard.active_cancel.lock() = None;
+    let prepare_result = prepare_result?;
     let result = prepare_result.result.required("Result is required")?;
     let stream_ptr = result.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream_ptr)?;
@@ -359,15 +376,26 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     )?;
 
     let stmt_handle = guard.stmt_handle;
-    inner.cancel_token = CancellationToken::new();
-    let _cancel_token = inner.cancel_token.clone();
+
+    let token = CancellationToken::new();
+    *guard.active_cancel.lock() = Some(token.clone());
+
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.statement_execute_query(StatementExecuteQueryRequest {
-            stmt_handle: Some(stmt_handle),
-            bindings,
-        })
-        .await
-    })?;
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            result = async {
+                c.statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings,
+                })
+                .await
+            } => result.map_err(Into::into),
+        }
+    });
+
+    *guard.active_cancel.lock() = None;
+    let response = response?;
 
     tracing::info!("execute: Successfully executed statement");
     let mut settings = dbc.connection.lock().numeric_settings;
@@ -1213,27 +1241,34 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
 
 /// Cancel processing on a statement (SQLCancel).
 ///
-/// Cancels the `CancellationToken` stored in `StatementInner`.
-/// Called from `SQLCancel` in `c_api.rs`, which may be invoked from a
-/// different thread. Per ODBC 3.5 spec, cross-thread `SQLCancel` does
-/// not clear or post diagnostic records.
+/// Two-path design for safe cross-thread cancellation:
+/// - Path 1: If an RPC is in flight (`active_cancel` is `Some`), cancel the
+///   token. The executing thread observes this via `tokio::select!`. Never
+///   touches the inner Mutex.
+/// - Path 2: If no RPC is in flight (`active_cancel` is `None`), check for
+///   NeedData state and restore it. This is a single-threaded scenario.
 ///
-/// With the HandleManager, cross-thread `SQLCancel` now acquires the
-/// inner Mutex instead of aliasing raw pointers — no more UB.
+/// Per ODBC 3.5 spec, cross-thread `SQLCancel` does not clear or post
+/// diagnostic records.
 pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={:?}", statement_handle);
 
     // TODO(SNOW-3258918): Cancel async execution.
     // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
 
-    // TODO(SNOW-3258922): Cancel execution on another thread.
-    // Blocked by: no server-side cancel RPC. When implemented,
-    // cancelling the token resolves the cancelled() future observed
-    // by the executing thread's tokio::select!, aborting the in-flight RPC.
-
     let guard = stmt_from_handle(statement_handle)?;
-    let mut inner = guard.inner.lock();
 
+    // Path 1: cancel in-flight RPC without touching inner.
+    {
+        let active = guard.active_cancel.lock();
+        if let Some(token) = active.as_ref() {
+            token.cancel();
+            return Ok(());
+        }
+    }
+
+    // Path 2: no RPC in flight — check NeedData state (single-threaded).
+    let mut inner = guard.inner.lock();
     match inner.state.as_ref() {
         StatementState::AwaitingParamData { origin, .. }
         | StatementState::AwaitingPutData { origin, .. }
@@ -1241,12 +1276,10 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
             // TODO(SNOW-3258919): Full cancel testing during NeedData.
             let restored = origin.restore_state();
             inner.state.set(restored);
-            return Ok(());
         }
         _ => {}
     }
 
-    inner.cancel_token.cancel();
     Ok(())
 }
 

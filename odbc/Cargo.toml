@@ -22,7 +22,7 @@ parking_lot = { version = "0.12.5", features = ["arc_lock"] }
 
 proto_utils = { path = "../proto_utils" }
 error_trace = { path = "../error_trace" }
-tokio = { version = "1.50.0", features = ["rt"] }
+tokio = { version = "1.50.0", features = ["rt", "macros"] }
 tokio-util = "0.7"
 rust-ini = "0.21.3"
 
