@@ -19,7 +19,7 @@ source ./odbc/version.sh
 INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
 PKG_IDENTIFIER="net.snowflake.odbc-ud"
 BUILD_DIR=build
-SCRIPTS_DIR=odbc/installer/mac
+SCRIPTS_DIR=odbc/installer/mac/scripts
 
 DRIVER_X86_64="${DRIVER_X86_64:-target/x86_64-apple-darwin/release/libsfodbc.dylib}"
 DRIVER_ARM64="${DRIVER_ARM64:-target/aarch64-apple-darwin/release/libsfodbc.dylib}"
