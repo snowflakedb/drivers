@@ -373,7 +373,7 @@ fn fetch_impl(
             }
         }
 
-        if let Err(e) = cache.refresh_if_needed(&inner, &numeric_settings) {
+        if let Err(e) = cache.refresh_if_needed(&inner, numeric_settings) {
             if rows_fetched == 0 {
                 return Err(e);
             }

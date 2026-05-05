@@ -377,20 +377,6 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     Ok(())
 }
 
-const STATEMENT_TYPE_ID_MANAGE_PATS: i64 = 0x6244;
-
-fn is_ddl_statement(statement_type_id: i64) -> bool {
-    tracing::debug!("is_ddl_statement: statement_type_id={}", statement_type_id);
-    if statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS {
-        return false;
-    }
-    (0x6000..0x7000).contains(&statement_type_id)
-}
-
-fn is_dml_statement_type(statement_type_id: Option<i64>) -> bool {
-    statement_type_id.is_some_and(|id| (0x3000..0x4000).contains(&id))
-}
-
 fn set_state(stmt: &mut StatementInner, state: StatementState) {
     stmt.ird.desc_count = match &state {
         StatementState::QueryExecuted { reader, .. } => {
