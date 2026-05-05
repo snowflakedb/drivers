@@ -22,6 +22,14 @@ from .private_key_helper import get_test_private_key_path
 Row = tuple[Any, ...]
 
 
+_MIN_XDIST_WORKERS = 8
+
+
+def pytest_xdist_auto_num_workers(config):
+    num_cpus = os.cpu_count() or _MIN_XDIST_WORKERS
+    return max(num_cpus, _MIN_XDIST_WORKERS)
+
+
 @pytest.mark.optionalhook
 def pytest_metadata(metadata):
     metadata["Version of snowflake.connector"] = "Universal" if IS_UNIVERSAL_DRIVER else "Old"

@@ -131,7 +131,9 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-vv",
-    "-n 16",
+    # minimum 8 workers configured via pytest_xdist_auto_num_workers in conftest.py
+    "-n", "auto",
+    "--max-worker-restart=4",
     "--durations=0",
 ]
 # Default timeout for tests (2 minutes) - prevents hanging tests on CI
