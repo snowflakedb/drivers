@@ -131,7 +131,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-vv",
-    "-n 16",
+    "-n auto",  # minimum 8 workers configured via pytest_xdist_auto_num_workers in conftest.py
     "--max-worker-restart=4",
     "--durations=0",
 ]
