@@ -118,11 +118,6 @@ impl LogManager {
             }),
             None => LoggingConfig::default(),
         };
-        // Overlay env-var overrides (SF_ODBC_LOG_PATH / SF_ODBC_LOG_LEVEL /
-        // RUST_LOG) so the driver can be pointed at a log file without an
-        // `sf.odbc.ini` (container / CI setups where config files are awkward
-        // to manage).
-        let config = super::ini_config::apply_env_overrides(config);
         match Self::init(config) {
             Ok(lm) => Some(lm),
             Err(e) => {
@@ -139,7 +134,6 @@ impl LogManager {
             Ok(Some(section)) => super::ini_config::load_from_toml_section(&section),
             _ => LoggingConfig::default(),
         };
-        let config = super::ini_config::apply_env_overrides(config);
         match Self::init(config) {
             Ok(lm) => Some(lm),
             Err(e) => {
