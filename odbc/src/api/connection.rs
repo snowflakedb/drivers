@@ -1261,8 +1261,20 @@ pub fn get_info<E: OdbcEncoding>(
     }
 }
 
-/// Write a 32-bit bitmask into the `SQLGetInfo` output buffer, following the
-/// ODBC contract that `*StringLengthPtr` reports the number of bytes written.
+/// Write a 32-bit bitmask into the `SQLGetInfo` output buffer.
+///
+/// Per the ODBC `SQLGetInfo` contract, `BufferLength` is **explicitly
+/// ignored** for fixed-size non-character return values
+/// (<https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetinfo-function>:
+/// *"BufferLength is ignored if InfoValuePtr is not character data."*).
+/// All `SQL_CONVERT_*` info types — and every other bitmask info type
+/// in this module — return a fixed `SQLUINTEGER` (4 bytes), so the
+/// driver is contractually entitled to write a full `u32` whenever the
+/// caller supplies a non-null `InfoValuePtr`. We therefore intentionally
+/// do not consult `BufferLength` here; the existing
+/// `GetDataExtensions` arm above follows the same convention.
+/// `*StringLengthPtr` always reports the number of bytes written so a
+/// caller that mis-sized its buffer can detect that on the next call.
 fn write_u32_bitmask(
     mask: u32,
     info_value_ptr: sql::Pointer,

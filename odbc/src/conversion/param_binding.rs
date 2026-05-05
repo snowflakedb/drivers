@@ -2668,6 +2668,36 @@ mod tests {
     }
 
     #[test]
+    fn convert_interval_day_basic() -> TestResult {
+        // Single-field SQL_C_INTERVAL_DAY: only `day_second.day` is
+        // populated. The formatter must not look at `hour`/`minute`/etc.
+        let iv = ds_interval(0, 42, 0, 0, 0, 0);
+        let (ty, v) = convert_interval(CDataType::IntervalDay, 103, &iv)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_hour_basic() -> TestResult {
+        // Single-field SQL_C_INTERVAL_HOUR: only `day_second.hour` is read.
+        let iv = ds_interval(0, 0, 23, 0, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalHour, 104, &iv)?;
+        assert_eq!(v, Value::String("23".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_minute_negative() -> TestResult {
+        // Single-field SQL_C_INTERVAL_MINUTE with sign — confirms only
+        // `day_second.minute` is consulted alongside `interval_sign`.
+        let iv = ds_interval(1, 0, 0, 90, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalMinute, 105, &iv)?;
+        assert_eq!(v, Value::String("-90".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn convert_interval_year_to_month() -> TestResult {
         let iv = ym_interval(0, 5, 11);
         let (_, v) = convert_interval(CDataType::IntervalYearToMonth, 107, &iv)?;

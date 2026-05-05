@@ -509,33 +509,61 @@ impl ReadODBC for SnowflakeVarchar {
 /// `interval_type` field — drivers MUST trust the C type set on the binding
 /// (some applications never bother filling in `interval_type`).
 ///
-/// We deliberately do NOT copy the whole `SQL_INTERVAL_STRUCT` up front:
-/// applications routinely populate only the active variant of the
-/// `interval_value` union (e.g. `year_month` for SQL_C_INTERVAL_YEAR),
-/// so a wholesale `read_unaligned::<IntervalStruct>` would touch the
-/// 20-byte `DaySecond` tail bytes the app never wrote. We instead read
-/// `interval_sign` and the active variant individually at the offsets
-/// fixed by the `repr(C)` layout in `odbc_sys::IntervalStruct`:
-///
-///   offset  0  interval_type   c_int  (4 bytes)
-///   offset  4  interval_sign   i16    (2 bytes)
-///   offset  6  padding                (2 bytes, before the 4-aligned union)
-///   offset  8  interval_value  union  (20 bytes; YearMonth = 8, DaySecond = 20)
+/// We deliberately do NOT copy the whole `SQL_INTERVAL_STRUCT`, nor even
+/// the active `YearMonth` / `DaySecond` variant of its union, up front:
+/// applications routinely populate only the specific field(s) their
+/// `SQL_C_INTERVAL_*` subtype requires (e.g. just `intval.year_month.year`
+/// for `SQL_C_INTERVAL_YEAR`). A wholesale `read_unaligned::<YearMonth>`
+/// would still copy `month`, and a `read_unaligned::<DaySecond>` would
+/// copy all five fields — including bytes the app never wrote. Reading
+/// uninitialised memory through `read_unaligned` is undefined behaviour
+/// in Rust even when the resulting value's type tolerates every bit
+/// pattern, so each match arm reads only the specific u32 fields its
+/// variant uses, at the offsets fixed by the `repr(C)` layout in
+/// `odbc_sys::IntervalStruct`. See the per-arm comments below for the
+/// exact offset table.
 fn format_interval(binding: &ParameterBinding) -> String {
     // SAFETY: the caller has already routed us here via `make_converter`,
     // which only dispatches to `SnowflakeVarchar` for SQL_INTERVAL_*
     // parameter types; for those types ODBC requires the application to
-    // pass a buffer of at least `sizeof(SQL_INTERVAL_STRUCT)`, so reading
-    // `interval_sign` (i16 at offset 4) and either `YearMonth` (8 bytes
-    // at offset 8) or `DaySecond` (20 bytes at offset 8) stays within the
-    // application-supplied buffer without ever touching the inactive
-    // union tail.
+    // pass a buffer of at least `sizeof(SQL_INTERVAL_STRUCT)`, so every
+    // offset we read below stays within the application-supplied buffer.
+    //
+    // We also never copy the union as a whole: a `read_unaligned::<YearMonth>`
+    // or `read_unaligned::<DaySecond>` would materialise an 8- or 20-byte
+    // Rust value on the stack, including bytes the application never
+    // initialised when it bound a single-field source like
+    // `SQL_C_INTERVAL_YEAR` (which only writes `intval.year_month.year`).
+    // Reading uninitialised memory through `read_unaligned` is undefined
+    // behaviour in Rust even when the resulting value's type tolerates
+    // every bit pattern, so each match arm reads only the specific
+    // 4-byte fields its variant uses, at the offsets fixed by
+    // `odbc_sys::IntervalStruct`'s `repr(C)` layout:
+    //
+    //   offset  0  interval_type   c_int    (4 bytes, ignored — see below)
+    //   offset  4  interval_sign   i16      (2 bytes, read once)
+    //   offset  6  padding                  (2 bytes, before the 4-aligned union)
+    //   offset  8  year_month.year / day_second.day        (u32)
+    //   offset 12  year_month.month / day_second.hour      (u32)
+    //   offset 16  day_second.minute                       (u32)
+    //   offset 20  day_second.second                       (u32)
+    //   offset 24  day_second.fraction                     (u32, microseconds)
+    //
+    // Drivers MUST NOT trust the struct's `interval_type` field — many
+    // applications never set it — so the active fields are selected from
+    // `binding.value_type` instead.
+    const SIGN_OFFSET: usize = 4;
+    const F0_OFFSET: usize = 8; // year / day
+    const F1_OFFSET: usize = 12; // month / hour
+    const F2_OFFSET: usize = 16; // minute
+    const F3_OFFSET: usize = 20; // second
+    const F4_OFFSET: usize = 24; // fraction (us)
+
     let base = binding.parameter_value_ptr as *const u8;
     let sign_raw: sql::SmallInt =
-        unsafe { std::ptr::read_unaligned(base.add(4) as *const sql::SmallInt) };
+        unsafe { std::ptr::read_unaligned(base.add(SIGN_OFFSET) as *const sql::SmallInt) };
     let sign = if sign_raw != 0 { "-" } else { "" };
-    let ym = || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::YearMonth) };
-    let ds = || unsafe { std::ptr::read_unaligned(base.add(8) as *const sql::DaySecond) };
+    let read_u32 = |off: usize| unsafe { std::ptr::read_unaligned(base.add(off) as *const u32) };
 
     /// Render `<seconds>.<fraction>` with the fraction zero-padded to 6
     /// digits and the decimal point always present (e.g. 45 → "45.000000",
@@ -567,58 +595,51 @@ fn format_interval(binding: &ParameterBinding) -> String {
     // than 2 (default 2, but explicitly bounded by the leading-field
     // precision the application declared on the qualifier).
     match binding.value_type {
-        CDataType::IntervalYear => format!("{sign}{}", ym().year),
-        CDataType::IntervalMonth => format!("{sign}{}", ym().month),
-        CDataType::IntervalDay => format!("{sign}{}", ds().day),
-        CDataType::IntervalHour => format!("{sign}{}", ds().hour),
-        CDataType::IntervalMinute => format!("{sign}{}", ds().minute),
-        CDataType::IntervalSecond => {
-            let ds = ds();
-            format!("{sign}{}", fmt_seconds(ds.second, ds.fraction, false))
-        }
+        // Single-field sources: read only the one u32 the application
+        // promised to populate. Everything else in the union may be
+        // uninitialised.
+        CDataType::IntervalYear => format!("{sign}{}", read_u32(F0_OFFSET)),
+        CDataType::IntervalMonth => format!("{sign}{}", read_u32(F1_OFFSET)),
+        CDataType::IntervalDay => format!("{sign}{}", read_u32(F0_OFFSET)),
+        CDataType::IntervalHour => format!("{sign}{}", read_u32(F1_OFFSET)),
+        CDataType::IntervalMinute => format!("{sign}{}", read_u32(F2_OFFSET)),
+        CDataType::IntervalSecond => format!(
+            "{sign}{}",
+            fmt_seconds(read_u32(F3_OFFSET), read_u32(F4_OFFSET), false),
+        ),
         CDataType::IntervalYearToMonth => {
-            let ym = ym();
-            format!("{sign}{}-{:02}", ym.year, ym.month)
+            format!("{sign}{}-{:02}", read_u32(F0_OFFSET), read_u32(F1_OFFSET))
         }
         CDataType::IntervalDayToHour => {
-            let ds = ds();
-            format!("{sign}{} {:02}", ds.day, ds.hour)
+            format!("{sign}{} {:02}", read_u32(F0_OFFSET), read_u32(F1_OFFSET))
         }
-        CDataType::IntervalDayToMinute => {
-            let ds = ds();
-            format!("{sign}{} {:02}:{:02}", ds.day, ds.hour, ds.minute)
-        }
-        CDataType::IntervalDayToSecond => {
-            let ds = ds();
-            format!(
-                "{sign}{} {:02}:{:02}:{}",
-                ds.day,
-                ds.hour,
-                ds.minute,
-                fmt_seconds(ds.second, ds.fraction, true),
-            )
-        }
+        CDataType::IntervalDayToMinute => format!(
+            "{sign}{} {:02}:{:02}",
+            read_u32(F0_OFFSET),
+            read_u32(F1_OFFSET),
+            read_u32(F2_OFFSET),
+        ),
+        CDataType::IntervalDayToSecond => format!(
+            "{sign}{} {:02}:{:02}:{}",
+            read_u32(F0_OFFSET),
+            read_u32(F1_OFFSET),
+            read_u32(F2_OFFSET),
+            fmt_seconds(read_u32(F3_OFFSET), read_u32(F4_OFFSET), true),
+        ),
         CDataType::IntervalHourToMinute => {
-            let ds = ds();
-            format!("{sign}{}:{:02}", ds.hour, ds.minute)
+            format!("{sign}{}:{:02}", read_u32(F1_OFFSET), read_u32(F2_OFFSET))
         }
-        CDataType::IntervalHourToSecond => {
-            let ds = ds();
-            format!(
-                "{sign}{}:{:02}:{}",
-                ds.hour,
-                ds.minute,
-                fmt_seconds(ds.second, ds.fraction, true),
-            )
-        }
-        CDataType::IntervalMinuteToSecond => {
-            let ds = ds();
-            format!(
-                "{sign}{}:{}",
-                ds.minute,
-                fmt_seconds(ds.second, ds.fraction, true),
-            )
-        }
+        CDataType::IntervalHourToSecond => format!(
+            "{sign}{}:{:02}:{}",
+            read_u32(F1_OFFSET),
+            read_u32(F2_OFFSET),
+            fmt_seconds(read_u32(F3_OFFSET), read_u32(F4_OFFSET), true),
+        ),
+        CDataType::IntervalMinuteToSecond => format!(
+            "{sign}{}:{}",
+            read_u32(F2_OFFSET),
+            fmt_seconds(read_u32(F3_OFFSET), read_u32(F4_OFFSET), true),
+        ),
         // The caller's match guarantees we only land here for an interval C
         // type, so any other value indicates a programmer error.
         other => unreachable!("format_interval called with non-interval C type {other:?}"),
