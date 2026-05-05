@@ -768,26 +768,18 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 ConnectionState::Connected { conn_handle, .. } => *conn_handle,
                 ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
             };
+            let g = global().context(OdbcRuntimeSnafu)?;
             // Return 24000 if any statement has an open cursor.
-            for (weak, raw_ptr) in &connection.child_statements {
-                // Use strong_count to check liveness without constructing Arc<Statement>
-                // (i.e., &Statement), which would coexist with the outer &mut Connection
-                // and create an aliasing hazard via Statement::conn: *mut Connection.
-                if weak.strong_count() == 0 {
-                    continue;
-                }
-                // SAFETY: strong_count > 0 guarantees the Arc allocation (and the Statement
-                // it points to) is still alive. We project to `state` via addr_of! rather than
-                // forming &Statement to avoid aliasing conn: *mut Connection with &mut Connection.
-                let is_cursor_open = unsafe {
-                    let state_ptr = std::ptr::addr_of!((*(*raw_ptr)).state);
-                    matches!(
-                        (*state_ptr).as_ref(),
+            for &child_id in &connection.child_statements {
+                if let Ok(stmt_guard) = g.stmt_registry.get(child_id) {
+                    let inner = stmt_guard.inner.lock();
+                    let is_cursor_open = matches!(
+                        inner.state.as_ref(),
                         StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
-                    )
-                };
-                if is_cursor_open {
-                    return InvalidCursorStateSnafu.fail();
+                    );
+                    if is_cursor_open {
+                        return InvalidCursorStateSnafu.fail();
+                    }
                 }
             }
             let catalog = read_string_from_pointer::<E>(value_ptr, string_length)?;

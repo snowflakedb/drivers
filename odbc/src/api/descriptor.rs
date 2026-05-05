@@ -1,27 +1,34 @@
 use crate::api::CDataType;
+use crate::api::error::OdbcRuntimeSnafu;
+use crate::api::handle_registry::HandleId;
+use crate::api::runtime::global;
 use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
 use odbc_sys as sql;
+use snafu::ResultExt;
 use tracing;
 
 /// Check if the owning statement is in a NeedData state (S8/S9/S10).
 ///
 /// Uses `desc_ref_from_handle` to validate the descriptor handle (null
 /// and kind checks) and obtain a typed reference, then reads the
-/// back-pointer to the owning `Statement` to check its state.
+/// back-pointer (HandleId) to the owning `Statement` to check its state.
 ///
 /// ODBC spec allows ARD/APD/IPD access during S8-S10 (only IRD is
 /// restricted), but we block all four descriptor kinds to match
 /// reference driver behavior.
 fn check_need_data(desc_handle: sql::Handle) -> OdbcResult<()> {
-    let stmt_ptr = match desc_ref_from_handle(desc_handle)? {
-        DescriptorRef::Ard(desc) => desc.stmt,
-        DescriptorRef::Ird(desc) => desc.stmt,
-        DescriptorRef::Apd(desc) => desc.stmt,
-        DescriptorRef::Ipd(desc) => desc.stmt,
+    let stmt_id = match desc_ref_from_handle(desc_handle)? {
+        DescriptorRef::Ard(desc) => desc.stmt_id,
+        DescriptorRef::Ird(desc) => desc.stmt_id,
+        DescriptorRef::Apd(desc) => desc.stmt_id,
+        DescriptorRef::Ipd(desc) => desc.stmt_id,
     };
-    if !stmt_ptr.is_null() {
-        let stmt = unsafe { &*stmt_ptr };
-        if stmt.state.as_ref().is_need_data() {
+    if stmt_id != HandleId::default() {
+        let guard = global()
+            .context(OdbcRuntimeSnafu)?
+            .stmt_registry
+            .get(stmt_id)?;
+        if guard.inner.lock().state.as_ref().is_need_data() {
             return crate::api::error::InvalidDuringDaeSnafu.fail();
         }
     }

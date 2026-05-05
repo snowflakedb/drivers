@@ -13,7 +13,6 @@ use sf_core::protobuf::generated::database_driver_v1::{
 };
 use snafu::ResultExt;
 use std::collections::HashMap;
-use std::sync::Weak;
 
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -635,7 +634,7 @@ impl From<SqlType> for sql::SqlDataType {
 pub struct ArdDescriptor {
     kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt: *const Statement,
+    pub(crate) stmt_id: HandleId,
     pub bindings: HashMap<u16, Binding>,
     /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
     pub array_size: usize,
@@ -656,7 +655,7 @@ impl ArdDescriptor {
         Self {
             kind: DescriptorKind::Ard,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt: std::ptr::null(),
+            stmt_id: HandleId::default(),
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -692,7 +691,7 @@ impl ArdDescriptor {
 pub struct ApdDescriptor {
     kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt: *const Statement,
+    pub(crate) stmt_id: HandleId,
     pub records: HashMap<u16, ApdRecord>,
     /// `SQL_DESC_ARRAY_SIZE` — number of parameter sets (default 1).
     pub array_size: usize,
@@ -713,7 +712,7 @@ impl ApdDescriptor {
         Self {
             kind: DescriptorKind::Apd,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt: std::ptr::null(),
+            stmt_id: HandleId::default(),
             records: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -739,7 +738,7 @@ impl ApdDescriptor {
 pub struct IrdDescriptor {
     kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt: *const Statement,
+    pub(crate) stmt_id: HandleId,
     /// `SQL_DESC_COUNT` — number of columns in the result set.
     pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
@@ -759,7 +758,7 @@ impl IrdDescriptor {
         Self {
             kind: DescriptorKind::Ird,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt: std::ptr::null(),
+            stmt_id: HandleId::default(),
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -777,7 +776,7 @@ impl IrdDescriptor {
 pub struct IpdDescriptor {
     kind: DescriptorKind,
     pub diagnostic_info: DiagnosticInfo,
-    pub(crate) stmt: *const Statement,
+    pub(crate) stmt_id: HandleId,
     pub records: HashMap<u16, IpdRecord>,
     /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
     pub array_status_ptr: *mut u16,
@@ -796,7 +795,7 @@ impl IpdDescriptor {
         Self {
             kind: DescriptorKind::Ipd,
             diagnostic_info: DiagnosticInfo::default(),
-            stmt: std::ptr::null(),
+            stmt_id: HandleId::default(),
             records: HashMap::new(),
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -926,12 +925,9 @@ pub struct Connection {
     pub quiet_mode: sql::Pointer,
     /// SQL_ATTR_PACKET_SIZE — pre-connect only (default 0 = driver-defined)
     pub packet_size: sql::UInteger,
-    /// Weak references to all child statements allocated on this connection, paired with
-    /// the raw pointer obtained from `Arc::into_raw` at allocation time.
-    /// Storing this pointer ensures `Arc::from_raw` (used in `free_connection`) receives a
-    /// pointer that satisfies its documented contract (obtained via `Arc::into_raw`, not
-    /// `Weak::as_ptr`).
-    pub(crate) child_statements: Vec<(Weak<Statement>, *const Statement)>,
+    /// HandleIds of all child statements allocated on this connection.
+    /// Used by `free_connection` to release orphaned statements.
+    pub(crate) child_statements: Vec<HandleId>,
     /// Cached local autocommit state. Defaults to `AutocommitValue::On`.
     /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
     /// when the server session parameter is unavailable.
@@ -945,9 +941,9 @@ pub struct Connection {
     pub metadata_id: bool,
 }
 
-// Safety: `*const Statement` inside `child_statements` is `!Send`, but access to Connection
-// is always serialised through the Mutex<Connection> in Dbc, and ODBC guarantees that a
-// single connection handle is only used from one thread at a time.
+// Safety: Connection contains raw pointers (quiet_mode: sql::Pointer) that are !Send + !Sync.
+// Access to Connection is always serialised through the Mutex<Connection> in Dbc, and ODBC
+// guarantees that a single connection handle is only used from one thread at a time.
 unsafe impl Send for Connection {}
 
 /// Application Parameter Descriptor (APD) record.
@@ -1231,10 +1227,24 @@ impl GetDataState {
     }
 }
 
+/// Outer Statement handle — immutable fields only.
+///
+/// All mutable state lives inside `inner: Mutex<StatementInner>`.
+/// The `HandleManager` stores `Statement` inside `Arc<RwLock<Option<Statement>>>`,
+/// so the outer fields are accessible through `HandleGuard::deref()` without
+/// any additional locking.
 pub struct Statement {
     /// ID of the parent connection handle. Looked up via the global dbc_registry.
-    conn_id: HandleId,
+    pub conn_id: HandleId,
     pub stmt_handle: StatementHandle,
+    pub inner: parking_lot::Mutex<StatementInner>,
+}
+
+/// All mutable statement state, protected by `Statement::inner`.
+///
+/// Lock ordering: always lock `Connection` (via `dbc.connection.lock()`) **before**
+/// locking `Statement::inner` when both are needed.
+pub struct StatementInner {
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
     pub ird: IrdDescriptor,
@@ -1270,10 +1280,12 @@ pub struct Statement {
     pub cancel_token: CancellationToken,
 }
 
-// Safety: `Send` allows moving the Statement allocation across threads when the Arc is
-// handed back on an arbitrary thread.
-unsafe impl Send for Statement {}
-unsafe impl Sync for Statement {}
+// Safety: StatementInner contains raw pointers (descriptor fields like bind_offset_ptr,
+// array_status_ptr) that make it !Send + !Sync. These are application-owned pointers
+// that are only dereferenced on the calling thread. This temporary unsafe impl allows
+// Mutex<StatementInner> to work; PR 5 removes it by adding proper interior mutability.
+unsafe impl Send for StatementInner {}
+unsafe impl Sync for StatementInner {}
 
 impl Statement {
     /// Construct a new Statement for the given connection.
@@ -1281,22 +1293,24 @@ impl Statement {
         Self {
             conn_id,
             stmt_handle,
-            state: StatementState::Created.into(),
-            ard: ArdDescriptor::new(),
-            ird: IrdDescriptor::new(),
-            apd: ApdDescriptor::new(),
-            ipd: IpdDescriptor::new(),
-            diagnostic_info: DiagnosticInfo::default(),
-            get_data_state: None,
-            cursor_type: CursorType::ForwardOnly,
-            max_length: 0,
-            used_extended_fetch: false,
-            prepared_param_count: None,
-            metadata_id,
-            last_query_id: None,
-            multi_query_ids: Vec::new(),
-            multi_current_idx: 0,
-            cancel_token: CancellationToken::new(),
+            inner: parking_lot::Mutex::new(StatementInner {
+                state: StatementState::Created.into(),
+                ard: ArdDescriptor::new(),
+                ird: IrdDescriptor::new(),
+                apd: ApdDescriptor::new(),
+                ipd: IpdDescriptor::new(),
+                diagnostic_info: DiagnosticInfo::default(),
+                get_data_state: None,
+                cursor_type: CursorType::ForwardOnly,
+                max_length: 0,
+                used_extended_fetch: false,
+                prepared_param_count: None,
+                metadata_id,
+                last_query_id: None,
+                multi_query_ids: Vec::new(),
+                multi_current_idx: 0,
+                cancel_token: CancellationToken::new(),
+            }),
         }
     }
 
@@ -1328,7 +1342,10 @@ pub fn conn_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Dbc>> {
         .get(handle_id)
 }
 
-pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement {
-    let stmt_ptr = handle as *mut Statement;
-    unsafe { stmt_ptr.as_mut().unwrap() }
+pub fn stmt_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Statement>> {
+    let handle_id = HandleId::from(handle);
+    global()
+        .context(OdbcRuntimeSnafu)?
+        .stmt_registry
+        .get(handle_id)
 }

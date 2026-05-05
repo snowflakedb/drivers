@@ -113,11 +113,8 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
 /// This function is called by the ODBC driver manager.
 ///
 /// ODBC allows SQLCancel to be called from a different thread.
-/// `cancel()` accesses the `Statement` via `stmt_from_handle()` — the
-/// same pattern used by every other C API entry point. Cross-thread
-/// calls therefore create concurrent `&mut Statement` references, which
-/// is a pre-existing codebase-wide aliasing issue. A future handle
-/// manager will introduce proper interior mutability to eliminate this UB.
+/// `cancel()` accesses the `Statement` via `stmt_from_handle()` and
+/// acquires the inner Mutex for safe cross-thread access.
 ///
 /// This function does not modify statement diagnostics. Any diagnostic
 /// information related to cancellation must be produced by the executing

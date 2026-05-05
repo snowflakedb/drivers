@@ -42,13 +42,14 @@ pub fn num_result_cols(
     column_count_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let num_cols = match stmt.state.as_ref() {
+    let num_cols = match inner.state.as_ref() {
         StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
         StatementState::QueryExecuted { reader, .. } => {
             reader.schema().fields().len() as sql::SmallInt
@@ -73,13 +74,14 @@ pub fn num_result_cols(
 /// Get the number of affected rows
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let row_count = match stmt.state.as_ref() {
+    let row_count = match inner.state.as_ref() {
         StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
         StatementState::DmlExecuted { rows_affected, .. } => *rows_affected as sql::Len,
@@ -114,13 +116,14 @@ pub fn col_attribute<E: OdbcEncoding>(
         column_number,
         field_identifier
     );
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let schema = match stmt.state.as_ref() {
+    let schema = match inner.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         _ => return StatementNotExecutedSnafu.fail(),
@@ -146,7 +149,7 @@ pub fn col_attribute<E: OdbcEncoding>(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            let dbc = stmt.conn()?;
+            let dbc = guard.conn()?;
             let settings = dbc.connection.lock().numeric_settings;
             let sql_type = sql_type_from_field(field, &settings).context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
@@ -219,13 +222,14 @@ pub fn describe_col<E: OdbcEncoding>(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("describe_col: column_number={column_number}");
-    let stmt = stmt_from_handle(statement_handle);
+    let guard = stmt_from_handle(statement_handle)?;
+    let inner = guard.inner.lock();
 
-    if stmt.state.as_ref().is_need_data() {
+    if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
 
-    let schema = match stmt.state.as_ref() {
+    let schema = match inner.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         StatementState::Prepared { schema } => schema.clone(),
@@ -248,7 +252,7 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     let field = schema.field(col_idx);
-    let dbc = stmt.conn()?;
+    let dbc = guard.conn()?;
     let numeric_settings = dbc.connection.lock().numeric_settings;
 
     let name = field.name();
