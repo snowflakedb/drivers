@@ -1,4 +1,6 @@
 use crate::api::CDataType;
+use crate::api::ConnectionState;
+use crate::api::error::DisconnectedSnafu;
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu, InternalSnafu,
     InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
@@ -275,11 +277,19 @@ pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResu
             return MixedCursorFunctionsSnafu.fail();
         }
     }
-    fetch_impl(&guard, warnings)
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    if matches!(conn.state, ConnectionState::Disconnected) {
+        tracing::error!("fetch: connection is disconnected");
+        return DisconnectedSnafu.fail();
+    }
+    let numeric_settings = conn.numeric_settings;
+    fetch_impl(&guard, &numeric_settings, warnings)
 }
 
 fn fetch_impl(
     guard: &crate::api::handle_registry::HandleGuard<crate::api::Statement>,
+    numeric_settings: &NumericSettings,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let mut inner = guard.inner.lock();
@@ -301,8 +311,7 @@ fn fetch_impl(
     // the caller instead of just marking the row as Error.
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut inner.state)?;
-        let numeric_settings = guard.conn()?.connection.lock().numeric_settings;
-        cache.refresh_if_needed(&inner, &numeric_settings)?;
+        cache.refresh_if_needed(&inner, numeric_settings)?;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
@@ -337,7 +346,6 @@ fn fetch_impl(
 
     let mut rows_fetched: usize = 0;
     let mut has_error = false;
-    let numeric_settings = guard.conn()?.connection.lock().numeric_settings;
 
     while rows_fetched < array_size {
         match advance_cursor(&mut inner.state) {
@@ -565,6 +573,13 @@ pub fn extended_fetch(
             return InvalidDuringDaeSnafu.fail();
         }
     }
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    if matches!(conn.state, ConnectionState::Disconnected) {
+        tracing::error!("extended_fetch: connection is disconnected");
+        return DisconnectedSnafu.fail();
+    }
+    let numeric_settings = conn.numeric_settings;
 
     let orientation = FetchOrientation::try_from(fetch_orientation)?;
     match orientation {
@@ -582,7 +597,7 @@ pub fn extended_fetch(
         inner.ird.array_status_ptr = row_status_ptr;
     }
 
-    fetch_impl(&guard, warnings)
+    fetch_impl(&guard, &numeric_settings, warnings)
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {

@@ -65,19 +65,12 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
     tracing::info!("Allocating new statement handle");
     let conn_id = HandleId::from(input_handle);
     let dbc = conn_from_handle(input_handle)?;
-    let (conn_handle, metadata_id) = {
-        let connection = dbc.connection.lock();
-        match &connection.state {
-            ConnectionState::Connected {
-                db_handle: _,
-                conn_handle,
-            } => (*conn_handle, connection.metadata_id),
-            ConnectionState::Disconnected => {
-                tracing::error!("Cannot allocate statement: connection is disconnected");
-                return DisconnectedSnafu.fail();
-            }
-        }
+    let mut conn = dbc.connection.lock();
+    let conn_handle = match conn.state {
+        ConnectionState::Connected { conn_handle, .. } => conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
     };
+
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         c.statement_new(StatementNewRequest {
             conn_handle: Some(conn_handle),
@@ -89,22 +82,17 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<sql::Handle> {
         .stmt_handle
         .required("Statement handle is required")?;
 
-    let stmt = Statement::new(conn_id, stmt_handle, metadata_id);
+    let stmt = Statement::new(conn_id, stmt_handle, conn.metadata_id);
     let g = global().context(OdbcRuntimeSnafu)?;
     let stmt_id = g.stmt_registry.add(stmt)?;
+    let guard = g.stmt_registry.get(stmt_id)?;
+    let mut inner = guard.inner.lock();
+    inner.ard.stmt_id = stmt_id;
+    inner.ird.stmt_id = stmt_id;
+    inner.apd.stmt_id = stmt_id;
+    inner.ipd.stmt_id = stmt_id;
 
-    // Set descriptor back-pointers to the stmt HandleId so that
-    // check_need_data in descriptor.rs can look up the statement.
-    {
-        let guard = g.stmt_registry.get(stmt_id)?;
-        let mut inner = guard.inner.lock();
-        inner.ard.stmt_id = stmt_id;
-        inner.ird.stmt_id = stmt_id;
-        inner.apd.stmt_id = stmt_id;
-        inner.ipd.stmt_id = stmt_id;
-    }
-
-    dbc.connection.lock().child_statements.push(stmt_id);
+    conn.child_statements.push(stmt_id);
     Ok(stmt_id.into())
 }
 

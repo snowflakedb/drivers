@@ -768,13 +768,10 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 ConnectionState::Connected { conn_handle, .. } => *conn_handle,
                 ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
             };
+            let g = global().context(OdbcRuntimeSnafu)?;
             // Return 24000 if any statement has an open cursor.
             for &child_id in &connection.child_statements {
-                if let Ok(stmt_guard) = global()
-                    .context(OdbcRuntimeSnafu)?
-                    .stmt_registry
-                    .get(child_id)
-                {
+                if let Ok(stmt_guard) = g.stmt_registry.get(child_id) {
                     let inner = stmt_guard.inner.lock();
                     let is_cursor_open = matches!(
                         inner.state.as_ref(),

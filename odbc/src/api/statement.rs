@@ -63,8 +63,19 @@ pub fn exec_direct<E: OdbcEncoding>(
 
 fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
     let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let mut conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
+
+    // Validate connection before committing to NeedData state.
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => {
+            tracing::error!("exec_direct: connection is disconnected");
+            return DisconnectedSnafu.fail();
+        }
+    };
 
     if inner.state.as_ref().is_need_data() {
         return InvalidDuringDaeSnafu.fail();
@@ -73,13 +84,6 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     if inner.state.as_ref().has_open_cursor() {
         tracing::error!("exec_direct: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
-    }
-
-    // Validate connection before committing to NeedData state.
-    let dbc = guard.conn()?;
-    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
-        tracing::error!("exec_direct: connection is disconnected");
-        return DisconnectedSnafu.fail();
     }
 
     inner.prepared_param_count = None;
@@ -103,16 +107,6 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         return DaeRequiredSnafu.fail();
     }
 
-    let conn_handle = {
-        let connection = dbc.connection.lock();
-        match &connection.state {
-            ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-            ConnectionState::Disconnected => {
-                tracing::error!("exec_direct: connection is disconnected");
-                return DisconnectedSnafu.fail();
-            }
-        }
-    };
     let (bindings, _json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
     let stmt_handle = guard.stmt_handle;
 
@@ -135,9 +129,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     tracing::info!("exec_direct: response={:?}", response);
     let response = response?;
 
-    let mut settings = dbc.connection.lock().numeric_settings;
-    update_numeric_settings(&conn_handle, &mut settings)?;
-    dbc.connection.lock().numeric_settings = settings;
+    update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
     apply_execute_response(&mut inner, stmt_handle, response, ExecutionOrigin::Direct)?;
     Ok(())
 }
@@ -219,6 +211,15 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     }
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let _conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => {
+            tracing::error!("prepare: connection is disconnected");
+            return DisconnectedSnafu.fail();
+        }
+    };
     let mut inner = guard.inner.lock();
 
     if inner.state.as_ref().is_need_data() {
@@ -228,12 +229,6 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     if inner.state.as_ref().has_open_cursor() {
         tracing::error!("prepare: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
-    }
-
-    let dbc = guard.conn()?;
-    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
-        tracing::error!("prepare: connection is disconnected");
-        return DisconnectedSnafu.fail();
     }
 
     tracing::debug!("prepare: query = {query}");
@@ -279,7 +274,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         .build()
     })?;
     inner.prepared_param_count = Some(param_count);
-    let max_varchar = dbc.connection.lock().numeric_settings.max_varchar_size;
+    let max_varchar = conn.numeric_settings.max_varchar_size;
     inner.ipd.records.retain(|&k, _| k <= param_count);
     for i in 1..=param_count {
         inner
