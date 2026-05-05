@@ -1020,8 +1020,97 @@ jobs:
           name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
           path: build/snowflake-odbc-ud-*.rpm
 
+  build_dmg:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    runs-on: macos-latest
+    name: build_dmg (macOS Universal)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Cargo registry cache (DMG build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-universal-cargo-registry-dmg-
+
+      - name: Restore Rust target cache (DMG build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-dmg
+          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-universal-rust-dmg-release-target-
+
+      - name: Prepare cache directories
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-dmg
+
+      - name: Install Rust targets
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+
+      - name: Create ODBC stub libraries for linking
+        run: |
+          mkdir -p .odbc-stub
+          echo "void _odbc_stub(void) {}" | clang -x c -arch x86_64 -arch arm64 -dynamiclib \
+            -Wl,-install_name,libodbc.dylib -o .odbc-stub/libodbc.dylib -
+
+      - name: Build ODBC driver (x86_64)
+        run: cargo build --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
+
+      - name: Build ODBC driver (aarch64)
+        run: cargo build --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
+
+      - name: Save Cargo registry cache (DMG build)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (DMG build)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 15
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-dmg
+          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Compute ODBC version
+        id: odbc-version
+        run: |
+          source ./odbc/version.sh
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Package DMG
+        run: ./odbc/installer/mac/package.sh
+        env:
+          DRIVER_X86_64: .cargo-target-dmg/x86_64-apple-darwin/release/libsfodbc.dylib
+          DRIVER_ARM64: .cargo-target-dmg/aarch64-apple-darwin/release/libsfodbc.dylib
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake_odbc_ud-${{ steps.odbc-version.outputs.version }}-universal-macos
+          path: build/snowflake_odbc_ud-*.dmg
+
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi, build_dmg]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1041,13 +1130,15 @@ jobs:
              [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.build_odbc_driver.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build_msi.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.build_msi.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build_dmg.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ ODBC tests were RUN and FAILED or CANCELLED"
             echo "  - odbc_unit_tests: ${{ needs.odbc_unit_tests.result }}"
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
             echo "  - build_odbc_driver: ${{ needs.build_odbc_driver.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
             echo "  - build_msi: ${{ needs.build_msi.result }}"
+            echo "  - build_dmg: ${{ needs.build_dmg.result }}"
             exit 1
           fi
           

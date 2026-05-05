@@ -1,0 +1,39 @@
+#!/bin/bash
+#
+# Post-install script for the Snowflake ODBC UD macOS pkg.
+# Registers the driver with the iODBC Driver Manager.
+#
+
+INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
+DRIVER_PATH="$INSTALL_DIR/lib/libsfodbc.dylib"
+
+if [ -n "$SUDO_USER" ]; then
+    USER_HOME=$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory | awk '{print $2}')
+else
+    USER_HOME="$HOME"
+fi
+
+ODBC_DIR="$USER_HOME/Library/ODBC"
+ODBCINST_FILE="$ODBC_DIR/odbcinst.ini"
+
+mkdir -p "$ODBC_DIR"
+
+DRIVER_ENTRY="[Snowflake ODBC UD]
+Driver=$DRIVER_PATH
+Description=Snowflake ODBC UD"
+
+if [ -f "$ODBCINST_FILE" ]; then
+    if grep -q "\[Snowflake ODBC UD\]" "$ODBCINST_FILE"; then
+        echo "Snowflake ODBC UD already registered in $ODBCINST_FILE, updating..."
+        sed -i '' '/\[Snowflake ODBC UD\]/,/^\[/{/^\[Snowflake ODBC UD\]/d;/^Driver=/d;/^Description=/d;/^$/d;}' "$ODBCINST_FILE"
+    fi
+fi
+
+echo "" >> "$ODBCINST_FILE"
+echo "$DRIVER_ENTRY" >> "$ODBCINST_FILE"
+
+echo "Snowflake ODBC UD registered in $ODBCINST_FILE"
+
+if [ -n "$SUDO_UID" ]; then
+    chown -R "$SUDO_UID":"$SUDO_GID" "$ODBC_DIR"
+fi
