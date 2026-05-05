@@ -21,6 +21,8 @@ from .private_key_helper import get_test_private_key_path
 # Type alias for a single row returned from cursor
 Row = tuple[Any, ...]
 
+_MIN_XDIST_WORKERS = 8
+
 
 def pytest_configure(config):
     # scripts/ is not a Python package (no __init__.py, not on sys.path), so
@@ -36,6 +38,11 @@ def pytest_configure(config):
 
     param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
     module.bootstrap(parameters_path=param_path)
+
+
+def pytest_xdist_auto_num_workers(config):
+    num_cpus = os.cpu_count() or _MIN_XDIST_WORKERS
+    return max(num_cpus, _MIN_XDIST_WORKERS)
 
 
 @pytest.mark.optionalhook

@@ -23,6 +23,11 @@ public class SnowflakeDriver implements Driver {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeDriver.class);
   private static final String DRIVER_NAME = "Snowflake JDBC Driver";
   private static final String DRIVER_VERSION = "4.0.0";
+
+  public static String getDriverVersion() {
+    return DRIVER_VERSION;
+  }
+
   private static final int MAJOR_VERSION = 4;
   private static final int MINOR_VERSION = 0;
 

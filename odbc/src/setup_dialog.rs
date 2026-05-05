@@ -10,6 +10,9 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 
 use crate::c_api::DLL_HINSTANCE;
+use crate::setup_common::{
+    self, SQLValidDSNW, from_wide, read_dsn_value, to_wide, write_dsn_values,
+};
 
 // ---------------------------------------------------------------------------
 // Win32 FFI
@@ -78,36 +81,6 @@ unsafe extern "system" {
     fn MoveWindow(hWnd: HWND, X: i32, Y: i32, nWidth: i32, nHeight: i32, bRepaint: BOOL) -> BOOL;
     fn SetCursor(hCursor: *mut core::ffi::c_void) -> *mut core::ffi::c_void;
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> *mut core::ffi::c_void;
-}
-
-// odbccp32.dll (ODBC Installer API) — linked via raw-dylib so the linker
-// generates thin import stubs without requiring an import library.
-#[cfg_attr(
-    target_arch = "x86",
-    link(
-        name = "odbccp32",
-        kind = "raw-dylib",
-        import_name_type = "undecorated"
-    )
-)]
-#[cfg_attr(not(target_arch = "x86"), link(name = "odbccp32", kind = "raw-dylib"))]
-unsafe extern "system" {
-    fn SQLGetPrivateProfileStringW(
-        lpszSection: *const u16,
-        lpszEntry: *const u16,
-        lpszDefault: *const u16,
-        lpszRetBuffer: *mut u16,
-        cchRetBuffer: i32,
-        lpszFilename: *const u16,
-    ) -> i32;
-    fn SQLWriteDSNToIniW(lpszDSN: *const u16, lpszDriver: *const u16) -> BOOL;
-    fn SQLWritePrivateProfileStringW(
-        lpszSection: *const u16,
-        lpszEntry: *const u16,
-        lpszString: *const u16,
-        lpszFilename: *const u16,
-    ) -> BOOL;
-    fn SQLValidDSNW(lpszDSN: *const u16) -> BOOL;
 }
 
 // odbc32.dll (ODBC Driver Manager) is loaded dynamically to avoid putting it
@@ -250,15 +223,6 @@ const FIELD_MAP: &[(i32, &str)] = &[
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-fn from_wide(p: &[u16]) -> String {
-    let len = p.iter().position(|&c| c == 0).unwrap_or(p.len());
-    String::from_utf16_lossy(&p[..len])
-}
-
 #[inline]
 fn loword(v: usize) -> u16 {
     v as u16
@@ -343,59 +307,6 @@ fn sql_succeeded(rc: i16) -> bool {
 // ---------------------------------------------------------------------------
 // DSN registry read/write via ODBC installer API
 // ---------------------------------------------------------------------------
-
-unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
-    let dsn_w = to_wide(dsn);
-    let key_w = to_wide(key);
-    let default_w = to_wide("");
-    let filename_w = to_wide("odbc.ini");
-    let mut buf = vec![0u16; 512];
-    loop {
-        let copied = unsafe {
-            SQLGetPrivateProfileStringW(
-                dsn_w.as_ptr(),
-                key_w.as_ptr(),
-                default_w.as_ptr(),
-                buf.as_mut_ptr(),
-                buf.len() as i32,
-                filename_w.as_ptr(),
-            )
-        } as usize;
-        if copied < buf.len().saturating_sub(1) {
-            return String::from_utf16_lossy(&buf[..copied]);
-        }
-        buf.resize(buf.len() * 2, 0);
-    }
-}
-
-unsafe fn write_dsn_values(dsn: &str, driver: &str, fields: &[(String, String)]) -> bool {
-    let dsn_w = to_wide(dsn);
-    let driver_w = to_wide(driver);
-    if unsafe { SQLWriteDSNToIniW(dsn_w.as_ptr(), driver_w.as_ptr()) } == 0 {
-        return false;
-    }
-    let odbc_ini = to_wide("odbc.ini");
-    let mut ok = true;
-    for (key, value) in fields {
-        if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
-            continue;
-        }
-        let key_w = to_wide(key);
-        let val_w = to_wide(value);
-        if unsafe {
-            SQLWritePrivateProfileStringW(
-                dsn_w.as_ptr(),
-                key_w.as_ptr(),
-                val_w.as_ptr(),
-                odbc_ini.as_ptr(),
-            )
-        } == 0
-        {
-            ok = false;
-        }
-    }
-    ok
-}
 
 // ---------------------------------------------------------------------------
 // Dialog context passed via LPARAM

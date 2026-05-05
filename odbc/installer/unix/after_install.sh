@@ -15,7 +15,7 @@ ODBC_DIR=/usr/lib64/snowflake/odbc
 
 echo "Adding driver info to odbcinst.ini..."
 odbcinst -i -d -r <<ODBCINST_INI
-[SnowflakeODBCUDDriver]
+[Snowflake ODBC UD]
 APILevel=1
 ConnectFunctions=YYY
 Description=Snowflake ODBC UD
@@ -28,7 +28,7 @@ echo "Adding connect info to odbc.ini..."
 odbcinst -i -s -l -r <<ODBC_INI
 [snowflake]
 Description=SnowflakeDB
-Driver=SnowflakeODBCUDDriver
+Driver=Snowflake ODBC UD
 Locale=en-US
 SERVER=$SF_ACCOUNT.snowflakecomputing.com
 PORT=443

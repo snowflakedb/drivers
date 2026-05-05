@@ -779,7 +779,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let bindings_opt = input
             .bindings
             .and_then(|b| b.binding_type)
-            .map(BindingType::from);
+            .map(BindingType::try_from)
+            .transpose()
+            .map_err(|e| DriverException {
+                message: e,
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            })?;
 
         let result = self
             .driver
@@ -816,7 +822,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let bindings_opt = input
             .bindings
             .and_then(|b| b.binding_type)
-            .map(BindingType::from);
+            .map(BindingType::try_from)
+            .transpose()
+            .map_err(|e| DriverException {
+                message: e,
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            })?;
 
         let result = self
             .driver
