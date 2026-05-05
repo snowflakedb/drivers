@@ -96,6 +96,8 @@ pub mod param_names {
     pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
+    // Prefetch configuration
+    pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -807,6 +809,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         description: "Exact number of statements in a multi-statement query",
         deprecated_by: None,
         scope: ParamScope::Statement,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    // ── Prefetch ───────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::CLIENT_PREFETCH_THREADS.as_str(),
+        aliases: &["CLIENT_PREFETCH_THREADS"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(4)),
+        sensitive: false,
+        description: "Number of concurrent chunk prefetch threads for result set downloading",
+        deprecated_by: None,
+        scope: ParamScope::Session,
         used_at_connect: false,
         mutable_after_connect: true,
     },
