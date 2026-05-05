@@ -1224,7 +1224,12 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={:?}", statement_handle);
 
     // TODO(SNOW-3258918): Cancel async execution.
+    // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
+
     // TODO(SNOW-3258922): Cancel execution on another thread.
+    // Blocked by: no server-side cancel RPC. When implemented,
+    // cancelling the token resolves the cancelled() future observed
+    // by the executing thread's tokio::select!, aborting the in-flight RPC.
 
     let guard = stmt_from_handle(statement_handle)?;
     let mut inner = guard.inner.lock();
@@ -1233,6 +1238,7 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
         StatementState::AwaitingParamData { origin, .. }
         | StatementState::AwaitingPutData { origin, .. }
         | StatementState::PutDataCalled { origin, .. } => {
+            // TODO(SNOW-3258919): Full cancel testing during NeedData.
             let restored = origin.restore_state();
             inner.state.set(restored);
             return Ok(());
