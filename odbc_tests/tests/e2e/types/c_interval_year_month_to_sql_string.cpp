@@ -102,8 +102,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MONTH to SQL_VAR
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_MONTH, val, ind);
 
-  // Then the formatted literal is stored (no zero-padding for the leading
-  // field, per Appendix D)
+  // Then the formatted literal is stored without zero-padding for the leading field
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "11");
 }
@@ -126,9 +125,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR_TO_MONTH to
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
 
-  // Then the "<year>-<month(2)>" form is stored — the year is the
-  // leading field (rendered as-is) and the month is non-leading (the
-  // case below with a single-digit month proves the zero-padding rule)
+  // Then the "<year>-<month(2)>" form is stored
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "5-11");
 }
@@ -138,10 +135,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR_TO_MONTH wi
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_YEAR_TO_MONTH carrying 4 years 7 months is
-  // bound and inserted (month < 10 — exercises the zero-padding rule
-  // on the positive-sign path; the negative-sign case below
-  // independently asserts the same behavior)
+  // When SQL_C_INTERVAL_YEAR_TO_MONTH carrying 4 years 7 months is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -149,9 +143,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR_TO_MONTH wi
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
 
-  // Then the trailing month sub-field is zero-padded to 2 digits per
-  // ODBC "Interval Data Type Length" (every non-leading field is
-  // rendered as exactly two characters), regardless of sign
+  // Then the trailing month sub-field is zero-padded to 2 digits per ODBC "Interval Data Type Length"
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "4-07");
 }
@@ -161,8 +153,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_YEAR_TO
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_YEAR_TO_MONTH carrying -2 years 3 months is bound
-  // and inserted (the sign is stored on the struct, not on each field)
+  // When SQL_C_INTERVAL_YEAR_TO_MONTH carrying -2 years 3 months is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -170,10 +161,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_YEAR_TO
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, val, ind);
 
-  // Then the leading sign is applied once, before the year field, and
-  // the trailing month sub-field is zero-padded to 2 digits per ODBC
-  // "Interval Data Type Length" (every non-leading field is rendered
-  // as exactly two characters)
+  // Then the leading sign is applied once before the year and the trailing month is zero-padded to 2 digits
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-2-03");
 }

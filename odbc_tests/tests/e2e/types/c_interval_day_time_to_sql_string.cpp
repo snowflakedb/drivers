@@ -99,8 +99,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR to SQL_VARC
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_HOUR, val, ind);
 
-  // Then only the hour field is rendered (no zero-padding for the
-  // leading field, per Appendix D)
+  // Then only the hour field is rendered without zero-padding for the leading field
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "8");
 }
@@ -128,8 +127,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with no f
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_SECOND carrying 45 seconds (zero fraction) is
-  // bound and inserted
+  // When SQL_C_INTERVAL_SECOND carrying 45 seconds is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -137,8 +135,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with no f
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, val, ind);
 
-  // Then the fraction is rendered at the canonical 6-digit width per
-  // ODBC "Interval Data Type Length" (default seconds precision = 6)
+  // Then the fraction is rendered at the canonical 6-digit width per ODBC "Interval Data Type Length"
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "45.000000");
 }
@@ -148,10 +145,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with micr
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_SECOND carrying 45.500000s — fraction=500_000
-  // microseconds (the unit produced by
-  // `numeric_helpers::compute_interval_fraction` and consumed by the
-  // formatter; see #980 review)
+  // When SQL_C_INTERVAL_SECOND carrying 45.500000s is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -159,9 +153,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with micr
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, val, ind);
 
-  // Then the fraction is rendered at the canonical 6-digit width per
-  // ODBC "Interval Data Type Length" (matches what the legacy driver
-  // emits)
+  // Then the fraction is rendered at the canonical 6-digit width matching the legacy driver
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "45.500000");
 }
@@ -171,12 +163,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND with one-
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_SECOND carrying 1.000001s — verifies the
-  // fractional component is rendered with 6-digit microsecond precision
-  // (would have rendered as "1.000000001" if the formatter still used
-  // the buggy 9-digit nanosecond width caught in #980 review). With the
-  // canonical fixed-width fraction in place, this case is unchanged
-  // because the fraction value naturally produces "000001".
+  // When SQL_C_INTERVAL_SECOND carrying 1.000001s is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -198,8 +185,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_HOUR to S
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_DAY_TO_HOUR carrying 3 days 7 hours is bound and
-  // inserted
+  // When SQL_C_INTERVAL_DAY_TO_HOUR carrying 3 days 7 hours is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -207,10 +193,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_HOUR to S
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_HOUR, val, ind);
 
-  // Then the "<day> <hour>" form is stored with the hour zero-padded
-  // to 2 digits — per ODBC "Interval Data Type Length", every field
-  // that is not the leading field is rendered as exactly two
-  // characters (the day is the leading field and is unpadded)
+  // Then the "<day> <hour(2)>" form is stored with the hour zero-padded to 2 digits
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "3 07");
 }
@@ -220,8 +203,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_MINUTE to
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_DAY_TO_MINUTE carrying 3 days 7:05 is bound and
-  // inserted
+  // When SQL_C_INTERVAL_DAY_TO_MINUTE carrying 3 days 7:05 is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -229,8 +211,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_MINUTE to
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_MINUTE, val, ind);
 
-  // Then both hour and minute sub-fields are zero-padded to 2 digits;
-  // only the leading day is rendered as-is
+  // Then both hour and minute sub-fields are zero-padded to 2 digits
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "3 07:05");
 }
@@ -240,8 +221,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_SECOND wi
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_DAY_TO_SECOND carrying 10 days 12:30:59.5 is
-  // bound and inserted (fraction in microseconds)
+  // When SQL_C_INTERVAL_DAY_TO_SECOND carrying 10 days 12:30:59.5 is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -249,9 +229,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY_TO_SECOND wi
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_SECOND, val, ind);
 
-  // Then hour, minute and second sub-fields are all zero-padded to 2
-  // digits, and the seconds fraction is rendered at the canonical
-  // 6-digit microsecond width per the ODBC spec
+  // Then hour, minute and second are zero-padded and the seconds fraction is rendered at 6-digit microsecond width
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "10 12:30:59.500000");
 }
@@ -261,9 +239,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_DAY_TO_
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_DAY_TO_SECOND carrying -1 day 02:03:04 is bound
-  // and inserted (sign=1 means the whole interval is negative; per
-  // Appendix D the leading `-` is applied once before the day field)
+  // When SQL_C_INTERVAL_DAY_TO_SECOND carrying -1 day 02:03:04 is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -271,9 +247,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_INTERVAL_DAY_TO_
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_DAY_TO_SECOND, val, ind);
 
-  // Then the leading sign is applied once, the hour/minute/second
-  // sub-fields are 2-digit zero-padded, and the seconds fraction is
-  // emitted at the canonical 6-digit width even though it is zero
+  // Then the leading sign is applied once and the seconds fraction is emitted at the canonical 6-digit width even when
+  // zero
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-1 02:03:04.000000");
 }
@@ -301,8 +276,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR_TO_SECOND w
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_HOUR_TO_SECOND carrying 12:30:59.25 is bound and
-  // inserted (250_000 microseconds = 0.25 seconds)
+  // When SQL_C_INTERVAL_HOUR_TO_SECOND carrying 12:30:59.25 is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -310,9 +284,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR_TO_SECOND w
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_HOUR_TO_SECOND, val, ind);
 
-  // Then minute and second are zero-padded and the fractional tail is
-  // rendered at the canonical 6-digit microsecond width per the ODBC
-  // spec
+  // Then minute and second are zero-padded and the fractional tail is rendered at 6-digit microsecond width
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "12:30:59.250000");
 }
@@ -322,8 +294,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE_TO_SECOND
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
-  // When SQL_C_INTERVAL_MINUTE_TO_SECOND carrying 30:07.000000 is
-  // bound and inserted
+  // When SQL_C_INTERVAL_MINUTE_TO_SECOND carrying 30:07.000000 is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -331,10 +302,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE_TO_SECOND
   SQLLEN ind = sizeof(val);
   bind_interval_and_execute(stmt, SQL_C_INTERVAL_MINUTE_TO_SECOND, val, ind);
 
-  // Then the second sub-field is zero-padded to 2 digits and the
-  // leading minute is not (it's the leading field of the interval);
-  // the seconds fraction is always emitted at the canonical 6-digit
-  // width even when it is zero
+  // Then the second sub-field is zero-padded to 2 digits and the fraction is emitted at the canonical 6-digit width
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "30:07.000000");
 }

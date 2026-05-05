@@ -38,8 +38,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_GUID to SQL_VARCHAR", "[c
   // Given a VARCHAR column wide enough for the canonical 36-char form
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(40))");
 
-  // When a canonical GUID is bound and inserted. The byte layout is
-  // chosen so each section is visually distinct in the formatted output.
+  // When a canonical GUID is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -47,8 +46,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_GUID to SQL_VARCHAR", "[c
   SQLLEN ind = sizeof(val);
   bind_guid_and_execute(stmt, val, ind);
 
-  // Then the formatted literal is the canonical 8-4-4-4-12 upper-case
-  // hex form
+  // Then the formatted literal is the canonical 8-4-4-4-12 upper-case hex form
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "01234567-89AB-CDEF-FEDC-BA9876543210");
 }
@@ -65,8 +63,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind nil SQL_C_GUID to SQL_VARCHAR",
   SQLLEN ind = sizeof(val);
   bind_guid_and_execute(stmt, val, ind);
 
-  // Then every section is rendered with full-width zero padding rather
-  // than collapsed (the format string uses `:08X / :04X / :02X` widths)
+  // Then every section is rendered with full-width zero padding rather than collapsed
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "00000000-0000-0000-0000-000000000000");
 }
@@ -75,8 +72,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind max SQL_C_GUID to SQL_VARCHAR",
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(40))");
 
-  // When an all-`F` GUID is bound and inserted (verifies the formatter
-  // doesn't accidentally sign-extend or mask any field)
+  // When an all-`F` GUID is bound and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
