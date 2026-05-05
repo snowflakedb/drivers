@@ -1075,6 +1075,8 @@ jobs:
 
       - name: Save Cargo registry cache (DMG build)
         if: always()
+        continue-on-error: true
+        timeout-minutes: 10
         uses: actions/cache/save@v5
         with:
           path: .cargo-cache
@@ -1082,6 +1084,8 @@ jobs:
 
       - name: Save Rust target cache (DMG build)
         if: always()
+        continue-on-error: true
+        timeout-minutes: 15
         uses: actions/cache/save@v5
         with:
           path: .cargo-target-dmg
