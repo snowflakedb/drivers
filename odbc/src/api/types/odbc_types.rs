@@ -179,6 +179,13 @@ pub enum InfoType {
     DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_CONVERT_GUID` (173) — bitmask of supported conversions from
+    /// `SQL_GUID` to other SQL types. The Microsoft Windows ODBC Driver
+    /// Manager consults this when validating `SQLBindParameter` calls with
+    /// `ValueType=SQL_C_GUID`; if the corresponding `SQL_CVT_<target>` bit
+    /// is unset the DM rejects the bind with `HYC00` ("Driver does not
+    /// support this parameter") before the call ever reaches the driver.
+    ConvertGuid = 173,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -191,6 +198,7 @@ impl TryFrom<u16> for InfoType {
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
+            173 => Ok(InfoType::ConvertGuid),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
                 Err(OdbcError::UnknownInfoType {

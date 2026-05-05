@@ -1232,6 +1232,48 @@ pub fn get_info<E: OdbcEncoding>(
             }
             Ok(())
         }
+        InfoType::ConvertGuid => {
+            // Per the ODBC spec for `SQL_CONVERT_<type>`, this bitmask
+            // enumerates the target SQL types the driver can reach FROM
+            // `SQL_GUID` via the `CONVERT` scalar function (and, by
+            // extension, the conversions the Microsoft Windows ODBC DM
+            // permits at `SQLBindParameter` time).  The bits are
+            // independent — each one is set only if that specific
+            // conversion is actually implemented; setting bits we do not
+            // support would violate the spec.
+            //
+            // The driver formats `SQL_C_GUID` parameters as the canonical
+            // 8-4-4-4-12 upper-case hex literal (see
+            // `varchar.rs::WriteODBCType for SnowflakeVarchar`), so every
+            // character target is reachable, plus identity
+            // (`SQL_CVT_GUID`).  Binary / varbinary routes are not
+            // implemented yet, so those bits stay off.
+            const SQL_CVT_CHAR: u32 = 0x0000_0001;
+            const SQL_CVT_VARCHAR: u32 = 0x0000_0100;
+            const SQL_CVT_LONGVARCHAR: u32 = 0x0000_0200;
+            const SQL_CVT_WCHAR: u32 = 0x0020_0000;
+            const SQL_CVT_WLONGVARCHAR: u32 = 0x0040_0000;
+            const SQL_CVT_WVARCHAR: u32 = 0x0080_0000;
+            const SQL_CVT_GUID: u32 = 0x0100_0000;
+            let mask: u32 = SQL_CVT_CHAR
+                | SQL_CVT_VARCHAR
+                | SQL_CVT_LONGVARCHAR
+                | SQL_CVT_WCHAR
+                | SQL_CVT_WVARCHAR
+                | SQL_CVT_WLONGVARCHAR
+                | SQL_CVT_GUID;
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = mask;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
     }
 }
 
