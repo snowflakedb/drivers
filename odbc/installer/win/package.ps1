@@ -98,25 +98,43 @@ if (-not (Test-Path (Join-Path $DriverBinDir $driverDll))) {
 }
 
 # --- VC++ Redistributable ---
+function Find-LatestVCRedist([string]$RedistRoot) {
+    if (-not (Test-Path $RedistRoot)) { return $null }
+    $latest = Get-ChildItem -Directory $RedistRoot | Sort-Object Name -Descending | Select-Object -First 1
+    if ($latest) { return $latest.FullName }
+    return $null
+}
+
 if (-not $VCRedistDir) {
-    # Try VCINSTALLDIR env var first (set by vcvarsall.bat)
+    Write-Host "No -VCRedistDir found. Detecting available versions"
     if ($env:VCINSTALLDIR) {
-        $VCRedistDir = Join-Path $env:VCINSTALLDIR "Redist\MSVC\v143"
-    } else {
-        # Auto-detect via vswhere
+        $redistRoot = Join-Path $env:VCINSTALLDIR "Redist\MSVC"
+        $VCRedistDir = Find-LatestVCRedist $redistRoot
+        if ($VCRedistDir) { Write-Host "VCINSTALLDIR found. Using $VCRedistDir" }
+    }
+    if (-not $VCRedistDir) {
+        Write-Host "Autodetecting the VC++ Redistributable with vswhere.exe"
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         if (Test-Path $vswhere) {
             $vsPath = & $vswhere -latest -property installationPath
             if ($vsPath) {
-                $VCRedistDir = Join-Path $vsPath "VC\Redist\MSVC\v143"
+                $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+                $VCRedistDir = Find-LatestVCRedist $redistRoot
+                if ($VCRedistDir) { Write-Host "Detected VC++ Redistributable at $VCRedistDir" }
             }
+        } else {
+            Write-Host "vswhere not found in path $vswhere"
         }
     }
     if (-not $VCRedistDir -or -not (Test-Path $VCRedistDir)) {
         throw "VC++ Redistributable directory not found. Install Visual Studio or pass -VCRedistDir."
     }
 }
-$vcRedistExe = if ($Arch -eq "x64") { "vc_redist.x64.exe" } else { "vc_redist.x86.exe" }
+$vcRedistExe = switch ($Arch) {
+    "x64"   { "vc_redist.x64.exe" }
+    "x86"   { "vc_redist.x86.exe" }
+    "arm64" { "vc_redist.arm64.exe" }
+}
 if (-not (Test-Path (Join-Path $VCRedistDir $vcRedistExe))) {
     throw "$vcRedistExe not found in $VCRedistDir"
 }
