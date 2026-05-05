@@ -92,16 +92,14 @@ async fn read_batches<'a>(
         query_response::RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
-        } => {
-            arrow_prefetch_reader(
-                initial_base64_opt,
-                chunk_download_data.into(),
-                http_client.clone(),
-                prefetch_config,
-            )
-            .await
-            .context(ChunkReadingSnafu)
-        }
+        } => arrow_prefetch_reader(
+            initial_base64_opt,
+            chunk_download_data.into(),
+            http_client.clone(),
+            prefetch_config,
+        )
+        .await
+        .context(ChunkReadingSnafu),
         query_response::RowsetData::SchemaOnly { rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             schema_only_reader(&row_types).context(ChunkReadingSnafu)
