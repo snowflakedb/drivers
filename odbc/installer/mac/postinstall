@@ -11,14 +11,14 @@ ODBCINST_FILE="$ODBC_DIR/odbcinst.ini"
 
 mkdir -p "$ODBC_DIR"
 
-DRIVER_ENTRY="[SnowflakeODBCUDDriver]
+DRIVER_ENTRY="[Snowflake ODBC UD]
 Driver=$DRIVER_PATH
 Description=Snowflake ODBC UD"
 
 if [ -f "$ODBCINST_FILE" ]; then
-    if grep -q "\[SnowflakeODBCUDDriver\]" "$ODBCINST_FILE"; then
-        echo "SnowflakeODBCUDDriver already registered in $ODBCINST_FILE, updating..."
-        sed -i '' '/\[SnowflakeODBCUDDriver\]/,/^\[/{/^\[SnowflakeODBCUDDriver\]/d;/^Driver=/d;/^Description=/d;/^$/d;}' "$ODBCINST_FILE"
+    if grep -q "\[Snowflake ODBC UD\]" "$ODBCINST_FILE"; then
+        echo "Snowflake ODBC UD already registered in $ODBCINST_FILE, updating..."
+        sed -i '' '/\[Snowflake ODBC UD\]/,/^\[/{/^\[Snowflake ODBC UD\]/d;/^Driver=/d;/^Description=/d;/^$/d;}' "$ODBCINST_FILE"
     fi
 fi
 
