@@ -4,7 +4,50 @@ Tracks work needed to take the initial Copybara mirror setup (see
 `copy.bara.sky` and `.github/workflows/mirror.yml`) from "test destination"
 to production-ready.
 
+## Filter model: denylist + manifest snapshot
+
+`copy.bara.sky` uses a **denylist** (`EXCLUDED_PATHS`) rather than a
+per-extension allowlist. New source files reach the mirror by default;
+anything matching the denylist does not. The denylist stays small and
+reviewable.
+
+Internal material should live under `_internal/` — the single catch-all
+denylist entry that covers the convention. Existing internal directories
+(`adr/`, `doc/`, `.ai/`, `.cursor/`, …) and the mirror machinery itself
+are listed explicitly alongside it. Name-based catch-alls (`**/*.internal.*`,
+`**/*_internal*`, `**/SECURITY_ASSESSMENT*`, etc.) guard against sensitive
+files added inside otherwise-public directories.
+
+A checked-in snapshot `.mirror/manifest.txt` records every file Copybara
+would mirror, plus a trailing `# sha256:` line. The
+`validations.yml::mirror-manifest` CI check regenerates the snapshot and
+fails the PR if it differs from what's committed. Every PR that changes
+the mirrored set therefore includes a visible manifest diff the reviewer
+must approve — that is the explicit security gate.
+
+**Typical flows:**
+
+- Adding a file inside an already-mirrored directory:
+  `scripts/mirror/generate_manifest.py` and commit the updated
+  `.mirror/manifest.txt`.
+- Adding a new internal-only file: put it under `_internal/`, then
+  regenerate the manifest (it will be unchanged — that's the point).
+- Adding a new internal-only top-level directory: either create it
+  under `_internal/`, or add an explicit entry to `EXCLUDED_PATHS` in
+  `copy.bara.sky`, then regenerate.
+- CI fails with "manifest is out of date": run
+  `scripts/mirror/generate_manifest.py` locally and commit the updated
+  `.mirror/manifest.txt`.
+
 ## Outstanding items
+
+### Migrate existing internal directories into `_internal/`
+
+`adr/`, `doc/`, `.ai/`, `.cursor/` are denied by explicit top-level
+entries. Collapsing them into `_internal/adr/`, `_internal/doc/`, etc.
+shrinks `EXCLUDED_PATHS` to essentially just `_internal/**`. Worth doing
+once tooling that references those paths (Cursor rules, review configs)
+can be updated to follow.
 
 ### Validate the inbound (external PR) flow end-to-end
 
@@ -30,10 +73,9 @@ this in production:
 
 ### Mirror `.github/` once the bot has the `workflow` scope
 
-`.github/` (workflows, composite actions, labeler, copilot-instructions,
-etc.) is currently excluded from the Copybara allowlist. When the mirror
-bot attempted to push workflow files using a classic PAT, GitHub rejected
-the push:
+`.github/` is currently fully excluded via `EXCLUDED_PATHS` in
+`copy.bara.sky`. When the mirror bot attempted to push workflow files
+using a classic PAT, GitHub rejected the push:
 
 ```
 ! [remote rejected] HEAD -> main
@@ -43,17 +85,17 @@ the push:
 
 To restore `.github/` mirroring:
 
-- Switch `MIRROR_GITHUB_TOKEN` / `SNOWFLAKE_EMU_TOKEN` to either a
-  GitHub App installation token (preferred) or a fine-grained PAT that
-  grants the `workflow` scope on the destination repo.
-- Re-add the `.github/**/*.yml`, `.github/**/*.yaml`, `.github/**/*.sh`,
-  `.github/**/Dockerfile`, `.github/secrets/*.gpg`, and
-  `.github/copilot-instructions.md` entries to `origin_files` in
-  `copy.bara.sky`.
-- Decide whether the mirror workflow itself (`.github/workflows/mirror.yml`)
-  should be mirrored. If yes, keep the existing `verify_match` exclude
-  for `.github/workflows/mirror*` so its references to
-  `snowflake-eng/universal-driver` don't trip the guard.
+- Switch `SNOWFLAKE_EMU_TOKEN` to either a GitHub App installation token
+  (preferred) or a fine-grained PAT that grants the `workflow` scope on
+  the destination repo.
+- In `copy.bara.sky`: narrow the `.github/**` entry in `EXCLUDED_PATHS`
+  to just `.github/workflows/mirror*.yml` (that one stays excluded so
+  the mirror's own workflow doesn't get pushed back to itself; the
+  existing `verify_match` exclude already covers its
+  `snowflake-eng/universal-driver` references).
+- Regenerate `.mirror/manifest.txt` — the manifest diff will be large
+  the first time and is the reviewable moment for exposing `.github/`
+  contents publicly.
 
 
 

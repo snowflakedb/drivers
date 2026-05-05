@@ -50,6 +50,27 @@ jobs:
           fi
           echo "Generated test data matches repository."
 
+  mirror-manifest:
+    # Fails the PR if the set of files Copybara would mirror has drifted
+    # from the checked-in .mirror/manifest.txt. Any added, removed, or
+    # renamed mirrored file must land alongside a regenerated manifest
+    # so the change is visible in review.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check mirror manifest
+        # The script prints a self-contained human-readable report on
+        # failure (purpose of the check, which paths would newly reach
+        # the mirror, and how to fix). No post-processing needed here.
+        run: python scripts/mirror/generate_manifest.py --check
+
   tests-format-validator:
     runs-on: ubuntu-latest
     steps:
@@ -143,27 +164,30 @@ jobs:
           retention-days: 30
 
   validations-status:
-    needs: [test-data, tests-format-validator, test-coverage-report]
+    needs: [test-data, mirror-manifest, tests-format-validator, test-coverage-report]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check status
         run: |
           echo "=== Validations Status ==="
-          
+
           # Check if any validation failed or was cancelled
           if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.mirror-manifest.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test-coverage-report.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Validations FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
+            echo "  - mirror-manifest: ${{ needs.mirror-manifest.result }}"
             echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
             echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
             exit 1
           fi
-          
+
           echo "✓ Validations PASSED"
           echo "  - test-data: ${{ needs.test-data.result }}"
+          echo "  - mirror-manifest: ${{ needs.mirror-manifest.result }}"
           echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
           echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
           exit 0

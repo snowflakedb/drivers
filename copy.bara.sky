@@ -1,7 +1,7 @@
 # Copybara config: two workflows.
 #
 # 1. `mirror`  — outbound: snowflake-eng/universal-driver -> snowflake-eng/universal-driver-mirror-test
-#                (ITERATIVE, direct push, allowlisted paths + internal-marker guards)
+#                (ITERATIVE, direct push, denylist filter + internal-marker guards)
 #                Runs daily via .github/workflows/mirror.yml.
 #
 # 2. `import`  — inbound: mirror PRs with the `ok-to-import` label become PRs
@@ -16,108 +16,60 @@
 SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
 MIRROR_REPO = "https://github.com/snowflake-eng/universal-driver-mirror-test"
 
-# ALLOWLIST shared by both workflows. Keep this as the single source of
-# truth — new dirs/types must be listed here or they stay internal
-# (outbound) / are dropped from imported PRs (inbound).
+# DENYLIST: mirror everything except paths matching these patterns.
 #
-# ⚠️  MARKDOWN FILES: .md files are NOT globbed. Each mirrored .md must
-#     be listed by exact path. Prevents accidental exposure of internal
-#     ADRs or security assessments on the outbound path.
-MIRRORED_PATHS = [
-    # ── Rust core & workspace crates ──
-    "sf_core/**/*.rs", "sf_core/**/Cargo.toml", "sf_core/**/*.def",
-    "sf_mini_core/**/*.rs", "sf_mini_core/**/Cargo.toml",
-    "sf_mini_core_static/**/*.rs", "sf_mini_core_static/**/Cargo.toml",
-    "error_trace/**/*.rs", "error_trace/**/Cargo.toml",
-    "error_trace_derive/**/*.rs", "error_trace_derive/**/Cargo.toml",
-    "proto_generator/**/*.rs", "proto_generator/**/Cargo.toml",
-    "proto_utils/**/*.rs", "proto_utils/**/Cargo.toml",
-    "protobuf/**/*.proto",
+# Safety model
+# ------------
+# A denylist defaults to "public" for new files, which is the opposite of
+# what a mirror config typically wants. We compensate with two things:
+#
+#   1. `_internal/` convention: put any new internal-only material under
+#      `_internal/` and it's covered without touching this file.
+#   2. Manifest snapshot: `.mirror/manifest.txt` pins the exact set of
+#      files Copybara would push. A CI check (validations.yml::mirror-
+#      manifest) fails every PR whose actual mirrored file-set drifts
+#      from the checked-in manifest. Adding a brand-new internal file
+#      therefore forces a visible `.mirror/manifest.txt` diff that a
+#      reviewer has to approve.
+#
+# Keep this list small. Broad catch-alls live in the pattern section at
+# the bottom. Narrow, explicit per-path entries live in the top section.
+EXCLUDED_PATHS = [
+    # ── Internal-only top-level directories (existing) ──
+    "adr/**",
+    "doc/**",
+    ".ai/**",
+    ".cursor/**",
+    ".claude/**",
+    ".idea/**",
+    ".direnv/**",
 
-    # ── Python wrapper (source, config, build, native bridge) ──
-    "python/**/*.py", "python/**/*.pyx", "python/**/*.pyi",
-    "python/**/*.toml", "python/**/*.lock",
-    "python/**/*.c", "python/**/*.cpp", "python/**/*.h", "python/**/*.hpp",
-    "python/**/*.txt", "python/**/*.yaml",
-    "python/**/*.sh", "python/**/*.sdist", "python/**/*.typed",
-    "python/**/.gitignore", "python/**/.clang-format",
+    # Conventional home for NEW internal material. Prefer adding files
+    # here rather than inventing a new top-level exclusion.
+    "_internal/**",
 
-    # ── JDBC wrapper ──
-    "jdbc/**/*.java", "jdbc/**/*.gradle", "jdbc/**/*.properties", "jdbc/**/*.xml",
-    "jdbc/**/*.bat", "jdbc/**/*.jar",
-    "jdbc/**/gradlew", "jdbc/**/*.MockMaker", "jdbc/**/*.Driver",
-    "jdbc/**/*.rs", "jdbc/**/*.py", "jdbc/**/*.toml",
-    "jdbc_bridge/**/*.rs", "jdbc_bridge/**/Cargo.toml",
+    # ── Mirror machinery itself ──
+    "copy.bara.sky",
+    "implementation.md",
+    ".mirror/**",
+    ".github/workflows/mirror*.yml",
+    "Universal Driver Source Mirroring*.md",
 
-    # ── ODBC wrapper & tests ──
-    "odbc/**/*.rs", "odbc/**/*.cpp", "odbc/**/*.hpp", "odbc/**/*.h",
-    "odbc/**/*.toml", "odbc/**/*.def",
-    "odbc/**/*.yaml", "odbc/**/*.txt", "odbc/**/*.sh", "odbc/**/*.ps1",
-    "odbc/**/*.py",
-    "odbc_tests/**/*.cpp", "odbc_tests/**/*.hpp",
-    "odbc_tests/**/*.yaml", "odbc_tests/**/*.txt",
-    "odbc_tests/**/*.rs", "odbc_tests/**/*.toml",
-    "odbc_trace_tool/**/*.rs", "odbc_trace_tool/**/Cargo.toml",
+    # ── .github/ excluded in full ──
+    # The mirror token is a classic PAT without the `workflow` scope, so
+    # pushing .github/workflows/* files is rejected by GitHub. Tracked as
+    # a follow-up in implementation.md. When the token gains the scope,
+    # narrow this to `.github/workflows/mirror*.yml` only.
+    ".github/**",
 
-    # ── CI & GitHub config ──
-    # NOTE: .github/ is intentionally NOT mirrored outbound. Pushing with
-    # a PAT that lacks the `workflow` scope fails when .github/workflows/*
-    # files change. Revisit once the mirror bot uses a GitHub App or a
-    # token that carries the workflow scope. See implementation.md.
-    ".buildkite/**/*.yml",
-    ".cargo/**/*.toml",
-    "ci/**/Jenkinsfile", "ci/**/Jenkinsfile.*",
-    "ci/**/*.sh", "ci/**/*.py", "ci/**/*.yml",
-    "ci/**/Dockerfile", "ci/**/Dockerfile.*",
-    "ci/**/reference-odbc-*",
-
-    # ── Tests (data, fixtures, perf) ──
-    "tests/**/*.rs", "tests/**/*.py", "tests/**/*.java",
-    "tests/**/*.feature", "tests/**/*.json", "tests/**/*.csv",
-    "tests/**/*.sh", "tests/**/*.yaml",
-    "tests/**/*.toml", "tests/**/*.lock",
-    "tests/**/*.cpp", "tests/**/*.h", "tests/**/*.hpp",
-    "tests/**/*.txt", "tests/**/*.css",
-    "tests/**/*.crl", "tests/**/*.p8",
-    "tests/**/*.gz", "tests/**/*.br", "tests/**/*.bz2",
-    "tests/**/*.zst", "tests/**/*.xz",
-    "tests/**/*.deflate", "tests/**/*.raw_deflate",
-    "tests/**/*.gpg",
-    "tests/**/*.dockerignore", "tests/**/.gitignore",
-    "tests/**/Dockerfile", "tests/**/Dockerfile.*",
-    "tests/**/Jenkinsfile", "tests/**/Jenkinsfile.*",
-    "tests/**/*.jar",
-
-    # ── Scripts ──
-    "scripts/**/*.sh", "scripts/**/*.py", "scripts/**/*.bat",
-    "scripts/**/*.ps1", "scripts/**/*.sql",
-
-    # ── Root files (explicit, no globs) ──
-    "Cargo.toml", "Cargo.lock", "build_common.rs", "rust-toolchain.toml",
-    "codecov.yml", "LICENSE", "shell.nix",
-    ".clang-format", ".dockerignore", ".envrc",
-    ".gitattributes", ".gitignore", ".pre-commit-config.yaml",
-
-    # ── Allowed markdown files (explicit paths, NO globs) ──
-    "README.md",
-    "sf_core/README.md",
-    "sf_core/src/bin/README.md",
-    "sf_mini_core/README.md",
-    "python/README.md",
-    "python/tests/README.md",
-    "jdbc/README.md",
-    "jdbc/tools/api-coverage/README.md",
-    "odbc/README.md",
-    "proto_generator/README.md",
-    "tests/definitions/README.md",
-    "tests/performance/README.md",
-    "tests/test_coverage_report/README.md",
-    "tests/test_data/generated_test_data/README.md",
-    "tests/tests_format_validator/README.md",
-    "tests/wiremock/README.md",
-    # NOTE: adr/, doc/, .ai/, .cursor/ markdown files are intentionally
-    # NOT listed — they may contain internal ADRs or security assessments.
-    # To mirror a new .md file, add its exact path here.
+    # ── Name-based catch-alls ──
+    # Match any file whose name looks internal regardless of where it
+    # lives in the tree.
+    "**/*.internal.*",
+    "**/*_internal*",
+    "**/SECURITY_ASSESSMENT*",
+    "**/SECURITY_AUDIT*",
+    "**/*SECURITY_NOTES*",
 ]
 
 
@@ -134,8 +86,9 @@ core.workflow(
         url = SOURCE_REPO,
         ref = "main",
     ),
-    # Direct push — no PR gate. Safety relies on the allowlist + the
-    # verify_match checks below, plus environment approval on dispatch.
+    # Direct push — no PR gate. Safety relies on the denylist + the
+    # verify_match checks below, plus environment approval on dispatch,
+    # plus the validations.yml mirror-manifest PR check.
     destination = git.github_destination(
         url = MIRROR_REPO,
         push = "main",
@@ -143,7 +96,7 @@ core.workflow(
     authoring = authoring.pass_thru(
         "Mirror Bot <mirror-bot@snowflake.com>"
     ),
-    origin_files = glob(MIRRORED_PATHS),
+    origin_files = glob(["**"], exclude = EXCLUDED_PATHS),
     transformations = [
         # Fail the sync if any mirrored file references the internal repo.
         # The mirror workflow itself is excluded because it legitimately
@@ -172,10 +125,10 @@ core.workflow(
 # │   copybara migrate copy.bara.sky import <PR_NUMBER>                 │
 # │                                                                     │
 # │ Contributor authorship is preserved on the imported commits         │
-# │ (authoring.pass_thru_default). The resulting internal PR runs       │
-# │ against full internal CI before merge; when merged to main the      │
-# │ outbound `mirror` workflow pushes the change back to the mirror on  │
-# │ its next run, closing the loop.                                     │
+# │ (authoring.pass_thru). The resulting internal PR runs against full  │
+# │ internal CI before merge; when merged to main the outbound `mirror` │
+# │ workflow pushes the change back to the mirror on its next run,      │
+# │ closing the loop.                                                   │
 # └─────────────────────────────────────────────────────────────────────┘
 core.workflow(
     name = "import",
@@ -190,17 +143,14 @@ core.workflow(
     # Create a PR on the internal repo so internal CI and reviewers see it.
     #
     # NOTE: pr_branch is intentionally omitted — Copybara's `pr_branch`
-    # field does NOT interpolate ${LABEL} placeholders, so templating a
-    # PR number into it leaves literal `${GITHUB_PR_NUMBER}` text. When
-    # omitted, github_pr_destination derives a branch name from the
-    # origin change, giving us a unique per-PR branch automatically.
+    # field does NOT interpolate ${LABEL} placeholders. Without it,
+    # github_pr_destination derives a unique per-PR branch automatically.
     #
     # Only labels that git.github_pr_origin actually exposes may appear
     # in title/body: GITHUB_PR_NUMBER, GITHUB_PR_TITLE, GITHUB_PR_BODY,
     # GITHUB_PR_URL, GITHUB_PR_HEAD_SHA. Author login is NOT available
     # as a label — Copybara carries it on the imported commit's author
-    # metadata instead (via authoring.pass_thru below), so reviewers see
-    # the original contributor in the commit header.
+    # metadata instead (via authoring.pass_thru below).
     destination = git.github_pr_destination(
         url = SOURCE_REPO,
         destination_ref = "main",
@@ -221,10 +171,11 @@ core.workflow(
     authoring = authoring.pass_thru(
         "Mirror Bot <mirror-bot@snowflake.com>"
     ),
-    # Same allowlist as outbound — anything outside it is silently dropped
-    # from the imported PR. Intentional: external contributors cannot add
-    # files to .github/, adr/, .ai/, etc. even if they try.
-    origin_files = glob(MIRRORED_PATHS),
+    # Same denylist as outbound — anything matching EXCLUDED_PATHS is
+    # silently dropped from the imported PR. Intentional: external
+    # contributors cannot add files to .github/, adr/, _internal/, etc.
+    # even if they try.
+    origin_files = glob(["**"], exclude = EXCLUDED_PATHS),
     transformations = [
         # Defensive: internal hostnames should never appear in a mirror PR,
         # but fail loudly if they somehow do.
