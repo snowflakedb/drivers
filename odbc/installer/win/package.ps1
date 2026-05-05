@@ -99,17 +99,23 @@ if (-not (Test-Path (Join-Path $DriverBinDir $driverDll))) {
 
 # --- VC++ Redistributable ---
 if (-not $VCRedistDir) {
+    Write-Host "No -VCRedistDir found. Detecting available versions"
     # Try VCINSTALLDIR env var first (set by vcvarsall.bat)
     if ($env:VCINSTALLDIR) {
         $VCRedistDir = Join-Path $env:VCINSTALLDIR "Redist\MSVC\v143"
+        Write-Host "VCINSTALLDIR found. Setting VCRedistDir to $VCRedistDir"
     } else {
+        Write-Host "Autodetecting the VC++ Redistributable with vswhere.exe"
         # Auto-detect via vswhere
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         if (Test-Path $vswhere) {
             $vsPath = & $vswhere -latest -property installationPath
             if ($vsPath) {
                 $VCRedistDir = Join-Path $vsPath "VC\Redist\MSVC\v143"
+                Write-Host "Detected VC++ Redistributable at $VCRedistDir"
             }
+        } else {
+            Write-Host "vswhere not found in path $vswhere"
         }
     }
     if (-not $VCRedistDir -or -not (Test-Path $VCRedistDir)) {
