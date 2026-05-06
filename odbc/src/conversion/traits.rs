@@ -507,6 +507,16 @@ pub(crate) enum SnowflakeLogicalType {
     TimestampNtz,
     TimestampLtz,
     TimestampTz,
+    /// Year-month interval logical type. Mirrors the result-side
+    /// `INTERVAL_YEAR_MONTH` logical type that GS emits for native
+    /// INTERVAL columns (see `sf_core::SnowflakeLogicalType`); used on
+    /// the bind-parameter side to identify SQL_INTERVAL_YEAR/MONTH/
+    /// YEAR_TO_MONTH inputs to the server.
+    IntervalYearMonth,
+    /// Day-time interval logical type, covering DAY/HOUR/MINUTE/SECOND
+    /// and their compound subtypes (DAY_TO_HOUR..MINUTE_TO_SECOND).
+    /// Mirrors `INTERVAL_DAY_TIME` on the result side.
+    IntervalDayTime,
 }
 
 impl SnowflakeLogicalType {
@@ -523,6 +533,8 @@ impl SnowflakeLogicalType {
             Self::TimestampNtz => "TIMESTAMP_NTZ",
             Self::TimestampLtz => "TIMESTAMP_LTZ",
             Self::TimestampTz => "TIMESTAMP_TZ",
+            Self::IntervalYearMonth => "INTERVAL_YEAR_MONTH",
+            Self::IntervalDayTime => "INTERVAL_DAY_TIME",
         }
     }
 }
