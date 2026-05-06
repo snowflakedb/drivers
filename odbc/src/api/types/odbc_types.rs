@@ -179,19 +179,6 @@ pub enum InfoType {
     DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
-    /// `SQL_CONVERT_LONGVARBINARY` (47) — bitmask of conversions the driver
-    /// supports with the `CONVERT` scalar function for `SQL_LONGVARBINARY`
-    /// source data. The Microsoft Windows ODBC Driver Manager also
-    /// consults this bitmask at `SQLBindParameter(SQL_C_BINARY, …)` time
-    /// to decide whether the call may be forwarded to the driver.
-    ConvertLongVarBinary = 47,
-    /// `SQL_CONVERT_BINARY` (49) — bitmask of conversions for `SQL_BINARY`
-    /// source data. Same DM-gating role as `ConvertLongVarBinary` for
-    /// `SQLBindParameter(SQL_C_BINARY, SQL_BINARY)`.
-    ConvertBinary = 49,
-    /// `SQL_CONVERT_VARBINARY` (50) — bitmask of conversions for
-    /// `SQL_VARBINARY` source data.
-    ConvertVarBinary = 50,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -204,9 +191,6 @@ impl TryFrom<u16> for InfoType {
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
-            47 => Ok(InfoType::ConvertLongVarBinary),
-            49 => Ok(InfoType::ConvertBinary),
-            50 => Ok(InfoType::ConvertVarBinary),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
                 Err(OdbcError::UnknownInfoType {
