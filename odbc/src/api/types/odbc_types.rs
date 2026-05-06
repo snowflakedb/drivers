@@ -1227,9 +1227,11 @@ impl GetDataState {
     }
 }
 
-/// Outer Statement handle — immutable fields only.
+/// Outer Statement handle.
 ///
-/// All mutable state lives inside `inner: Mutex<StatementInner>`.
+/// Most mutable state lives inside `inner: Mutex<StatementInner>`.
+/// `active_cancel` is also mutable (interior mutability via its own Mutex)
+/// to allow zero-contention cross-thread cancellation without locking `inner`.
 /// The `HandleManager` stores `Statement` inside `Arc<RwLock<Option<Statement>>>`,
 /// so the outer fields are accessible through `HandleGuard::deref()` without
 /// any additional locking.

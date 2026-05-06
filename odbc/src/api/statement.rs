@@ -1256,6 +1256,11 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     // TODO(SNOW-3258918): Cancel async execution.
     // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
 
+    // TODO(SNOW-3258922): Cancel execution on another thread.
+    // Blocked by: no server-side cancel RPC. When implemented,
+    // cancelling the token resolves the cancelled() future observed
+    // by the executing thread's tokio::select!, aborting the in-flight RPC.
+
     let guard = stmt_from_handle(statement_handle)?;
 
     // Path 1: cancel in-flight RPC without touching inner.
