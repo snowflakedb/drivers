@@ -521,8 +521,7 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // behaviour. The legacy driver normalises differently (overflows the fraction
   // into the seconds field) so the literal it emits is not "45.1000000". This
   // test documents new-driver behaviour only — skip on the reference driver.
-  SKIP_OLD_DRIVER("BD#000",
-                  "New driver pins format!(\"{:06}\", fraction) for out-of-spec fraction=1_000_000us");
+  SKIP_OLD_DRIVER("BD#000", "New driver pins format!(\"{:06}\", fraction) for out-of-spec fraction=1_000_000us");
 
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
