@@ -62,24 +62,30 @@ jobs:
 
       - name: Configure git for Copybara
         env:
-          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+          # Origin is the mirror (snowflakedb/ud-mirror-test) — fetches to
+          # read the PR branch happen via the credentials file, so the
+          # snowflakedb-scoped token goes here. The destination push to
+          # snowflake-eng/universal-driver uses SNOWFLAKE_EMU_TOKEN passed
+          # inline on the Copybara command URL, which wins over this file.
+          SNOWFLAKEDB_TOKEN: ${{ secrets.SNOWFLAKEDB_TOKEN }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
           git config --global user.email "mirror-bot@snowflake.com"
-          # Copybara shells out to `git fetch` on both the mirror origin
-          # (to read the PR) and the internal destination (to push the
-          # import branch). The same token needs read on the mirror and
-          # contents:write on the internal repo.
           git config --global credential.helper store
           umask 077
-          printf 'https://x-access-token:%s@github.com\n' "${GITHUB_TOKEN}" > "${HOME}/.git-credentials"
+          printf 'https://x-access-token:%s@github.com\n' "${SNOWFLAKEDB_TOKEN}" > "${HOME}/.git-credentials"
 
       - name: Run Copybara (import)
         env:
           # Copybara reads GITHUB_TOKEN to call the mirror's API for the
-          # PR metadata (labels, title, body, author).
-          GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
+          # PR metadata (labels, title, body, author) — that's a read
+          # against snowflakedb, so use the snowflakedb token here.
+          GITHUB_TOKEN: ${{ secrets.SNOWFLAKEDB_TOKEN }}
+          # EMU token is used only to push the imported branch into the
+          # internal snowflake-eng/universal-driver repo; inlined on the
+          # destination URL below.
+          SNOWFLAKE_EMU_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
           PR_NUMBER: ${{ github.event.inputs.pr_number }}
         run: |
           set -euo pipefail
@@ -91,7 +97,7 @@ jobs:
           # of internal main — safe because the PR only touches files
           # inside MIRRORED_PATHS.
           java -jar copybara_deploy.jar migrate copy.bara.sky import "${PR_NUMBER}" \
-            --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+            --git-destination-url="https://x-access-token:${SNOWFLAKE_EMU_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
             --nogit-destination-rebase \
             --force
 
