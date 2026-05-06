@@ -52,8 +52,6 @@ TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=timezone.
 LARGE_RESULT_SET_SIZE = 50_000
 SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
-pytestmark = pytest.mark.skip_universal(reason="SNOW-3450792 - session timezone is not respected")
-
 
 def sequential_timestamp(i):
     """Transform index to expected sequential timestamp in session timezone."""

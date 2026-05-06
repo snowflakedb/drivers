@@ -1062,6 +1062,7 @@ class TestCreateRowIteratorNumpyFlag:
 
         mock_create.assert_called_once_with(
             stream_ptr=42,
+            connection=mock_connection,
             use_dict_result=False,
             use_numpy=True,
         )
@@ -1077,6 +1078,7 @@ class TestCreateRowIteratorNumpyFlag:
 
         mock_create.assert_called_once_with(
             stream_ptr=42,
+            connection=mock_connection,
             use_dict_result=False,
             use_numpy=False,
         )
@@ -1197,13 +1199,15 @@ class TestFetchArrowBatches:
             with pytest.raises(ProgrammingError, match="pyarrow"):
                 list(cursor.fetch_arrow_batches())
 
-    def test_passes_force_microsecond_precision(self, cursor):
+    def test_passes_force_microsecond_precision(self, cursor, mock_connection):
         cursor._query_result._stream_ptr = 42
 
         with patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])) as mock_get:
             list(cursor.fetch_arrow_batches(force_microsecond_precision=True))
 
-        mock_get.assert_called_once_with(stream_ptr=42, force_microsecond_precision=True, number_to_decimal=ANY)
+        mock_get.assert_called_once_with(
+            stream_ptr=42, connection=mock_connection, force_microsecond_precision=True, number_to_decimal=ANY
+        )
 
 
 class TestFetchArrowAll:
@@ -1277,13 +1281,15 @@ class TestFetchArrowAll:
 
         assert result is None
 
-    def test_passes_force_microsecond_precision(self, cursor):
+    def test_passes_force_microsecond_precision(self, cursor, mock_connection):
         cursor._query_result._stream_ptr = 42
 
         with patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])) as mock_get:
             cursor.fetch_arrow_all(force_microsecond_precision=True)
 
-        mock_get.assert_called_once_with(stream_ptr=42, force_microsecond_precision=True, number_to_decimal=ANY)
+        mock_get.assert_called_once_with(
+            stream_ptr=42, connection=mock_connection, force_microsecond_precision=True, number_to_decimal=ANY
+        )
 
 
 class TestFetchPandasBatches:
