@@ -803,7 +803,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             stream_ptr=self._query_result.consume_stream(),
             connection=self._connection,
             use_dict_result=self._use_dict_result,
-            use_numpy=self._connection._numpy,
+            use_numpy=bool(self._connection.config.numpy),
         )
 
     @pep249

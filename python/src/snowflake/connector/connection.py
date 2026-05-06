@@ -10,7 +10,6 @@ import atexit
 import functools
 import logging
 import platform
-import re
 import threading
 import warnings
 
@@ -19,10 +18,9 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, TypeVar, cast
 
-from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
-from ._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
+from ._internal.config_utils import create_config_settings_from_dict
 from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
 from ._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
 from ._internal.errorhandler import ErrorHandlerMixin
@@ -30,8 +28,8 @@ from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
 from ._internal.logout_config_mapping import (
-    LogoutConfig,
     LogoutOptionKeys,
+    logout_config_options_modifier,
 )
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
@@ -58,6 +56,7 @@ from ._internal.protobuf_gen.database_driver_v1_services import (
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
 from ._internal.text_utils import split_statements
+from .connection_config import ConnectionConfig
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import DatabaseError, Error, ErrorValue, InterfaceError, ProgrammingError
@@ -77,11 +76,11 @@ _APPLICATION_NAME = "PythonConnector"
 # Kept as a public alias for backward compatibility — external packages
 # (e.g. snowflake-sqlalchemy) may import this symbol.
 CLIENT_NAME = _APPLICATION_NAME
-# The old connector used re.match(r"[\w\d_]+") without anchors, so any string
-# starting with a word character was accepted (dots, hyphens, etc. in the tail
-# were silently ignored).  We keep a start-anchored pattern without $ so that
-# callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
-APPLICATION_RE = re.compile(r"^[\w\d_]+")
+
+# Default upper bound for query strings included in log messages.  Mirrors
+# the ``log_max_query_length`` default emitted by the generated
+# :class:`ConnectionConfig` (sourced from ``PARAM_DEFS``); kept here as a
+# named constant so the property fallback isn't a magic number.
 LOG_MAX_QUERY_LENGTH = 80
 
 SessionParameters = dict[str, Any]
@@ -118,108 +117,94 @@ class Connection(ErrorHandlerMixin):
     def __init__(
         self,
         *,
-        paramstyle: str | None = None,
-        autocommit: bool | None = None,
+        connection_name: str | None = None,
+        connections_file_path: str | None = None,
+        config: ConnectionConfig | None = None,
         **kwargs: ConnectionParamValue,
     ) -> None:
         """
         Initialize a new connection object.
 
+        ``connection_name``, ``connections_file_path`` and ``config`` are
+        keyword-only to preserve the previous calling contract — the legacy
+        ``__init__`` was ``(self, **kwargs)`` so any positional argument was
+        a ``TypeError``.  Keeping these keyword-only guarantees that an
+        accidental positional call fails fast instead of being silently
+        bound to one of the new parameters.
+
         Args:
-            paramstyle: Binding style – ``"pyformat"`` (default), ``"format"``, ``"qmark"`` or ``"numeric"``
-            autocommit: Optional bool to enable/disable autocommit at connection time
-            database: Database name
-            user: Username
-            password: Password
-            host: Host name
-            port: Port number
-            private_key: Private key in bytes, str (base64), or RSAPrivateKey format
-            session_parameters: Optional dict of session parameters to set at connection time
-            server_session_keep_alive: Optional[bool] - Control server session lifecycle
-                - True: Never send logout (Fire & Forget; session persists on server
-                  as long as there is activity in it, e.g. running queries)
-                - False: Always send logout on close. For backward compatibility,
-                  False is currently remapped to None when auto-detection is enabled,
-                  so Core checks the async query registry before logout.
-                  This remapping will be removed in a future version.
-                - None: Delegate to auto-detection setting
-            enable_server_session_keep_alive_auto_detection: Optional[bool]
-                - True (default): Check async query registry before logout (backward compat)
-                - False: Don't check registry
-                - None: Auto-detection disabled (Core treats None as False)
-            auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
-            authenticator: Authentication method. Use ``"USERNAME_PASSWORD_MFA"`` for MFA authentication.
-            passcode: MFA passcode (TOTP one-time code from an authenticator app). When provided
-                with ``authenticator="USERNAME_PASSWORD_MFA"``, the driver automatically uses the
-                Duo passcode flow; you do not need to set ``ext_authn_duo_method="passcode"``
-                explicitly.
-            passcode_in_password: If ``True``, the MFA passcode is appended to the password field
-                rather than sent separately. This is treated the same as supplying ``passcode``
-                directly and will automatically select the Duo passcode flow. Default ``False``.
-            client_store_temporary_credential: If ``True``, a successfully obtained MFA token is
-                cached in the OS keyring and reused for subsequent connections, avoiding repeated
-                MFA prompts. Default ``False``. The server must have ``ALLOW_CLIENT_MFA_CACHING``
-                enabled. This also implicitly requests an MFA token from the server
-                (``CLIENT_REQUEST_MFA_TOKEN``).
-            client_request_mfa_token: Deprecated alias for ``client_store_temporary_credential``
-                from ``snowflake-connector-python``. Accepted for backward compatibility; prefer
-                ``client_store_temporary_credential`` in new code.
-            ext_authn_duo_method: DUO Security authentication method applied when no explicit
-                passcode is provided and no cached MFA token is available. Either ``"push"``
-                (send a push notification to the registered device) or ``"passcode"`` (prompt
-                for or use a TOTP code). When a ``passcode`` is supplied directly this parameter
-                is ignored because the passcode flow is selected automatically.
+            connection_name: Named connection to load from TOML configuration files
+            connections_file_path: Path to connections configuration file
+            config: Pre-built ConnectionConfig object (mutually exclusive with kwargs)
             **kwargs: Additional connection parameters
         """
         self._messages: list[tuple[type[Exception], ErrorValue]] = []
         self._errorhandler: Callable[..., None] = Error.default_errorhandler
 
+        self.config = ConnectionConfig.from_connection_args(
+            connection_name=connection_name,
+            connections_file_path=connections_file_path,
+            config=config,
+            **kwargs,
+        )
+
         # paramstyle (via setter so str | ParamStyle normalization is single-sourced)
         from snowflake.connector import paramstyle as default_paramstyle
 
-        self.paramstyle = paramstyle or default_paramstyle
+        self.paramstyle = self.config.paramstyle or default_paramstyle
 
-        kwargs = self._rewrite_private_key_password(kwargs)
-        kwargs = self._rewrite_mfa_params(kwargs)
+        # Validate numpy dependency
+        if self.config.numpy:
+            check_dependency(np)
 
-        self._log_max_query_length: int = kwargs.get("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
-
-        application = kwargs.pop("application", None)
-        if application is None or (isinstance(application, str) and not application):
-            self._application = _APPLICATION_NAME
-        elif isinstance(application, str):
-            if not APPLICATION_RE.match(application):
-                raise ProgrammingError(msg=f"Invalid application name: {application!r}")
-            self._application = application
-        else:
-            raise ProgrammingError(msg=f"Invalid application parameter (must be a non-empty string): {application!r}")
-        kwargs["client_app_id"] = self._application
-
-        # Extract Python-only params before processing kwargs for Rust core
-        self._numpy: bool = self._resolve_numpy_option(kwargs)
-        self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
+        # Backward-compat: ``auto_cleanup`` is a Python-only flag controlling whether
+        # ``__del__`` / atexit should auto-close a leaked connection.  The legacy
+        # snowflake-connector-python driver exposed it as ``conn.auto_cleanup`` and
+        # defaulted to ``True``; preserve both here.  ``self.config.auto_cleanup``
+        # is ``None`` when the caller did not provide a value, which we map to
+        # the legacy default ``True``.  The field is in ``_PYTHON_ONLY`` on
+        # ``ConnectionConfig`` so it is never forwarded to the Rust core.
+        self.auto_cleanup: bool = True if self.config.auto_cleanup is None else bool(self.config.auto_cleanup)
 
         self.db_api = database_driver_client()
         self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
-        if autocommit is not None and not isinstance(autocommit, bool):
-            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+        # The LogoutConfig modifier re-applies the legacy Python wrapper
+        # behaviour (default ``enable_server_session_keep_alive_auto_detection=True``
+        # with FutureWarning, ``False+True → None`` keep-alive remap, default
+        # ``logout_error_strategy=best_effort``) on top of the generated
+        # ConnectionConfig fields.  See ``logout_config_options_modifier`` for
+        # the full contract.
+        options = self.config.to_proto_options(
+            options_modifiers=[logout_config_options_modifier],
+        )
 
-        # Pop all special-purpose keys from kwargs in-place.
-        # After this, kwargs contains only generic Core options.
-        session_params = self._parse_kwargs(kwargs, autocommit)
+        if options:
+            response = self.db_api.connection_set_options(
+                ConnectionSetOptionsRequest(
+                    conn_handle=self.conn_handle,
+                    options=options,
+                )
+            )
+            for warning in response.warnings:
+                warnings.warn(warning.message, stacklevel=2)
 
-        # All driver config → Core in a single RPC (generic kwargs + logout config)
-        self._send_driver_options(kwargs)
-
-        # Session params → Core (separate RPC: these are Snowflake server
-        # SET commands (string→string), not driver config (typed ConfigSetting))
+        # Set session parameters if provided (before connection_init)
+        session_params = self.config.session_parameters
         if session_params:
             self.db_api.connection_set_session_parameters(
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
+
+        # Initialise close-lifecycle state before ``_connect()`` so that the
+        # ``__del__`` / atexit fail-safes always observe a sane object even
+        # if connection_init raises.  ``_connect()`` deliberately does NOT
+        # touch these — re-initialising them there would also reset the
+        # close lock if ``_connect()`` were ever called more than once.
+        self._closed = False
+        self._close_lock = threading.Lock()
 
         self._connect()
 
@@ -228,7 +213,6 @@ class Connection(ErrorHandlerMixin):
 
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-        self._close_lock = threading.Lock()
 
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
@@ -254,59 +238,6 @@ class Connection(ErrorHandlerMixin):
 
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
-
-    def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
-        """Parse and extract all special params from kwargs in-place.
-
-        After this call, kwargs contains only generic Core options
-        suitable for connection_set_options. Special params are stored
-        on self (auto_cleanup, _numpy, logout_config).
-        Session params are returned to the caller for a single-use RPC.
-        """
-        # Python-only (pop — never goes to Core)
-        self.auto_cleanup: bool = pop_typed_kwarg(kwargs, "auto_cleanup", bool, True)
-
-        # Session params use a dedicated RPC (connection_set_session_parameters),
-        # not the generic connection_set_options path, so pop them from kwargs.
-        session_params = self._extract_session_params(kwargs, autocommit)
-
-        # Transform in-place (stays in kwargs for generic path)
-        if "private_key" in kwargs:
-            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
-
-        # Logout params (pop + resolve defaults + build config).
-        # Init-time snapshot only; Core re-derives at close() time from connection_seed,
-        # so post-init overrides like close(retry=False) won't be reflected here.
-        self.logout_config = LogoutConfig.from_kwargs(kwargs)
-
-        return session_params
-
-    @staticmethod
-    def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
-        """Pop session_parameters from kwargs and fold in autocommit."""
-        params: SessionParameters = kwargs.pop("session_parameters", None) or {}
-        if autocommit is not None:
-            params["AUTOCOMMIT"] = str(autocommit).lower()
-        return params
-
-    def _send_driver_options(self, kwargs: dict[str, Any]) -> None:
-        """Send all driver config to Core in a single connection_set_options RPC.
-
-        Combines generic kwargs (user, account, host, ...) with resolved logout
-        config from self.logout_config (server_session_keep_alive, error_strategy,
-        timeouts, ...) into one batched call. Called at init time, before connection_init.
-        """
-        options = create_config_settings_from_dict(kwargs)
-        options.update(create_config_settings_from_dict(self.logout_config.to_option_dict()))
-        if options:
-            response = self.db_api.connection_set_options(
-                ConnectionSetOptionsRequest(
-                    conn_handle=self.conn_handle,
-                    options=options,
-                )
-            )
-            for warning in response.warnings:
-                warnings.warn(warning.message, stacklevel=2)
 
     @pep249
     @api_telemetry
@@ -675,38 +606,6 @@ class Connection(ErrorHandlerMixin):
     def _telemetry(self) -> _BackwardCompatTelemetryClient:
         return _BackwardCompatTelemetryClient()
 
-    @backward_compatibility
-    def _rewrite_private_key_password(self, kwargs: ConnectionParameters) -> ConnectionParameters:
-        private_key_file_pwd = kwargs.pop("private_key_file_pwd", None)
-        if private_key_file_pwd is not None:
-            kwargs = {**kwargs, "private_key_password": private_key_file_pwd}
-        return kwargs
-
-    @backward_compatibility
-    def _rewrite_mfa_params(self, kwargs: ConnectionParameters) -> ConnectionParameters:
-        """Translate Python-style MFA parameter names to the keys expected by the Rust core.
-
-        Handles two rewrite rules:
-
-        * ``passcode_in_password`` → ``passcodeInPassword`` (camelCase key required by Rust core).
-        * ``client_request_mfa_token`` → ``client_store_temporary_credential`` for compatibility
-          with ``snowflake-connector-python``, which used the former name for MFA token caching.
-          If both are supplied, ``client_store_temporary_credential`` takes precedence and the
-          legacy key is discarded.
-        """
-        passcode_in_password = kwargs.pop("passcode_in_password", None)
-        if passcode_in_password is not None:
-            kwargs = {**kwargs, "passcodeInPassword": passcode_in_password}
-
-        # client_request_mfa_token is the legacy snowflake-connector-python name for MFA token
-        # caching.  Map it to the canonical key so callers migrating from the old driver do not
-        # need to update their code.
-        legacy_token_cache = kwargs.pop("client_request_mfa_token", None)
-        if legacy_token_cache is not None and "client_store_temporary_credential" not in kwargs:
-            kwargs = {**kwargs, "client_store_temporary_credential": legacy_token_cache}
-
-        return kwargs
-
     @property
     def role(self) -> str | None:
         """The current role in use for the session."""
@@ -805,7 +704,8 @@ class Connection(ErrorHandlerMixin):
     @property
     def application(self) -> str:
         """The name of the client application connecting to Snowflake."""
-        return self._application
+        # Always set by from_connection_args (defaults to _APPLICATION_NAME)
+        return self.config.application  # type: ignore[return-value]
 
     @property
     @pep249
@@ -850,7 +750,13 @@ class Connection(ErrorHandlerMixin):
     @property
     def log_max_query_length(self) -> int:
         """Maximum number of characters of a query string to log."""
-        return self._log_max_query_length
+        # ``self.config.log_max_query_length`` defaults to ``LOG_MAX_QUERY_LENGTH``
+        # via the generated dataclass; the explicit fallback covers the case
+        # where a caller passed ``log_max_query_length=None`` to disable the
+        # default without supplying a replacement.
+        return (
+            self.config.log_max_query_length if self.config.log_max_query_length is not None else LOG_MAX_QUERY_LENGTH
+        )
 
     def _format_query_for_log(self, query: str) -> str:
         """Collapse whitespace and truncate a query string for safe debug logging."""
@@ -876,11 +782,11 @@ class Connection(ErrorHandlerMixin):
     @property
     def arrow_number_to_decimal(self) -> bool:
         """Whether to convert Arrow numeric types to Python ``Decimal`` instead of ``float``."""
-        return self._arrow_number_to_decimal
+        return bool(self.config.arrow_number_to_decimal)
 
     @arrow_number_to_decimal.setter
     def arrow_number_to_decimal(self, value: bool) -> None:
-        self._arrow_number_to_decimal = bool(value)
+        self.config.arrow_number_to_decimal = bool(value)
 
     @arrow_number_to_decimal.setter  # type: ignore[attr-defined, untyped-decorator]
     @backward_compatibility
@@ -946,14 +852,6 @@ class Connection(ErrorHandlerMixin):
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
-
-    @staticmethod
-    def _resolve_numpy_option(kwargs: ConnectionParameters) -> bool:
-        """Pop ``numpy`` from *kwargs* and validate that numpy is installed if requested."""
-        use_numpy = bool(kwargs.pop("numpy", False))
-        if use_numpy:
-            check_dependency(np)
-        return use_numpy
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:
