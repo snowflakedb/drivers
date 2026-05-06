@@ -1,12 +1,13 @@
 #!/bin/bash
 #
 # Post-install script for the Snowflake ODBC UD macOS pkg.
-# Registers the driver with the iODBC Driver Manager.
+# Registers the driver and a default DSN with the iODBC Driver Manager.
 #
 # Driver registration and DSN content live in ini section templates installed
-# alongside the driver. odbc/installer/unix/package.sh substitutes
+# alongside this script. odbc/installer/mac/package.sh substitutes
 # __ODBC_API_VERSION__ at packaging time from [package.metadata.odbc] in
-# odbc/Cargo.toml; the remaining placeholders are substituted here at install time.
+# odbc/Cargo.toml; the remaining placeholders are substituted here at install
+# time.
 #
 
 INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
@@ -33,6 +34,13 @@ if [ -z "${SF_ACCOUNT:-}" ]; then
 fi
 
 mkdir -p "$ODBC_DIR"
+
+parse_section_header() {
+    head -n 1 "$1" | sed -e 's/^\[//' -e 's/\]$//'
+}
+
+DRIVER_NAME=$(parse_section_header "$SCRIPT_DIR/odbcinst.ini.template")
+DSN_NAME=$(parse_section_header "$SCRIPT_DIR/odbc.ini.template")
 
 render_template() {
     sed \
@@ -76,8 +84,66 @@ write_ini_section() {
     mv "$tmp" "$target_file"
 }
 
+upsert_ini_kv() {
+    local target_file="$1" section="$2" key="$3" value="$4"
+
+    local tmp
+    tmp=$(mktemp)
+
+    if [ -f "$target_file" ]; then
+        awk -v section="[$section]" -v key="$key" -v value="$value" '
+            BEGIN { in_section = 0; seen_section = 0; updated = 0 }
+            /^\[/ {
+                if (in_section && !updated) {
+                    print key "=" value
+                    updated = 1
+                }
+                in_section = ($0 == section) ? 1 : 0
+                if (in_section) seen_section = 1
+                print
+                next
+            }
+            in_section {
+                eq = index($0, "=")
+                if (eq > 0) {
+                    line_key = substr($0, 1, eq - 1)
+                    sub(/[[:space:]]+$/, "", line_key)
+                    if (line_key == key) {
+                        if (!updated) {
+                            print key "=" value
+                            updated = 1
+                        }
+                        next
+                    }
+                }
+                print
+                next
+            }
+            { print }
+            END {
+                if (!seen_section) {
+                    if (NR > 0) print ""
+                    print section
+                    print key "=" value
+                } else if (!updated) {
+                    print key "=" value
+                }
+            }
+        ' "$target_file" > "$tmp"
+    else
+        printf '%s\n%s=%s\n' "[$section]" "$key" "$value" > "$tmp"
+    fi
+
+    mv "$tmp" "$target_file"
+}
+
 write_ini_section "$ODBCINST_FILE" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
 write_ini_section "$ODBC_FILE"     "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
+
+# Maintain the iODBC index sections so SQLDrivers() / SQLDataSources() and
+# tools like ODBC Manager.app see our driver and DSN.
+upsert_ini_kv "$ODBCINST_FILE" "ODBC Drivers"      "$DRIVER_NAME" "Installed"
+upsert_ini_kv "$ODBC_FILE"     "ODBC Data Sources" "$DSN_NAME"    "$DRIVER_NAME"
 
 echo "Snowflake ODBC UD registered in $ODBCINST_FILE"
 echo "Default Snowflake DSN written to $ODBC_FILE"
