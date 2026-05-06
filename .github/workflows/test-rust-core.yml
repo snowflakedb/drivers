@@ -486,13 +486,43 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
+      # Locate vcvarsall.bat dynamically via vswhere instead of hard-coding the
+      # VS 2022 path. The `windows-latest` image is being migrated from
+      # `windows-2025` to `windows-2025-vs2026` (rollout completing 2026-05-12),
+      # which only ships VS 2026, so the old hard-coded VS 2022 path silently
+      # disappears. `call` to a missing .bat does NOT fail in cmd, which is why
+      # the previous version produced an empty MSVC env and a confusing
+      # `'dumpbin' is not recognized` error rather than failing fast.
+      - name: Locate MSVC (vswhere)
+        id: vswhere
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_INSTALL=%%i"
+          if not defined VS_INSTALL (
+            echo ERROR: vswhere could not locate a Visual Studio installation
+            exit /b 1
+          )
+          if not exist "%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat" (
+            echo ERROR: vcvarsall.bat not found at "%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat"
+            exit /b 1
+          )
+          echo VCVARSALL=%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat>> %GITHUB_ENV%
+
       - name: Build and test
         id: run_rust_tests_x86
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          call "%VCVARSALL%" x86
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+
+          :: Guard: vcvarsall.bat can succeed silently with a broken env, so
+          :: confirm the toolchain is actually on PATH before relying on it.
+          where dumpbin >nul 2>&1
+          if %ERRORLEVEL% neq 0 (
+            echo ERROR: dumpbin not on PATH after vcvarsall.bat x86
+            exit /b 1
+          )
 
           cargo build --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
@@ -511,7 +541,7 @@ jobs:
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+          call "%VCVARSALL%" x86
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
 
