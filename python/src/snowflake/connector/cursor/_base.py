@@ -801,6 +801,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     def _create_row_iterator(self) -> ArrowStreamIterator:
         return create_row_iterator(
             stream_ptr=self._query_result.consume_stream(),
+            connection=self._connection,
             use_dict_result=self._use_dict_result,
             use_numpy=self._connection._numpy,
         )
@@ -1081,6 +1082,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """Fetch Arrow Tables in batches."""
         iterator = create_table_iterator(
             stream_ptr=self._query_result.consume_stream(),
+            connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -1100,6 +1102,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """Fetch all results as a single Arrow Table."""
         iterator = create_table_iterator(
             stream_ptr=self._query_result.consume_stream(),
+            connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )

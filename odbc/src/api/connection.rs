@@ -1206,6 +1206,15 @@ pub fn get_info<E: OdbcEncoding>(
             Ok(())
         }
         InfoType::DriverOdbcVer => {
+            // ODBC 3.80 — matches the level the legacy Snowflake ODBC
+            // driver advertises (`DriverODBCVer=03.52` in the .ini and
+            // `03.80` in the SQLGetInfoValues fixture). Critically, the
+            // Microsoft Windows ODBC Driver Manager refuses to forward
+            // `SQLBindParameter(SQL_C_GUID, …)` with `HYC00` when the
+            // driver advertises `<03.50`, because `SQL_C_GUID` is an
+            // ODBC 3.5+ C type. Returning `03.80` is also a superset
+            // claim: every API the driver currently implements is
+            // available at that level.
             write_string_bytes::<E>(
                 ODBC_API_VERSION,
                 info_value_ptr as *mut E::Char,

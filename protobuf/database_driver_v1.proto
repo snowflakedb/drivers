@@ -405,6 +405,14 @@ message ConnectionGetParameterResponse {
   optional string value = 1;
 }
 
+message ConnectionGetAllParametersRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionGetAllParametersResponse {
+  map<string, string> parameters = 1;
+}
+
 message ConnectionValidateOptionsRequest {
   ConnectionHandle conn_handle = 1;
 }
@@ -806,6 +814,8 @@ service DatabaseDriver {
   // gets cached session parameter. Cache is updated with subset of connection parameters
   // (chosen by server, included in HTTP response) after each query
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
+  // gets all resolved session parameters at once
+  rpc ConnectionGetAllParameters(ConnectionGetAllParametersRequest) returns (ConnectionGetAllParametersResponse);
   // pre-flight validation of connection options - reports all issues at once
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
   // Fetch the result of a previously executed query by Snowflake Query ID

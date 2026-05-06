@@ -505,6 +505,8 @@ behavior_differences:
     reviewed: false
     old_driver_behavior: |
       When SQLCancel or SQLCancelHandle is called from a different thread to cancel an in-progress SQLExecDirect, the cancel function intermittently returns SQL_ERROR with SQLSTATE HY008 (NativeError 604, "SQL execution canceled") instead of SQL_SUCCESS. This happens because the driver's internal CancelExecute() calls Statement::cancel() without a try-catch. When the server's abort-request endpoint responds with a non-success status (e.g. the query was already canceled before the REST abort completed), cancel() throws and the exception propagates to the caller.
+
+      The diagnostic record posted alongside that SQL_ERROR is also unreliable. The exception path may unwind without populating the diag list, and the in-flight SQLExecDirect on the executor thread concurrently clears the per-statement diag list at entry and posts its own HY008 at exit. A snapshot of the diag list taken on the canceling thread immediately after the cancel returns may therefore be empty, contain a single HY008 from the executor's completed SQLExecDirect, or contain a single HY008 posted by the cancel itself, depending on thread scheduling.
     new_driver_behavior: |
       Cross-thread SQLCancel and SQLCancelHandle always return SQL_SUCCESS per the ODBC specification. The cancel function posts no diagnostics of its own; only the canceled function (SQLExecDirect) returns SQL_ERROR with HY008.
     impact: |

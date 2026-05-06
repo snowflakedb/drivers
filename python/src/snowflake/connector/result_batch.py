@@ -251,7 +251,7 @@ class ResultBatch(ErrorHandlerMixin):
             )
 
         stream_ptr = self._take_arrow_stream_ptr(conn)
-        return create_row_iterator(stream_ptr, use_dict_result=use_dict_result)
+        return create_row_iterator(stream_ptr, connection=conn, use_dict_result=use_dict_result)
 
     @requires_dependency(pyarrow)
     def to_arrow(
@@ -265,6 +265,7 @@ class ResultBatch(ErrorHandlerMixin):
         return collect_arrow_table(
             create_table_iterator(
                 stream_ptr,
+                connection=conn,
                 number_to_decimal=number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
             ),
