@@ -50,6 +50,11 @@ def assert_dtypes(df: pd.DataFrame, expected: list) -> None:
         assert check(dtype), f"Column {i} ({df.columns[i]}): dtype {dtype} failed {check.__name__}"
 
 
+def assert_string_dtypes(df: pd.DataFrame) -> None:
+    for i, dtype in enumerate(df.dtypes):
+        assert pd.api.types.is_string_dtype(dtype), f"Column {i} ({df.columns[i]}): expected string, got {dtype}"
+
+
 def get_row(df: pd.DataFrame, idx: int) -> list:
     # use list() instead of .tolist(), as tolist() converts np/pandas types to native python types
     return list(df.iloc[idx])
