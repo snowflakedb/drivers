@@ -186,8 +186,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail binding compound interval C typ
   // When each compound SQL_C_INTERVAL_* type is bound to SQL_VARBINARY and executed
   // Then every interval bind is rejected with SQLSTATE 07006
   for (SQLSMALLINT c_type : {SQL_C_INTERVAL_YEAR_TO_MONTH, SQL_C_INTERVAL_DAY_TO_HOUR, SQL_C_INTERVAL_DAY_TO_MINUTE,
-                             SQL_C_INTERVAL_DAY_TO_SECOND, SQL_C_INTERVAL_HOUR_TO_MINUTE,
-                             SQL_C_INTERVAL_HOUR_TO_SECOND, SQL_C_INTERVAL_MINUTE_TO_SECOND}) {
+                             SQL_C_INTERVAL_DAY_TO_SECOND, SQL_C_INTERVAL_HOUR_TO_MINUTE, SQL_C_INTERVAL_HOUR_TO_SECOND,
+                             SQL_C_INTERVAL_MINUTE_TO_SECOND}) {
     SQL_INTERVAL_STRUCT v = {};
     SQLLEN ind = sizeof(v);
     check_incompatible_bindparam(stmt, c_type, SQL_VARBINARY, &v, sizeof(v), &ind);
@@ -236,8 +236,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should accept SQL_C_BINARY, SQL_C_CHAR, SQL
   {
     SQLCHAR hex_lit[] = "DEADBEEF";
     SQLLEN ind = SQL_NTS;
-    SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BINARY, 0, 0, hex_lit, 0,
-                                     &ind);
+    SQLRETURN ret =
+        SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BINARY, 0, 0, hex_lit, 0, &ind);
     REQUIRE_ODBC(ret, stmt);
     REQUIRE(SQLExecute(stmt.getHandle()) == SQL_SUCCESS);
   }
