@@ -218,15 +218,26 @@ pipeline {
                                     installSystemDeps()
                                     
                                     dir('python') {
-                                        // CC/CXX override: hatch ships its own python-build-standalone
-                                        // interpreter compiled with clang, so its sysconfig reports
-                                        // CXX=clang++. The Rocky 8 coverage image only has GCC, so
-                                        // setuptools/distutils fails the C++ extension build with
-                                        // "command 'clang++' failed: No such file or directory".
-                                        // Forcing CC=gcc / CXX=g++ keeps the build on the toolchain
-                                        // that's actually present in the image.
+                                        // Compiler setup for the Cython C++ extension build:
+                                        //
+                                        // 1. Hatch ships its own python-build-standalone interpreter
+                                        //    compiled with clang, so its sysconfig reports CXX=clang++.
+                                        //    The Rocky 8 image only has GCC, so without an override
+                                        //    setuptools/distutils dies with
+                                        //    "command 'clang++' failed: No such file or directory".
+                                        //    Force CC=gcc / CXX=g++ to use the toolchain in the image.
+                                        //
+                                        // 2. python-build-standalone also injects `-march=x86-64-v4`
+                                        //    into the build flags (its interpreter targets AVX2/AVX-512).
+                                        //    The default Rocky 8 system GCC is 8.5, which only knows
+                                        //    `-march=x86-64` and rejects v4 with
+                                        //    "cc1plus: error: bad value ('x86-64-v4') for '-march=' switch".
+                                        //    Source gcc-toolset-11 (already used by the ODBC stage)
+                                        //    so that `gcc`/`g++` resolve to GCC 11, which supports
+                                        //    `-march=x86-64-v4`.
                                         sh label: 'Build Python Package', script: '''
                                             set +x
+                                            source /opt/rh/gcc-toolset-11/enable
                                             export CC=gcc
                                             export CXX=g++
                                             RUSTFLAGS="" hatch build -t wheel
