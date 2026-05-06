@@ -904,7 +904,7 @@ jobs:
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-msi-${{ matrix.config }}-${{ matrix.arch }}
+          name: snowflake-odbc-ud-${{ matrix.config }}-${{ matrix.arch }}
           path: build/snowflake-odbc-ud-*.msi
 
   build_rpm:
