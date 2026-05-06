@@ -25,9 +25,9 @@ use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
-    ConnectionHandle, ExecuteQueryResponse, QueryBindings, ResultSetResponse,
-    StatementExecuteQueryRequest, StatementGetResultSetRequest,
-    StatementHandle as StatementHandleProto, StatementPrepareRequest, StatementSetOptionsRequest,
+    ConnectionGetResultSetRequest, ConnectionHandle, ExecuteQueryResponse, QueryBindings,
+    ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
+    StatementExecuteQueryRequest, StatementPrepareRequest, StatementSetOptionsRequest,
     StatementSetSqlQueryRequest, config_setting, execute_query_response, query_bindings,
 };
 use snafu::ResultExt;
@@ -179,7 +179,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     };
 
     update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
-    apply_execute_response(&mut inner, stmt_handle, response, ExecutionOrigin::Direct)?;
+    apply_execute_response(&mut inner, conn_handle, response, ExecutionOrigin::Direct)?;
     inner.rows_returned = 0;
     // Clear any SQL text cached by a prior SQLPrepare so a subsequent
     // SQLExecute cannot inject LIMIT into stale prepared SQL.
@@ -635,7 +635,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     let mut settings = dbc.connection.lock().numeric_settings;
     update_numeric_settings(&conn_handle, &mut settings)?;
     dbc.connection.lock().numeric_settings = settings;
-    apply_execute_response(&mut inner, stmt_handle, response, origin)?;
+    apply_execute_response(&mut inner, conn_handle, response, origin)?;
     inner.rows_returned = 0;
     inner.last_sent_max_rows = Some(max_rows);
     Ok(())
@@ -656,13 +656,13 @@ fn set_state(stmt: &mut StatementInner, state: StatementState) {
 
 /// Process an `ExecuteQueryResponse` and apply the resulting state to the statement.
 ///
-/// For Single results: fetches the Arrow stream via `StatementGetResultSet`, then
-/// creates the appropriate state (DDL/DML/Query).
+/// For Single results: uses the returned ResultSetHandle to fetch the Arrow stream,
+/// then creates the appropriate state (DDL/DML/Query).
 /// For Multi results: stores child query IDs, fetches the first child result set,
 /// and sets up state for `SQLMoreResults` iteration.
 fn apply_execute_response(
     stmt: &mut StatementInner,
-    stmt_handle: sf_core::protobuf::generated::database_driver_v1::StatementHandle,
+    conn_handle: ConnectionHandle,
     response: ExecuteQueryResponse,
     origin: ExecutionOrigin,
 ) -> OdbcResult<()> {
@@ -673,11 +673,17 @@ fn apply_execute_response(
     stmt.multi_current_idx = 0;
 
     match result {
-        execute_query_response::Result::Single(descriptor) => {
+        execute_query_response::Result::Single(rs_response) => {
+            let descriptor = rs_response
+                .result_descriptor
+                .required("Descriptor is required")?;
+            let rs_handle = rs_response
+                .result_set_handle
+                .required("ResultSet handle is required")?;
             let query_id = descriptor.query_id.clone();
-            let rs = fetch_result_set(stmt_handle, &query_id)?;
-            let execute_state = create_execute_state_from_result_set(
-                rs,
+            let stream = fetch_stream_and_release(rs_handle)?;
+            let execute_state = create_execute_state_from_stream(
+                stream,
                 descriptor.statement_type_id,
                 descriptor.rows_affected,
                 origin,
@@ -719,14 +725,16 @@ fn apply_execute_response(
 
             // Fetch and apply the first child result set.
             let first_id = &stmt.multi_query_ids[0];
-            let rs = fetch_result_set(stmt_handle, first_id)?;
-            let statement_type_id = rs
-                .result_descriptor
-                .as_ref()
-                .and_then(|d| d.statement_type_id);
-            let rows_affected = rs.result_descriptor.as_ref().and_then(|d| d.rows_affected);
+            let rs = fetch_result_set_by_query_id(conn_handle, first_id)?;
+            let descriptor = rs.result_descriptor.as_ref();
+            let statement_type_id = descriptor.and_then(|d| d.statement_type_id);
+            let rows_affected = descriptor.and_then(|d| d.rows_affected);
+            let rs_handle = rs
+                .result_set_handle
+                .required("ResultSet handle is required")?;
+            let stream = fetch_stream_and_release(rs_handle)?;
             let execute_state =
-                create_execute_state_from_result_set(rs, statement_type_id, rows_affected, origin)?;
+                create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
             stmt.multi_current_idx = 1;
             set_state(stmt, execute_state);
             Ok(())
@@ -734,14 +742,14 @@ fn apply_execute_response(
     }
 }
 
-/// Fetch a result set (descriptor + Arrow stream) for a given query ID.
-fn fetch_result_set(
-    stmt_handle: StatementHandleProto,
+/// Fetch a ResultSetResponse (handle + descriptor) for a given query ID via the connection.
+fn fetch_result_set_by_query_id(
+    conn_handle: ConnectionHandle,
     query_id: &str,
 ) -> OdbcResult<ResultSetResponse> {
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        c.statement_get_result_set(StatementGetResultSetRequest {
-            stmt_handle: Some(stmt_handle),
+        c.connection_get_result_set(ConnectionGetResultSetRequest {
+            conn_handle: Some(conn_handle),
             query_id: query_id.to_string(),
         })
         .await
@@ -749,13 +757,41 @@ fn fetch_result_set(
     Ok(response)
 }
 
-fn create_execute_state_from_result_set(
-    rs: ResultSetResponse,
+/// Fetch the Arrow stream from a ResultSet handle and release the handle.
+///
+/// `result_set_get_stream` takes ownership of the prebuilt stream (one-shot),
+/// so the handle is no longer useful after this call.
+fn fetch_stream_and_release(rs_handle: ResultSetHandle) -> OdbcResult<ArrowArrayStreamPtr> {
+    let stream = {
+        let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+            c.result_set_get_stream(ResultSetGetStreamRequest {
+                result_set_handle: Some(rs_handle),
+            })
+            .await
+        })?;
+        response.stream.required("Stream is required")?
+    };
+    release_result_set(rs_handle);
+    Ok(stream)
+}
+
+fn release_result_set(rs_handle: ResultSetHandle) {
+    if let Ok(rt) = global() {
+        let _ = rt.block_on(async |c| {
+            c.result_set_release(ResultSetReleaseRequest {
+                result_set_handle: Some(rs_handle),
+            })
+            .await
+        });
+    }
+}
+
+fn create_execute_state_from_stream(
+    stream: ArrowArrayStreamPtr,
     statement_type_id: Option<i64>,
     rows_affected: Option<i64>,
     origin: ExecutionOrigin,
 ) -> OdbcResult<StatementState> {
-    let stream = rs.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
     let schema = reader.schema();
 
@@ -2060,15 +2096,24 @@ pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
     let query_id = inner.multi_query_ids[inner.multi_current_idx].clone();
     inner.multi_current_idx += 1;
 
-    let stmt_handle = guard.stmt_handle;
-    let rs = fetch_result_set(stmt_handle, &query_id)?;
-    let statement_type_id = rs
-        .result_descriptor
-        .as_ref()
-        .and_then(|d| d.statement_type_id);
-    let rows_affected = rs.result_descriptor.as_ref().and_then(|d| d.rows_affected);
+    let dbc = guard.conn()?;
+    let conn = dbc.connection.lock();
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+    };
+    drop(conn);
+
+    let rs = fetch_result_set_by_query_id(conn_handle, &query_id)?;
+    let descriptor = rs.result_descriptor.as_ref();
+    let statement_type_id = descriptor.and_then(|d| d.statement_type_id);
+    let rows_affected = descriptor.and_then(|d| d.rows_affected);
+    let rs_handle = rs
+        .result_set_handle
+        .required("ResultSet handle is required")?;
+    let stream = fetch_stream_and_release(rs_handle)?;
     let execute_state =
-        create_execute_state_from_result_set(rs, statement_type_id, rows_affected, origin)?;
+        create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
     set_state(&mut inner, execute_state);
     Ok(())
 }

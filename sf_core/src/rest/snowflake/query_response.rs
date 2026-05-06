@@ -184,7 +184,7 @@ pub struct NameValueParameter {
     pub value: serde_json::Value,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct RowType {
     #[serde(rename = "name")]
     pub name: String,
@@ -209,7 +209,7 @@ pub struct RowType {
     pub _fields: Option<Vec<FieldMetadata>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FieldMetadata {
     //unused fields
     #[serde(rename = "name")]
@@ -440,45 +440,40 @@ impl Data {
         })
     }
 
-    pub fn to_rowset_data<'a>(&'a self) -> RowsetData<'a> {
+    /// Converts to `RowsetData` by moving fields out of `Data`.
+    pub fn into_rowset_data(self) -> RowsetData {
+        let chunk_download_data = self.to_chunk_download_data();
+        let initial_base64_opt = self.rowset_base64.filter(|v| !v.is_empty());
+
         match self.query_result_format.as_deref() {
-            Some("arrow") => {
-                match (
-                    self.to_initial_base64_opt(),
-                    self.to_chunk_download_data(),
-                    self.row_type.as_ref(),
-                ) {
-                    (initial_base64_opt, Some(chunk_download_data), _) => {
-                        RowsetData::ArrowMultiChunk {
-                            initial_base64_opt,
-                            chunk_download_data,
-                        }
-                    }
-                    (Some(chunk_base64), None, _) => RowsetData::ArrowSingleChunk { chunk_base64 },
-                    (None, None, Some(rowtype)) => RowsetData::SchemaOnly { rowtype },
-                    _ => {
-                        tracing::error!(
-                            "Initial base64 and/or chunk download data are missing for Arrow result format"
-                        );
-                        RowsetData::NoData
-                    }
+            Some("arrow") => match (initial_base64_opt, chunk_download_data, self.row_type) {
+                (initial_base64_opt, Some(chunk_download_data), _) => RowsetData::ArrowMultiChunk {
+                    initial_base64_opt,
+                    chunk_download_data,
+                },
+                (Some(chunk_base64), None, _) => RowsetData::ArrowSingleChunk { chunk_base64 },
+                (None, None, Some(rowtype)) => RowsetData::SchemaOnly { rowtype },
+                _ => {
+                    tracing::error!(
+                        "Initial base64 and/or chunk download data are missing for Arrow result format"
+                    );
+                    RowsetData::NoData
                 }
-            }
-            Some("json") => {
-                if let Some((rowset, rowtype)) = self.to_json_rowset() {
-                    match self.to_chunk_download_data() {
-                        Some(chunk_download_data) => RowsetData::JsonMultiChunk {
-                            rowset,
-                            rowtype,
-                            chunk_download_data,
-                        },
-                        None => RowsetData::JsonRowset { rowset, rowtype },
-                    }
-                } else {
+            },
+            Some("json") => match (self.rowset, self.row_type) {
+                (Some(rowset), Some(rowtype)) => match chunk_download_data {
+                    Some(chunk_download_data) => RowsetData::JsonMultiChunk {
+                        rowset,
+                        rowtype,
+                        chunk_download_data,
+                    },
+                    None => RowsetData::JsonRowset { rowset, rowtype },
+                },
+                _ => {
                     tracing::error!("Rowset and/or rowtype are missing for JSON result format");
                     RowsetData::NoData
                 }
-            }
+            },
             Some(other) => {
                 tracing::error!("Unsupported query result format: {other}");
                 RowsetData::NoData
@@ -532,26 +527,30 @@ impl Data {
 }
 
 #[derive(Debug)]
-pub enum RowsetData<'a> {
+pub enum RowsetData {
     SchemaOnly {
-        rowtype: &'a Vec<RowType>,
+        rowtype: Vec<RowType>,
     },
     ArrowMultiChunk {
-        initial_base64_opt: Option<&'a str>,
+        initial_base64_opt: Option<String>,
         chunk_download_data: Vec<ChunkDownloadData>,
     },
     ArrowSingleChunk {
-        chunk_base64: &'a str,
+        chunk_base64: String,
     },
     JsonRowset {
-        rowset: &'a Vec<Vec<Option<String>>>,
-        rowtype: &'a Vec<RowType>,
+        rowset: Vec<Vec<Option<String>>>,
+        rowtype: Vec<RowType>,
     },
     JsonMultiChunk {
-        rowset: &'a Vec<Vec<Option<String>>>,
-        rowtype: &'a Vec<RowType>,
+        rowset: Vec<Vec<Option<String>>>,
+        rowtype: Vec<RowType>,
         chunk_download_data: Vec<ChunkDownloadData>,
     },
+    /// PUT (UPLOAD) result: file transfer already executed, results stored.
+    Upload(Vec<crate::file_manager::UploadResult>),
+    /// GET (DOWNLOAD) result: file transfer already executed, results stored.
+    Download(Vec<crate::file_manager::DownloadResult>),
     NoData,
 }
 
@@ -1034,7 +1033,7 @@ mod tests {
         let response: Response = serde_json::from_str(json).unwrap();
 
         assert!(matches!(
-            response.data.to_rowset_data(),
+            response.data.into_rowset_data(),
             RowsetData::ArrowMultiChunk { .. }
         ));
     }

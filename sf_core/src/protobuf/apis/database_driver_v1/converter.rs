@@ -1,12 +1,16 @@
+use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::ExecuteQueryResult as NativeExecuteQueryResult;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
-use crate::apis::database_driver_v1::ResolvedResultSet as NativeResolvedResultSet;
+use crate::apis::database_driver_v1::InlineData;
 use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescriptor;
+use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
-use crate::apis::database_driver_v1::error::{ConfigError, InvalidColumnMetadataSnafu, RestError};
+use crate::apis::database_driver_v1::error::{
+    ConfigError, InlineJsonEncodingSnafu, InvalidColumnMetadataSnafu, RestError,
+};
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
@@ -138,6 +142,24 @@ impl From<StatementHandle> for Handle {
 impl From<Handle> for StatementHandle {
     fn from(handle: Handle) -> Self {
         StatementHandle {
+            id: handle.id as i64,
+            magic: handle.magic as i64,
+        }
+    }
+}
+
+impl From<ResultSetHandle> for Handle {
+    fn from(handle: ResultSetHandle) -> Self {
+        Handle {
+            id: handle.id as u64,
+            magic: handle.magic as u64,
+        }
+    }
+}
+
+impl From<Handle> for ResultSetHandle {
+    fn from(handle: Handle) -> Self {
+        ResultSetHandle {
             id: handle.id as i64,
             magic: handle.magic as i64,
         }
@@ -288,8 +310,8 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
         match result {
-            NativeExecuteQueryResult::Single(descriptor) => ExecuteQueryResponse {
-                result: Some(execute_query_response::Result::Single(descriptor.into())),
+            NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
+                result: Some(execute_query_response::Result::Single(info.into())),
             },
             NativeExecuteQueryResult::Multi {
                 parent,
@@ -308,13 +330,86 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     }
 }
 
-impl From<NativeResolvedResultSet> for ResultSetResponse {
-    fn from(result: NativeResolvedResultSet) -> Self {
-        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
-        ResultSetResponse {
-            result_descriptor: Some(result.descriptor.into()),
+impl From<Box<FFI_ArrowArrayStream>> for ResultSetGetStreamResponse {
+    fn from(stream: Box<FFI_ArrowArrayStream>) -> Self {
+        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(stream).into();
+        ResultSetGetStreamResponse {
             stream: Some(stream_ptr),
         }
+    }
+}
+
+impl From<NativeResultSetInfo> for ResultSetResponse {
+    fn from(info: NativeResultSetInfo) -> Self {
+        ResultSetResponse {
+            result_set_handle: Some(info.handle.into()),
+            result_descriptor: Some(info.descriptor.into()),
+        }
+    }
+}
+
+impl TryFrom<ChunkDataWithDescriptor> for ResultSetGetChunksResponse {
+    type Error = DriverException;
+
+    fn try_from(value: ChunkDataWithDescriptor) -> Result<Self, Self::Error> {
+        let chunk_data = value.chunk_data;
+        let descriptor = value.descriptor;
+
+        let columns: Vec<ColumnMetadata> = descriptor
+            .columns
+            .iter()
+            .cloned()
+            .map(|c| c.into())
+            .collect();
+
+        let mut chunks = Vec::new();
+
+        let inline_base64 = match &chunk_data.inline {
+            InlineData::Json(rowset) => {
+                let row_types: Vec<RowType> = descriptor
+                    .columns
+                    .iter()
+                    .map(column_metadata_to_row_type)
+                    .collect::<Result<Vec<_>, _>>()
+                    .to_protobuf()?;
+                Some(
+                    json_rowset_to_arrow_ipc_base64(rowset, &row_types)
+                        .context(InlineJsonEncodingSnafu)
+                        .to_protobuf()?,
+                )
+            }
+            InlineData::ArrowIpc(b64) => Some(b64.clone()),
+            InlineData::None => None,
+        };
+
+        if let Some(base64_data) = inline_base64 {
+            let remote_rows: i32 = chunk_data.remote_chunks.iter().map(|c| c.row_count).sum();
+            let inline_row_count = descriptor
+                .rows_affected
+                .map(|total| (total as i32).saturating_sub(remote_rows))
+                .unwrap_or(0);
+
+            chunks.push(ResultChunk {
+                format: ChunkFormat::ArrowIpc as i32,
+                data: Some(result_chunk::Data::Inline(base64_data)),
+                row_count: inline_row_count,
+            });
+        }
+
+        for c in &chunk_data.remote_chunks {
+            chunks.push(ResultChunk {
+                format: ChunkFormat::from(chunk_data.format) as i32,
+                data: Some(result_chunk::Data::Remote(RemoteChunk {
+                    url: c.url.clone(),
+                    headers: c.headers.clone(),
+                    compressed_size: c.compressed_size,
+                    uncompressed_size: c.uncompressed_size,
+                })),
+                row_count: c.row_count,
+            });
+        }
+
+        Ok(ResultSetGetChunksResponse { chunks, columns })
     }
 }
 

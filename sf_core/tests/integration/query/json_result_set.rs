@@ -250,7 +250,11 @@ fn should_handle_empty_result_set_for_arrow_and_json() {
         execute_query_response::Result::Single(d) => d,
         _ => panic!("expected single"),
     };
-    assert_eq!(desc.rows_affected, Some(1), "Cannot force JSON result set");
+    assert_eq!(
+        desc.result_descriptor.as_ref().unwrap().rows_affected,
+        Some(1),
+        "Cannot force JSON result set"
+    );
 
     client.set_sql_query(&stmt, select_query);
     let json_result = client.execute_statement_query(&stmt);
@@ -330,7 +334,11 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
         execute_query_response::Result::Single(d) => d,
         _ => panic!("expected single"),
     };
-    assert_eq!(desc.rows_affected, Some(1), "Cannot force JSON result set");
+    assert_eq!(
+        desc.result_descriptor.as_ref().unwrap().rows_affected,
+        Some(1),
+        "Cannot force JSON result set"
+    );
 
     client.set_sql_query(&stmt, &select_query);
     let json_result = client.execute_statement_query(&stmt);

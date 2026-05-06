@@ -14,7 +14,7 @@ use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
-use rest::snowflake::query_response::{self, QueryResponseError};
+use rest::snowflake::query_response::{self, QueryResponseError, RowsetData};
 use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::sync::Arc;
 
@@ -35,34 +35,12 @@ const ODBC_PUT_ENCRYPTION_LITERAL: &str = "ENCRYPTED";
 /// from legacy libsnowflakeclient. See `ODBC_PUT_ENCRYPTION_LITERAL`.
 const ODBC_GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
 
-/// Result of processing a query response, containing the Arrow reader.
-pub struct QueryResult {
-    pub reader: Box<dyn RecordBatchReader + Send>,
-}
-
-pub async fn process_query_response(
+/// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
+pub(super) async fn perform_put_get_transfer(
+    command: &str,
     data: &query_response::Data,
-    http_client: &Client,
-    prefetch_config: &PrefetchConfig,
-    wrapper_presets: &WrapperPresets,
-) -> Result<QueryResult, QueryResponseProcessingError> {
-    match data.command {
-        Some(ref command) => perform_put_get(command.clone(), data, wrapper_presets).await,
-        None => {
-            let reader = read_batches(data.to_rowset_data(), http_client.clone(), prefetch_config)
-                .await
-                .context(BatchReadingSnafu)?;
-            Ok(QueryResult { reader })
-        }
-    }
-}
-
-async fn perform_put_get(
-    command: String,
-    data: &query_response::Data,
-    wrapper_presets: &WrapperPresets,
-) -> Result<QueryResult, QueryResponseProcessingError> {
-    match command.as_str() {
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    match command {
         "UPLOAD" => {
             let file_upload_data = data
                 .to_file_upload_data()
@@ -70,9 +48,7 @@ async fn perform_put_get(
             let upload_results = upload_files(&file_upload_data)
                 .await
                 .context(FileUploadSnafu)?;
-            let reader = upload_results_reader(upload_results, wrapper_presets)
-                .context(UploadResultsConversionSnafu)?;
-            Ok(QueryResult { reader })
+            Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
             let file_download_data = data.to_file_download_data().map_err(|e| {
@@ -85,9 +61,7 @@ async fn perform_put_get(
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
-            let reader = download_results_reader(download_results, wrapper_presets)
-                .context(DownloadResultsConversionSnafu)?;
-            Ok(QueryResult { reader })
+            Ok(RowsetData::Download(download_results))
         }
         _ => UnsupportedCommandSnafu {
             command: command.to_string(),
@@ -96,32 +70,52 @@ async fn perform_put_get(
     }
 }
 
-async fn read_batches<'a>(
-    data: query_response::RowsetData<'a>,
+/// Builds an Arrow `RecordBatchReader` from the stored `RowsetData`.
+/// Called lazily by `result_set_get_stream`.
+pub(super) async fn build_reader_from_rowset_data(
+    data: &RowsetData,
+    http_client: Client,
+    prefetch_config: &PrefetchConfig,
+    wrapper_presets: &WrapperPresets,
+) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+    match data {
+        RowsetData::Upload(results) => {
+            upload_results_reader(results, wrapper_presets).context(UploadResultsConversionSnafu)
+        }
+        RowsetData::Download(results) => download_results_reader(results, wrapper_presets)
+            .context(DownloadResultsConversionSnafu),
+        _ => read_batches(data, http_client, prefetch_config)
+            .await
+            .context(BatchReadingSnafu),
+    }
+}
+
+pub(super) async fn read_batches(
+    data: &RowsetData,
     http_client: Client,
     prefetch_config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
-        query_response::RowsetData::ArrowSingleChunk { chunk_base64 } => {
+        RowsetData::ArrowSingleChunk { chunk_base64 } => {
             single_chunk_reader(chunk_base64).context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::ArrowMultiChunk {
+        RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
         } => arrow_prefetch_reader(
-            initial_base64_opt,
-            chunk_download_data.into(),
+            initial_base64_opt.as_deref(),
+            chunk_download_data.clone().into(),
             http_client.clone(),
             prefetch_config,
         )
         .await
         .context(ChunkReadingSnafu),
-        query_response::RowsetData::SchemaOnly { rowtype } => {
+        RowsetData::SchemaOnly { rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             schema_only_reader(&row_types).context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::JsonRowset { rowset, rowtype } => {
+        RowsetData::JsonRowset { rowset, rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             validate_column_count(rowset, &row_types)?;
             json_prefetch_reader(
@@ -134,7 +128,7 @@ async fn read_batches<'a>(
             .await
             .context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::JsonMultiChunk {
+        RowsetData::JsonMultiChunk {
             rowset,
             rowtype,
             chunk_download_data,
@@ -145,14 +139,14 @@ async fn read_batches<'a>(
             json_prefetch_reader(
                 rowset,
                 row_types,
-                chunk_download_data,
+                chunk_download_data.clone(),
                 http_client.clone(),
                 prefetch_config,
             )
             .await
             .context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::NoData => Ok(empty_reader()),
+        RowsetData::NoData | RowsetData::Upload(_) | RowsetData::Download(_) => Ok(empty_reader()),
     }
 }
 
@@ -231,8 +225,8 @@ fn download_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataTyp
 }
 
 /// Converts upload results to Arrow format
-pub fn upload_results_reader(
-    upload_results: Vec<UploadResult>,
+pub(super) fn upload_results_reader(
+    upload_results: &[UploadResult],
     wrapper_presets: &WrapperPresets,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
     let schema = create_schema(&upload_row_types(wrapper_presets))
@@ -259,8 +253,8 @@ pub fn upload_results_reader(
 }
 
 /// Converts download results to Arrow format
-pub fn download_results_reader(
-    download_results: Vec<DownloadResult>,
+pub(super) fn download_results_reader(
+    download_results: &[DownloadResult],
     wrapper_presets: &WrapperPresets,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
     let schema = create_schema(&download_row_types(wrapper_presets))
