@@ -483,6 +483,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_get_all_parameters",
+        skip(self, input)
+    )]
+    async fn connection_get_all_parameters(
+        &self,
+        input: ConnectionGetAllParametersRequest,
+    ) -> Result<ConnectionGetAllParametersResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let parameters = self
+            .driver
+            .connection_get_all_parameters(conn_handle.into())
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionGetAllParametersResponse { parameters })
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_validate_options",
         skip(self, input)
     )]

@@ -160,6 +160,35 @@ class TestClosedConnection:
         assert error.sfqid == sfqid
         assert error.errno == -1
 
+    def test_connection_info_properties_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        role = conn.role
+        database = conn.database
+        schema = conn.schema
+        warehouse = conn.warehouse
+        user = conn.user
+        account = conn.account
+        host = conn.host
+        port = conn.port
+        session_id = conn.session_id
+
+        conn.close()
+
+        assert conn.role == role
+        assert conn.database == database
+        assert conn.schema == schema
+        assert conn.warehouse == warehouse
+        assert conn.user == user
+        assert conn.account == account
+        assert conn.host == host
+        assert conn.port == port
+        assert conn.session_id == session_id
+
+    def test_session_parameters_on_closed_connection(self, connection_factory):
+        conn = connection_factory(session_parameters={"TIMEZONE": "America/Los_Angeles"})
+        conn.close()
+        assert conn._session_parameters["TIMEZONE"] == "America/Los_Angeles"
+
 
 class TestConnectionMethods:
     """Test Connection object methods."""

@@ -1327,6 +1327,49 @@ impl DatabaseDriverV1 {
         .await
     }
 
+    pub async fn connection_get_all_parameters(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<HashMap<String, String>, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                let mut result = HashMap::new();
+
+                for (k, v) in conn.connection_seed.iter() {
+                    if let Some(s) = setting_as_display_string(v) {
+                        result.insert(k.to_uppercase(), s);
+                    }
+                }
+                if let Some(resolved) = &conn.resolved_connect {
+                    for (k, v) in resolved.iter() {
+                        if let Some(s) = setting_as_display_string(v) {
+                            result.insert(k.to_uppercase(), s);
+                        }
+                    }
+                }
+                for (k, v) in conn.session_overrides.iter() {
+                    if let Some(s) = setting_as_display_string(v) {
+                        result.insert(k.to_uppercase(), s);
+                    }
+                }
+
+                let cache = conn.session_parameters.read().await;
+                for (k, v) in cache.iter() {
+                    if !v.is_empty() {
+                        result.insert(k.clone(), v.clone());
+                    }
+                }
+
+                Ok(result)
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
     pub async fn connection_get_parameter(
         &self,
         conn_handle: Handle,
@@ -2385,6 +2428,37 @@ mod tests {
             !valid,
             "heartbeat should return false on uninitialized connection"
         );
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_get_all_parameters_returns_empty_by_default() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        let params = ds.connection_get_all_parameters(handle).await.unwrap();
+        assert!(params.is_empty());
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_get_all_parameters_returns_cached_values() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let conn = c.lock().await;
+            let mut cache = conn.session_parameters.write().await;
+            cache.insert("TIMEZONE".into(), "America/Los_Angeles".into());
+            cache.insert("QUERY_TAG".into(), "test_tag".into());
+        }
+
+        let params = ds.connection_get_all_parameters(handle).await.unwrap();
+        assert_eq!(params.get("TIMEZONE").unwrap(), "America/Los_Angeles");
+        assert_eq!(params.get("QUERY_TAG").unwrap(), "test_tag");
+        assert_eq!(params.len(), 2);
 
         ds.connection_release(handle).unwrap();
     }

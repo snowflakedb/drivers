@@ -19,18 +19,29 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, TypeVar, cast
 
-from snowflake.connector._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
-from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+from ._internal._private_key_helper import normalize_private_key
+from ._internal.api_client.client_api import database_driver_client
+from ._internal.binding_converters import ParamStyle
+from ._internal.config_utils import create_config_settings_from_dict, pop_typed_kwarg
+from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
+from ._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_INVALID_VALUE
+from ._internal.errorhandler import ErrorHandlerMixin
+from ._internal.extras import check_dependency
+from ._internal.extras import numpy as np
+from ._internal.freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
+from ._internal.logout_config_mapping import (
+    LogoutConfig,
+    LogoutOptionKeys,
+)
+from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
     WrapperIdentity,
 )
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
+from ._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
-    ConnectionGetParameterRequest,
     ConnectionGetQueryStatusRequest,
     ConnectionGetQueryStatusResponse,
     ConnectionHeartbeatRequest,
@@ -44,20 +55,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseNewRequest,
     DatabaseReleaseRequest,
 )
-from snowflake.connector._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
-
-from ._internal._private_key_helper import normalize_private_key
-from ._internal.api_client.client_api import database_driver_client
-from ._internal.binding_converters import ParamStyle
-from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
-from ._internal.errorhandler import ErrorHandlerMixin
-from ._internal.extras import check_dependency
-from ._internal.extras import numpy as np
-from ._internal.logout_config_mapping import (
-    LogoutConfig,
-    LogoutOptionKeys,
-)
 from ._internal.snowflake_restful import SnowflakeRestful
+from ._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
@@ -224,6 +223,9 @@ class Connection(ErrorHandlerMixin):
 
         self._connect()
 
+        self._session_parameters = SessionParametersProxy(self.db_api, self.conn_handle)
+        self._connection_info = ConnectionInfoProxy(self.db_api, self.conn_handle)
+
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._close_lock = threading.Lock()
@@ -324,6 +326,9 @@ class Connection(ErrorHandlerMixin):
         # even while another thread's logout is still in-flight.
         if self.is_closed():
             return
+
+        self._session_parameters.freeze()
+        self._connection_info.freeze()
 
         # Lock guards ONLY the handle swap — prevents concurrent double-release.
         with self._close_lock:
@@ -578,9 +583,7 @@ class Connection(ErrorHandlerMixin):
         Returns:
             str | None: The parameter value, or None if not found
         """
-        request = ConnectionGetParameterRequest(conn_handle=self.conn_handle, key=name)
-        response = self.db_api.connection_get_parameter(request)
-        return response.value if response.value else None
+        return self._session_parameters[name]
 
     @property
     def paramstyle(self) -> ParamStyle:
@@ -656,7 +659,7 @@ class Connection(ErrorHandlerMixin):
 
     @internal_api
     def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
-        """Refresh connection details for connection"""
+        """Return connection details from Core."""
         return self.db_api.connection_get_info(
             ConnectionGetInfoRequest(
                 conn_handle=self.conn_handle,
@@ -704,50 +707,42 @@ class Connection(ErrorHandlerMixin):
     @property
     def role(self) -> str | None:
         """The current role in use for the session."""
-        info = self._get_connection_info()
-        return info.role if info.HasField("role") else None
+        return cast("str | None", self._connection_info["role"])
 
     @property
     def database(self) -> str | None:
         """The current database in use for the session."""
-        info = self._get_connection_info()
-        return info.database if info.HasField("database") else None
+        return cast("str | None", self._connection_info["database"])
 
     @property
     def schema(self) -> str | None:
         """The current schema in use for the session."""
-        info = self._get_connection_info()
-        return info.schema if info.HasField("schema") else None
+        return cast("str | None", self._connection_info["schema"])
 
     @property
     def account(self) -> str | None:
         """The Snowflake account name used by this connection."""
-        info = self._get_connection_info()
-        return info.account if info.HasField("account") else None
+        return cast("str | None", self._connection_info["account"])
 
     @property
     def warehouse(self) -> str | None:
         """The current warehouse in use for the session."""
-        info = self._get_connection_info()
-        return info.warehouse if info.HasField("warehouse") else None
+        return cast("str | None", self._connection_info["warehouse"])
 
     @property
     def user(self) -> str | None:
         """The user name used for authentication."""
-        info = self._get_connection_info()
-        return info.user if info.HasField("user") else None
+        return cast("str | None", self._connection_info["user"])
 
     @property
     def host(self) -> str | None:
         """The host name of the Snowflake instance."""
-        info = self._get_connection_info()
-        return info.host if info.HasField("host") else None
+        return cast("str | None", self._connection_info["host"])
 
     @property
     def port(self) -> int | None:
         """The port number of the Snowflake instance."""
-        info = self._get_connection_info()
-        return info.port if info.HasField("port") else None
+        return cast("int | None", self._connection_info["port"])
 
     @property
     def region(self) -> str | None:
@@ -757,10 +752,10 @@ class Connection(ErrorHandlerMixin):
     @property
     def session_id(self) -> int:
         """The Snowflake session ID for this connection."""
-        info = self._get_connection_info()
-        if not info.HasField("session_id"):
+        value = cast("int | None", self._connection_info["session_id"])
+        if value is None:
             raise InterfaceError(msg="Session ID is not available; connection may not be initialized")
-        return info.session_id
+        return value
 
     @property
     def login_timeout(self) -> int | None:
