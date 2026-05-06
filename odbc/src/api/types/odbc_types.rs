@@ -1227,9 +1227,11 @@ impl GetDataState {
     }
 }
 
-/// Outer Statement handle — immutable fields only.
+/// Outer Statement handle.
 ///
-/// All mutable state lives inside `inner: Mutex<StatementInner>`.
+/// Most mutable state lives inside `inner: Mutex<StatementInner>`.
+/// `active_cancel` is also mutable (interior mutability via its own Mutex)
+/// to allow zero-contention cross-thread cancellation without locking `inner`.
 /// The `HandleManager` stores `Statement` inside `Arc<RwLock<Option<Statement>>>`,
 /// so the outer fields are accessible through `HandleGuard::deref()` without
 /// any additional locking.
@@ -1238,6 +1240,10 @@ pub struct Statement {
     pub conn_id: HandleId,
     pub stmt_handle: StatementHandle,
     pub inner: parking_lot::Mutex<StatementInner>,
+    /// Cancellation token for the currently in-flight RPC, if any.
+    /// `Some(token)` while a cancellable operation is running; `None` otherwise.
+    /// SQLCancel checks this without locking `inner` — zero-contention cross-thread cancel.
+    pub active_cancel: parking_lot::Mutex<Option<CancellationToken>>,
 }
 
 /// All mutable statement state, protected by `Statement::inner`.
@@ -1273,11 +1279,6 @@ pub struct StatementInner {
     pub multi_query_ids: Vec<String>,
     /// Index of the next child result to fetch in `multi_query_ids`.
     pub multi_current_idx: usize,
-    /// Cancelled by `SQLCancel` (possibly from another thread) and observed
-    /// by execution functions via `tokio::select!` when cross-thread cancel
-    /// is wired up. Replaced with a fresh token at the start of each
-    /// execution/prepare call so that stale cancels do not affect new ops.
-    pub cancel_token: CancellationToken,
 }
 
 // Safety: StatementInner contains raw pointers (descriptor fields like bind_offset_ptr,
@@ -1309,8 +1310,8 @@ impl Statement {
                 last_query_id: None,
                 multi_query_ids: Vec::new(),
                 multi_current_idx: 0,
-                cancel_token: CancellationToken::new(),
             }),
+            active_cancel: parking_lot::Mutex::new(None),
         }
     }
 

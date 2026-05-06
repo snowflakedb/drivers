@@ -113,8 +113,12 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
 /// This function is called by the ODBC driver manager.
 ///
 /// ODBC allows SQLCancel to be called from a different thread.
-/// `cancel()` accesses the `Statement` via `stmt_from_handle()` and
-/// acquires the inner Mutex for safe cross-thread access.
+/// Uses a two-path design via `Statement::active_cancel`:
+/// - Path 1 (RPC in flight): cancels the token without touching the inner
+///   Mutex. The executing thread observes cancellation via `tokio::select!`
+///   and returns HY008.
+/// - Path 2 (no RPC): locks the inner Mutex to check/restore NeedData state.
+///   This path only runs in single-threaded DAE scenarios.
 ///
 /// This function does not modify statement diagnostics. Any diagnostic
 /// information related to cancellation must be produced by the executing
