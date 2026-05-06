@@ -203,6 +203,15 @@ ignore_missing_imports = true
 
 # ===== Hatch Configuration =====
 
+# Pin the isolated build environment used by `hatch build` to Python 3.10
+# so produced wheels are tagged `cp310` (matching the lowest supported
+# `requires-python`). Without this hatch picks the highest interpreter
+# available on the host (e.g. 3.14 in CI), which produces a `cp314` wheel
+# that is rejected by `hatch run test.py3.10:install-wheel` with
+# "A path dependency is incompatible with the current platform".
+[tool.hatch.envs.hatch-build]
+python = "3.10"
+
 [tool.hatch.envs.default]
 features = ["test", "dev"]
 installer = "uv"

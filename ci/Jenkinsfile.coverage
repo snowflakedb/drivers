@@ -384,6 +384,16 @@ pipeline {
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/parameters.json
                                         export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                        # Persist Gradle's dependency cache + wrapper distribution under the
+                                        # Jenkins workspace so they survive container teardown between builds.
+                                        # Without this every coverage run re-downloads every Maven Central /
+                                        # Gradle plugin POM/JAR, which intermittently trips Maven Central's
+                                        # rate limiter (HTTP 429 "Too Many Requests") and fails the stage.
+                                        # `$WORKSPACE` is auto-mounted into the container by Jenkins, so writes
+                                        # to this path persist on the host filesystem across builds on the same
+                                        # agent.
+                                        export GRADLE_USER_HOME="${WORKSPACE}/.gradle-cache"
+                                        mkdir -p "${GRADLE_USER_HOME}"
                                         chmod +x jdbc/gradlew
                                         cd jdbc
                                         ./gradlew test jacocoTestReport --stacktrace
