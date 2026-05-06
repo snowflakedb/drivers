@@ -1241,6 +1241,41 @@ pub fn get_info<E: OdbcEncoding>(
             }
             Ok(())
         }
+        InfoType::ConvertBinary | InfoType::ConvertVarBinary | InfoType::ConvertLongVarBinary => {
+            // Bitmask returned for `SQL_CONVERT_BINARY` /
+            // `SQL_CONVERT_VARBINARY` / `SQL_CONVERT_LONGVARBINARY` —
+            // the SQL targets the driver can convert *from* a binary
+            // source. Mirrors what `SnowflakeBinary::write_odbc_type`
+            // accepts as a `target_type`: every character SQL type
+            // (the driver formats binary as the canonical uppercase
+            // hex literal — see `binary.rs::SnowflakeBinary::write_odbc_type`),
+            // plus the binary-family identity conversions. The Windows
+            // ODBC Driver Manager also consults this mask at
+            // `SQLBindParameter(SQL_C_BINARY, SQL_BINARY)` time; without
+            // these bits the DM would reject the bind with `HYC00`
+            // before the call reaches the driver, even though the bind
+            // is spec-legal per ODBC Appendix D.
+            let mask: u32 = 0x0000_0001  // SQL_CVT_CHAR
+                | 0x0000_0100            // SQL_CVT_VARCHAR
+                | 0x0000_0200            // SQL_CVT_LONGVARCHAR
+                | 0x0020_0000            // SQL_CVT_WCHAR
+                | 0x0080_0000            // SQL_CVT_WVARCHAR
+                | 0x0040_0000            // SQL_CVT_WLONGVARCHAR
+                | 0x0000_0400            // SQL_CVT_BINARY
+                | 0x0000_0800            // SQL_CVT_VARBINARY
+                | 0x0004_0000; // SQL_CVT_LONGVARBINARY
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = mask;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
     }
 }
 

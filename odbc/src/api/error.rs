@@ -614,7 +614,8 @@ impl OdbcError {
                     SqlState::RestrictedDataTypeAttributeViolation
                 }
                 JsonBindingError::InvalidBooleanValue { .. }
-                | JsonBindingError::InvalidNumericLiteral { .. } => {
+                | JsonBindingError::InvalidNumericLiteral { .. }
+                | JsonBindingError::InvalidHexLiteral { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
                 _ => SqlState::GeneralError,
