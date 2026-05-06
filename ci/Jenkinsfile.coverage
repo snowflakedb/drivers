@@ -46,12 +46,15 @@ def installSystemDeps() {
     // install resilient to mirror rotation. Long-term fix: bake `unzip` into
     // the Docker image so no runtime install is needed.
     sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
-    // perl-* modules are required by the `openssl-src` crate when the
+    // perl-Time-Piece is required by the `openssl-src` crate when the
     // `vendored-openssl` feature is active (Rust Core stage runs tarpaulin
-    // with `--all-features`, which enables it). Without them the build
-    // fails with "Can't locate Time/Piece.pm in @INC" at openssl-3.x
-    // Configure time. Long-term fix: bake these into the Docker image.
-    sh label: 'Install system dependencies', script: 'yum install -y unzip perl-Time-Piece perl-IPC-Cmd perl-FindBin perl-File-Compare perl-File-Copy perl-Pod-Html'
+    // with `--all-features`, which enables it). Without it the build fails
+    // with "Can't locate Time/Piece.pm in @INC" at openssl-3.x Configure
+    // time. Other perl modules openssl-src may use (FindBin, File::Compare,
+    // File::Copy, IPC::Cmd, Pod::Html) are already bundled in the base
+    // perl-interpreter / perl-modules packages on Rocky 8 and have no
+    // separate subpackages. Long-term fix: bake this into the Docker image.
+    sh label: 'Install system dependencies', script: 'yum install -y unzip perl-Time-Piece'
 }
 
 def decodeSecrets() {
