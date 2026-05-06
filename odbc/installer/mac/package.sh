@@ -71,8 +71,7 @@ cp odbc/include/sf_odbc.h "$STAGE_DIR$INSTALL_DIR/include/"
 # stage the postinstall alongside the iODBC ini templates the postinstall
 # renders at install time. __ODBC_API_VERSION__ is baked into the odbcinst
 # template here so the customer's machine doesn't need access to Cargo.toml;
-# the remaining placeholders (__DRIVER_PATH__, __SF_ACCOUNT__) are resolved
-# by the postinstall.
+# the remaining placeholders are resolved by the postinstall.
 cp "$SCRIPTS_DIR/postinstall" "$SCRIPTS_STAGE_DIR/postinstall"
 chmod +x "$SCRIPTS_STAGE_DIR/postinstall"
 sed "s/__ODBC_API_VERSION__/${ODBC_API_VERSION}/g" \
@@ -81,8 +80,8 @@ cp "$TEMPLATES_DIR/odbc.ini.template" "$SCRIPTS_STAGE_DIR/odbc.ini.template"
 
 mkdir -p "$BUILD_DIR"
 
-PKG_NAME="snowflake_odbc_ud-${VERSION}-universal.pkg"
-DMG_NAME="snowflake_odbc_ud-${VERSION}-universal.dmg"
+PKG_NAME="snowflake-odbc-ud-${VERSION}-universal.pkg"
+DMG_NAME="snowflake-odbc-ud-${VERSION}-universal.dmg"
 
 echo "=== Building pkg: $PKG_NAME ==="
 pkgbuild \
