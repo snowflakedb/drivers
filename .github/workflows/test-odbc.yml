@@ -93,7 +93,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: odbc_reference_tests (${{ matrix.name }})
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_reference == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

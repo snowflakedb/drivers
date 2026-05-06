@@ -444,7 +444,7 @@ jobs:
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
     needs: [detect-changes, build_wheels]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python_reference == 'true'
     strategy:
       fail-fast: false
       matrix:

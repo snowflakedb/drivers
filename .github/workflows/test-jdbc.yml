@@ -146,7 +146,7 @@ jobs:
 
   jdbc_tests_reference:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc_reference == 'true'
     name: JDBC Old Driver Reference Tests
     runs-on: ubuntu-latest
     steps:
