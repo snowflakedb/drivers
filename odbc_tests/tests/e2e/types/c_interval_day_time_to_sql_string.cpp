@@ -35,6 +35,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -516,6 +517,13 @@ TEST_CASE_METHOD(ConnSchemaFixture,
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should render seven-digit fraction for SQL_C_INTERVAL_SECOND when fraction equals one second",
                  "[c_interval][conversion][sql_string]") {
+  // Out-of-spec input: pins the *new* driver formatter's min-width-not-truncate
+  // behaviour. The legacy driver normalises differently (overflows the fraction
+  // into the seconds field) so the literal it emits is not "45.1000000". This
+  // test documents new-driver behaviour only — skip on the reference driver.
+  SKIP_OLD_DRIVER("BD#000",
+                  "New driver pins format!(\"{:06}\", fraction) for out-of-spec fraction=1_000_000us");
+
   // Given a VARCHAR column
   conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
