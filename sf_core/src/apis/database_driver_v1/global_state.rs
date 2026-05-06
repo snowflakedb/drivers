@@ -13,6 +13,44 @@ use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
+/// Which shape the PUT/GET result set should take.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum PutGetResultsetFlavor {
+    #[default]
+    Python,
+    Odbc,
+}
+
+/// Immutable behavioural presets declared by each wrapper (Python, ODBC, JDBC)
+/// at startup. These are **not** exposed to end users — they capture
+/// compile-time / init-time differences between wrappers so that shared Rust
+/// code can branch on them without hard-coding wrapper knowledge everywhere.
+#[derive(Debug, Clone, Default)]
+pub struct WrapperPresets {
+    pub put_get_resultset_flavor: PutGetResultsetFlavor,
+}
+
+impl WrapperPresets {
+    /// Build a preset bundle for the named wrapper.
+    ///
+    /// Starts from `Self::default()` and overrides only the fields that
+    /// differ for the given wrapper. To add a new preset, add a field
+    /// with a `Default` value to the struct, then add a line in the
+    /// match arm of every wrapper that needs a non-default value.
+    pub fn for_wrapper(name: &str) -> Self {
+        let mut presets = Self::default();
+        match name.to_ascii_lowercase().as_str() {
+            "python" => {}
+            "odbc" => {
+                presets.put_get_resultset_flavor = PutGetResultsetFlavor::Odbc;
+            }
+            "jdbc" => {}
+            _ => {}
+        }
+        presets
+    }
+}
+
 /// Injection points for `DatabaseDriverV1`.
 ///
 /// Each field is optional; `None` means "use the production default".
@@ -25,6 +63,7 @@ pub struct DriverProviders {
     /// `LogManager` instance created during logging initialization.
     /// Owns the `SdkTracerProvider`, `SessionRegistry`, and OS details.
     pub log_manager: Option<LogManager>,
+    pub wrapper_presets: WrapperPresets,
 }
 
 pub struct DatabaseDriverV1 {
@@ -35,6 +74,7 @@ pub struct DatabaseDriverV1 {
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
     log_manager: Option<LogManager>,
+    pub(super) wrapper_presets: WrapperPresets,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -57,6 +97,7 @@ impl DatabaseDriverV1 {
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
             log_manager: providers.log_manager,
+            wrapper_presets: providers.wrapper_presets,
         }
     }
 

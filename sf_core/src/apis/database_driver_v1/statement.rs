@@ -450,7 +450,7 @@ impl DatabaseDriverV1 {
             .await;
         }
 
-        let descriptor = response_to_descriptor(&response.data);
+        let descriptor = response_to_descriptor(&response.data, &self.wrapper_presets);
 
         let prefetch_config = resolve_prefetch_config(&conn_arc).await;
 
@@ -461,7 +461,7 @@ impl DatabaseDriverV1 {
             None
         } else {
             let query_result =
-                process_query_response(&response.data, &http_client, &prefetch_config)
+                process_query_response(&response.data, &http_client, &prefetch_config, &self.wrapper_presets)
                     .await
                     .context(QueryResponseProcessingSnafu)?;
             Some(Box::new(FFI_ArrowArrayStream::new(query_result.reader)))
@@ -650,7 +650,7 @@ impl DatabaseDriverV1 {
             .await;
         }
 
-        let descriptor = response_to_descriptor(&response.data);
+        let descriptor = response_to_descriptor(&response.data, &self.wrapper_presets);
         if super::multistatement::is_multistatement(&response.data) {
             let query_ids = super::multistatement::child_query_ids(&response.data);
             let statement_type_ids =
@@ -750,7 +750,10 @@ fn response_inline_data(data: &Data, format: ChunkFormatKind) -> InlineData {
 }
 
 /// Extract metadata from a Snowflake query response into a `ResultSetDescriptor`.
-fn response_to_descriptor(data: &Data) -> ResultSetDescriptor {
+fn response_to_descriptor(
+    data: &Data,
+    wrapper_presets: &super::global_state::WrapperPresets,
+) -> ResultSetDescriptor {
     let query_id = data.query_id.clone().unwrap_or_default();
     let rows_affected = calculate_rows_affected(data);
     let columns = data
@@ -775,7 +778,7 @@ fn response_to_descriptor(data: &Data) -> ResultSetDescriptor {
                 })
                 .collect()
         })
-        .unwrap_or_else(|| put_get_columns(data.command.as_deref()));
+        .unwrap_or_else(|| put_get_columns(data.command.as_deref(), wrapper_presets));
 
     // Snowflake's REST response for PUT / GET does not always carry a `statementTypeId`,
     // wrapper classifiers need a client-side fallback to recognise the synthesized PUT / GET cursor.
@@ -799,11 +802,14 @@ fn response_to_descriptor(data: &Data) -> ResultSetDescriptor {
 
 /// Return client-synthesized column metadata for PUT/GET commands,
 /// which don't include `rowType` in the Snowflake response.
-fn put_get_columns(command: Option<&str>) -> Vec<ColumnMetadata> {
+fn put_get_columns(
+    command: Option<&str>,
+    wrapper_presets: &super::global_state::WrapperPresets,
+) -> Vec<ColumnMetadata> {
     use super::query::{download_column_metadata, upload_column_metadata};
     match command {
-        Some("UPLOAD") => upload_column_metadata(),
-        Some("DOWNLOAD") => download_column_metadata(),
+        Some("UPLOAD") => upload_column_metadata(wrapper_presets),
+        Some("DOWNLOAD") => download_column_metadata(wrapper_presets),
         _ => Vec::new(),
     }
 }
@@ -883,12 +889,13 @@ async fn fetch_query_response_data(
 async fn fetch_and_resolve_result_set(
     conn_ptr: &Arc<Mutex<Connection>>,
     query_id: &str,
+    wrapper_presets: &super::global_state::WrapperPresets,
 ) -> Result<ResolvedResultSet, ApiError> {
     let (data, http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
     let prefetch_config = resolve_prefetch_config(conn_ptr).await;
 
-    let descriptor = response_to_descriptor(&data);
-    let query_result = process_query_response(&data, &http_client, &prefetch_config)
+    let descriptor = response_to_descriptor(&data, wrapper_presets);
+    let query_result = process_query_response(&data, &http_client, &prefetch_config, wrapper_presets)
         .await
         .context(QueryResponseProcessingSnafu)?;
     let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
@@ -900,10 +907,11 @@ async fn fetch_and_resolve_result_set(
 async fn fetch_chunk_info_by_query_id(
     conn_ptr: &Arc<Mutex<Connection>>,
     query_id: &str,
+    wrapper_presets: &super::global_state::WrapperPresets,
 ) -> Result<StoredChunkInfo, ApiError> {
     let (data, _http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
 
-    let descriptor = response_to_descriptor(&data);
+    let descriptor = response_to_descriptor(&data, wrapper_presets);
     let format = response_chunk_format(&data)?;
 
     Ok(StoredChunkInfo {
@@ -950,7 +958,7 @@ impl DatabaseDriverV1 {
         // Slow path: fetch from Snowflake by query_id (multi-statement children)
         let conn = stmt.conn.clone();
         drop(stmt);
-        fetch_and_resolve_result_set(&conn, &query_id).await
+        fetch_and_resolve_result_set(&conn, &query_id, &self.wrapper_presets).await
     }
 
     /// Fetch a result set by query_id using the connection (stateless, always fetches from Snowflake).
@@ -966,7 +974,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        fetch_and_resolve_result_set(&conn_ptr, &query_id).await
+        fetch_and_resolve_result_set(&conn_ptr, &query_id, &self.wrapper_presets).await
     }
 
     /// Fetch chunk metadata by query_id using the connection (no statement handle required).
@@ -982,7 +990,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        fetch_chunk_info_by_query_id(&conn_ptr, &query_id).await
+        fetch_chunk_info_by_query_id(&conn_ptr, &query_id, &self.wrapper_presets).await
     }
 }
 

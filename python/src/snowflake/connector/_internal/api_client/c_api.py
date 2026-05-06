@@ -60,7 +60,7 @@ except OSError as err:
 LOGGER_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p
 )
-core.sf_core_init.argtypes = [LOGGER_CALLBACK]
+core.sf_core_init.argtypes = [LOGGER_CALLBACK, ctypes.c_char_p]
 core.sf_core_init.restype = ctypes.c_uint32
 
 core.sf_core_api_call_proto.restype = ctypes.c_uint32
@@ -121,7 +121,7 @@ def sf_core_free_buffer(buffer: Any, length: int) -> None:
 
 
 def sf_core_init(callback: Any) -> None:
-    core.sf_core_init(callback)
+    core.sf_core_init(callback, b"python")
 
 
 level_map = {
