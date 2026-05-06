@@ -44,7 +44,7 @@ MANIFEST_HEADER = """\
 # Do not edit by hand; re-run the generator and commit the result.
 #
 # Every path below is a file that `copybara migrate copy.bara.sky mirror`
-# would push to snowflake-eng/universal-driver-mirror-test. Any PR that
+# would push to snowflakedb/ud-mirror-test. Any PR that
 # changes this set must include the regenerated manifest in the same diff
 # (enforced by validations.yml::mirror-manifest). The trailing
 # `# sha256:` line hashes the sorted paths for tamper-evidence.

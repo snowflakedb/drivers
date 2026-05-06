@@ -1,6 +1,6 @@
 # Copybara config: two workflows.
 #
-# 1. `mirror`  — outbound: snowflake-eng/universal-driver -> snowflake-eng/universal-driver-mirror-test
+# 1. `mirror`  — outbound: snowflake-eng/universal-driver -> snowflakedb/ud-mirror-test
 #                (ITERATIVE, direct push, denylist filter + internal-marker guards)
 #                Runs daily via .github/workflows/mirror.yml.
 #
@@ -10,11 +10,11 @@
 #                .github/workflows/mirror-inbound.yml.
 #
 # Initial rollout: destinations/origins point at the TEST mirror
-# (universal-driver-mirror-test). Flip to snowflakedb/universal-driver
+# (ud-mirror-test). Flip to snowflakedb/universal-driver
 # once both directions are validated.
 
 SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
-MIRROR_REPO = "https://github.com/snowflake-eng/universal-driver-mirror-test"
+MIRROR_REPO = "https://github.com/snowflakedb/ud-mirror-test"
 
 # DENYLIST: mirror everything except paths matching these patterns.
 #

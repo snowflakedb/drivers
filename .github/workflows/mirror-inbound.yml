@@ -1,6 +1,6 @@
 name: Import mirror PR
 
-# Imports a labeled PR from snowflake-eng/universal-driver-mirror-test back
+# Imports a labeled PR from snowflakedb/ud-mirror-test back
 # into the internal repo as an internal PR so it can run against internal
 # CI before merge.
 #
@@ -104,7 +104,7 @@ jobs:
             echo "## Import PR #${PR_NUMBER}"
             echo ""
             echo "- **Dispatched by:** ${{ github.actor }}"
-            echo "- **Source PR:** https://github.com/snowflake-eng/universal-driver-mirror-test/pull/${PR_NUMBER}"
+            echo "- **Source PR:** https://github.com/snowflakedb/ud-mirror-test/pull/${PR_NUMBER}"
             echo "- **Result:** ${{ job.status }}"
             echo ""
             echo "If successful, a matching \`import-mirror-pr-${PR_NUMBER}\` PR now exists on the internal repo. Review, run internal CI, and merge — the outbound mirror will push the change back to the public repo on its next run."

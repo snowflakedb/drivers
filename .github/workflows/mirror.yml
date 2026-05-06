@@ -1,6 +1,6 @@
 name: Mirror to public repo
 
-# Mirrors snowflake-eng/universal-driver -> snowflake-eng/universal-driver-mirror-test
+# Mirrors snowflake-eng/universal-driver -> snowflakedb/ud-mirror-test
 # (will be flipped to snowflakedb/universal-driver once validated).
 #
 # Triggers:
@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 env:
-  MIRROR_DESTINATION_URL: https://github.com/snowflake-eng/universal-driver-mirror-test
+  MIRROR_DESTINATION_URL: https://github.com/snowflakedb/ud-mirror-test
   # Pin to a specific Copybara snapshot release so mirror behavior is
   # reproducible. Bump deliberately; verify SHA below when bumping.
   COPYBARA_RELEASE: v20260504
@@ -100,7 +100,7 @@ jobs:
             extra_args+=(--last-rev "${LAST_REV}")
           fi
           java -jar copybara_deploy.jar migrate copy.bara.sky mirror \
-            --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver-mirror-test.git" \
+            --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflakedb/ud-mirror-test.git" \
             --force \
             "${extra_args[@]}"
 
@@ -191,7 +191,7 @@ jobs:
             # (e.g. release/8.1 -> release/8.1 on the mirror).
             java -jar copybara_deploy.jar migrate copy.bara.sky mirror \
               --ref="${branch}" \
-              --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflake-eng/universal-driver-mirror-test.git" \
+              --git-destination-url="https://x-access-token:${GITHUB_TOKEN}@github.com/snowflakedb/ud-mirror-test.git" \
               --git-destination-push="${branch}" \
               --force \
               "${extra_args[@]}" \
