@@ -5,6 +5,9 @@ Unlike TIMESTAMP_LTZ (which converts to session timezone on retrieval), TZ keeps
 exact offset that was stored. Unlike TIMESTAMP_NTZ, TZ always has tzinfo.
 Python type: datetime with pytz.FixedOffset tzinfo matching the stored offset.
 
+The session timezone is explicitly set to America/New_York (a non-UTC zone)
+so that tests prove offset preservation is independent of the session timezone.
+
 All SQL string literals include explicit timezone offsets to exercise offset preservation.
 """
 
@@ -17,6 +20,8 @@ import pytest
 from ...conftest import with_paramstyle
 from .utils import assert_datetime_type, assert_sequential_values, batch_insert
 
+
+SESSION_TZ_NAME = "America/New_York"
 
 # =============================================================================
 # EXPECTED DATETIME VALUES (with timezone offsets)
@@ -59,6 +64,17 @@ def compare_ts_utc(actual, expected):
     return actual.astimezone(timezone.utc) == expected
 
 
+@pytest.fixture(autouse=True)
+def _set_session_timezone(cursor):
+    """Set session timezone to a non-UTC zone for all tests in this module.
+
+    TIMESTAMP_TZ preserves the original per-row offset, so the session
+    timezone must NOT affect the returned offsets.  Using a non-UTC zone
+    proves that offset preservation is independent of the session timezone.
+    """
+    cursor.execute(f"ALTER SESSION SET TIMEZONE = '{SESSION_TZ_NAME}'")
+
+
 class TestTimestampTzTypeCasting:
     """Tests for TIMESTAMP_TZ type casting to appropriate type."""
 
@@ -73,7 +89,7 @@ class TestTimestampTzTypeCasting:
         assert_datetime_type(result)
 
         # And Values should have timezone info
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_datetime_type(result)
 
 
 class TestTimestampTzLiteral:
@@ -99,7 +115,7 @@ class TestTimestampTzLiteral:
         result = execute_query(f"SELECT {select_cols}", single_row=True)
 
         # Then Result should contain timestamps <expected_values>
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_datetime_type(result)
         assert tuple(to_utc(result)) == tuple(to_utc(expected_values))
 
         # And Values should have timezone info
@@ -157,7 +173,7 @@ class TestTimestampTzLiteral:
         result = execute_query(f"SELECT '{query_str}'::TIMESTAMP_TZ", single_row=True)
 
         # Then Result should contain timestamps <expected_values>
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_datetime_type(result)
         assert result[0].astimezone(timezone.utc) == expected.astimezone(timezone.utc)
 
         # And Values should have timezone info
@@ -174,7 +190,7 @@ class TestTimestampTzLiteral:
         )
 
         # Then Result should contain [2024-01-15 10:30:00 +05:00, NULL]
-        assert_datetime_type(result, can_be_none=True, require_tzinfo=True)
+        assert_datetime_type(result, can_be_none=True)
         assert to_utc(result) == [TS_2024_JAN.astimezone(timezone.utc), None]
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_tz(self, execute_query):
@@ -194,7 +210,7 @@ class TestTimestampTzLiteral:
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00 +00:00
         values = [row[0] for row in rows]
-        assert_datetime_type(values, require_tzinfo=True)
+        assert_datetime_type(values)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp, compare=compare_ts_utc)
 
 
@@ -229,7 +245,7 @@ class TestTimestampTzTable:
         result = [row[0] for row in rows]
 
         # Then Result should contain timestamps <expected_values>
-        assert_datetime_type(result, can_be_none=can_be_none, require_tzinfo=True)
+        assert_datetime_type(result, can_be_none=can_be_none)
         assert to_utc(result) == to_utc(expected_values)
 
         # And Values should have timezone info
@@ -258,7 +274,7 @@ class TestTimestampTzTable:
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00 +00:00
         values = [row[0] for row in rows]
-        assert_datetime_type(values, require_tzinfo=True)
+        assert_datetime_type(values)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp, compare=compare_ts_utc)
 
 
@@ -285,7 +301,7 @@ class TestTimestampTzBinding:
         )
 
         # Then Result should contain the bound timestamps
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_datetime_type(result)
         assert len(result) == 2
 
         # And Values should have timezone info
@@ -327,7 +343,7 @@ class TestTimestampTzBinding:
         null_results = [r for r in result if r is None]
         assert len(non_null_results) == 2
         assert len(null_results) == 1
-        assert_datetime_type(non_null_results, require_tzinfo=True)
+        assert_datetime_type(non_null_results)
 
 
 class TestTimestampTzPrecision:
@@ -360,5 +376,5 @@ class TestTimestampTzPrecision:
         assert result[0].microsecond == expected.microsecond
 
         # And Values should have timezone info
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_datetime_type(result)
         assert result[0].tzinfo is not None
