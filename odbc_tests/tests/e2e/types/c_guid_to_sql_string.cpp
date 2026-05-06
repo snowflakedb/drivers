@@ -4,11 +4,11 @@
 // ("Converting Data from C to SQL Data Types"), `SQL_C_GUID` →
 // `SQL_VARCHAR/SQL_CHAR/SQL_WCHAR` is the canonical text route. The
 // driver formats the 16-byte GUID as the standard 8-4-4-4-12 hex
-// literal in upper-case (`Data1` and `Data2`/`Data3` are little-endian
-// integer fields, `Data4` is a fixed byte sequence) — see
-// `varchar.rs::WriteODBCType for SnowflakeVarchar` for the format
-// string. These tests round-trip through Snowflake to confirm the on-
-// wire text matches what the driver promises.
+// literal in upper-case (`Data1` and `Data2`/`Data3` are stored in
+// native byte order, `Data4` is a fixed byte sequence) — see the
+// `CDataType::Guid` arm in `varchar.rs::ReadODBC for SnowflakeVarchar`
+// for the format string. These tests round-trip through Snowflake to
+// confirm the on-wire text matches what the driver promises.
 
 #include <catch2/catch_test_macros.hpp>
 
