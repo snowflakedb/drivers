@@ -3,6 +3,18 @@ name = "odbc"
 version = "4.0.0"
 edition = "2024"
 
+[package.metadata.odbc]
+# ODBC API conformance level reported by SQLGetInfo(SQL_DRIVER_ODBC_VER) and
+# registered as DriverODBCVer with unixODBC / the Windows ODBC registry.
+# Format is "MM.mm" (e.g. "03.80").
+odbc_api_version = "03.80"
+# Snowflake ODBC UD release version used as the RPM / DMG / MSI artifact
+# version and embedded in the Windows DLL VERSIONINFO resource. The git
+# short SHA is appended at packaging time to produce the full release string.
+# Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
+# This is to be removed and the package.version used after moving into the PuPr
+odbc_preview_version = "0.0.1"
+
 [lib]
 name = "sfodbc"
 crate-type = ["cdylib", "rlib"]

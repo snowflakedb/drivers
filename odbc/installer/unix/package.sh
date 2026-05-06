@@ -13,7 +13,29 @@
 #
 set -euxo pipefail
 
-source ./odbc/version.sh
+read_odbc_metadata() {
+    local key="$1"
+    awk -v key="$key" '
+        /^\[package\.metadata\.odbc\][[:space:]]*$/ { in_section = 1; next }
+        /^\[/                                       { in_section = 0 }
+        in_section && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            line = $0
+            sub(/^[^"]*"/, "", line)
+            sub(/".*$/,    "", line)
+            print line
+            exit
+        }
+    ' odbc/Cargo.toml
+}
+
+BASE_VERSION=$(read_odbc_metadata odbc_preview_version)
+ODBC_API_VERSION=$(read_odbc_metadata odbc_api_version)
+if [[ -z "$BASE_VERSION" || -z "$ODBC_API_VERSION" ]]; then
+    echo "Failed to read odbc_preview_version / odbc_api_version from [package.metadata.odbc] in odbc/Cargo.toml"
+    exit 1
+fi
+COMMIT_HASH="${COMMIT_HASH:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
+VERSION="${BASE_VERSION}-${COMMIT_HASH}"
 
 echo "=== Platform: $PLATFORM ==="
 
@@ -49,12 +71,18 @@ ODBC_DIR=/usr/lib64/snowflake/odbc
 STAGE_DIR=$(mktemp -d)
 trap 'rm -rf "$STAGE_DIR"' EXIT
 RPM_SCRIPTS_DIR=odbc/installer/unix
+TEMPLATES_DIR=odbc/installer/shared/templates
 
 echo "=== Staging files in $STAGE_DIR ==="
 mkdir -p "$STAGE_DIR$ODBC_DIR/lib"
 mkdir -p "$STAGE_DIR$ODBC_DIR/include"
+mkdir -p "$STAGE_DIR$ODBC_DIR/templates"
 cp "$DRIVER_SO" "$STAGE_DIR$ODBC_DIR/lib/"
 cp odbc/include/sf_odbc.h "$STAGE_DIR$ODBC_DIR/include/"
+
+sed "s/__ODBC_API_VERSION__/${ODBC_API_VERSION}/g" \
+    "$TEMPLATES_DIR/odbcinst.ini.template" > "$STAGE_DIR$ODBC_DIR/templates/odbcinst.ini.template"
+cp "$TEMPLATES_DIR/odbc.ini.template" "$STAGE_DIR$ODBC_DIR/templates/odbc.ini.template"
 
 RPM_NAME="snowflake-odbc-ud-${VERSION}.${SYSTEM_ARCH}.rpm"
 mkdir -p "$BUILD_DIR"

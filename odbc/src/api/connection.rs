@@ -29,6 +29,7 @@ const SQL_FALSE: sql::UInteger = 0;
 
 const ODBC_DRIVER_NAME: &str = "ODBC";
 const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
@@ -1206,7 +1207,7 @@ pub fn get_info<E: OdbcEncoding>(
         }
         InfoType::DriverOdbcVer => {
             write_string_bytes::<E>(
-                "03.00",
+                ODBC_API_VERSION,
                 info_value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,

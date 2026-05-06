@@ -1,6 +1,11 @@
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../build_common.rs"));
 
 fn main() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let odbc_api_version = read_odbc_metadata(&manifest_dir, "odbc_api_version");
+    println!("cargo:rustc-env=SF_ODBC_API_VER={odbc_api_version}");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+
     #[cfg(not(target_os = "windows"))]
     {
         emit_loader_rpaths();
@@ -10,12 +15,11 @@ fn main() {
     // This avoids the PE/COFF 65535 export symbol limit.
     #[cfg(target_os = "windows")]
     {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let manifest_path = std::path::Path::new(&manifest_dir);
         let def_path = manifest_path.join("exports.def");
         println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
 
-        let (major, minor, patch) = parse_base_version(&manifest_dir);
+        let (major, minor, patch) = parse_odbc_preview_version(&manifest_dir);
         let commit_hash = resolve_commit_hash();
 
         let target_arch =
@@ -40,7 +44,6 @@ fn main() {
         )
         .expect("failed to write version_generated.h");
 
-        println!("cargo:rerun-if-changed=version.sh");
         println!("cargo:rerun-if-changed=exports.def");
         println!("cargo:rerun-if-changed=src/setup/resource.rc");
         println!("cargo:rerun-if-changed=src/setup/resource.h");
@@ -60,32 +63,66 @@ fn main() {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn parse_base_version(manifest_dir: &str) -> (u32, u32, u32) {
-    let version_sh = std::fs::read_to_string(std::path::Path::new(manifest_dir).join("version.sh"))
-        .expect("failed to read version.sh");
-    for line in version_sh.lines() {
-        if let Some(val) = line.strip_prefix("BASE_VERSION=") {
-            let trimmed = val.trim();
-            let parts: Vec<&str> = trimmed.split('.').collect();
-            assert!(
-                parts.len() == 3,
-                "invalid BASE_VERSION in version.sh: expected <major>.<minor>.<patch>, got `{trimmed}`"
-            );
-            return (
-                parts[0]
-                    .parse()
-                    .unwrap_or_else(|_| panic!("invalid major version in `{trimmed}`")),
-                parts[1]
-                    .parse()
-                    .unwrap_or_else(|_| panic!("invalid minor version in `{trimmed}`")),
-                parts[2]
-                    .parse()
-                    .unwrap_or_else(|_| panic!("invalid patch version in `{trimmed}`")),
-            );
+fn read_odbc_metadata(manifest_dir: &str, key: &str) -> String {
+    const SECTION: &str = "[package.metadata.odbc]";
+
+    let cargo_toml_path = std::path::Path::new(manifest_dir).join("Cargo.toml");
+    let cargo_toml = std::fs::read_to_string(&cargo_toml_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", cargo_toml_path.display()));
+
+    let mut in_section = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == SECTION;
+            continue;
         }
+        if !in_section {
+            continue;
+        }
+        let Some(rhs) = trimmed.strip_prefix(key) else {
+            continue;
+        };
+        let rhs = rhs.trim_start();
+        let Some(rhs) = rhs.strip_prefix('=') else {
+            continue;
+        };
+        let value = rhs.trim();
+        let value = value.split('#').next().unwrap_or(value).trim();
+        if let Some(stripped) = value
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        {
+            return stripped.to_string();
+        }
+        panic!("`{key}` in {SECTION} must be a quoted string, got `{value}`");
     }
-    panic!("BASE_VERSION not found in version.sh")
+    panic!(
+        "`{key}` not found in {SECTION} of {}",
+        cargo_toml_path.display()
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn parse_odbc_preview_version(manifest_dir: &str) -> (u32, u32, u32) {
+    let raw = read_odbc_metadata(manifest_dir, "odbc_preview_version");
+    let parts: Vec<&str> = raw.split('.').collect();
+    assert!(
+        parts.len() == 3,
+        "invalid odbc_preview_version: expected <major>.<minor>.<patch>, got `{raw}`"
+    );
+    (
+        parts[0]
+            .parse()
+            .unwrap_or_else(|_| panic!("invalid major version in `{raw}`")),
+        parts[1]
+            .parse()
+            .unwrap_or_else(|_| panic!("invalid minor version in `{raw}`")),
+        parts[2]
+            .parse()
+            .unwrap_or_else(|_| panic!("invalid patch version in `{raw}`")),
+    )
 }
 
 #[cfg(target_os = "windows")]

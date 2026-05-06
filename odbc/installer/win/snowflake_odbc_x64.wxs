@@ -144,7 +144,7 @@
 				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc.dll" KeyPath="yes" />
 				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc.dll" />
 				<RegistryValue Type="string" Name="Description" Value="Snowflake ODBC UD" />
-				<RegistryValue Type="string" Name="DriverODBCVer" Value="03.52" />
+				<RegistryValue Type="string" Name="DriverODBCVer" Value="$(var.OdbcApiVer)" />
 				<RegistryValue Type="string" Name="CompanyName" Value="Snowflake Computing" />
 				<RegistryValue Type="string" Name="ConnectFunctions" Value="YYY" />
 				<RegistryValue Type="string" Name="APILevel" Value="1" />

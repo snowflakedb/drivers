@@ -3,11 +3,21 @@
 # Post-install script for the Snowflake ODBC UD macOS pkg.
 # Registers the driver with the iODBC Driver Manager.
 #
+# Driver registration and DSN content live in ini section templates installed
+# alongside the driver. odbc/installer/unix/package.sh substitutes
+# __ODBC_API_VERSION__ at packaging time from [package.metadata.odbc] in
+# odbc/Cargo.toml; the remaining placeholders are substituted here at install time.
+#
 
 INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
 DRIVER_PATH="$INSTALL_DIR/lib/libsfodbc.dylib"
 
-if [ -n "$SUDO_USER" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# pkg postinstall scripts run as root. Resolve the invoking user's home so the
+# driver and DSN land in the per-user iODBC config (~/Library/ODBC/), which is
+# the macOS convention.
+if [ -n "${SUDO_USER:-}" ]; then
     USER_HOME=$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory | awk '{print $2}')
 else
     USER_HOME="$HOME"
@@ -15,25 +25,63 @@ fi
 
 ODBC_DIR="$USER_HOME/Library/ODBC"
 ODBCINST_FILE="$ODBC_DIR/odbcinst.ini"
+ODBC_FILE="$ODBC_DIR/odbc.ini"
+
+if [ -z "${SF_ACCOUNT:-}" ]; then
+    echo "[WARN] SF_ACCOUNT is not set, please manually update $ODBC_FILE after installation"
+    SF_ACCOUNT=SF_ACCOUNT
+fi
 
 mkdir -p "$ODBC_DIR"
 
-DRIVER_ENTRY="[Snowflake ODBC UD]
-Driver=$DRIVER_PATH
-Description=Snowflake ODBC UD"
+render_template() {
+    sed \
+        -e "s|__DRIVER_PATH__|${DRIVER_PATH}|g" \
+        -e "s|__SF_ACCOUNT__|${SF_ACCOUNT}|g" \
+        "$1"
+}
 
-if [ -f "$ODBCINST_FILE" ]; then
-    if grep -q "\[Snowflake ODBC UD\]" "$ODBCINST_FILE"; then
-        echo "Snowflake ODBC UD already registered in $ODBCINST_FILE, updating..."
-        sed -i '' '/\[Snowflake ODBC UD\]/,/^\[/{/^\[Snowflake ODBC UD\]/d;/^Driver=/d;/^Description=/d;/^$/d;}' "$ODBCINST_FILE"
+# Replace (or append) a named ini section so re-running the installer with
+# updated driver metadata leaves the file well-formed instead of accreting
+# duplicate keys. The section content includes the [section] header line; the
+# section name is parsed from it so callers don't have to repeat themselves.
+write_ini_section() {
+    local target_file="$1" section_content="$2"
+
+    local section_name
+    section_name=$(printf '%s\n' "$section_content" \
+        | head -n 1 \
+        | sed -e 's/^\[//' -e 's/\]$//')
+    if [ -z "$section_name" ]; then
+        echo "Section content must start with a [section] header" >&2
+        return 1
     fi
-fi
 
-echo "" >> "$ODBCINST_FILE"
-echo "$DRIVER_ENTRY" >> "$ODBCINST_FILE"
+    local tmp
+    tmp=$(mktemp)
+
+    if [ -f "$target_file" ]; then
+        awk -v header="[$section_name]" '
+            $0 == header { skip = 1; next }
+            /^\[/        { skip = 0 }
+            !skip
+        ' "$target_file" > "$tmp"
+    fi
+
+    if [ -s "$tmp" ] && [ "$(tail -n 1 "$tmp")" != "" ]; then
+        printf '\n' >> "$tmp"
+    fi
+    printf '%s\n' "$section_content" >> "$tmp"
+
+    mv "$tmp" "$target_file"
+}
+
+write_ini_section "$ODBCINST_FILE" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
+write_ini_section "$ODBC_FILE"     "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
 
 echo "Snowflake ODBC UD registered in $ODBCINST_FILE"
+echo "Default Snowflake DSN written to $ODBC_FILE"
 
-if [ -n "$SUDO_UID" ]; then
-    chown -R "$SUDO_UID":"$SUDO_GID" "$ODBC_DIR"
+if [ -n "${SUDO_UID:-}" ]; then
+    chown -R "$SUDO_UID":"${SUDO_GID:-$SUDO_UID}" "$ODBC_DIR"
 fi

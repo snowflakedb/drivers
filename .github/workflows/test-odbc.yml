@@ -893,29 +893,18 @@ jobs:
           Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
           if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
 
-      - name: Compute ODBC version
-        id: odbc-version
-        shell: pwsh
-        run: |
-          $versionLine = Get-Content "odbc\version.sh" -Raw
-          if ($versionLine -match 'BASE_VERSION=(\S+)') { $base = $Matches[1] } else { throw "Could not parse BASE_VERSION" }
-          $hash = (git rev-parse --short HEAD)
-          $version = "${base}-${hash}"
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-
       - name: Build MSI installer
         shell: pwsh
         run: |
           .\odbc\installer\win\package.ps1 `
             -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
             -Arch ${{ matrix.arch }} `
-            -BuildConfig ${{ matrix.config }} `
-            -Version "${{ steps.odbc-version.outputs.version }}"
+            -BuildConfig ${{ matrix.config }}
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-ud-${{ steps.odbc-version.outputs.version }}-${{ matrix.config }}-${{ matrix.arch }}
+          name: snowflake-odbc-ud-msi-${{ matrix.config }}-${{ matrix.arch }}
           path: build/snowflake-odbc-ud-*.msi
 
   build_rpm:
@@ -1091,12 +1080,6 @@ jobs:
           path: .cargo-target-dmg
           key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Compute ODBC version
-        id: odbc-version
-        run: |
-          source ./odbc/version.sh
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Package DMG
         run: ./odbc/installer/mac/package.sh
         env:
@@ -1106,7 +1089,7 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake_odbc_ud-${{ steps.odbc-version.outputs.version }}-universal-macos
+          name: snowflake_odbc_ud-universal-macos
           path: build/snowflake_odbc_ud-*.dmg
 
   odbc-status:

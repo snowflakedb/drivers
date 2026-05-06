@@ -5,33 +5,30 @@
 #
 # Registers the driver with unixODBC and creates a template DSN.
 #
+# Driver registration and DSN content live in ini section templates installed
+# alongside the driver. odbc/installer/unix/package.sh substitutes
+# __ODBC_API_VERSION__ at packaging time from [package.metadata.odbc] in
+# odbc/Cargo.toml; the remaining placeholders are substituted here at install time.
+#
+
+ODBC_DIR=/usr/lib64/snowflake/odbc
+DRIVER_PATH=$ODBC_DIR/lib/libsfodbc.so
+TEMPLATES_DIR=$ODBC_DIR/templates
 
 if [[ -z "$SF_ACCOUNT" ]]; then
     echo "[WARN] SF_ACCOUNT is not set, please manually update the odbc.ini file after installation"
     SF_ACCOUNT=SF_ACCOUNT
 fi
 
-ODBC_DIR=/usr/lib64/snowflake/odbc
+render_template() {
+    sed \
+        -e "s|__DRIVER_PATH__|${DRIVER_PATH}|g" \
+        -e "s|__SF_ACCOUNT__|${SF_ACCOUNT}|g" \
+        "$1"
+}
 
 echo "Adding driver info to odbcinst.ini..."
-odbcinst -i -d -r <<ODBCINST_INI
-[Snowflake ODBC UD]
-APILevel=1
-ConnectFunctions=YYY
-Description=Snowflake ODBC UD
-Driver=$ODBC_DIR/lib/libsfodbc.so
-DriverODBCVer=03.52
-SQLLevel=1
-ODBCINST_INI
+render_template "$TEMPLATES_DIR/odbcinst.ini.template" | odbcinst -i -d -r
 
 echo "Adding connect info to odbc.ini..."
-odbcinst -i -s -l -r <<ODBC_INI
-[snowflake]
-Description=SnowflakeDB
-Driver=Snowflake ODBC UD
-Locale=en-US
-SERVER=$SF_ACCOUNT.snowflakecomputing.com
-PORT=443
-SSL=on
-ACCOUNT=$SF_ACCOUNT
-ODBC_INI
+render_template "$TEMPLATES_DIR/odbc.ini.template" | odbcinst -i -s -l -r
