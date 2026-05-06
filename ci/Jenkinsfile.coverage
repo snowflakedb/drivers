@@ -46,7 +46,12 @@ def installSystemDeps() {
     // install resilient to mirror rotation. Long-term fix: bake `unzip` into
     // the Docker image so no runtime install is needed.
     sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
-    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+    // perl-* modules are required by the `openssl-src` crate when the
+    // `vendored-openssl` feature is active (Rust Core stage runs tarpaulin
+    // with `--all-features`, which enables it). Without them the build
+    // fails with "Can't locate Time/Piece.pm in @INC" at openssl-3.x
+    // Configure time. Long-term fix: bake these into the Docker image.
+    sh label: 'Install system dependencies', script: 'yum install -y unzip perl-Time-Piece perl-IPC-Cmd perl-FindBin perl-File-Compare perl-File-Copy perl-Pod-Html'
 }
 
 def decodeSecrets() {
@@ -210,8 +215,17 @@ pipeline {
                                     installSystemDeps()
                                     
                                     dir('python') {
+                                        // CC/CXX override: hatch ships its own python-build-standalone
+                                        // interpreter compiled with clang, so its sysconfig reports
+                                        // CXX=clang++. The Rocky 8 coverage image only has GCC, so
+                                        // setuptools/distutils fails the C++ extension build with
+                                        // "command 'clang++' failed: No such file or directory".
+                                        // Forcing CC=gcc / CXX=g++ keeps the build on the toolchain
+                                        // that's actually present in the image.
                                         sh label: 'Build Python Package', script: '''
                                             set +x
+                                            export CC=gcc
+                                            export CXX=g++
                                             RUSTFLAGS="" hatch build -t wheel
                                         '''
 
