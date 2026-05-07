@@ -31,23 +31,26 @@ pub struct WrapperPresets {
 }
 
 impl WrapperPresets {
-    /// Build a preset bundle for the named wrapper.
+    /// Presets for the Python connector.
     ///
-    /// Starts from `Self::default()` and overrides only the fields that
-    /// differ for the given wrapper. To add a new preset, add a field
-    /// with a `Default` value to the struct, then add a line in the
-    /// match arm of every wrapper that needs a non-default value.
-    pub fn for_wrapper(name: &str) -> Self {
-        let mut presets = Self::default();
-        match name.to_ascii_lowercase().as_str() {
-            "python" => {}
-            "odbc" => {
-                presets.put_get_resultset_flavor = PutGetResultsetFlavor::Odbc;
-            }
-            "jdbc" => {}
-            _ => {}
+    /// Currently identical to `Default` — listed explicitly so that
+    /// future Python-specific overrides have a clear home.
+    pub fn python() -> Self {
+        Self::default()
+    }
+
+    /// Presets for the ODBC driver.
+    #[allow(clippy::needless_update)]
+    pub fn odbc() -> Self {
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
+            ..Self::default()
         }
-        presets
+    }
+
+    /// Presets for the JDBC bridge.
+    pub fn jdbc() -> Self {
+        Self::default()
     }
 }
 

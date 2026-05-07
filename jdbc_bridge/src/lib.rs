@@ -23,7 +23,7 @@ impl JdbcBridge {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .take(),
-            wrapper_presets: WrapperPresets::for_wrapper("jdbc"),
+            wrapper_presets: WrapperPresets::jdbc(),
             ..Default::default()
         };
         Self {

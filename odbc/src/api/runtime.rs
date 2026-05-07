@@ -90,7 +90,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     if guard.globals.is_none() {
         let providers = DriverProviders {
             log_manager: sf_core::logging::LogManager::for_odbc(),
-            wrapper_presets: WrapperPresets::for_wrapper("odbc"),
+            wrapper_presets: WrapperPresets::odbc(),
             ..Default::default()
         };
 

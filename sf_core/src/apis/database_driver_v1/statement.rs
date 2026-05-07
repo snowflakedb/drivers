@@ -460,10 +460,14 @@ impl DatabaseDriverV1 {
         let prebuilt_stream = if super::multistatement::is_multistatement(&response.data) {
             None
         } else {
-            let query_result =
-                process_query_response(&response.data, &http_client, &prefetch_config, &self.wrapper_presets)
-                    .await
-                    .context(QueryResponseProcessingSnafu)?;
+            let query_result = process_query_response(
+                &response.data,
+                &http_client,
+                &prefetch_config,
+                &self.wrapper_presets,
+            )
+            .await
+            .context(QueryResponseProcessingSnafu)?;
             Some(Box::new(FFI_ArrowArrayStream::new(query_result.reader)))
         };
 
@@ -895,9 +899,10 @@ async fn fetch_and_resolve_result_set(
     let prefetch_config = resolve_prefetch_config(conn_ptr).await;
 
     let descriptor = response_to_descriptor(&data, wrapper_presets);
-    let query_result = process_query_response(&data, &http_client, &prefetch_config, wrapper_presets)
-        .await
-        .context(QueryResponseProcessingSnafu)?;
+    let query_result =
+        process_query_response(&data, &http_client, &prefetch_config, wrapper_presets)
+            .await
+            .context(QueryResponseProcessingSnafu)?;
     let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
 
     Ok(ResolvedResultSet { descriptor, stream })
