@@ -30,6 +30,12 @@ pub struct LogManager {
     telemetry_sessions: SessionRegistry,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
     fs: Arc<dyn FsAdapter>,
+    /// Process-wide default for `log_query_text` parsed from `sf.odbc.ini` /
+    /// `[log]` TOML. `None` means "unset; let the registry default win".
+    log_query_text: Option<bool>,
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`].
+    log_query_parameters: Option<bool>,
 }
 
 impl LogManager {
@@ -42,6 +48,20 @@ impl LogManager {
     pub fn os_details(&self) -> &Option<HashMap<String, String>> {
         self.os_details
             .get_or_init(|| detect_os_details(self.fs.as_ref()))
+    }
+
+    /// Process-wide default for `log_query_text`, parsed from `sf.odbc.ini`
+    /// (or the `[log]` TOML section). Acts as a fallback when no
+    /// per-connection setting is supplied; explicit DSN / connection-string
+    /// values still win.
+    pub fn log_query_text(&self) -> Option<bool> {
+        self.log_query_text
+    }
+
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`] for precedence semantics.
+    pub fn log_query_parameters(&self) -> Option<bool> {
+        self.log_query_parameters
     }
 
     /// Create a `LogManager` without installing a global tracing subscriber.
@@ -57,7 +77,24 @@ impl LogManager {
             telemetry_sessions: SessionRegistry::default(),
             os_details: once_cell::sync::OnceCell::new(),
             fs,
+            log_query_text: None,
+            log_query_parameters: None,
         }
+    }
+
+    /// Override the cached `log_query_text` / `log_query_parameters` defaults
+    /// without re-installing a tracing subscriber. Test-only ergonomics: lets
+    /// integration tests build a `LogManager` via [`Self::with_none_subscriber`]
+    /// and still simulate values parsed from `sf.odbc.ini`.
+    #[doc(hidden)]
+    pub fn with_query_log_defaults(
+        mut self,
+        log_query_text: Option<bool>,
+        log_query_parameters: Option<bool>,
+    ) -> Self {
+        self.log_query_text = log_query_text;
+        self.log_query_parameters = log_query_parameters;
+        self
     }
 
     /// Initialise logging with the given config, creating a fresh
@@ -65,6 +102,8 @@ impl LogManager {
     /// installed.
     pub fn init(config: LoggingConfig) -> Result<Self, LogError> {
         let sessions = SessionRegistry::default();
+        let log_query_text = config.log_query_text;
+        let log_query_parameters = config.log_query_parameters;
         let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
             .ok_or_else(|| {
                 InitSnafu {
@@ -77,6 +116,8 @@ impl LogManager {
             telemetry_sessions: sessions,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
+            log_query_text,
+            log_query_parameters,
         })
     }
 
@@ -91,6 +132,8 @@ impl LogManager {
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
+        let log_query_text = config.log_query_text;
+        let log_query_parameters = config.log_query_parameters;
         let provider =
             Self::try_init(config, Some(app_sink), Some(registry.clone()))?.ok_or_else(|| {
                 InitSnafu {
@@ -103,6 +146,8 @@ impl LogManager {
             telemetry_sessions: registry,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
+            log_query_text,
+            log_query_parameters,
         })
     }
 
@@ -333,6 +378,29 @@ mod tests {
                 "build_core_layer should succeed for level {level:?}"
             );
         }
+    }
+
+    #[test]
+    fn with_none_subscriber_log_query_defaults_are_none() {
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs));
+        assert_eq!(lm.log_query_text(), None);
+        assert_eq!(lm.log_query_parameters(), None);
+    }
+
+    #[test]
+    fn with_query_log_defaults_overrides_values() {
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs))
+            .with_query_log_defaults(Some(true), Some(false));
+        assert_eq!(lm.log_query_text(), Some(true));
+        assert_eq!(lm.log_query_parameters(), Some(false));
+    }
+
+    #[test]
+    fn with_query_log_defaults_supports_partial_set() {
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs))
+            .with_query_log_defaults(Some(true), None);
+        assert_eq!(lm.log_query_text(), Some(true));
+        assert_eq!(lm.log_query_parameters(), None);
     }
 
     #[test]

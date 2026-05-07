@@ -6,12 +6,16 @@
 //! thread-local subscriber so this test does not race with `setup_logging`'s
 //! global subscriber.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::json;
+use sf_core::apis::database_driver_v1::{DatabaseDriverV1, DriverProviders};
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::config::rest_parameters::{DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
 use sf_core::config::retry::RetryPolicy;
+use sf_core::config::settings::Setting;
+use sf_core::fs_adapter::RealFs;
+use sf_core::logging::LogManager;
 use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -181,6 +185,114 @@ async fn sync_query_emits_info_log_with_sql_and_bindings_when_both_flags_on() {
         logs.contains("sentinel_binding_value"),
         "Bindings JSON should appear when log_query_parameters=true, got:\n{logs}"
     );
+}
+
+/// Build a `DatabaseDriverV1` whose injected `LogManager` exposes the given
+/// ini-derived defaults, mirroring the wiring `for_odbc` / `for_toml` produce
+/// in production but without installing a global tracing subscriber.
+fn driver_with_log_query_defaults(
+    log_query_text: Option<bool>,
+    log_query_parameters: Option<bool>,
+) -> DatabaseDriverV1 {
+    let log_manager = LogManager::with_none_subscriber(Arc::new(RealFs))
+        .with_query_log_defaults(log_query_text, log_query_parameters);
+    DatabaseDriverV1::with_providers(DriverProviders {
+        log_manager: Some(log_manager),
+        ..Default::default()
+    })
+}
+
+#[tokio::test]
+async fn ini_default_seeds_log_query_text_when_no_dsn_setting() {
+    let driver = driver_with_log_query_defaults(Some(true), None);
+    let handle = driver.connection_new();
+
+    let value = driver
+        .connection_get_parameter(handle, "log_query_text".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        value.as_deref(),
+        Some("true"),
+        "ini default should be visible on the seed when no DSN value is set"
+    );
+
+    driver.connection_release(handle).unwrap();
+}
+
+#[tokio::test]
+async fn ini_default_seeds_log_query_parameters_when_no_dsn_setting() {
+    let driver = driver_with_log_query_defaults(None, Some(true));
+    let handle = driver.connection_new();
+
+    let value = driver
+        .connection_get_parameter(handle, "log_query_parameters".into())
+        .await
+        .unwrap();
+    assert_eq!(value.as_deref(), Some("true"));
+    let unset = driver
+        .connection_get_parameter(handle, "log_query_text".into())
+        .await
+        .unwrap();
+    assert!(
+        unset.is_none(),
+        "untouched flag must not be seeded by an unrelated default"
+    );
+
+    driver.connection_release(handle).unwrap();
+}
+
+#[tokio::test]
+async fn dsn_setting_overrides_ini_default_for_log_query_text() {
+    let driver = driver_with_log_query_defaults(Some(true), Some(true));
+    let handle = driver.connection_new();
+
+    driver
+        .connection_set_option(handle, "log_query_text".into(), Setting::Bool(false))
+        .await
+        .unwrap();
+
+    let text = driver
+        .connection_get_parameter(handle, "log_query_text".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        text.as_deref(),
+        Some("false"),
+        "explicit DSN setting must win over the ini-derived default"
+    );
+
+    let parameters = driver
+        .connection_get_parameter(handle, "log_query_parameters".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        parameters.as_deref(),
+        Some("true"),
+        "ini default should still apply for the flag the user did not touch"
+    );
+
+    driver.connection_release(handle).unwrap();
+}
+
+#[tokio::test]
+async fn ini_defaults_absent_when_no_log_manager_is_injected() {
+    let driver = DatabaseDriverV1::new();
+    let handle = driver.connection_new();
+
+    let text = driver
+        .connection_get_parameter(handle, "log_query_text".into())
+        .await
+        .unwrap();
+    let parameters = driver
+        .connection_get_parameter(handle, "log_query_parameters".into())
+        .await
+        .unwrap();
+
+    assert!(text.is_none());
+    assert!(parameters.is_none());
+
+    driver.connection_release(handle).unwrap();
 }
 
 #[tokio::test]

@@ -561,7 +561,26 @@ impl DatabaseDriverV1 {
     }
 
     pub fn connection_new(&self) -> Handle {
-        self.connections.add_handle(Mutex::new(Connection::new()))
+        let mut conn = Connection::new();
+        // Seed process-wide defaults parsed from `sf.odbc.ini` / `[log]` TOML
+        // so they apply when no DSN / connection-string value is provided.
+        // Explicit per-connection settings still win because they are
+        // inserted unconditionally on top of the seed.
+        if let Some(v) = self.log_query_text() {
+            inject_bool_if_absent(
+                &mut conn.connection_seed,
+                crate::config::param_registry::param_names::LOG_QUERY_TEXT.as_str(),
+                v,
+            );
+        }
+        if let Some(v) = self.log_query_parameters() {
+            inject_bool_if_absent(
+                &mut conn.connection_seed,
+                crate::config::param_registry::param_names::LOG_QUERY_PARAMETERS.as_str(),
+                v,
+            );
+        }
+        self.connections.add_handle(Mutex::new(conn))
     }
 
     pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
@@ -657,6 +676,15 @@ fn inject_if_absent(seed: &mut ParamStore, key: &str, value: &str) {
     let trimmed = value.trim();
     if seed.get_any(key).is_none() && !trimmed.is_empty() {
         seed.insert(key.to_owned(), Setting::String(trimmed.to_owned()));
+    }
+}
+
+/// `Setting::Bool` variant of [`inject_if_absent`]. Used to seed process-wide
+/// boolean defaults (e.g. `log_query_text` from `sf.odbc.ini`) without
+/// overriding an explicit DSN / connection-string value.
+fn inject_bool_if_absent(seed: &mut ParamStore, key: &str, value: bool) {
+    if seed.get_any(key).is_none() {
+        seed.insert(key.to_owned(), Setting::Bool(value));
     }
 }
 
@@ -1960,6 +1988,91 @@ mod tests {
             get_session_or_setting(&conn, "DATABASE", param_names::DATABASE),
             Some("override_db".into())
         );
+    }
+
+    #[tokio::test]
+    async fn connection_new_seeds_log_query_defaults_from_log_manager() {
+        use crate::apis::database_driver_v1::global_state::DriverProviders;
+        use crate::fs_adapter::RealFs;
+        use crate::logging::LogManager;
+        use std::sync::Arc;
+
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs))
+            .with_query_log_defaults(Some(true), Some(false));
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            log_manager: Some(lm),
+            ..Default::default()
+        });
+
+        let handle = ds.connection_new();
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.connection_seed.get_bool(param_names::LOG_QUERY_TEXT),
+            Some(true)
+        );
+        assert_eq!(
+            conn.connection_seed
+                .get_bool(param_names::LOG_QUERY_PARAMETERS),
+            Some(false)
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_new_does_not_seed_when_log_manager_absent() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.connection_seed.get_bool(param_names::LOG_QUERY_TEXT),
+            None
+        );
+        assert_eq!(
+            conn.connection_seed
+                .get_bool(param_names::LOG_QUERY_PARAMETERS),
+            None
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_option_overrides_log_query_seed() {
+        use crate::apis::database_driver_v1::global_state::DriverProviders;
+        use crate::fs_adapter::RealFs;
+        use crate::logging::LogManager;
+        use std::sync::Arc;
+
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs))
+            .with_query_log_defaults(Some(true), Some(true));
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            log_manager: Some(lm),
+            ..Default::default()
+        });
+
+        let handle = ds.connection_new();
+        ds.connection_set_option(handle, "log_query_text".into(), Setting::Bool(false))
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.connection_seed.get_bool(param_names::LOG_QUERY_TEXT),
+            Some(false),
+            "explicit option must override the ini-derived seed default"
+        );
+        assert_eq!(
+            conn.connection_seed
+                .get_bool(param_names::LOG_QUERY_PARAMETERS),
+            Some(true),
+            "untouched seed default should still be honored"
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
     }
 
     #[tokio::test]
