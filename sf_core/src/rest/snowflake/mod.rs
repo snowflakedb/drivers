@@ -179,6 +179,43 @@ impl<'a> QueryInput<'a> {
     }
 }
 
+/// Build the optional `sql` and `bindings` fields used in query log lines,
+/// honoring the `log_query_text` / `log_query_parameters` opt-ins and the
+/// existing `log_max_query_length` truncation.
+///
+/// - `(None, None)` when `log_query_text` is `false`.
+/// - `(Some(prefix), None)` when only `log_query_text` is `true`.
+/// - `(Some(prefix), Some(bindings_prefix))` when both flags are `true`;
+///   `bindings_prefix` is the empty string when no bindings are attached.
+///
+/// Returning `None` lets callers pass the result straight to `tracing` macros
+/// where `Option::None` fields are skipped automatically.
+pub(crate) fn query_log_fields(
+    params: &QueryParameters,
+    input: &QueryInput<'_>,
+) -> (Option<String>, Option<String>) {
+    if !params.log_query_text {
+        return (None, None);
+    }
+    let sql = input
+        .sql
+        .chars()
+        .take(params.log_max_query_length)
+        .collect::<String>();
+    let bindings = params.log_query_parameters.then(|| {
+        input
+            .bindings
+            .map(|raw| {
+                raw.get()
+                    .chars()
+                    .take(params.log_max_query_length)
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    });
+    (Some(sql), bindings)
+}
+
 pub fn user_agent(client_info: &ClientInfo) -> String {
     let base = format!(
         "{}/{} ({}-{})",
@@ -974,12 +1011,10 @@ async fn execute_async_with_fallback<'a>(
                 ..
             },
         ) => {
+            let (sql, bindings) = query_log_fields(query_parameters, &query_input);
             tracing::error!(
-                sql_prefix = query_input
-                    .sql
-                    .chars()
-                    .take(query_parameters.log_max_query_length)
-                    .collect::<String>(),
+                sql = sql,
+                bindings = bindings,
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -1037,9 +1072,11 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
 
-    tracing::debug!(
+    let (sql, bindings) = query_log_fields(query_parameters, query_input);
+    tracing::info!(
         request_id = %request_id,
-        sql_prefix = query_input.sql.chars().take(query_parameters.log_max_query_length).collect::<String>(),
+        sql = sql,
+        bindings = bindings,
         "Executing sync query"
     );
 
@@ -2264,6 +2301,110 @@ mod tests {
         }
     }
 
+    mod query_log_fields_tests {
+        use super::*;
+        use serde_json::value::RawValue;
+
+        fn make_params(log_max_query_length: usize, text: bool, params: bool) -> QueryParameters {
+            QueryParameters {
+                server_url: "https://example.test".into(),
+                client_info: test_client_info(),
+                log_max_query_length,
+                log_query_text: text,
+                log_query_parameters: params,
+            }
+        }
+
+        #[test]
+        fn flags_off_returns_none_none() {
+            let params = make_params(80, false, false);
+            let input = QueryInput::new("SELECT 1");
+            assert_eq!(query_log_fields(&params, &input), (None, None));
+        }
+
+        #[test]
+        fn bindings_flag_without_text_flag_is_noop() {
+            let params = make_params(80, false, true);
+            let input = QueryInput::new("SELECT 1");
+            assert_eq!(query_log_fields(&params, &input), (None, None));
+        }
+
+        #[test]
+        fn text_only_returns_full_sql_when_within_limit() {
+            let params = make_params(80, true, false);
+            let input = QueryInput::new("SELECT 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT 1"));
+            assert!(bindings.is_none());
+        }
+
+        #[test]
+        fn text_only_truncates_to_log_max_query_length() {
+            let params = make_params(6, true, false);
+            let input = QueryInput::new("SELECT * FROM t WHERE x = 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT"));
+            assert!(bindings.is_none());
+        }
+
+        #[test]
+        fn text_only_truncates_at_char_boundary_for_multibyte() {
+            // "héllo" — 'é' is 2 bytes in UTF-8 but a single `char`. With limit
+            // 3 we expect "hél" (3 chars), not bytes.
+            let params = make_params(3, true, false);
+            let input = QueryInput::new("héllo world");
+            let (sql, _) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("hél"));
+        }
+
+        #[test]
+        fn text_and_params_includes_bindings_json() {
+            let params = make_params(80, true, true);
+            let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
+                "1": {"type": "TEXT", "value": "hello"}
+            }))
+            .unwrap();
+            let mut input = QueryInput::new("SELECT ?");
+            input.bindings = Some(&raw);
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT ?"));
+            assert!(bindings.is_some());
+            let bindings = bindings.unwrap();
+            assert!(
+                bindings.contains("hello"),
+                "expected bindings JSON to contain the value, got {bindings}"
+            );
+        }
+
+        #[test]
+        fn text_and_params_truncates_bindings_to_log_max_query_length() {
+            let params = make_params(8, true, true);
+            let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
+                "1": {"type": "TEXT", "value": "abcdefghijklmnop"}
+            }))
+            .unwrap();
+            let mut input = QueryInput::new("SELECT ?");
+            input.bindings = Some(&raw);
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref().map(str::len), Some(8));
+            let bindings = bindings.expect("bindings field should be present");
+            assert_eq!(bindings.chars().count(), 8);
+            assert!(
+                raw.get().starts_with(&bindings),
+                "truncated bindings should be the prefix of the raw JSON: {bindings}"
+            );
+        }
+
+        #[test]
+        fn text_and_params_returns_empty_string_when_no_bindings() {
+            let params = make_params(80, true, true);
+            let input = QueryInput::new("SELECT 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT 1"));
+            assert_eq!(bindings.as_deref(), Some(""));
+        }
+    }
+
     mod execute_sync_query_retry_tests {
         use super::*;
         use std::sync::Arc;
@@ -2305,6 +2446,8 @@ mod tests {
                 server_url: server.uri(),
                 client_info: test_client_info(),
                 log_max_query_length: 1024,
+                log_query_text: false,
+                log_query_parameters: false,
             };
             let query_input = QueryInput::new("SELECT 1");
 

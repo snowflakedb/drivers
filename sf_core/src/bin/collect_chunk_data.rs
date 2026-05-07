@@ -361,6 +361,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_url,
         client_info,
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
+        log_query_text: false,
+        log_query_parameters: false,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 

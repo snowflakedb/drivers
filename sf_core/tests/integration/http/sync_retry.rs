@@ -195,6 +195,8 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
         server_url: format!("http://{}", addr),
         client_info: test_client_info(),
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
+        log_query_text: false,
+        log_query_parameters: false,
     }
 }
 

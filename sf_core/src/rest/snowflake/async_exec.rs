@@ -3,12 +3,12 @@ use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::error::{SfError, current_location, map_http_error};
 use crate::rest::snowflake::{
-    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_request,
-    query_response,
+    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_log_fields,
+    query_request, query_response,
 };
 use reqwest::{Method, StatusCode};
 use std::time::{Duration, Instant};
-use tracing::debug;
+use tracing::{debug, info};
 use url::Url;
 
 const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
@@ -190,6 +190,13 @@ pub async fn submit_statement_async<'a>(
     let server_url = &params.server_url;
     let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
+    let (sql, bindings) = query_log_fields(params, query_input);
+    info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing async query"
+    );
     let request_body = build_async_query_request(query_input);
     let submit_request = || {
         build_submit_request(

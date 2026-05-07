@@ -85,6 +85,8 @@ pub mod param_names {
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
+    pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
+    pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
     // Logout configuration
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
@@ -684,6 +686,34 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: false,
         mutable_after_connect: false,
     },
+    ParamDef {
+        canonical_name: param_names::LOG_QUERY_TEXT.as_str(),
+        aliases: &["LOG_QUERY_TEXT"],
+        value_type: ValueType::Bool,
+        additional_value_type: Some(ValueType::String),
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Include the (truncated) SQL text in INFO query logs",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOG_QUERY_PARAMETERS.as_str(),
+        aliases: &["LOG_QUERY_PARAMETERS"],
+        value_type: ValueType::Bool,
+        additional_value_type: Some(ValueType::String),
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Include the (truncated) JSON bindings in INFO query logs (requires log_query_text)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
     // ── Logout ────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::SERVER_SESSION_KEEP_ALIVE.as_str(),
@@ -1032,6 +1062,56 @@ mod tests {
         assert!(!def.used_at_connect);
         assert!(!def.mutable_after_connect);
         assert_eq!(def.default.unwrap()(), Setting::Int(80));
+    }
+
+    #[test]
+    fn log_query_text_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_query_text")
+            .expect("log_query_text should be registered");
+        assert_eq!(def.canonical_name, "log_query_text");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert_eq!(def.additional_value_type, Some(ValueType::String));
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+        assert_eq!(def.default.unwrap()(), Setting::Bool(false));
+    }
+
+    #[test]
+    fn log_query_parameters_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_query_parameters")
+            .expect("log_query_parameters should be registered");
+        assert_eq!(def.canonical_name, "log_query_parameters");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert_eq!(def.additional_value_type, Some(ValueType::String));
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+        assert_eq!(def.default.unwrap()(), Setting::Bool(false));
+    }
+
+    #[test]
+    fn log_query_text_resolves_uppercase_alias() {
+        let r = registry();
+        let def = r
+            .resolve("LOG_QUERY_TEXT")
+            .expect("LOG_QUERY_TEXT alias should resolve");
+        assert_eq!(def.canonical_name, "log_query_text");
+    }
+
+    #[test]
+    fn log_query_parameters_resolves_uppercase_alias() {
+        let r = registry();
+        let def = r
+            .resolve("LOG_QUERY_PARAMETERS")
+            .expect("LOG_QUERY_PARAMETERS alias should resolve");
+        assert_eq!(def.canonical_name, "log_query_parameters");
     }
 
     #[test]

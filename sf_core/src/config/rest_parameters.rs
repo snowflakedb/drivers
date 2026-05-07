@@ -49,11 +49,41 @@ pub fn resolve_log_max_query_length(settings: &dyn Settings) -> usize {
         .unwrap_or(DEFAULT_LOG_MAX_QUERY_LENGTH)
 }
 
+/// Read a boolean-typed parameter that may have been provided as a bool, an int,
+/// or a string ("true"/"false"/"1"/"0"). Falls back to `default` when absent or
+/// when present but unparseable.
+fn resolve_bool_param(settings: &dyn Settings, key: &str, default: bool) -> bool {
+    settings
+        .get_bool(key)
+        .or_else(|| {
+            settings
+                .get_string(key)
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        })
+        .or_else(|| settings.get_int(key).map(|v| v != 0))
+        .unwrap_or(default)
+}
+
+/// Read `log_query_text` from a settings bag, accepting bool/int/string values.
+pub fn resolve_log_query_text(settings: &dyn Settings) -> bool {
+    resolve_bool_param(settings, param_names::LOG_QUERY_TEXT.as_str(), false)
+}
+
+/// Read `log_query_parameters` from a settings bag, accepting bool/int/string values.
+pub fn resolve_log_query_parameters(settings: &dyn Settings) -> bool {
+    resolve_bool_param(settings, param_names::LOG_QUERY_PARAMETERS.as_str(), false)
+}
+
 #[derive(Clone)]
 pub struct QueryParameters {
     pub server_url: String,
     pub client_info: ClientInfo,
     pub log_max_query_length: usize,
+    /// Include the (truncated) SQL text in INFO query logs.
+    pub log_query_text: bool,
+    /// Include the (truncated) JSON bindings in INFO query logs (only honored
+    /// when [`Self::log_query_text`] is also true).
+    pub log_query_parameters: bool,
 }
 
 impl QueryParameters {
@@ -66,6 +96,8 @@ impl QueryParameters {
             server_url: get_server_url(settings)?,
             client_info: ClientInfo::from_settings(settings)?,
             log_max_query_length: resolve_log_max_query_length(settings),
+            log_query_text: resolve_log_query_text(settings),
+            log_query_parameters: resolve_log_query_parameters(settings),
         })
     }
 }
@@ -841,5 +873,83 @@ mod tests {
     fn test_detect_os_version_not_empty() {
         let version = crate::telemetry::environment::detect_os_version();
         assert!(!version.is_empty());
+    }
+
+    // ── log_query_text / log_query_parameters resolvers ──────────────
+
+    #[test]
+    fn test_resolve_log_query_text_default_false() {
+        let settings = create_test_settings(vec![]);
+        assert!(!resolve_log_query_text(&settings));
+        assert!(!resolve_log_query_parameters(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_bool() {
+        let settings = create_test_settings(vec![("log_query_text", Setting::Bool(true))]);
+        assert!(resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_string_true() {
+        let settings =
+            create_test_settings(vec![("log_query_text", Setting::String("true".into()))]);
+        assert!(resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_string_uppercase() {
+        let settings =
+            create_test_settings(vec![("log_query_text", Setting::String("TRUE".into()))]);
+        assert!(resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_string_one() {
+        let settings = create_test_settings(vec![("log_query_text", Setting::String("1".into()))]);
+        assert!(resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_string_false() {
+        let settings =
+            create_test_settings(vec![("log_query_text", Setting::String("false".into()))]);
+        assert!(!resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_int_one() {
+        let settings = create_test_settings(vec![("log_query_text", Setting::Int(1))]);
+        assert!(resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_text_from_int_zero() {
+        let settings = create_test_settings(vec![("log_query_text", Setting::Int(0))]);
+        assert!(!resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_resolve_log_query_parameters_independent_of_text_flag() {
+        // The resolver itself just reads the boolean; the text-flag gating is
+        // enforced by `query_log_fields`, not by the resolver.
+        let settings = create_test_settings(vec![("log_query_parameters", Setting::Bool(true))]);
+        assert!(resolve_log_query_parameters(&settings));
+        assert!(!resolve_log_query_text(&settings));
+    }
+
+    #[test]
+    fn test_query_parameters_from_settings_populates_new_flags() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            ("log_query_text", Setting::Bool(true)),
+            ("log_query_parameters", Setting::String("1".into())),
+        ]);
+        let params = QueryParameters::from_settings(&settings).unwrap();
+        assert!(params.log_query_text);
+        assert!(params.log_query_parameters);
     }
 }

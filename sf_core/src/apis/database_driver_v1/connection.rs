@@ -25,6 +25,7 @@ use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
+    resolve_log_query_parameters, resolve_log_query_text,
 };
 use crate::config::retry::RetryPolicy;
 use crate::handle_manager::Handle;
@@ -772,6 +773,8 @@ impl Connection {
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
             log_max_query_length: resolve_log_max_query_length(settings),
+            log_query_text: resolve_log_query_text(settings),
+            log_query_parameters: resolve_log_query_parameters(settings),
         })
     }
 
