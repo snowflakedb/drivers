@@ -22,7 +22,7 @@ use super::error::{
 };
 use super::interval::{
     SnowflakeIntervalDayTime, SnowflakeIntervalYearMonth, day_time_subtype_from_sql,
-    year_month_subtype_from_sql,
+    read_single_field_interval_i128, year_month_subtype_from_sql,
 };
 use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
@@ -104,6 +104,24 @@ impl ParamConverter for DecimalParamConverter {
                     .build());
                 }
             }
+            // Single-field SQL_C_INTERVAL_* sources resolve to the integer
+            // count of the leading interval field per ODBC Appendix D
+            // ("C to SQL Data Types: Interval"). For SQL_C_INTERVAL_SECOND
+            // any sub-second `fraction` is truncated toward zero —
+            // SQL_DECIMAL / SQL_NUMERIC targets carry their own scale on
+            // the server, but the wire representation here is the integer
+            // leading-field text, matching how `SnowflakeNumber::read_odbc`
+            // handles the same source for the integer SQL targets. Compound
+            // interval C types (YEAR_TO_MONTH, DAY_TO_*, HOUR_TO_*,
+            // MINUTE_TO_SECOND) carry more than one field and have no
+            // single-integer mapping; they fall through to the unsupported
+            // arm below.
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond => read_single_field_interval_i128(binding).to_string(),
             _ => {
                 return Err(UnsupportedParameterTypeSnafu {
                     sql_type: sql::SqlDataType::DECIMAL,

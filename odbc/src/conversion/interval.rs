@@ -531,6 +531,65 @@ pub(crate) fn format_interval(binding: &ParameterBinding) -> String {
 }
 
 // =============================================================================
+// Integer extraction for exact-numeric bind targets.
+// =============================================================================
+
+/// Read a `SQL_INTERVAL_STRUCT` whose `value_type` is one of the six
+/// single-field interval C types and return the field's signed integer
+/// value as `i128`. Used by `SnowflakeNumber::read_odbc` to bind
+/// `SQL_C_INTERVAL_<single-field>` against `SQL_TINYINT` through
+/// `SQL_NUMERIC`, per ODBC Appendix D ("C to SQL Data Types") which
+/// maps single-field intervals to the integer count of their leading
+/// field.
+///
+/// For `SQL_C_INTERVAL_SECOND` the `fraction` field (microseconds) is
+/// truncated toward zero — exact-numeric SQL targets are integral. This
+/// matches the silent-truncation behaviour `SnowflakeNumber::read_odbc`
+/// already applies to `SQL_C_NUMERIC` inputs with `scale > 0`. The
+/// server-side truncation warning (22015, "interval field overflow")
+/// surfaces if and only if the receiving column actually rejects the
+/// loss of precision.
+///
+/// # Panics
+///
+/// Compound interval C types (`IntervalYearToMonth`,
+/// `IntervalDayToHour`, …) carry more than one field and have no
+/// single-integer representation. Callers are responsible for routing
+/// them to a 07006 path before reaching this helper; we `unreachable!`
+/// rather than returning a result so caller match arms can stay tight.
+pub(crate) fn read_single_field_interval_i128(binding: &ParameterBinding) -> i128 {
+    // Field offsets match `format_interval` above; see the offset table
+    // there for the full layout.
+    const SIGN_OFFSET: usize = 4;
+    const F0_OFFSET: usize = 8; // year / day
+    const F1_OFFSET: usize = 12; // month / hour
+    const F2_OFFSET: usize = 16; // minute
+    const F3_OFFSET: usize = 20; // second
+
+    let base = binding.parameter_value_ptr as *const u8;
+    let sign_raw: sql::SmallInt =
+        unsafe { std::ptr::read_unaligned(base.add(SIGN_OFFSET) as *const sql::SmallInt) };
+    let read_u32 =
+        |off: usize| -> u32 { unsafe { std::ptr::read_unaligned(base.add(off) as *const u32) } };
+
+    let magnitude: i128 = match binding.value_type {
+        CDataType::IntervalYear => read_u32(F0_OFFSET) as i128,
+        CDataType::IntervalMonth => read_u32(F1_OFFSET) as i128,
+        CDataType::IntervalDay => read_u32(F0_OFFSET) as i128,
+        CDataType::IntervalHour => read_u32(F1_OFFSET) as i128,
+        CDataType::IntervalMinute => read_u32(F2_OFFSET) as i128,
+        // SECOND: read leading-field integer; sub-second `fraction` is
+        // truncated toward zero per the spec rule for integer targets.
+        CDataType::IntervalSecond => read_u32(F3_OFFSET) as i128,
+        other => unreachable!(
+            "read_single_field_interval_i128 called with non-single-field C interval type {other:?}"
+        ),
+    };
+
+    if sign_raw != 0 { -magnitude } else { magnitude }
+}
+
+// =============================================================================
 // WriteJson — emit `{"type": "INTERVAL_YEAR_MONTH" | "INTERVAL_DAY_TIME",
 // "value": "<literal>"}`.
 // =============================================================================

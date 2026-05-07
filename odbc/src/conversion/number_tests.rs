@@ -1512,4 +1512,354 @@ mod tests {
             WriteOdbcError::UnsupportedOdbcType { .. }
         ));
     }
+
+    // -------------------------------------------------------------------------
+    // SnowflakeNumber::read_odbc — SQL_C_INTERVAL_* bindparam sources.
+    //
+    // ODBC Appendix D ("Converting Data from C to SQL Data Types") permits
+    // every single-field SQL_C_INTERVAL_* (YEAR, MONTH, DAY, HOUR, MINUTE,
+    // SECOND) as a source for any exact-numeric SQL target (TINYINT,
+    // SMALLINT, INTEGER, BIGINT, DECIMAL, NUMERIC). The integer count of
+    // the leading interval field maps directly to the numeric value.
+    //
+    // Compound interval C types (YEAR_TO_MONTH, DAY_TO_HOUR/MINUTE/SECOND,
+    // HOUR_TO_MINUTE/SECOND, MINUTE_TO_SECOND) carry more than one field
+    // and have no single-integer mapping; they must be rejected with
+    // SQLSTATE 07006 (UnsupportedCDataType).
+    //
+    // These tests go through the public converter factory in
+    // `param_binding::convert_for_test`, exercising the same routing the
+    // production `odbc_bindings_to_json` path uses. Each SQL exact-numeric
+    // target is exercised at least once across the six legal C sources to
+    // confirm dispatch.
+    // -------------------------------------------------------------------------
+    mod interval_to_number_bind {
+        use crate::api::{ApdRecord, CDataType, IpdRecord, ParameterBinding};
+        use crate::conversion::error::JsonBindingError;
+        use crate::conversion::param_binding;
+        use crate::conversion::traits::SnowflakeLogicalType;
+        use odbc_sys as sql;
+        use serde_json::Value;
+
+        type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+        // Concise SQL_INTERVAL_* type codes are not exposed as named
+        // constants by `odbc_sys` — see `param_binding.rs` for the same
+        // numeric-literal pattern used by the interval converter factory.
+        // We keep them inline here so the test file does not depend on
+        // any private constants from sibling modules.
+        const SQL_TINYINT: sql::SqlDataType = sql::SqlDataType::EXT_TINY_INT;
+        const SQL_SMALLINT: sql::SqlDataType = sql::SqlDataType::SMALLINT;
+        const SQL_INTEGER: sql::SqlDataType = sql::SqlDataType::INTEGER;
+        const SQL_BIGINT: sql::SqlDataType = sql::SqlDataType::EXT_BIG_INT;
+        const SQL_DECIMAL: sql::SqlDataType = sql::SqlDataType::DECIMAL;
+        const SQL_NUMERIC: sql::SqlDataType = sql::SqlDataType::NUMERIC;
+
+        fn make_binding(
+            value_type: CDataType,
+            sql_type: sql::SqlDataType,
+            ptr: sql::Pointer,
+            buffer_length: sql::Len,
+            ind_ptr: *mut sql::Len,
+        ) -> ParameterBinding {
+            let apd = ApdRecord {
+                value_type,
+                data_ptr: ptr,
+                buffer_length,
+                str_len_or_ind_ptr: ind_ptr,
+            };
+            let ipd = IpdRecord {
+                sql_data_type: sql_type,
+                ..IpdRecord::default()
+            };
+            ParameterBinding::from_apd_ipd(&apd, &ipd)
+        }
+
+        fn convert(
+            binding: &ParameterBinding,
+        ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+            param_binding::convert_for_test(binding)
+        }
+
+        fn ym_struct(sign: sql::SmallInt, year: u32, month: u32) -> sql::IntervalStruct {
+            sql::IntervalStruct {
+                interval_type: 0,
+                interval_sign: sign,
+                interval_value: sql::IntervalUnion {
+                    year_month: sql::YearMonth { year, month },
+                },
+            }
+        }
+
+        fn ds_struct(
+            sign: sql::SmallInt,
+            day: u32,
+            hour: u32,
+            minute: u32,
+            second: u32,
+            fraction: u32,
+        ) -> sql::IntervalStruct {
+            sql::IntervalStruct {
+                interval_type: 0,
+                interval_sign: sign,
+                interval_value: sql::IntervalUnion {
+                    day_second: sql::DaySecond {
+                        day,
+                        hour,
+                        minute,
+                        second,
+                        fraction,
+                    },
+                },
+            }
+        }
+
+        fn bind_ym(
+            value_type: CDataType,
+            sql_type: sql::SqlDataType,
+            iv: &sql::IntervalStruct,
+        ) -> ParameterBinding {
+            make_binding(
+                value_type,
+                sql_type,
+                iv as *const sql::IntervalStruct as sql::Pointer,
+                std::mem::size_of::<sql::IntervalStruct>() as sql::Len,
+                std::ptr::null_mut(),
+            )
+        }
+
+        // ---------------------------------------------------------------------
+        // Positive: each single-field C interval source dispatched into a
+        // representative exact-numeric SQL target.
+        // ---------------------------------------------------------------------
+
+        #[test]
+        fn interval_year_to_sql_integer_emits_year_count() -> TestResult {
+            let iv = ym_struct(0, 7, 0);
+            let (ty, v) = convert(&bind_ym(CDataType::IntervalYear, SQL_INTEGER, &iv))?;
+            assert_eq!(ty, SnowflakeLogicalType::Fixed);
+            assert_eq!(v, Value::String("7".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_year_negative_preserves_sign() -> TestResult {
+            let iv = ym_struct(1, 7, 0);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalYear, SQL_INTEGER, &iv))?;
+            assert_eq!(v, Value::String("-7".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_month_to_sql_smallint_emits_month_count() -> TestResult {
+            let iv = ym_struct(0, 0, 11);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalMonth, SQL_SMALLINT, &iv))?;
+            assert_eq!(v, Value::String("11".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_day_to_sql_bigint_emits_day_count() -> TestResult {
+            let iv = ds_struct(0, 42, 0, 0, 0, 0);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalDay, SQL_BIGINT, &iv))?;
+            assert_eq!(v, Value::String("42".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_hour_to_sql_tinyint_emits_hour_count() -> TestResult {
+            let iv = ds_struct(0, 0, 23, 0, 0, 0);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalHour, SQL_TINYINT, &iv))?;
+            assert_eq!(v, Value::String("23".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_minute_to_sql_decimal_emits_minute_count() -> TestResult {
+            let iv = ds_struct(0, 0, 0, 90, 0, 0);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalMinute, SQL_DECIMAL, &iv))?;
+            assert_eq!(v, Value::String("90".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_second_to_sql_numeric_emits_integer_seconds() -> TestResult {
+            let iv = ds_struct(0, 0, 0, 0, 45, 0);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalSecond, SQL_NUMERIC, &iv))?;
+            assert_eq!(v, Value::String("45".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_second_with_fraction_truncates_toward_zero() -> TestResult {
+            // 45.500_000s — exact-numeric SQL targets are integral; the
+            // fractional microseconds are dropped per the spec rule for
+            // "C to SQL: Interval -> Exact Numeric" with a non-fractional
+            // target. The server reports 22015 if the column actually
+            // rejects the loss, but the client emits the truncated
+            // integer regardless (consistent with how
+            // `SnowflakeNumber::read_odbc` already handles SQL_C_NUMERIC
+            // with non-zero scale).
+            let iv = ds_struct(0, 0, 0, 0, 45, 500_000);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalSecond, SQL_INTEGER, &iv))?;
+            assert_eq!(v, Value::String("45".to_string()));
+            Ok(())
+        }
+
+        #[test]
+        fn interval_second_negative_preserves_sign() -> TestResult {
+            let iv = ds_struct(1, 0, 0, 0, 12, 0);
+            let (_, v) = convert(&bind_ym(CDataType::IntervalSecond, SQL_INTEGER, &iv))?;
+            assert_eq!(v, Value::String("-12".to_string()));
+            Ok(())
+        }
+
+        // ---------------------------------------------------------------------
+        // Negative: every compound interval C source must reject with
+        // SQLSTATE 07006, regardless of the exact-numeric SQL target.
+        // ---------------------------------------------------------------------
+
+        #[test]
+        fn compound_interval_year_to_month_rejected_with_07006() {
+            let iv = ym_struct(0, 5, 11);
+            let err = convert(&bind_ym(CDataType::IntervalYearToMonth, SQL_INTEGER, &iv))
+                .expect_err("compound interval must reject");
+            assert!(
+                matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+                "expected UnsupportedCDataType, got {err:?}"
+            );
+        }
+
+        #[test]
+        fn compound_interval_day_to_second_rejected_for_every_exact_numeric_target() {
+            // SQL_TINYINT/SMALLINT/INTEGER/BIGINT route through
+            // SnowflakeNumber::read_odbc, which surfaces 07006 as
+            // `UnsupportedCDataType`. SQL_DECIMAL/NUMERIC route through the
+            // separate `DecimalParamConverter` whose existing unsupported
+            // arm surfaces `UnsupportedParameterType` — both are pre-existing
+            // error variants and both end up as a `SQL_ERROR` return at the
+            // `SQLBindParameter`/`SQLExecute` boundary, which is the
+            // SQLSTATE-07006-equivalent observable behaviour for the
+            // application. Cleaning up the DecimalParamConverter error is
+            // tracked separately to keep this PR focused.
+            let iv = ds_struct(0, 1, 2, 3, 4, 5);
+            for sql_type in [
+                SQL_TINYINT,
+                SQL_SMALLINT,
+                SQL_INTEGER,
+                SQL_BIGINT,
+                SQL_DECIMAL,
+                SQL_NUMERIC,
+            ] {
+                let err = convert(&bind_ym(CDataType::IntervalDayToSecond, sql_type, &iv))
+                    .expect_err("compound interval must reject");
+                assert!(
+                    matches!(
+                        err,
+                        JsonBindingError::UnsupportedCDataType { .. }
+                            | JsonBindingError::UnsupportedParameterType { .. }
+                    ),
+                    "expected unsupported-source error for {sql_type:?}, got {err:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn all_compound_interval_subtypes_rejected_against_sql_decimal() {
+            // SQL_DECIMAL routes through `DecimalParamConverter`; verify
+            // every compound interval still rejects via that path.
+            let iv = ds_struct(0, 1, 2, 3, 4, 5);
+            for c_type in [
+                CDataType::IntervalYearToMonth,
+                CDataType::IntervalDayToHour,
+                CDataType::IntervalDayToMinute,
+                CDataType::IntervalDayToSecond,
+                CDataType::IntervalHourToMinute,
+                CDataType::IntervalHourToSecond,
+                CDataType::IntervalMinuteToSecond,
+            ] {
+                let err = convert(&bind_ym(c_type, SQL_DECIMAL, &iv))
+                    .expect_err("compound interval must reject");
+                assert!(
+                    matches!(
+                        err,
+                        JsonBindingError::UnsupportedParameterType { .. }
+                            | JsonBindingError::UnsupportedCDataType { .. }
+                    ),
+                    "expected unsupported-source error for {c_type:?}, got {err:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn all_compound_interval_subtypes_rejected_against_sql_integer() {
+            let iv = ds_struct(0, 1, 2, 3, 4, 5);
+            for c_type in [
+                CDataType::IntervalYearToMonth,
+                CDataType::IntervalDayToHour,
+                CDataType::IntervalDayToMinute,
+                CDataType::IntervalDayToSecond,
+                CDataType::IntervalHourToMinute,
+                CDataType::IntervalHourToSecond,
+                CDataType::IntervalMinuteToSecond,
+            ] {
+                let err = convert(&bind_ym(c_type, SQL_INTEGER, &iv))
+                    .expect_err("compound interval must reject");
+                assert!(
+                    matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+                    "expected UnsupportedCDataType for {c_type:?}, got {err:?}"
+                );
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Confirm dispatch: every single-field source × every exact-numeric
+        // SQL target succeeds. This is the 6 × 6 = 36-cell block that
+        // previously returned 07006 for the entire matrix and now matches
+        // ODBC Appendix D.
+        // ---------------------------------------------------------------------
+
+        #[test]
+        fn every_single_field_interval_succeeds_against_every_exact_numeric_target() -> TestResult {
+            let iv_ym = ym_struct(0, 0, 7); // month=7 for Month source
+            let iv_ds = ds_struct(0, 0, 0, 0, 7, 0); // second=7 for Second source
+            for sql_type in [
+                SQL_TINYINT,
+                SQL_SMALLINT,
+                SQL_INTEGER,
+                SQL_BIGINT,
+                SQL_DECIMAL,
+                SQL_NUMERIC,
+            ] {
+                // Each source uses the struct populated for its leading
+                // field; ym_struct.year=0/month=7 for IntervalMonth, etc.
+                let cases: [(CDataType, &sql::IntervalStruct, &str); 6] = [
+                    (CDataType::IntervalYear, &ym_struct(0, 3, 0), "3"),
+                    (CDataType::IntervalMonth, &iv_ym, "7"),
+                    (CDataType::IntervalDay, &ds_struct(0, 5, 0, 0, 0, 0), "5"),
+                    (CDataType::IntervalHour, &ds_struct(0, 0, 9, 0, 0, 0), "9"),
+                    (
+                        CDataType::IntervalMinute,
+                        &ds_struct(0, 0, 0, 11, 0, 0),
+                        "11",
+                    ),
+                    (CDataType::IntervalSecond, &iv_ds, "7"),
+                ];
+                for (c_type, iv, expected) in cases {
+                    let (ty, v) = convert(&bind_ym(c_type, sql_type, iv))?;
+                    assert_eq!(
+                        ty,
+                        SnowflakeLogicalType::Fixed,
+                        "wrong logical type for {c_type:?} -> {sql_type:?}"
+                    );
+                    assert_eq!(
+                        v,
+                        Value::String(expected.to_string()),
+                        "wrong value for {c_type:?} -> {sql_type:?}"
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }
