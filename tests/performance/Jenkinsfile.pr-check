@@ -16,8 +16,20 @@ import groovy.transform.Field
 @Field def REGRESSION_STATUS_CONTEXT = 'performance/regression'
 @Field def REGRESSION_EXIT_CODE = 77
 
-// Track whether the Python+ODBC lane detected a confirmed regression
+// Track whether any lane detected a confirmed regression
 @Field def regressionDetected = false
+@Field def pythonRegressionDetected = false
+@Field def odbcRegressionDetected = false
+
+// Change detection: which drivers need perf testing
+@Field def runCore = false
+@Field def runPython = false
+@Field def runOdbc = false
+@Field def skipAll = false
+
+def isMergeQueue() {
+    return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
 
 def setupVenv() {
     dir('tests/performance') {
@@ -157,18 +169,24 @@ ${sep}
 PERFORMANCE REGRESSION CHECK SUMMARY
 ${sep}
   Driver   Test group   Result
-  ------   ----------   ------
-  Python   Fast         ${exitCodeLabel(python.exitFast)}
-  Python   Slow         ${exitCodeLabel(python.exitSlow)}
-  ODBC     Fast         ${exitCodeLabel(odbc.exitFast)}
-  ODBC     Slow         ${exitCodeLabel(odbc.exitSlow)}
-${sep}
+  ------   ----------   ------"""
+    if (python) {
+        echo """  Python   Fast         ${exitCodeLabel(python.exitFast)}
+  Python   Slow         ${exitCodeLabel(python.exitSlow)}"""
+    }
+    if (odbc) {
+        echo """  ODBC     Fast         ${exitCodeLabel(odbc.exitFast)}
+  ODBC     Slow         ${exitCodeLabel(odbc.exitSlow)}"""
+    }
+    echo """${sep}
   Fast tests : ${REGRESSION_FAST_TEST_FILTER}
   Slow tests : ${REGRESSION_SLOW_TEST_FILTER}
   Threshold  : ${REGRESSION_THRESHOLD}%  |  Rerun iters: ${REGRESSION_RERUN_ITERATIONS}
 ${sep}"""
 
     for (driver in ['python', 'odbc']) {
+        if (driver == 'python' && !python) continue
+        if (driver == 'odbc' && !odbc) continue
         def summaryFile = "results/regression_summary_${driver}.json"
         if (!fileExists(summaryFile)) {
             echo "  [${driver.toUpperCase()}] No regression summary file found (${summaryFile})"
@@ -210,6 +228,72 @@ def runBaselineTests(String driver) {
     """
 }
 
+def detectChanges() {
+    // For main branch builds, run everything
+    if (env.CHANGE_ID == null) {
+        runCore = true
+        runPython = true
+        runOdbc = true
+        return
+    }
+
+    def changedFiles = sh(
+        returnStdout: true,
+        script: "git diff --name-only origin/${env.CHANGE_TARGET}...HEAD"
+    ).trim().split('\n').toList()
+
+    echo "Changed files (${changedFiles.size()}):"
+    changedFiles.each { echo "  ${it}" }
+
+    // Core/shared changes → run all drivers
+    def corePatterns = [
+        'sf_core/', 'sf_mini_core/', 'sf_mini_core_static/',
+        'proto_utils/', 'proto_generator/', 'protobuf/', 'thrift/',
+        'Cargo.toml', 'Cargo.lock', 'build_common.rs', 'rust-toolchain.toml',
+        'error_trace/', 'error_trace_derive/',
+    ]
+
+    // Perf test infra changes → run all drivers
+    def perfPatterns = ['tests/performance/']
+
+    // Python-specific changes
+    def pythonPatterns = ['python/', 'pep249_dbapi/']
+
+    // ODBC-specific changes
+    def odbcPatterns = ['odbc/', 'odbc_trace_tool/']
+
+    for (file in changedFiles) {
+        if (corePatterns.any { file.startsWith(it) }) {
+            runCore = true
+            runPython = true
+            runOdbc = true
+            break
+        }
+        if (perfPatterns.any { file.startsWith(it) }) {
+            runCore = true
+            runPython = true
+            runOdbc = true
+            break
+        }
+        if (pythonPatterns.any { file.startsWith(it) }) {
+            runPython = true
+        }
+        if (odbcPatterns.any { file.startsWith(it) }) {
+            runOdbc = true
+        }
+    }
+
+    skipAll = !runCore && !runPython && !runOdbc
+
+    echo ""
+    echo "=== Performance Change Detection ==="
+    echo "  Run Core:   ${runCore}"
+    echo "  Run Python: ${runPython}"
+    echo "  Run ODBC:   ${runOdbc}"
+    echo "  Skip all:   ${skipAll}"
+    echo "====================================="
+}
+
 pipeline {
     agent none
 
@@ -228,10 +312,29 @@ pipeline {
     }
 
     stages {
-        stage('PR Check') {
+        stage('Detect Changes') {
+            agent { label 'drivers-perf-regular-memory-node-snowos' }
+            steps {
+                script {
+                    detectChanges()
+                    if (skipAll) {
+                        postRegressionStatus('SUCCESS', 'Skipped — no performance-relevant changes')
+                        echo "No performance-relevant changes detected — skipping perf tests"
+                    }
+                }
+            }
+        }
+
+        stage('Build & Test') {
+            when {
+                expression { !skipAll }
+            }
             failFast true
             parallel {
                 stage('Core') {
+                    when {
+                        expression { runCore }
+                    }
                     agent { label 'drivers-perf-regular-memory-node-snowos' }
                     stages {
                         stage('Setup - Core') {
@@ -276,18 +379,21 @@ pipeline {
                     }
                 }
 
-                stage('Python + ODBC') {
+                stage('Python') {
+                    when {
+                        expression { runPython }
+                    }
                     agent { label 'drivers-perf-regular-memory-node-snowos' }
                     environment {
                         JENKINS_NODE_LABEL = 'drivers-perf-regular-memory-node-snowos'
                     }
                     stages {
-                        stage('Setup - Python/ODBC') {
+                        stage('Setup - Python') {
                             steps {
                                 setupVenv()
                             }
                         }
-                        stage('Build - Python + ODBC + WireMock') {
+                        stage('Build - Python + WireMock') {
                             steps {
                                 withCredentials([
                                     usernamePassword(
@@ -297,12 +403,11 @@ pipeline {
                                     )
                                 ]) {
                                     sh 'tests/performance/drivers/python/build.sh'
-                                    sh 'tests/performance/drivers/odbc/build.sh'
                                     sh 'tests/performance/wiremock/build.sh'
                                 }
                             }
                         }
-                        stage('Test - Python + ODBC') {
+                        stage('Test - Python') {
                             steps {
                                 withCredentials([
                                     string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
@@ -314,28 +419,32 @@ pipeline {
                                         file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
                                     ]) {
                                         script {
-                                            def isMainBranch = (env.CHANGE_ID == null)
-
-                                            if (isMainBranch) {
+                                            if (isMergeQueue()) {
+                                                echo "Merge queue: running smoke test only (no upload)"
+                                                sh """
+                                                    source .venv/bin/activate
+                                                    export CLOUD=aws
+                                                    python -m hatch run -- python -m pytest \
+                                                        tests/test_select_1M_recorded_http.py \
+                                                        -k "${REGRESSION_FAST_TEST_FILTER}" \
+                                                        --driver=python --driver-type=universal \
+                                                        --iterations=1 --warmup-iterations=0 \
+                                                        -s -v
+                                                """
+                                            } else if (env.CHANGE_ID == null) {
                                                 runBaselineTests('python')
-                                                runBaselineTests('odbc')
                                             } else {
                                                 def python = runRegressionTests('python')
-                                                def odbc   = runRegressionTests('odbc')
 
-                                                printRegressionSummary(python, odbc)
+                                                printRegressionSummary(python, null)
 
-                                                def exitCode = combineExitCodes(python.combined, odbc.combined)
-
-                                                if (exitCode == REGRESSION_EXIT_CODE) {
+                                                if (python.combined == REGRESSION_EXIT_CODE) {
+                                                    pythonRegressionDetected = true
                                                     regressionDetected = true
-                                                    postRegressionStatus('FAILURE', 'Performance regression detected')
-                                                    echo "Performance regression detected (exit code ${REGRESSION_EXIT_CODE})"
-                                                } else if (exitCode != 0) {
-                                                    postRegressionStatus('FAILURE', 'Tests failed before regression check could complete')
-                                                    error("Tests failed with exit code ${exitCode}")
-                                                } else {
-                                                    postRegressionStatus('SUCCESS', 'No performance regression detected')
+                                                    echo "Performance regression detected in Python (exit code ${REGRESSION_EXIT_CODE})"
+                                                } else if (python.combined != 0) {
+                                                    postRegressionStatus('FAILURE', 'Python tests failed before regression check could complete')
+                                                    error("Python tests failed with exit code ${python.combined}")
                                                 }
                                             }
                                         }
@@ -343,28 +452,112 @@ pipeline {
                                 }
                             }
                         }
-                        stage('Regression Gate') {
-                            when {
-                                expression { env.CHANGE_ID != null }
-                            }
-                            steps {
-                                script {
-                                    if (!regressionDetected) {
-                                        echo "No regression detected — gate passed"
-                                        return
-                                    }
+                    }
+                }
 
-                                    def accepted = hasPrLabel(ACCEPT_PERF_LABEL)
-                                    if (accepted) {
-                                        echo "Regression detected but '${ACCEPT_PERF_LABEL}' label is present — accepting performance changes"
-                                        postRegressionStatus('SUCCESS', "Regression accepted via ${ACCEPT_PERF_LABEL} label".toString())
-                                    } else {
-                                        echo "Regression detected and '${ACCEPT_PERF_LABEL}' label is NOT present — add the label and re-run to accept"
-                                        postRegressionStatus('FAILURE', "Regression confirmed — add ${ACCEPT_PERF_LABEL} label to accept".toString())
+                stage('ODBC') {
+                    when {
+                        expression { runOdbc }
+                    }
+                    agent { label 'drivers-perf-regular-memory-node-snowos' }
+                    environment {
+                        JENKINS_NODE_LABEL = 'drivers-perf-regular-memory-node-snowos'
+                    }
+                    stages {
+                        stage('Setup - ODBC') {
+                            steps {
+                                setupVenv()
+                            }
+                        }
+                        stage('Build - ODBC + WireMock') {
+                            steps {
+                                withCredentials([
+                                    usernamePassword(
+                                        credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+                                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                                    )
+                                ]) {
+                                    sh 'tests/performance/drivers/odbc/build.sh'
+                                    sh 'tests/performance/wiremock/build.sh'
+                                }
+                            }
+                        }
+                        stage('Test - ODBC') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                                ]) {
+                                    sh './scripts/decode_secrets.sh'
+                                }
+                                dir('tests/performance') {
+                                    withCredentials([
+                                        file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                                    ]) {
+                                        script {
+                                            if (isMergeQueue()) {
+                                                echo "Merge queue: running smoke test only (no upload)"
+                                                sh """
+                                                    source .venv/bin/activate
+                                                    export CLOUD=aws
+                                                    python -m hatch run -- python -m pytest \
+                                                        tests/test_select_1M_recorded_http.py \
+                                                        -k "${REGRESSION_FAST_TEST_FILTER}" \
+                                                        --driver=odbc --driver-type=universal \
+                                                        --iterations=1 --warmup-iterations=0 \
+                                                        -s -v
+                                                """
+                                            } else if (env.CHANGE_ID == null) {
+                                                runBaselineTests('odbc')
+                                            } else {
+                                                def odbc = runRegressionTests('odbc')
+
+                                                printRegressionSummary(null, odbc)
+
+                                                if (odbc.combined == REGRESSION_EXIT_CODE) {
+                                                    odbcRegressionDetected = true
+                                                    regressionDetected = true
+                                                    echo "Performance regression detected in ODBC (exit code ${REGRESSION_EXIT_CODE})"
+                                                } else if (odbc.combined != 0) {
+                                                    postRegressionStatus('FAILURE', 'ODBC tests failed before regression check could complete')
+                                                    error("ODBC tests failed with exit code ${odbc.combined}")
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        stage('Regression Gate') {
+            when {
+                expression { env.CHANGE_ID != null && !skipAll }
+            }
+            agent { label 'drivers-perf-regular-memory-node-snowos' }
+            steps {
+                script {
+                    if (!regressionDetected) {
+                        postRegressionStatus('SUCCESS', 'No performance regression detected')
+                        echo "No regression detected — gate passed"
+                        return
+                    }
+
+                    def accepted = hasPrLabel(ACCEPT_PERF_LABEL)
+                    def drivers = []
+                    if (pythonRegressionDetected) drivers.add('Python')
+                    if (odbcRegressionDetected) drivers.add('ODBC')
+                    def driverList = drivers.join(', ')
+
+                    if (accepted) {
+                        echo "Regression detected in ${driverList} but '${ACCEPT_PERF_LABEL}' label is present — accepting performance changes"
+                        postRegressionStatus('SUCCESS', "Regression accepted via ${ACCEPT_PERF_LABEL} label".toString())
+                    } else {
+                        echo "Regression detected in ${driverList} and '${ACCEPT_PERF_LABEL}' label is NOT present — add the label and re-run to accept"
+                        postRegressionStatus('FAILURE', "Regression confirmed (${driverList}) — add ${ACCEPT_PERF_LABEL} label to accept".toString())
                     }
                 }
             }
