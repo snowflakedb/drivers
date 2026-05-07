@@ -56,12 +56,6 @@ runs:
           throw "vcvarsall.bat $arch failed with exit code $LASTEXITCODE"
         }
 
-        # Propagate every env var vcvarsall set to BOTH:
-        #   - $env:GITHUB_ENV     -> visible to subsequent steps in the job
-        #   - the current process -> so the post-condition checks below see
-        #                            the freshly-updated PATH (writes to
-        #                            GITHUB_ENV are buffered and only applied
-        #                            at step boundary).
         $vcvarsOutput | ForEach-Object {
           if ($_ -match '^([^=]+)=(.*)$') {
             $name = $Matches[1]
