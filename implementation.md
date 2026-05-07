@@ -55,11 +55,11 @@ can be updated to follow.
 `.github/workflows/mirror-inbound.yml` dispatches it. Before relying on
 this in production:
 
-- The inbound workflow uses two tokens: `SNOWFLAKEDB_TOKEN` for the
+- The inbound workflow uses two tokens: `DRIVER_MIRROR_TOKEN` for the
   origin side (reading the mirror PR from `snowflakedb/ud-mirror-test`
   via git fetch + PR-metadata API) and `SNOWFLAKE_EMU_TOKEN` for the
   destination push into `snowflake-eng/universal-driver`. Confirm
-  `SNOWFLAKEDB_TOKEN` has read on the mirror and `SNOWFLAKE_EMU_TOKEN`
+  `DRIVER_MIRROR_TOKEN` has read on the mirror and `SNOWFLAKE_EMU_TOKEN`
   has `contents:write` + PR-create rights on the internal repo.
 - Walk one real PR end-to-end: open test PR on mirror → label
   `ok-to-import` → dispatch `mirror-inbound.yml` with the PR number →
@@ -88,7 +88,7 @@ using a classic PAT, GitHub rejected the push:
 
 To restore `.github/` mirroring:
 
-- Switch `SNOWFLAKEDB_TOKEN` (the token that actually pushes to the
+- Switch `DRIVER_MIRROR_TOKEN` (the token that actually pushes to the
   mirror) to either a GitHub App installation token (preferred) or a
   fine-grained PAT that grants the `workflow` scope on
   `snowflakedb/ud-mirror-test`.
@@ -107,16 +107,16 @@ To restore `.github/` mirroring:
 runs on the mirror after the outbound Copybara push and auto-closes the
 original PR with a link to the replayed commit. For the outbound mirror
 to *install* it on the mirror repo (i.e. push a file under
-`.github/workflows/` to `snowflakedb/ud-mirror-test`), `SNOWFLAKEDB_TOKEN`
+`.github/workflows/` to `snowflakedb/ud-mirror-test`), `DRIVER_MIRROR_TOKEN`
 must carry the `workflow` scope — the same GitHub restriction as the
-`.github/` item above. The current `SNOWFLAKEDB_TOKEN` is a classic PAT
+`.github/` item above. The current `DRIVER_MIRROR_TOKEN` is a classic PAT
 without that scope, so the file is not yet mirrored automatically.
 
 Until the scope is added, probably issue a **separate token** dedicated
 to this push rather than broadening the main mirror token — the
 outbound mirror runs daily and only needs `contents:write`, while
 pushing workflow files is a rarer, higher-privilege operation that
-deserves its own auditable credential (e.g. `SNOWFLAKEDB_WORKFLOW_TOKEN`)
+deserves its own auditable credential (e.g. `DRIVER_MIRROR_WORKFLOW_TOKEN`)
 scoped to just `snowflakedb/ud-mirror-test` with `workflow`. Short
 term: deploy `close-imported-pr.yml` to the mirror manually; long term:
 add the extra token (or a GitHub App with the right permission) and
@@ -138,7 +138,7 @@ that:
 
 - `main` and `release/*` accept pushes **only** from the mirror bot
   identity (GitHub App installation or deploy-key principal used by
-  `SNOWFLAKEDB_TOKEN`).
+  `DRIVER_MIRROR_TOKEN`).
 - Direct pushes from all human users are blocked.
 - Force-push is disabled for everyone except the mirror bot (Copybara
   rewrites history on transformation changes, so the bot itself needs

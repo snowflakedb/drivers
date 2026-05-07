@@ -1,3 +1,7 @@
+# DEPRECATED: use Buildkite pipeline .buildkite/pipelines/mirror-inbound/pipeline.yml
+# This workflow is retained for reference only. workflow_dispatch is kept
+# as a manual escape hatch.
+
 name: Import mirror PR
 
 # Imports a labeled PR from snowflakedb/ud-mirror-test back
@@ -64,24 +68,24 @@ jobs:
         env:
           # Origin is the mirror (snowflakedb/ud-mirror-test) — fetches to
           # read the PR branch happen via the credentials file, so the
-          # snowflakedb-scoped token goes here. The destination push to
+          # mirror-scoped token goes here. The destination push to
           # snowflake-eng/universal-driver uses SNOWFLAKE_EMU_TOKEN passed
           # inline on the Copybara command URL, which wins over this file.
-          SNOWFLAKEDB_TOKEN: ${{ secrets.SNOWFLAKEDB_TOKEN }}
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
         run: |
           set -euo pipefail
           git config --global user.name  "Mirror Bot"
           git config --global user.email "mirror-bot@snowflake.com"
           git config --global credential.helper store
           umask 077
-          printf 'https://x-access-token:%s@github.com\n' "${SNOWFLAKEDB_TOKEN}" > "${HOME}/.git-credentials"
+          printf 'https://x-access-token:%s@github.com\n' "${DRIVER_MIRROR_TOKEN}" > "${HOME}/.git-credentials"
 
       - name: Run Copybara (import)
         env:
           # Copybara reads GITHUB_TOKEN to call the mirror's API for the
           # PR metadata (labels, title, body, author) — that's a read
-          # against snowflakedb, so use the snowflakedb token here.
-          GITHUB_TOKEN: ${{ secrets.SNOWFLAKEDB_TOKEN }}
+          # against the mirror, so use the mirror token here.
+          GITHUB_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
           # EMU token is used only to push the imported branch into the
           # internal snowflake-eng/universal-driver repo; inlined on the
           # destination URL below.

@@ -1,0 +1,174 @@
+# Outbound mirror: snowflake-eng/universal-driver -> snowflakedb/ud-mirror-test
+# (flips to snowflakedb/universal-driver once validated).
+#
+# Entry points:
+#   - Scheduled build (Buildkite UI cron, daily 07:17 UTC) — unattended.
+#     Skips the `operator-inputs` step via `build.source == "schedule"`.
+#   - Manual build in the Buildkite UI — unblocks the `operator-inputs`
+#     step to collect `ref` and `last_rev`. The unblock ACL on this
+#     pipeline is the approval gate (replaces the `mirror-public` GitHub
+#     Environment reviewer list from the legacy workflow).
+#
+# Scope: main + every release/* branch.
+
+env:
+  COPYBARA_RELEASE: "v20260504"
+  MIRROR_DESTINATION_URL: "https://github.com/snowflakedb/ud-mirror-test"
+
+common: &common
+  agents:
+    queue: "discovery"
+    repo: "snowflakedb/universal-driver"
+  plugins:
+    - ${GLOBAL_PLUGIN}/vault_secrets:
+        secrets:
+          - path: "secret/jenkins/mirror/snowflake_emu_token"
+            env_name: "SNOWFLAKE_EMU_TOKEN"
+          - path: "secret/jenkins/mirror/driver_mirror_token"
+            env_name: "DRIVER_MIRROR_TOKEN"
+  retry:
+    automatic:
+      - exit_status: "*"
+        limit: 1
+
+steps:
+  # ==========================================================================
+  # Operator inputs + approval gate (manual builds only)
+  # ==========================================================================
+  - input: ":lock: Approve mirror run"
+    key: "operator-inputs"
+    if: build.source != "schedule"
+    prompt: |
+      Approve and optionally override inputs. Leave fields blank to mirror
+      main + every release/* branch (the scheduled-run default).
+    fields:
+      - text: "ref"
+        key: "ref"
+        required: false
+        default: ""
+        hint: "Single branch to mirror (default: main + all release/*)"
+      - text: "last_rev"
+        key: "last_rev"
+        required: false
+        default: ""
+        hint: "Origin SHA to anchor Copybara's replay at (--last-rev). Only applied when a single branch is targeted."
+
+  # ==========================================================================
+  # Mirror main
+  # ==========================================================================
+  - label: ":arrows_counterclockwise: Mirror main"
+    key: "mirror-main"
+    depends_on: "operator-inputs"
+    allow_dependency_failure: false
+    concurrency_group: "mirror-public"
+    concurrency: 1
+    timeout_in_minutes: 30
+    <<: *common
+    command: |
+      set -euo pipefail
+      REF=$$(buildkite-agent meta-data get ref --default "")
+      LAST_REV=$$(buildkite-agent meta-data get last_rev --default "")
+      echo "ref='$$REF' last_rev='$$LAST_REV'"
+      if [ -n "$$REF" ] && [ "$$REF" != "main" ]; then
+        echo "ref is a non-main branch ($$REF) — skipping main mirror"
+        exit 0
+      fi
+      scripts/mirror/run_copybara.sh main "$$LAST_REV"
+
+  # ==========================================================================
+  # Mirror release/* branches
+  # ==========================================================================
+  - label: ":arrows_counterclockwise: Mirror release/* branches"
+    key: "mirror-release-branches"
+    depends_on: "mirror-main"
+    concurrency_group: "mirror-public"
+    concurrency: 1
+    timeout_in_minutes: 45
+    <<: *common
+    command: |
+      set -euo pipefail
+      REF=$$(buildkite-agent meta-data get ref --default "")
+      LAST_REV=$$(buildkite-agent meta-data get last_rev --default "")
+      echo "ref='$$REF' last_rev='$$LAST_REV'"
+      if [ -n "$$REF" ] && ! echo "$$REF" | grep -q '^release/'; then
+        echo "ref is not a release branch ($$REF) — skipping"
+        exit 0
+      fi
+
+      # Full history so `git branch -r --list 'origin/release/*'` sees
+      # every release branch.
+      git fetch --prune --no-tags origin '+refs/heads/release/*:refs/remotes/origin/release/*'
+
+      if [ -n "$$REF" ]; then
+        BRANCHES="$$REF"
+        SINGLE_REF="$$REF"
+      else
+        BRANCHES=$$(git branch -r --list 'origin/release/*' \
+          | sed 's|[[:space:]]*origin/||' \
+          | tr '\n' ' ' \
+          | sed 's/[[:space:]]*$$//')
+        SINGLE_REF=""
+      fi
+
+      if [ -z "$$BRANCHES" ]; then
+        echo "no release/* branches found — nothing to mirror"
+        exit 0
+      fi
+
+      failed=0
+      for branch in $$BRANCHES; do
+        echo "--- :arrows_counterclockwise: Mirror $$branch"
+        if ! scripts/mirror/run_copybara.sh release "$$branch" "$$LAST_REV" "$$SINGLE_REF"; then
+          buildkite-agent annotate ":warning: Copybara failed for $$branch" \
+            --style warning --append --context release-branches
+          failed=1
+        fi
+      done
+      # Per-branch failures are annotated; exit non-zero so the overall
+      # step reflects reality (matches the legacy `::warning::` behavior
+      # but no longer silently masks the outcome).
+      exit $$failed
+
+  # ==========================================================================
+  # Audit log
+  # ==========================================================================
+  - label: ":page_facing_up: Audit log"
+    key: "audit"
+    depends_on:
+      - step: "mirror-main"
+        allow_failure: true
+      - step: "mirror-release-branches"
+        allow_failure: true
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
+    command: |
+      set -euo pipefail
+      REF=$$(buildkite-agent meta-data get ref --default "")
+      LAST_REV=$$(buildkite-agent meta-data get last_rev --default "")
+      MAIN_OUTCOME=$$(buildkite-agent step get outcome --step mirror-main || echo "unknown")
+      RELEASE_OUTCOME=$$(buildkite-agent step get outcome --step mirror-release-branches || echo "unknown")
+
+      git fetch --prune --no-tags origin \
+        '+refs/heads/main:refs/remotes/origin/main' \
+        '+refs/heads/release/*:refs/remotes/origin/release/*' >/dev/null 2>&1 || true
+      MAIN_SHA=$$(git rev-parse refs/remotes/origin/main 2>/dev/null || echo "unknown")
+      RELEASE_COUNT=$$(git branch -r --list 'origin/release/*' | wc -l | tr -d '[:space:]')
+
+      {
+        echo "## Mirror Sync Report"
+        echo ""
+        echo "- **Time (UTC):** $$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        echo "- **Trigger:** $$BUILDKITE_SOURCE"
+        echo "- **Build creator:** $${BUILDKITE_BUILD_CREATOR:-unknown}"
+        echo "- **Requested ref:** $${REF:-<default>}"
+        echo "- **Requested last_rev:** $${LAST_REV:-<none>}"
+        echo "- **Source main SHA:** $$MAIN_SHA"
+        echo "- **Release branches:** $$RELEASE_COUNT"
+        echo "- **Destination:** $$MIRROR_DESTINATION_URL"
+        echo ""
+        echo "- **mirror-main outcome:** $$MAIN_OUTCOME"
+        echo "- **mirror-release-branches outcome:** $$RELEASE_OUTCOME"
+        echo ""
+        echo "Commits were pushed directly to the destination repo — check its commit log to verify."
+      } | buildkite-agent annotate --style info --context mirror-audit

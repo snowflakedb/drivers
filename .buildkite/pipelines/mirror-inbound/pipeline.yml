@@ -1,0 +1,97 @@
+# Inbound import: labeled mirror PR (snowflakedb/ud-mirror-test) ->
+# PR on internal snowflake-eng/universal-driver.
+#
+# Flow:
+#   1. Maintainer reviews the mirror PR and adds the `ok-to-import` label.
+#   2. Create a build on this pipeline in the Buildkite UI.
+#   3. Unblock the `operator-inputs` step and supply the mirror PR number —
+#      the unblock ACL is the approval gate.
+#   4. Copybara opens a matching PR on the internal repo; reviewer merges
+#      after internal CI passes. The outbound pipeline then mirrors the
+#      merge commit back on its next scheduled run.
+#
+# Manual-only: no schedule. Per-PR concurrency so two concurrent unblocks
+# for the same PR cannot race.
+
+env:
+  COPYBARA_RELEASE: "v20260504"
+  SOURCE_REPO_URL: "https://github.com/snowflake-eng/universal-driver"
+
+common: &common
+  agents:
+    queue: "discovery"
+    repo: "snowflakedb/universal-driver"
+  plugins:
+    - ${GLOBAL_PLUGIN}/vault_secrets:
+        secrets:
+          - path: "secret/jenkins/mirror/snowflake_emu_token"
+            env_name: "SNOWFLAKE_EMU_TOKEN"
+          - path: "secret/jenkins/mirror/driver_mirror_token"
+            env_name: "DRIVER_MIRROR_TOKEN"
+  retry:
+    automatic:
+      - exit_status: "*"
+        limit: 1
+
+steps:
+  # ==========================================================================
+  # Operator inputs + approval gate
+  # ==========================================================================
+  - input: ":lock: Approve mirror PR import"
+    key: "operator-inputs"
+    prompt: |
+      Supply the mirror PR number to import. The PR must already carry the
+      `ok-to-import` label on snowflakedb/ud-mirror-test.
+    fields:
+      - text: "pr_number"
+        key: "pr_number"
+        required: true
+        hint: "Mirror PR number (e.g. 42)"
+
+  # ==========================================================================
+  # Import mirror PR
+  # ==========================================================================
+  - label: ":inbox_tray: Import mirror PR"
+    key: "import-pr"
+    depends_on: "operator-inputs"
+    allow_dependency_failure: false
+    # Per-PR concurrency: a second dispatch for the same PR queues behind
+    # the first so two imports can't race on the same destination branch.
+    concurrency_group: "mirror-inbound-$BUILDKITE_BUILD_META_DATA_PR_NUMBER"
+    concurrency: 1
+    timeout_in_minutes: 30
+    <<: *common
+    command: |
+      set -euo pipefail
+      PR_NUMBER=$$(buildkite-agent meta-data get pr_number)
+      if [ -z "$$PR_NUMBER" ]; then
+        echo "pr_number is empty — the input step should have enforced this" >&2
+        exit 1
+      fi
+      echo "Importing mirror PR #$$PR_NUMBER"
+      scripts/mirror/run_copybara.sh import "$$PR_NUMBER"
+
+  # ==========================================================================
+  # Audit log
+  # ==========================================================================
+  - label: ":page_facing_up: Audit log"
+    key: "audit"
+    depends_on:
+      - step: "import-pr"
+        allow_failure: true
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
+    command: |
+      set -euo pipefail
+      PR_NUMBER=$$(buildkite-agent meta-data get pr_number --default "unknown")
+      IMPORT_OUTCOME=$$(buildkite-agent step get outcome --step import-pr || echo "unknown")
+      {
+        echo "## Import PR #$$PR_NUMBER"
+        echo ""
+        echo "- **Build creator:** $${BUILDKITE_BUILD_CREATOR:-unknown}"
+        echo "- **Source PR:** https://github.com/snowflakedb/ud-mirror-test/pull/$$PR_NUMBER"
+        echo "- **Outcome:** $$IMPORT_OUTCOME"
+        echo ""
+        echo "If successful, a matching \`import-mirror-pr-$$PR_NUMBER\` PR now exists on the internal repo. Review, run internal CI, and merge — the outbound mirror will push the change back to the public repo on its next run."
+      } | buildkite-agent annotate --style info --context mirror-inbound-audit

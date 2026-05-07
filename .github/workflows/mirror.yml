@@ -1,19 +1,16 @@
+# DEPRECATED: use Buildkite pipeline .buildkite/pipelines/mirror-outbound/pipeline.yml
+# This workflow is retained for reference only. The schedule trigger has
+# been removed so it no longer fires on its own; workflow_dispatch remains
+# as a manual escape hatch.
+
 name: Mirror to public repo
 
 # Mirrors snowflake-eng/universal-driver -> snowflakedb/ud-mirror-test
 # (will be flipped to snowflakedb/universal-driver once validated).
 #
-# Triggers:
-#   - schedule: daily at 07:17 UTC (unattended, no approval gate)
-#   - workflow_dispatch: manual run; requires approval via the `mirror-public`
-#     GitHub Environment (configured with required reviewers = snow-drivers-warsaw).
-#
 # Scope: main + every release/* branch.
 
 on:
-  schedule:
-    # Daily at 07:17 UTC — off-the-hour to avoid global cron stampede.
-    - cron: "17 7 * * *"
   workflow_dispatch:
     inputs:
       ref:
@@ -96,10 +93,11 @@ jobs:
         env:
           # EMU token reads github.com API for the origin repo metadata.
           GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
-          # snowflakedb-scoped token — inlined into the destination URL so
-          # the push to snowflakedb/ud-mirror-test authenticates against
-          # the public org, not the internal one.
-          SNOWFLAKEDB_TOKEN: ${{ secrets.SNOWFLAKEDB_TOKEN }}
+          # Mirror destination token (contents:write on ud-mirror-test
+          # today, on snowflakedb/universal-driver once the mirror flips).
+          # Inlined into the destination URL so the push authenticates
+          # against the public org, not the internal one.
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
           LAST_REV: ${{ github.event.inputs.last_rev }}
         run: |
           set -euo pipefail
@@ -109,7 +107,7 @@ jobs:
             extra_args+=(--last-rev "${LAST_REV}")
           fi
           java -jar copybara_deploy.jar migrate copy.bara.sky mirror \
-            --git-destination-url="https://x-access-token:${SNOWFLAKEDB_TOKEN}@github.com/snowflakedb/ud-mirror-test.git" \
+            --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflakedb/ud-mirror-test.git" \
             --force \
             "${extra_args[@]}"
 
@@ -157,7 +155,7 @@ jobs:
           # origin (private) repo — provide credentials via a credentials
           # file so those fetches authenticate non-interactively. Only the
           # EMU token goes in the credentials file; the destination push
-          # to snowflakedb/ud-mirror-test uses SNOWFLAKEDB_TOKEN passed
+          # to snowflakedb/ud-mirror-test uses DRIVER_MIRROR_TOKEN passed
           # inline on the Copybara command URL.
           git config --global credential.helper store
           umask 077
@@ -183,10 +181,11 @@ jobs:
         env:
           # EMU token reads github.com API for the origin repo metadata.
           GITHUB_TOKEN: ${{ secrets.SNOWFLAKE_EMU_TOKEN }}
-          # snowflakedb-scoped token — inlined into the destination URL so
-          # the push to snowflakedb/ud-mirror-test authenticates against
-          # the public org, not the internal one.
-          SNOWFLAKEDB_TOKEN: ${{ secrets.SNOWFLAKEDB_TOKEN }}
+          # Mirror destination token (contents:write on ud-mirror-test
+          # today, on snowflakedb/universal-driver once the mirror flips).
+          # Inlined into the destination URL so the push authenticates
+          # against the public org, not the internal one.
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
           BRANCHES: ${{ steps.branches.outputs.branches }}
           # `last_rev` only makes sense when mirroring a single branch:
           # it's a SHA on that branch's source history. Applied only when
@@ -208,7 +207,7 @@ jobs:
             # (e.g. release/8.1 -> release/8.1 on the mirror).
             java -jar copybara_deploy.jar migrate copy.bara.sky mirror \
               --ref="${branch}" \
-              --git-destination-url="https://x-access-token:${SNOWFLAKEDB_TOKEN}@github.com/snowflakedb/ud-mirror-test.git" \
+              --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflakedb/ud-mirror-test.git" \
               --git-destination-push="${branch}" \
               --force \
               "${extra_args[@]}" \
