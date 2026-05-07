@@ -13,7 +13,7 @@ use crate::config::settings::Setting;
 ///
 /// Supported keys (case-insensitive):
 /// `LogLevel`, `LogPath`, `LogFile`, `LogMaxSize`, `LogMaxCount`,
-/// `LogEnabled`, `LogQueryText`, `LogQueryParameters`.
+/// `LogEnabled`, `LogQueryText`, `LogQueryParameters`, `ErrorTraceEnabled`.
 ///
 /// Checks file permissions before reading (rejects group/world-writable files
 /// on Unix).
@@ -61,6 +61,7 @@ fn apply_ini_section(props: &ini::Properties) -> Result<LoggingConfig, LogError>
             "logenabled" => config.enabled = parse_bool(value)?,
             "logquerytext" => config.log_query_text = Some(parse_bool(value)?),
             "logqueryparameters" => config.log_query_parameters = Some(parse_bool(value)?),
+            "errortraceenabled" => config.error_trace_enabled = parse_bool(value)?,
             other => eprintln!("ignoring unknown INI key: {other}"),
         }
     }
@@ -109,6 +110,9 @@ pub fn load_from_toml_section(section: &HashMap<String, Setting>) -> LoggingConf
     }
     if let Some(Setting::Bool(b)) = section.get("log_query_parameters") {
         config.log_query_parameters = Some(*b);
+    }
+    if let Some(Setting::Bool(error_trace)) = section.get("error_trace_enabled") {
+        config.error_trace_enabled = *error_trace;
     }
 
     config
@@ -282,6 +286,7 @@ LogFile=driver.log
 LogMaxSize=1048576
 LogMaxCount=5
 LogEnabled=true
+ErrorTraceEnabled=false
 ";
         let config = parse_ini_content(ini).unwrap();
         assert_eq!(config.level, LevelFilter::DEBUG);
@@ -294,6 +299,7 @@ LogEnabled=true
         assert_eq!(config.max_file_count.unwrap(), 5);
         assert!(config.enabled);
         assert!(!config.open_telemetry);
+        assert!(!config.error_trace_enabled);
     }
 
     #[test]
@@ -306,6 +312,27 @@ LogEnabled=true
         assert!(config.max_file_count.is_none());
         assert!(config.enabled);
         assert!(!config.open_telemetry);
+        assert!(config.error_trace_enabled);
+    }
+
+    #[test]
+    fn parse_ini_content_error_trace_enabled_true() {
+        let config = parse_ini_content("ErrorTraceEnabled=true").unwrap();
+        assert!(config.error_trace_enabled);
+    }
+
+    #[test]
+    fn parse_ini_content_error_trace_enabled_false() {
+        let config = parse_ini_content("ErrorTraceEnabled=false").unwrap();
+        assert!(!config.error_trace_enabled);
+    }
+
+    #[test]
+    fn parse_ini_content_error_trace_enabled_case_insensitive() {
+        let config = parse_ini_content("errortraceenabled=false").unwrap();
+        assert!(!config.error_trace_enabled);
+        let config = parse_ini_content("ERRORTRACEENABLED=false").unwrap();
+        assert!(!config.error_trace_enabled);
     }
 
     #[test]
@@ -542,6 +569,7 @@ LOGENABLED=false
         section.insert("rotation".into(), Setting::String("DAILY".into()));
         section.insert("enabled".into(), Setting::Bool(false));
         section.insert("opentelemetry".into(), Setting::Bool(true));
+        section.insert("error_trace_enabled".into(), Setting::Bool(false));
 
         let config = load_from_toml_section(&section);
         assert_eq!(config.level, LevelFilter::DEBUG);
@@ -552,6 +580,7 @@ LOGENABLED=false
         assert_eq!(config.rotation, LogRotation::Daily);
         assert!(!config.enabled);
         assert!(config.open_telemetry);
+        assert!(!config.error_trace_enabled);
     }
 
     #[test]
@@ -565,6 +594,18 @@ LOGENABLED=false
         assert!(config.max_file_count.is_none());
         assert!(config.enabled);
         assert!(!config.open_telemetry);
+        assert!(config.error_trace_enabled);
+    }
+
+    #[test]
+    fn load_from_toml_section_error_trace_enabled_wrong_type_ignored() {
+        let mut section = HashMap::new();
+        section.insert(
+            "error_trace_enabled".into(),
+            Setting::String("false".into()),
+        );
+        let config = load_from_toml_section(&section);
+        assert!(config.error_trace_enabled);
     }
 
     #[test]

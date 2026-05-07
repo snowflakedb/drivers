@@ -36,6 +36,7 @@ pub struct LogManager {
     /// Process-wide default for `log_query_parameters`. See
     /// [`Self::log_query_text`].
     log_query_parameters: Option<bool>,
+    error_trace_enabled: bool,
 }
 
 impl LogManager {
@@ -64,6 +65,13 @@ impl LogManager {
         self.log_query_parameters
     }
 
+    /// Whether user-facing error messages should include the full error trace,
+    /// as parsed from the INI/TOML logging config. Consumer crates read this
+    /// during init to seed their own rendering-policy state.
+    pub fn error_trace_enabled(&self) -> bool {
+        self.error_trace_enabled
+    }
+
     /// Create a `LogManager` without installing a global tracing subscriber.
     ///
     /// The returned instance still provides a `SessionRegistry` and
@@ -79,6 +87,7 @@ impl LogManager {
             fs,
             log_query_text: None,
             log_query_parameters: None,
+            error_trace_enabled: LoggingConfig::default().error_trace_enabled,
         }
     }
 
@@ -104,6 +113,7 @@ impl LogManager {
         let sessions = SessionRegistry::default();
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
+        let error_trace_enabled = config.error_trace_enabled;
         let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
             .ok_or_else(|| {
                 InitSnafu {
@@ -118,6 +128,7 @@ impl LogManager {
             fs: Arc::new(RealFs),
             log_query_text,
             log_query_parameters,
+            error_trace_enabled,
         })
     }
 
@@ -134,6 +145,7 @@ impl LogManager {
     {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
+        let error_trace_enabled = config.error_trace_enabled;
         let provider =
             Self::try_init(config, Some(app_sink), Some(registry.clone()))?.ok_or_else(|| {
                 InitSnafu {
@@ -148,6 +160,7 @@ impl LogManager {
             fs: Arc::new(RealFs),
             log_query_text,
             log_query_parameters,
+            error_trace_enabled,
         })
     }
 
