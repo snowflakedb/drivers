@@ -48,8 +48,6 @@ LARGE_RESULT_SET_SIZE = 20_000
 # VECTOR(FLOAT) uses 32-bit floats — need relaxed tolerance vs 64-bit assert_floats_equal.
 FLOAT32_APPROX = {"rel": 1e-6}
 
-pytestmark = pytest.mark.skip_for_json_result_set(reason="VECTOR type is not supported in JSON result format")
-
 
 class TestVectorTypeCasting:
     """Tests for VECTOR type casting to appropriate type."""
@@ -118,14 +116,22 @@ class TestVectorLiteral:
         assert result[2] is None
 
     BOUNDARY_TEST_CASES = [
-        ("INT", "INT", [INT32_MIN, INT32_MAX, 0]),
-        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_SMALLEST_NORMAL, 0.0]),
+        pytest.param("INT", "INT", [INT32_MIN, INT32_MAX, 0], id="INT"),
+        # Server's JSON serialization flushes subnormals to zero, so FLOAT32_SMALLEST_NORMAL
+        # round-trips as 0.0 when PYTHON_CONNECTOR_QUERY_RESULT_FORMAT=JSON. This is a server-side
+        # encoding limitation — Arrow format preserves the bit pattern.
+        pytest.param(
+            "FLOAT",
+            "FLOAT",
+            [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_SMALLEST_NORMAL, 0.0],
+            id="FLOAT",
+            marks=pytest.mark.skip_for_json_result_set(reason="JSON format flushes FLOAT subnormals to zero"),
+        ),
     ]
 
     @pytest.mark.parametrize(
         "subtype, vec_type, expected_value",
         BOUNDARY_TEST_CASES,
-        ids=[c[0] for c in BOUNDARY_TEST_CASES],
     )
     def test_should_select_subtype_vector_boundary_values(self, execute_query, subtype, vec_type, expected_value):
         # Given Snowflake client is logged in

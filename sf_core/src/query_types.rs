@@ -95,6 +95,10 @@ pub enum RowType {
     Vector {
         name: String,
         nullable: bool,
+        /// VECTOR dimension, always in [1, VECTOR_MAX_DIMENSION]. Validated at parse time
+        /// so downstream code can cast to `usize` without bounds checks.
+        dimension: i32,
+        element_type: VectorElementType,
     },
 }
 
@@ -111,6 +115,18 @@ pub enum GeoRepresentation {
     /// `type=binary` — decoded into Arrow `Binary` by the JSON parser.
     Binary,
 }
+
+/// VECTOR(INT) uses 32-bit ints; VECTOR(FLOAT) uses 32-bit IEEE 754 floats.
+/// Stored as an enum (rather than `arrow::DataType`) to keep this module independent
+/// of the Arrow crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorElementType {
+    Int32,
+    Float32,
+}
+
+/// Maximum Snowflake VECTOR dimension (per SQL reference).
+pub const VECTOR_MAX_DIMENSION: i32 = 4096;
 
 impl RowType {
     pub fn fixed(name: &str, nullable: bool, precision: u64, scale: u64) -> Self {
@@ -264,10 +280,17 @@ impl RowType {
         }
     }
 
-    pub fn vector(name: &str, nullable: bool) -> Self {
+    pub fn vector(
+        name: &str,
+        nullable: bool,
+        dimension: i32,
+        element_type: VectorElementType,
+    ) -> Self {
         RowType::Vector {
             name: name.to_string(),
             nullable,
+            dimension,
+            element_type,
         }
     }
 }
