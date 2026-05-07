@@ -1,5 +1,6 @@
 """Unit tests for api_telemetry decorator and api_usage tracking."""
 
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -243,6 +244,49 @@ class TestApiTelemetryResetBehavior:
 
         methods = _get_api_methods(mock_db_api)
         assert "SnowflakeCursor.execute" in methods
+
+    def test_unconsumed_generator_does_not_leak_tracking(self, connection, mock_db_api):
+        """A never-iterated generator must not suppress subsequent telemetry."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        gen = connection.execute_stream(StringIO("SELECT 1"))
+        del gen
+
+        connection.cursor()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.cursor" in methods
+
+    def test_tracking_true_between_generator_yields(self, connection, mock_db_api):
+        """Between yields, _TRACKING is True so independent calls are tracked."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        gen = connection.execute_stream(StringIO("SELECT 1; SELECT 2"))
+        next(gen)
+
+        connection.get_query_status("")
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.get_query_status" in methods
+
+    def test_telemetry_works_after_abandoned_generator(self, connection, mock_db_api):
+        """cursor() + close() send telemetry even after an abandoned generator."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        gen = connection.execute_stream(StringIO("SELECT 1"))
+        del gen
+
+        cur = connection.cursor()
+        cur.close()
+        connection.close()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.execute_stream" in methods
+        assert "Connection.cursor" in methods
+        assert "SnowflakeCursor.close" in methods
+        assert "Connection.close" in methods
 
 
 class TestApiTelemetryFailureIsolation:
