@@ -19,7 +19,7 @@ use snafu::{Location, Snafu};
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
-pub(crate) enum OAuthError {
+pub enum OAuthError {
     /// `state` mismatch on the loopback redirect — analysis §14 #7. The
     /// display string is the verbatim ODBC/JDBC message; SREs grep for it.
     #[snafu(display(

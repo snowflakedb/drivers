@@ -54,6 +54,9 @@ impl DPoPKey {
     }
 
     /// Recover a key previously serialized by [`DPoPKey::to_jwk_json`].
+    /// Reserved for the DPoP-bundled cache rehydration path that step 2.4
+    /// will wire into the login retry loop.
+    #[allow(dead_code)]
     pub(crate) fn from_jwk_json(json: &str) -> Result<Self, OAuthError> {
         let jwk: serde_json::Value =
             serde_json::from_str(json).context(TokenResponseDecodeSnafu)?;
@@ -131,6 +134,7 @@ fn bn_to_b64url(bn: &openssl::bn::BigNumRef) -> Result<String, OAuthError> {
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
+#[allow(dead_code)]
 fn decode_b64url_bn(s: &str) -> Result<BigNum, OAuthError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(s.as_bytes())

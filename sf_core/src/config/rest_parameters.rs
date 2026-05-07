@@ -429,6 +429,58 @@ impl LoginMethod {
         settings.get_string(key).filter(|s| !s.is_empty())
     }
 
+    /// Read a boolean parameter that wrappers may submit as a typed bool,
+    /// a string (`"true"`, `"1"`), or an int (`0`/`1`). Defaults to `false`
+    /// when absent or unparseable so OAuth knobs like `enable_dpop` behave
+    /// the same regardless of the wrapper's setting representation.
+    fn get_flexible_bool(settings: &dyn Settings, key: &str) -> bool {
+        settings
+            .get_bool(key)
+            .or_else(|| {
+                settings
+                    .get_string(key)
+                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            })
+            .or_else(|| settings.get_int(key).map(|v| v != 0))
+            .unwrap_or(false)
+    }
+
+    /// Parse an optional URL parameter, returning [`InvalidParameterValue`]
+    /// when the user supplied a value that cannot be parsed by the `url`
+    /// crate. Empty/missing values resolve to `None` so callers can fall
+    /// back to flow-time defaults (e.g. `https://{host}/oauth/authorize`).
+    fn parse_optional_url(
+        settings: &dyn Settings,
+        key: &'static str,
+    ) -> Result<Option<Url>, ConfigError> {
+        let Some(raw) = Self::non_empty_string(settings, key) else {
+            return Ok(None);
+        };
+        let url = Url::parse(&raw).map_err(|e| {
+            InvalidParameterValueSnafu {
+                parameter: key,
+                value: raw,
+                explanation: format!("Could not parse URL: {e}"),
+            }
+            .build()
+        })?;
+        Ok(Some(url))
+    }
+
+    /// Parse a required URL parameter (e.g. CC `oauth_token_request_url`).
+    fn parse_required_url(settings: &dyn Settings, key: &'static str) -> Result<Url, ConfigError> {
+        let raw = Self::non_empty_string(settings, key)
+            .context(MissingParameterSnafu { parameter: key })?;
+        Url::parse(&raw).map_err(|e| {
+            InvalidParameterValueSnafu {
+                parameter: key,
+                value: raw,
+                explanation: format!("Could not parse URL: {e}"),
+            }
+            .build()
+        })
+    }
+
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
         let auth_upper = authenticator.to_ascii_uppercase();
@@ -505,6 +557,86 @@ impl LoginMethod {
                     authentication_timeout_secs,
                 }))
             }
+            "OAUTH" => Ok(Self::OAuthAccessToken {
+                username: Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                token: Self::non_empty_string(settings, "token")
+                    .context(MissingParameterSnafu { parameter: "token" })?
+                    .into(),
+            }),
+            "OAUTH_AUTHORIZATION_CODE" => {
+                let username = Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?;
+                // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
+                // missing client_id/client_secret at flow time
+                // (analysis_feature_oauth.md §1, §9). Keep them empty here
+                // and let the AC/CC providers apply that default.
+                let client_id =
+                    Self::non_empty_string(settings, "oauth_client_id").unwrap_or_default();
+                let client_secret =
+                    Self::non_empty_string(settings, "oauth_client_secret").unwrap_or_default();
+                let authorization_url =
+                    Self::parse_optional_url(settings, "oauth_authorization_url")?;
+                let token_url = Self::parse_optional_url(settings, "oauth_token_request_url")?;
+                let redirect_uri = Self::parse_optional_url(settings, "oauth_redirect_uri")?;
+                let scope = Self::non_empty_string(settings, "oauth_scope");
+                let enable_single_use_refresh_tokens =
+                    Self::get_flexible_bool(settings, "oauth_enable_single_use_refresh_tokens");
+                let disable_pkce = Self::get_flexible_bool(settings, "oauth_disable_pkce");
+                let enable_dpop = Self::get_flexible_bool(settings, "oauth_enable_dpop");
+                let client_store_temporary_credential =
+                    Self::get_flexible_bool(settings, "client_store_temporary_credential");
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+                Ok(Self::OAuthAuthorizationCode(OAuthAuthorizationCodeConfig {
+                    username,
+                    client_id,
+                    client_secret: client_secret.into(),
+                    authorization_url,
+                    token_url,
+                    redirect_uri,
+                    scope,
+                    enable_single_use_refresh_tokens,
+                    disable_pkce,
+                    enable_dpop,
+                    client_store_temporary_credential,
+                    authentication_timeout_secs,
+                }))
+            }
+            "OAUTH_CLIENT_CREDENTIALS" => {
+                // CC is external-IdP only: Snowflake's GS does not issue
+                // tokens for `grant_type=client_credentials` (analysis §4),
+                // so client_id, client_secret and token_url are mandatory.
+                let username = Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?;
+                let client_id = Self::non_empty_string(settings, "oauth_client_id").context(
+                    MissingParameterSnafu {
+                        parameter: "oauth_client_id",
+                    },
+                )?;
+                let client_secret = Self::non_empty_string(settings, "oauth_client_secret")
+                    .context(MissingParameterSnafu {
+                        parameter: "oauth_client_secret",
+                    })?;
+                let token_url = Self::parse_required_url(settings, "oauth_token_request_url")?;
+                let scope = Self::non_empty_string(settings, "oauth_scope");
+                let enable_dpop = Self::get_flexible_bool(settings, "oauth_enable_dpop");
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+                Ok(Self::OAuthClientCredentials(OAuthClientCredentialsConfig {
+                    username,
+                    client_id,
+                    client_secret: client_secret.into(),
+                    token_url,
+                    scope,
+                    enable_dpop,
+                    authentication_timeout_secs,
+                }))
+            }
             "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
@@ -538,7 +670,7 @@ impl LoginMethod {
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)",
+                explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, oauth, oauth_authorization_code, oauth_client_credentials, or an https:// URL for native Okta SSO (case-insensitive)",
             }
             .fail()?,
         }
@@ -919,6 +1051,217 @@ mod tests {
             "whitespace-only should become None"
         );
         assert!(info.compiler.is_none(), "whitespace+tab should become None");
+    }
+
+    #[test]
+    fn test_oauth_legacy_authenticator_resolves_to_oauth_access_token() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            ("token", Setting::String("legacy-bearer".to_string())),
+            ("authenticator", Setting::String("OAUTH".to_string())),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAccessToken { username, token } => {
+                assert_eq!(username, "alice");
+                assert_eq!(token.reveal(), "legacy-bearer");
+            }
+            other => panic!("Expected OAuthAccessToken, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_legacy_requires_token() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            ("authenticator", Setting::String("oauth".to_string())),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Missing required parameter") && msg.contains("token"),
+            "Expected missing-token error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_oauth_authorization_code_authenticator_parses_config() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("client-x".to_string())),
+            (
+                "oauth_client_secret",
+                Setting::String("super-secret".to_string()),
+            ),
+            (
+                "oauth_authorization_url",
+                Setting::String("https://idp.example.com/oauth/authorize".to_string()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/oauth/token".to_string()),
+            ),
+            (
+                "oauth_redirect_uri",
+                Setting::String("http://127.0.0.1:9090/".to_string()),
+            ),
+            (
+                "oauth_scope",
+                Setting::String("session:role:DEV".to_string()),
+            ),
+            (
+                "oauth_enable_single_use_refresh_tokens",
+                Setting::Bool(true),
+            ),
+            ("oauth_disable_pkce", Setting::Bool(false)),
+            ("oauth_enable_dpop", Setting::Bool(true)),
+            ("client_store_temporary_credential", Setting::Bool(true)),
+            ("authentication_timeout", Setting::Int(45)),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAuthorizationCode(cfg) => {
+                assert_eq!(cfg.username, "alice");
+                assert_eq!(cfg.client_id, "client-x");
+                assert_eq!(cfg.client_secret.reveal(), "super-secret");
+                assert_eq!(
+                    cfg.authorization_url.as_ref().map(Url::as_str),
+                    Some("https://idp.example.com/oauth/authorize")
+                );
+                assert_eq!(
+                    cfg.token_url.as_ref().map(Url::as_str),
+                    Some("https://idp.example.com/oauth/token")
+                );
+                assert_eq!(
+                    cfg.redirect_uri.as_ref().map(Url::as_str),
+                    Some("http://127.0.0.1:9090/")
+                );
+                assert_eq!(cfg.scope.as_deref(), Some("session:role:DEV"));
+                assert!(cfg.enable_single_use_refresh_tokens);
+                assert!(!cfg.disable_pkce);
+                assert!(cfg.enable_dpop);
+                assert!(cfg.client_store_temporary_credential);
+                assert_eq!(cfg.authentication_timeout_secs, 45);
+            }
+            other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_authorization_code_minimal_uses_defaults() {
+        // Bare authenticator + user; ensures the Snowflake-as-IdP wiring
+        // path can still construct the config with default URLs / empty
+        // client credentials (LOCAL_APPLICATION substitution happens at
+        // flow time, analysis §1 / §9).
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("oauth_authorization_code".to_string()),
+            ),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAuthorizationCode(cfg) => {
+                assert!(cfg.client_id.is_empty(), "client_id default is empty");
+                assert!(cfg.client_secret.reveal().is_empty());
+                assert!(cfg.authorization_url.is_none());
+                assert!(cfg.token_url.is_none());
+                assert!(cfg.redirect_uri.is_none());
+                assert!(cfg.scope.is_none());
+                assert!(!cfg.enable_single_use_refresh_tokens);
+                assert!(!cfg.disable_pkce);
+                assert!(!cfg.enable_dpop);
+                assert!(!cfg.client_store_temporary_credential);
+                assert_eq!(
+                    cfg.authentication_timeout_secs,
+                    DEFAULT_AUTHENTICATION_TIMEOUT_SECS
+                );
+            }
+            other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_client_credentials_requires_token_url() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            ("oauth_client_secret", Setting::String("sss".to_string())),
+            // oauth_token_request_url intentionally omitted
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Missing required parameter") && msg.contains("oauth_token_request_url"),
+            "Expected missing token URL error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_oauth_client_credentials_authenticator_parses_config() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("svc-account".to_string())),
+            (
+                "authenticator",
+                Setting::String("oauth_client_credentials".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            ("oauth_client_secret", Setting::String("sss".to_string())),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/oauth/token".to_string()),
+            ),
+            (
+                "oauth_scope",
+                Setting::String("session:role:READER".to_string()),
+            ),
+            ("oauth_enable_dpop", Setting::String("true".to_string())),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthClientCredentials(cfg) => {
+                assert_eq!(cfg.username, "svc-account");
+                assert_eq!(cfg.client_id, "cid");
+                assert_eq!(cfg.client_secret.reveal(), "sss");
+                assert_eq!(
+                    cfg.token_url.as_str(),
+                    "https://idp.example.com/oauth/token"
+                );
+                assert_eq!(cfg.scope.as_deref(), Some("session:role:READER"));
+                assert!(cfg.enable_dpop, "string \"true\" should resolve to true");
+                assert_eq!(
+                    cfg.authentication_timeout_secs,
+                    DEFAULT_AUTHENTICATION_TIMEOUT_SECS
+                );
+            }
+            other => panic!("Expected OAuthClientCredentials, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_authenticator_with_invalid_url_fails_fast() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            (
+                "oauth_authorization_url",
+                Setting::String("not a url".to_string()),
+            ),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("oauth_authorization_url") && msg.contains("Could not parse URL"),
+            "Expected URL parse error, got: {msg}"
+        );
     }
 
     #[test]

@@ -86,6 +86,18 @@ pub mod param_names {
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
+    // ── OAuth (analysis_feature_oauth.md §9) ───────────────────────────────
+    pub const OAUTH_CLIENT_ID: ParamKey = ParamKey("oauth_client_id");
+    pub const OAUTH_CLIENT_SECRET: ParamKey = ParamKey("oauth_client_secret");
+    pub const OAUTH_AUTHORIZATION_URL: ParamKey = ParamKey("oauth_authorization_url");
+    pub const OAUTH_TOKEN_REQUEST_URL: ParamKey = ParamKey("oauth_token_request_url");
+    pub const OAUTH_REDIRECT_URI: ParamKey = ParamKey("oauth_redirect_uri");
+    pub const OAUTH_SCOPE: ParamKey = ParamKey("oauth_scope");
+    pub const OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS: ParamKey =
+        ParamKey("oauth_enable_single_use_refresh_tokens");
+    pub const OAUTH_DISABLE_PKCE: ParamKey = ParamKey("oauth_disable_pkce");
+    pub const OAUTH_ENABLE_DPOP: ParamKey = ParamKey("oauth_enable_dpop");
+    pub const OAUTH_DISABLE_CONSOLE_LOGIN: ParamKey = ParamKey("oauth_disable_console_login");
     // Logout configuration
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
     pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
@@ -296,7 +308,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: None,
         sensitive: false,
-        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)",
+        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, OAUTH, OAUTH_AUTHORIZATION_CODE, OAUTH_CLIENT_CREDENTIALS)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -352,7 +364,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
         default: None,
         sensitive: true,
-        description: "Programmatic access token",
+        description: "Pre-acquired bearer token (PROGRAMMATIC_ACCESS_TOKEN or legacy AUTHENTICATOR=OAUTH)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -437,6 +449,150 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
         description: "Skip the Okta SAML URL host-match safety check",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // ── OAuth ───────────────────────────────────────────────────────────
+    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`
+    // (analysis_feature_oauth.md §9). All OAuth params are connect-time
+    // and immutable for the life of the connection.
+    ParamDef {
+        canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
+        aliases: &["OAUTH_CLIENT_ID"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
+        aliases: &["OAUTH_CLIENT_SECRET"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "OAuth client secret (redacted from logs)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
+        aliases: &["OAUTH_AUTHORIZATION_URL"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "IdP authorization endpoint (defaults to https://{host}/oauth/authorize)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
+        aliases: &["OAUTH_TOKEN_REQUEST_URL"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
+        default: None,
+        sensitive: false,
+        description: "IdP token endpoint (required for OAUTH_CLIENT_CREDENTIALS; defaults to https://{host}/oauth/token-request for AC)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
+        aliases: &["OAUTH_REDIRECT_URI"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_SCOPE.as_str(),
+        aliases: &["OAUTH_SCOPE"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "OAuth scope (space-separated; defaults to session:role:<role>)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
+        aliases: &["OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Request single-use refresh-token rotation (Snowflake-IdP only)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_DISABLE_PKCE.as_str(),
+        aliases: &["OAUTH_DISABLE_PKCE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_ENABLE_DPOP.as_str(),
+        aliases: &["OAUTH_ENABLE_DPOP"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str(),
+        aliases: &["OAUTH_DISABLE_CONSOLE_LOGIN"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Disable EXTERNALBROWSER console-login fallback (registered for JDBC parity; does not gate OAuth)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -931,6 +1087,19 @@ mod tests {
             ("CRL_MODE", "crl_check_mode"),
             ("CRL_ENABLED", "crl_check_mode"),
             ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
+            ("OAUTH_CLIENT_ID", "oauth_client_id"),
+            ("OAUTH_CLIENT_SECRET", "oauth_client_secret"),
+            ("OAUTH_AUTHORIZATION_URL", "oauth_authorization_url"),
+            ("OAUTH_TOKEN_REQUEST_URL", "oauth_token_request_url"),
+            ("OAUTH_REDIRECT_URI", "oauth_redirect_uri"),
+            ("OAUTH_SCOPE", "oauth_scope"),
+            (
+                "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+                "oauth_enable_single_use_refresh_tokens",
+            ),
+            ("OAUTH_DISABLE_PKCE", "oauth_disable_pkce"),
+            ("OAUTH_ENABLE_DPOP", "oauth_enable_dpop"),
+            ("OAUTH_DISABLE_CONSOLE_LOGIN", "oauth_disable_console_login"),
         ];
         for (alias, expected_canonical) in cases {
             let def = r
@@ -1046,6 +1215,39 @@ mod tests {
                 );
                 assert!(!p.effective_used_at_connect());
             }
+        }
+    }
+
+    #[test]
+    fn oauth_params_are_registered_with_correct_sensitive_flags() {
+        let r = registry();
+        let cases: &[(&str, bool)] = &[
+            ("oauth_client_id", false),
+            ("oauth_client_secret", true),
+            ("oauth_authorization_url", false),
+            ("oauth_token_request_url", false),
+            ("oauth_redirect_uri", false),
+            ("oauth_scope", false),
+            ("oauth_enable_single_use_refresh_tokens", false),
+            ("oauth_disable_pkce", false),
+            ("oauth_enable_dpop", false),
+            ("oauth_disable_console_login", false),
+        ];
+        for (name, expected_sensitive) in cases {
+            let def = r
+                .resolve(*name)
+                .unwrap_or_else(|| panic!("OAuth param {name} should be registered"));
+            assert_eq!(
+                def.sensitive, *expected_sensitive,
+                "{name}: expected sensitive={expected_sensitive}, got {}",
+                def.sensitive
+            );
+            assert_eq!(def.scope, ParamScope::Connection, "{name}: scope");
+            assert!(def.used_at_connect, "{name}: used_at_connect");
+            assert!(
+                !def.mutable_after_connect,
+                "{name}: mutable_after_connect must be false"
+            );
         }
     }
 

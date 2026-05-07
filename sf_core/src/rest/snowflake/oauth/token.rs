@@ -180,6 +180,7 @@ pub(crate) fn pack_dpop_bundle(access_token: &str, jwk_json: &str) -> String {
 /// recognized so callers can evict the corrupt entry and start over
 /// (mirrors JDBC's "legacy non-base64 encoded cache values" branch —
 /// analysis §14 #9).
+#[allow(dead_code)]
 pub(crate) fn unpack_dpop_bundle(packed: &str) -> Option<(String, String)> {
     let (at_b64, jwk_b64) = packed.split_once('.')?;
     let at = BASE64_STD.decode(at_b64.as_bytes()).ok()?;
@@ -187,6 +188,7 @@ pub(crate) fn unpack_dpop_bundle(packed: &str) -> Option<(String, String)> {
     Some((String::from_utf8(at).ok()?, String::from_utf8(jwk).ok()?))
 }
 
+#[allow(dead_code)]
 pub(crate) fn try_get_cached_oauth_dpop_bundled(
     token_url_or_server_url: &str,
     username: &str,

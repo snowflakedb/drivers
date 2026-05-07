@@ -48,11 +48,18 @@ use crate::token_cache::TokenCache;
 #[derive(Debug)]
 pub(crate) struct AcquiredOAuthToken {
     pub(crate) access_token: SensitiveString,
+    /// Refresh token returned by the IdP, when issued. Persisted by the
+    /// flow itself; the wiring layer does not consume it directly.
+    #[allow(dead_code)]
     pub(crate) refresh_token: Option<SensitiveString>,
-    /// Present iff DPoP was negotiated. Carries the JWK JSON so step 2.3
-    /// can reuse the same key when signing the Snowflake login-request
-    /// (analysis §5.1).
+    /// Present iff DPoP was negotiated. Carries the JWK JSON so the
+    /// Snowflake login-request can reuse the same key (analysis §5.1).
+    /// The wiring layer reads this only when DPoP login support lands.
+    #[allow(dead_code)]
     pub(crate) dpop_jwk_json: Option<String>,
+    /// IdP-reported lifetime of the access token, when present. Snowflake
+    /// drives session validity itself, so this is informational only.
+    #[allow(dead_code)]
     pub(crate) expires_in: Option<Duration>,
 }
 

@@ -46,6 +46,19 @@ pub const SESSION_GONE: i32 = 390111;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the OAuth access token presented at login is
+/// invalid (analysis_feature_oauth.md §8). Treated cross-driver as a signal
+/// to evict the cached access token and replay the OAuth flow.
+pub const OAUTH_ACCESS_TOKEN_INVALID: i32 = 390303;
+/// GS error code returned when the OAuth access token presented at login has
+/// expired (analysis_feature_oauth.md §8). Same eviction-and-retry behavior
+/// as [`OAUTH_ACCESS_TOKEN_INVALID`].
+pub const OAUTH_ACCESS_TOKEN_EXPIRED: i32 = 390318;
+/// GS error codes that indicate the cached OAuth access token (and any
+/// DPoP-bundled cache entry) must be evicted, after which the login is
+/// retried once. Mirrors JDBC/Go's `refreshOAuthTokenErrorCodes` set.
+const OAUTH_REFRESH_ERROR_CODES: [i32; 2] =
+    [OAUTH_ACCESS_TOKEN_INVALID, OAUTH_ACCESS_TOKEN_EXPIRED];
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -322,6 +335,40 @@ fn remove_mfa_token_from_cache(
     }
 }
 
+/// Evict the cached OAuth access token (and DPoP-bundled entry, when
+/// present) for an Authorization Code login. Used by the
+/// `390303 / 390318` retry block in [`snowflake_login_with_client`]:
+/// after eviction the next call to `auth_request_data` will run the
+/// refresh-token leg or, if that also fails, the full interactive flow
+/// (analysis_feature_oauth.md §8 + §3.2 state machine).
+///
+/// The cache key host follows the cross-driver convention from analysis
+/// §7.3: prefer the IdP token URL host, otherwise fall back to the
+/// Snowflake server host. The synthetic `https://{host}` URL string
+/// passed to the eviction helpers parses cleanly into the same host the
+/// AC flow used when storing the token.
+fn evict_oauth_access_token_for_authorization_code(
+    cfg: &crate::config::rest_parameters::OAuthAuthorizationCodeConfig,
+    server_url: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let token_url_str = cfg
+        .token_url
+        .as_ref()
+        .map(|u| u.as_str().to_string())
+        .unwrap_or_default();
+    let Some(host) = oauth::host_from_token_url(&token_url_str, server_url) else {
+        tracing::warn!(
+            "Cannot evict cached OAuth access token: unable to derive IdP host from token_url or server_url"
+        );
+        return;
+    };
+    let synthetic_host_url = format!("https://{host}");
+    tracing::debug!(host = %host, "Evicting cached OAuth access token for IdP host");
+    oauth::remove_oauth_access_token(&synthetic_host_url, &cfg.username, token_cache);
+    oauth::remove_oauth_dpop_bundled(&synthetic_host_url, &cfg.username, token_cache);
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -351,6 +398,41 @@ pub async fn auth_request_data(
             data.authenticator = Some(okta_config.okta_url.to_string());
             data.raw_saml_response = Some(saml_html.into());
         }
+        // Authorization Code orchestration runs the PKCE/state/loopback flow
+        // (and any cache hits / refresh-token exchange) before forwarding the
+        // resulting access token to Snowflake under AUTHENTICATOR=OAUTH.
+        // Per analysis §10.1 / §14 #5, the body always uses uppercase
+        // "OAUTH" — never the user-supplied authenticator string verbatim —
+        // and tags the request with OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so
+        // GS knows which flow produced the token. LOGIN_NAME is always set
+        // (§14 #10).
+        LoginMethod::OAuthAuthorizationCode(cfg) => {
+            let acquired = oauth::acquire_authorization_code(
+                client,
+                &login_parameters.server_url,
+                cfg,
+                token_cache,
+            )
+            .await
+            .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some("OAUTH".to_string());
+            data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
+        }
+        // Client Credentials is external-IdP only (analysis §4) and tokens
+        // are intentionally not cached (§14 #12). On Snowflake error codes
+        // 390303/390318 we have no cache to evict, so the retry block in
+        // `snowflake_login_with_client` simply bubbles the error.
+        LoginMethod::OAuthClientCredentials(cfg) => {
+            let acquired = oauth::acquire_client_credentials(client, cfg)
+                .await
+                .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some("OAUTH".to_string());
+            data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
+        }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
             Credentials::Password { username, password } => {
                 data.login_name = Some(username);
@@ -366,16 +448,17 @@ pub async fn auth_request_data(
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
             }
-            Credentials::OAuth { .. } => {
-                // Legacy AUTHENTICATOR=OAUTH body wiring lands in step 2.3
-                // (analysis_feature_oauth.md §6 / §10.1). This skeleton
-                // surfaces a typed error so the variant remains constructible
-                // without smuggling in flow logic.
-                return crate::auth::OAuthFlowNotWiredSnafu {
-                    flow: "OAuthAccessToken",
-                }
-                .fail()
-                .context(AuthenticationSnafu);
+            // Legacy pre-acquired access token: forward unchanged (analysis
+            // §6 / §10.1). LOGIN_NAME is always set (§14 #10) — never the
+            // .NET-only `loginName=""` quirk — and OAUTH_TYPE is omitted to
+            // distinguish the legacy flow from AC/CC.
+            Credentials::OAuth {
+                username,
+                access_token,
+            } => {
+                data.login_name = Some(username);
+                data.token = Some(access_token);
+                data.authenticator = Some("OAUTH".to_string());
             }
             Credentials::UserPasswordMfa {
                 username,
@@ -551,6 +634,41 @@ pub async fn snowflake_login_with_client(
             );
             remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
             tracing::info!("Retrying login without cached MFA token");
+            let retry_data =
+                auth_request_data(client, login_parameters, session_parameters, token_cache)
+                    .await?;
+            let retry_request = AuthRequest { data: retry_data };
+            auth_response = send_login_request(client, login_parameters, &retry_request).await?;
+        }
+    }
+
+    // OAuth refresh-on-failure (analysis_feature_oauth.md §8 / §14 #9):
+    // when GS rejects the OAuth access token with 390303 / 390318, evict
+    // the cached access token (and any DPoP-bundled entry) for the IdP
+    // host and replay the login once. The eviction is a no-op for
+    // OAuthClientCredentials (CC tokens are never cached, §14 #12) and
+    // for the legacy OAuthAccessToken flow (caller-supplied token), so
+    // those paths effectively bubble the error.
+    if !auth_response.success
+        && let LoginMethod::OAuthAuthorizationCode(cfg) = &login_parameters.login_method
+    {
+        let code = auth_response
+            ._code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        if OAUTH_REFRESH_ERROR_CODES.contains(&code) {
+            tracing::info!(
+                code = code,
+                oauth_type = "OAUTH_AUTHORIZATION_CODE",
+                "OAuth access token cached eviction triggered by Snowflake error code {code}"
+            );
+            evict_oauth_access_token_for_authorization_code(
+                cfg,
+                &login_parameters.server_url,
+                token_cache,
+            );
+            tracing::info!("Retrying login after OAuth refresh");
             let retry_data =
                 auth_request_data(client, login_parameters, session_parameters, token_cache)
                     .await?;
@@ -1525,6 +1643,12 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("OAuth flow failed"))]
+    OAuthFlow {
+        source: oauth::OAuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid Snowflake response"))]
     InvalidSnowflakeResponse {
         source: SnowflakeResponseError,
@@ -1874,6 +1998,106 @@ mod tests {
         }
     }
 
+    mod evict_oauth_access_token_for_authorization_code_tests {
+        use super::*;
+        use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
+        use crate::token_cache::TokenType;
+
+        fn ac_config(token_url: Option<&str>) -> OAuthAuthorizationCodeConfig {
+            OAuthAuthorizationCodeConfig {
+                username: "alice".to_string(),
+                client_id: String::new(),
+                client_secret: String::new().into(),
+                authorization_url: None,
+                token_url: token_url.map(|u| Url::parse(u).expect("test url parses")),
+                redirect_uri: None,
+                scope: None,
+                enable_single_use_refresh_tokens: false,
+                disable_pkce: false,
+                enable_dpop: false,
+                client_store_temporary_credential: false,
+                authentication_timeout_secs: 30,
+            }
+        }
+
+        /// When `token_url` is set, eviction targets the IdP host (analysis §7.3
+        /// cache key derivation), not the Snowflake server host.
+        #[test]
+        fn evicts_under_idp_host_when_token_url_present() {
+            let cache = StubTokenCache::with_token(
+                "idp.example.com",
+                "alice",
+                TokenType::OAuthAccessToken,
+                "stale-access",
+            );
+            let cfg = ac_config(Some("https://idp.example.com/oauth/token"));
+
+            evict_oauth_access_token_for_authorization_code(
+                &cfg,
+                "https://snowflake.example.com",
+                Some(&cache),
+            );
+
+            let after = cache
+                .get_token("idp.example.com", "alice", TokenType::OAuthAccessToken)
+                .unwrap();
+            assert!(after.is_none(), "AC retry must evict the IdP-host entry");
+        }
+
+        /// When `token_url` is absent, eviction falls back to the Snowflake
+        /// server host (Snowflake-as-IdP path; analysis §7.3).
+        #[test]
+        fn evicts_under_server_host_when_token_url_absent() {
+            let cache = StubTokenCache::with_token(
+                "snowflake.example.com",
+                "alice",
+                TokenType::OAuthAccessToken,
+                "stale-access",
+            );
+            let cfg = ac_config(None);
+
+            evict_oauth_access_token_for_authorization_code(
+                &cfg,
+                "https://snowflake.example.com",
+                Some(&cache),
+            );
+
+            let after = cache
+                .get_token(
+                    "snowflake.example.com",
+                    "alice",
+                    TokenType::OAuthAccessToken,
+                )
+                .unwrap();
+            assert!(
+                after.is_none(),
+                "AC retry must fall back to the Snowflake host when no token_url"
+            );
+        }
+
+        /// No cache, no panic — production wiring may pass `None` when token
+        /// caching is disabled.
+        #[test]
+        fn no_cache_is_a_noop() {
+            let cfg = ac_config(Some("https://idp.example.com/oauth/token"));
+            evict_oauth_access_token_for_authorization_code(
+                &cfg,
+                "https://snowflake.example.com",
+                None,
+            );
+        }
+
+        /// Refresh-on-failure error code constants must match the cross-driver
+        /// values (analysis §8). Locking this in catches accidental edits.
+        #[test]
+        fn refresh_error_codes_are_390303_and_390318() {
+            assert_eq!(OAUTH_ACCESS_TOKEN_INVALID, 390303);
+            assert_eq!(OAUTH_ACCESS_TOKEN_EXPIRED, 390318);
+            assert!(OAUTH_REFRESH_ERROR_CODES.contains(&OAUTH_ACCESS_TOKEN_INVALID));
+            assert!(OAUTH_REFRESH_ERROR_CODES.contains(&OAUTH_ACCESS_TOKEN_EXPIRED));
+        }
+    }
+
     mod into_query_result_tests {
         use super::*;
         use serde_json::json;
@@ -2106,6 +2330,39 @@ mod tests {
         assert!(
             data.authenticator.is_none(),
             "Password auth should NOT include AUTHENTICATOR field (matching old driver behavior)"
+        );
+    }
+
+    #[test]
+    fn oauth_legacy_auth_payload_includes_authenticator_and_token_no_oauth_type() {
+        // Pre-acquired AUTHENTICATOR=OAUTH legacy flow per
+        // analysis_feature_oauth.md §6 / §10.1: TOKEN is forwarded
+        // unchanged, LOGIN_NAME is always set (gotcha §14 #10), and
+        // OAUTH_TYPE is intentionally absent — only AC/CC tag the body
+        // with that discriminator.
+        let login_params = LoginParameters {
+            login_method: LoginMethod::OAuthAccessToken {
+                username: "alice".to_string(),
+                token: "legacy-bearer".into(),
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None))
+            .expect("legacy OAuth login body builds");
+
+        assert_eq!(data.login_name.as_deref(), Some("alice"));
+        assert_eq!(data.token.as_ref().unwrap().reveal(), "legacy-bearer");
+        assert_eq!(data.authenticator.as_deref(), Some("OAUTH"));
+        assert!(
+            data.oauth_type.is_none(),
+            "Legacy OAUTH must not set OAUTH_TYPE; only AC/CC do"
+        );
+        assert!(
+            data.password.is_none(),
+            "Legacy OAUTH must not include a password field"
         );
     }
 
