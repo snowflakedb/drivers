@@ -198,6 +198,15 @@ TEST_CASE("SQL_SF_TIMESTAMP_TZ binds SQL_C_TYPE_TIMESTAMP into a TIMESTAMP_TZ co
   // the legacy Python connector's behavior for naive `datetime` values bound
   // to TIMESTAMP_TZ. Applications that need to preserve a non-UTC offset must
   // bind via SQL_C_CHAR / SQL_C_WCHAR with a `+/-HH:MM` suffix instead.
+  //
+  // The legacy 3.16.0 ODBC driver REJECTS this binding with SQLSTATE HY000 /
+  // NativeError 40620 ("Logic error during conversion") rather than accepting
+  // the naive value. The new driver implements the spec/Python-connector
+  // semantics; documenting the divergence in BehaviorDifferences.yaml under
+  // BD#51 and skipping on the reference driver here.
+  SKIP_OLD_DRIVER("BD#51",
+                  "Legacy driver returns 40620 for SQL_C_TYPE_TIMESTAMP -> SQL_SF_TIMESTAMP_TZ; new driver "
+                  "accepts and binds as UTC (offset=0) per Python connector parity");
 
   // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_TZ column
   Connection conn;
@@ -247,6 +256,15 @@ TEST_CASE("SQL_SF_TIMESTAMP_TZ binds SQL_C_CHAR with offset suffix and round-tri
   // SQL_C_CHAR with a `+/-HH:MM` suffix. The driver parses the offset, emits
   // the legacy `<epoch_ns> <offset_minutes_plus_1440>` two-token wire format,
   // and the server stores the original instant alongside the offset.
+  //
+  // The legacy 3.16.0 ODBC driver REJECTS this binding with SQLSTATE HY000 /
+  // NativeError 40620 ("Logic error during conversion") — it does not parse
+  // the `+/-HH:MM` suffix from SQL_C_CHAR for vendor TZ. The new driver
+  // implements offset parsing per the universal driver design. Documented
+  // under BD#51; skip on the reference driver.
+  SKIP_OLD_DRIVER("BD#51",
+                  "Legacy driver returns 40620 for SQL_C_CHAR with `+/-HH:MM` -> SQL_SF_TIMESTAMP_TZ; new "
+                  "driver parses and preserves the offset on wire");
 
   // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_TZ column
   Connection conn;

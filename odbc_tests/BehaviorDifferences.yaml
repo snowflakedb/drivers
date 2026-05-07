@@ -553,3 +553,15 @@ behavior_differences:
       Applications that switch on SQLDescribeParam's data type code with cases for 1..=12 / 91..=95 / 101..=113 (the standard ODBC type codes) will no longer fall through to an unknown-type branch when the upstream code happens to bind via the vendor opt-in. Applications that explicitly test for the 2000/2001/2002 vendor codes after SQLBindParameter must update to test SQLColAttribute(SQL_DESC_TYPE_NAME) instead.
     description: |
       The MS ODBC specification for SQLDescribeParam describes returning standard SQL type codes (1..=12, 91..=95, 101..=113). The vendor codes 2000/2001/2002 are an *input-only* aliasing on SQLBindParameter; leaking them through SQLDescribeParam violates the spec contract.
+
+  51:
+    name: "SQL_SF_TIMESTAMP_TZ accepts SQL_C_TYPE_TIMESTAMP and SQL_C_CHAR-with-offset bindings"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      SQLBindParameter with ParameterType=SQL_SF_TIMESTAMP_TZ (vendor code 2001) rejects both SQL_C_TYPE_TIMESTAMP (naive datetime) and SQL_C_CHAR strings carrying a `+/-HH:MM` offset suffix. Both cases fail at SQLExecute with SQLSTATE HY000 / NativeError 40620 ("Logic error during conversion"). Applications wanting to bind a TIMESTAMP_TZ value have no first-class path through the legacy driver and must fall back to SQL_TYPE_TIMESTAMP (which routes to TIMESTAMP_NTZ) or rely on session TIMEZONE to convert via TIMESTAMP_LTZ.
+    new_driver_behavior: |
+      Both bindings succeed with spec-aligned semantics. SQL_C_TYPE_TIMESTAMP -> SQL_SF_TIMESTAMP_TZ stores the wall-clock at UTC (offset = 0 on the wire), matching the Python connector's behavior for naive `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR (and SQL_C_WCHAR) with a trailing `+/-HH:MM` offset is parsed and emitted in the legacy `<epoch_ns> <offset_minutes_plus_1440>` two-token wire format, so the server stores the exact instant alongside the original offset. The vendor code 2001 sits in the ODBC vendor-specific range, where the driver is free to define behavior; the new semantics are spec-permitted and additive over the legacy 40620 error path.
+    impact: |
+      Migration is forward-compatible: any application that previously caught the legacy 40620 will now find these bindings succeed with predictable, spec-conformant results. Applications that intentionally relied on the failure (e.g. as a feature gate) should switch to validating their bind path explicitly. Round-tripping a non-UTC TIMESTAMP_TZ via SQLBindParameter is now possible without falling through TIMESTAMP_LTZ + session TIMEZONE.
