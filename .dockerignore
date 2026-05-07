@@ -29,6 +29,10 @@ python/src/snowflake/connector/_core/
 **/deps/*.dylib
 **/deps/*.so
 
+# Node.js build artifacts and dependencies
+nodejs/node_modules/
+nodejs/dist/
+
 # C++ build artifacts
 **/cmake-build/
 **/cmake-build-*/
@@ -97,5 +101,3 @@ images/
 *.png
 *.jpg
 *.gif
-
-

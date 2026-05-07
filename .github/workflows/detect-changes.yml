@@ -19,6 +19,9 @@ on:
       python_packaging:
         description: "True if Python packaging files changed"
         value: ${{ jobs.detect.outputs.python_packaging }}
+      nodejs:
+        description: "True if Node.js wrapper code changed"
+        value: ${{ jobs.detect.outputs.nodejs }}
       shared:
         description: "True if shared config/build files changed"
         value: ${{ jobs.detect.outputs.shared }}
@@ -40,6 +43,9 @@ on:
       run_python_packaging:
         description: "True if Python packaging tests should run"
         value: ${{ jobs.detect.outputs.run_python_packaging }}
+      run_nodejs:
+        description: "True if Node.js tests should run"
+        value: ${{ jobs.detect.outputs.run_nodejs }}
       run_rust_core:
         description: "True if Rust Core tests should run"
         value: ${{ jobs.detect.outputs.run_rust_core }}
@@ -63,6 +69,7 @@ jobs:
       odbc: ${{ steps.filter.outputs.odbc }}
       python: ${{ steps.filter.outputs.python }}
       python_packaging: ${{ steps.filter.outputs.python_packaging }}
+      nodejs: ${{ steps.filter.outputs.nodejs }}
       shared: ${{ steps.filter.outputs.shared }}
       docs_only: ${{ steps.computed.outputs.docs_only }}
       # Pre-computed "should run" outputs
@@ -70,6 +77,7 @@ jobs:
       run_odbc: ${{ steps.computed.outputs.run_odbc }}
       run_python: ${{ steps.computed.outputs.run_python }}
       run_python_packaging: ${{ steps.computed.outputs.run_python_packaging }}
+      run_nodejs: ${{ steps.computed.outputs.run_nodejs }}
       run_rust_core: ${{ steps.computed.outputs.run_rust_core }}
       run_jdbc_reference: ${{ steps.computed.outputs.run_jdbc_reference }}
       run_odbc_reference: ${{ steps.computed.outputs.run_odbc_reference }}
@@ -134,6 +142,8 @@ jobs:
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
+            nodejs:
+              - 'nodejs/**'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -168,6 +178,7 @@ jobs:
              [[ "${{ steps.filter.outputs.jdbc }}" == "false" ]] && \
              [[ "${{ steps.filter.outputs.odbc }}" == "false" ]] && \
              [[ "${{ steps.filter.outputs.python }}" == "false" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs }}" == "false" ]] && \
              [[ "${{ steps.filter.outputs.shared }}" == "false" ]]; then
             echo "docs_only=true" >> $GITHUB_OUTPUT
           else
@@ -216,6 +227,17 @@ jobs:
             echo "run_rust_core=false" >> $GITHUB_OUTPUT
           fi
 
+          # Node.js should run only if files inside nodejs/** changed.
+          # Intentionally excludes `core` and `shared` for now: the Node.js
+          # driver is a fresh skeleton with no real integration yet, so
+          # changes to shared infra do not trigger nodejs tests.
+          # Broaden this rule (add `core`/`shared`) once the wrapper actually depends on them.
+          if [[ "${{ steps.filter.outputs.nodejs }}" == "true" ]]; then
+            echo "run_nodejs=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nodejs=false" >> $GITHUB_OUTPUT
+          fi
+
           # JDBC reference tests should run if: e2e/integ tests changed
           if [[ "${{ steps.filter.outputs.jdbc_e2e_integ }}" == "true" ]]; then
             echo "run_jdbc_reference=true" >> $GITHUB_OUTPUT
@@ -249,6 +271,7 @@ jobs:
           echo "| ODBC | ${{ steps.filter.outputs.odbc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python | ${{ steps.filter.outputs.python }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python Packaging | ${{ steps.filter.outputs.python_packaging }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | ${{ steps.filter.outputs.nodejs }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -263,3 +286,4 @@ jobs:
           echo "| Python Reference | ${{ steps.computed.outputs.run_python_reference }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python | ${{ steps.computed.outputs.run_python }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python Packaging | ${{ steps.computed.outputs.run_python_packaging }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | ${{ steps.computed.outputs.run_nodejs }} |" >> $GITHUB_STEP_SUMMARY
