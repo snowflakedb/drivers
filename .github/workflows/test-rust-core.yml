@@ -486,21 +486,15 @@ jobs:
         with:
           arch: x86
 
-      # Build everything once in the test profile (a separate `cargo build` in the
-      # dev profile would force a full ~600-crate recompile because dev and test
-      # profiles have distinct cargo fingerprints — that's where the previous
-      # ~14 minutes went). The subsequent `cargo test` in the next step reuses
-      # all of these artifacts and only does test execution.
+      # Single compile pass in the test profile; the `Run tests` step below
+      # reuses these artifacts. Splitting build and test across cargo profiles
+      # would recompile the whole dependency tree twice.
       - name: Compile (test profile, no run)
         shell: cmd
         run: cargo test --no-run --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
 
-      # Verify the toolchain actually emitted x86 binaries. Since `sf_core` is
-      # `crate-type = ["cdylib", "rlib"]` and `cargo test` only needs the rlib,
-      # `sf_core.dll` isn't produced here — but every test binary is, and they
-      # come from the same `--target i686-pc-windows-msvc`, so checking one of
-      # them proves the toolchain is x86. Build scripts live under `build\`,
-      # not `deps\`, so anything in `deps\` is target-arch.
+      # sf_core's cdylib isn't built by `cargo test`, so check a test binary
+      # instead — same target triple, so same arch proof.
       - name: Verify test binaries are x86
         shell: cmd
         run: |
