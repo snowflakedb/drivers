@@ -1,11 +1,11 @@
 name: Setup OpenSSL on Windows
 description: >
   Installs OpenSSL via vcpkg on Windows with caching.
-  Supports ARM64 and x86_64, static and dynamic linking.
+  Supports ARM64, x86_64, and x86 (32-bit), static and dynamic linking.
 
 inputs:
   arch:
-    description: "Target architecture: arm64 or x86_64"
+    description: "Target architecture: arm64, x86_64, or x86"
     required: true
   linkage:
     description: "Link mode: static (static-md triplet) or dynamic (shared DLLs)"
@@ -45,8 +45,11 @@ runs:
       shell: cmd
       run: vcpkg install openssl:${{ steps.triplet.outputs.value }}
 
-    - name: Install OpenSSL via vcpkg (x86_64)
-      if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'x86_64'
+    # x86_64 and x86 share the same install path: vcpkg auto-selects the host
+    # toolchain (x64) and cross-builds for the target triplet without needing
+    # an explicit setup-msvc step (vcpkg has its own MSVC bootstrap).
+    - name: Install OpenSSL via vcpkg (x86_64 / x86)
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.arch != 'arm64'
       shell: pwsh
       run: vcpkg install openssl:${{ steps.triplet.outputs.value }}
 

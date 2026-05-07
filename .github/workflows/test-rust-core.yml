@@ -322,12 +322,27 @@ jobs:
         with:
           arch: arm64
 
+      # Direct binary download from upstream redirector. taiki-e/install-action
+      # is blocked by the org allow-list, so we install the same pre-built
+      # binary it would fetch. windows-arm-tar ships the aarch64-pc-windows-msvc
+      # build for the windows-11-arm host.
+      - name: Install cargo-nextest (Windows ARM64 host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Use $HOME (POSIX, forward slashes on Git Bash) — $USERPROFILE is a
+          # Windows backslash path that mingw tar can't handle.
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -LsSf https://get.nexte.st/latest/windows-arm-tar | tar zxf - -C "$dest"
+          cargo nextest --version
+
       # Single compile pass in the test profile; the `Run tests` step below
       # reuses these artifacts. Splitting build and test across cargo profiles
       # would recompile the whole dependency tree twice.
       - name: Compile (test profile, no run)
         shell: cmd
-        run: cargo test --no-run --package sf_core --target aarch64-pc-windows-msvc
+        run: cargo nextest run --no-run --package sf_core --target aarch64-pc-windows-msvc
 
       # sf_core's cdylib isn't built by `cargo test`, so check a test binary
       # instead — same target triple, so same arch proof.
@@ -357,20 +372,22 @@ jobs:
           copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
           copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
 
+      # `--no-fail-fast` matches `cargo test`'s default of running all tests
+      # even after a failure (nextest's default is to stop after the first).
       - name: Run tests
         id: run_rust_tests_windows_arm64
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
+          cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
 
       - name: Rerun tests (Windows ARM64)
         if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
+          cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
 
       # Post-mortem diagnostics for Windows ARM64 failures: ARM64-specific build issues
       # (wrong architecture DLLs, missing OpenSSL, MSVC env not targeting ARM64) are
@@ -487,6 +504,15 @@ jobs:
           mode: restore
           shared-key: "x86-core-test"
 
+      # vcpkg-installed OpenSSL replaces the `vendored-openssl` cargo feature.
+      # `vendored-openssl` shells out to Perl + nmake to build OpenSSL from
+      # source on every cache-miss compile (~3-5 min). Mirrors the ARM64 lane.
+      - name: Setup OpenSSL (Windows x86)
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: x86
+          linkage: dynamic
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
@@ -498,12 +524,27 @@ jobs:
         with:
           arch: x86
 
+      # Direct binary download from upstream redirector. taiki-e/install-action
+      # is blocked by the org allow-list, so we install the same pre-built
+      # binary it would fetch. windows-tar ships the x86_64-pc-windows-msvc
+      # host build (the x86 target is just the cross-compile output).
+      - name: Install cargo-nextest (Windows x64 host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Use $HOME (POSIX, forward slashes on Git Bash) — $USERPROFILE is a
+          # Windows backslash path that mingw tar can't handle.
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -LsSf https://get.nexte.st/latest/windows-tar | tar zxf - -C "$dest"
+          cargo nextest --version
+
       # Single compile pass in the test profile; the `Run tests` step below
       # reuses these artifacts. Splitting build and test across cargo profiles
       # would recompile the whole dependency tree twice.
       - name: Compile (test profile, no run)
         shell: cmd
-        run: cargo test --no-run --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
+        run: cargo nextest run --no-run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc
 
       # sf_core's cdylib isn't built by `cargo test`, so check a test binary
       # instead — same target triple, so same arch proof.
@@ -527,20 +568,31 @@ jobs:
             exit /b 1
           )
 
+      # nextest's process-per-test model needs each test binary to find OpenSSL
+      # DLLs. The setup-windows-openssl action puts vcpkg's bin/ on PATH, but
+      # staging DLLs next to the test binaries is more robust (matches ARM64).
+      - name: Stage x86 OpenSSL DLLs next to test binaries
+        shell: cmd
+        run: |
+          copy "C:\vcpkg\installed\x86-windows\bin\libcrypto-3*.dll" target\i686-pc-windows-msvc\debug\deps\ 2>nul
+          copy "C:\vcpkg\installed\x86-windows\bin\libssl-3*.dll" target\i686-pc-windows-msvc\debug\deps\ 2>nul
+
+      # `--no-fail-fast` matches `cargo test`'s default of running all tests
+      # even after a failure (nextest's default is to stop after the first).
       - name: Run tests
         id: run_rust_tests_x86
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
+          cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
       - name: Rerun tests (Windows x86)
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
+          cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
       - name: Cleanup test PATs
         if: always()
