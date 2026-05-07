@@ -43,6 +43,15 @@ on:
       run_rust_core:
         description: "True if Rust Core tests should run"
         value: ${{ jobs.detect.outputs.run_rust_core }}
+      run_jdbc_reference:
+        description: "True if JDBC reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_jdbc_reference }}
+      run_odbc_reference:
+        description: "True if ODBC reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_odbc_reference }}
+      run_python_reference:
+        description: "True if Python reference tests should run (e2e/integ tests changed)"
+        value: ${{ jobs.detect.outputs.run_python_reference }}
 
 jobs:
   detect:
@@ -62,6 +71,9 @@ jobs:
       run_python: ${{ steps.computed.outputs.run_python }}
       run_python_packaging: ${{ steps.computed.outputs.run_python_packaging }}
       run_rust_core: ${{ steps.computed.outputs.run_rust_core }}
+      run_jdbc_reference: ${{ steps.computed.outputs.run_jdbc_reference }}
+      run_odbc_reference: ${{ steps.computed.outputs.run_odbc_reference }}
+      run_python_reference: ${{ steps.computed.outputs.run_python_reference }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -86,17 +98,39 @@ jobs:
               - 'jdbc/**'
               - 'jdbc_bridge/**'
               - 'tests/definitions/jdbc/**'
+            jdbc_e2e_integ:
+              - 'jdbc/src/test/java/net/snowflake/client/api/**'
+              - 'jdbc/src/test/java/net/snowflake/jdbc/**'
+              - 'jdbc/src/test/resources/**'
+              - 'jdbc/build.gradle'
             odbc:
               - 'odbc/**'
               - 'odbc_tests/**'
               - 'tests/definitions/odbc/**'
               - 'scripts/odbc/**'
               - 'scripts/old_odbc/**'
+            odbc_e2e_integ:
+              - 'odbc_tests/tests/e2e/**'
+              - 'odbc_tests/tests/integration/**'
+              - 'odbc_tests/CMakeLists.txt'
+              - 'odbc_tests/tests/CMakeLists.txt'
+              - 'odbc_tests/common/**'
+              - 'odbc_tests/BehaviorDifferences.yaml'
+              - 'odbc_tests/validate_behavior_differences.py'
+              - 'scripts/odbc/run_tests_unix.sh'
+              - 'scripts/odbc/run_tests_windows.ps1'
+              - 'ci/reference-odbc-version'
+              - 'ci/reference-odbc-checksums'
             python:
               - 'python/**'
               - 'pep249_dbapi/**'
               - 'tests/definitions/python/**'
               - 'scripts/old_python/**'
+            python_e2e_integ:
+              - 'python/tests/e2e/**'
+              - 'python/tests/integ/**'
+              - 'python/tests/*.py'
+              - 'python/tests/helpers/**'
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
@@ -182,6 +216,27 @@ jobs:
             echo "run_rust_core=false" >> $GITHUB_OUTPUT
           fi
 
+          # JDBC reference tests should run if: e2e/integ tests changed
+          if [[ "${{ steps.filter.outputs.jdbc_e2e_integ }}" == "true" ]]; then
+            echo "run_jdbc_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_jdbc_reference=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ODBC reference tests should run if: e2e/integ tests changed
+          if [[ "${{ steps.filter.outputs.odbc_e2e_integ }}" == "true" ]]; then
+            echo "run_odbc_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_odbc_reference=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Python reference tests should run if: e2e/integ tests changed
+          if [[ "${{ steps.filter.outputs.python_e2e_integ }}" == "true" ]]; then
+            echo "run_python_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_python_reference=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Output summary
         run: |
           echo "### Change Detection Summary" >> $GITHUB_STEP_SUMMARY
@@ -202,6 +257,9 @@ jobs:
           echo "|------------|------------|" >> $GITHUB_STEP_SUMMARY
           echo "| Rust Core | ${{ steps.computed.outputs.run_rust_core }} |" >> $GITHUB_STEP_SUMMARY
           echo "| JDBC | ${{ steps.computed.outputs.run_jdbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDBC Reference | ${{ steps.computed.outputs.run_jdbc_reference }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ODBC | ${{ steps.computed.outputs.run_odbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC Reference | ${{ steps.computed.outputs.run_odbc_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Reference | ${{ steps.computed.outputs.run_python_reference }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python | ${{ steps.computed.outputs.run_python }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python Packaging | ${{ steps.computed.outputs.run_python_packaging }} |" >> $GITHUB_STEP_SUMMARY
