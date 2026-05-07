@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, time
 from math import isinf, isnan
 
 
@@ -178,6 +178,14 @@ def assert_sequential_values(
 
         if not is_equal:
             raise AssertionError(f"Value mismatch at index {i}: expected {expected!r}, got {actual!r}")
+
+
+def millis_to_time(ms: int) -> time:
+    """Convert an integer number of milliseconds since midnight to a time object."""
+    seconds, millis = divmod(ms, 1000)
+    minutes, secs = divmod(seconds, 60)
+    hours, mins = divmod(minutes, 60)
+    return time(hours, mins, secs, millis * 1000)
 
 
 def batch_insert(execute_query, table_name, values, quote_strings: bool = False) -> None:

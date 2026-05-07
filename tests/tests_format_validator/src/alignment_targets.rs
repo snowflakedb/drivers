@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::feature_parser::Feature;
 use crate::step_finder::StepFinder;
-use crate::test_discovery::Language;
+use crate::test_discovery::{Language, TestDiscovery};
 use crate::utils::{clean_method_name, strings_match_normalized, to_snake_case};
 
 // ---------------------------------------------------------------------------
@@ -183,7 +183,14 @@ fn validate_pair(
     let mut missing_steps_by_method = Vec::new();
     let mut empty_steps_by_method = Vec::new();
 
+    let feature_excluded = TestDiscovery::get_excluded_languages(&feature.tags);
+
     for scenario in &feature.scenarios {
+        let scenario_excluded = TestDiscovery::get_excluded_languages(&scenario.tags);
+        if feature_excluded.contains(language) || scenario_excluded.contains(language) {
+            continue;
+        }
+
         let matching: Vec<&String> = all_test_methods
             .iter()
             .filter(|m| method_matches_scenario(m, &scenario.name))
