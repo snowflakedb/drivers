@@ -59,8 +59,8 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH
   // And fractional seconds are preserved alongside the offset
   {
     INFO("fractional seconds + offset");
-    auto result = check_char_success(
-        conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +07:00'::TIMESTAMP_TZ"), 1);
+    auto result =
+        check_char_success(conn.execute_fetch("SELECT '2024-01-15 10:30:00.123456789 +07:00'::TIMESTAMP_TZ"), 1);
     CHECK(result == "2024-01-15 10:30:00.123456789 +07:00");
   }
 }
