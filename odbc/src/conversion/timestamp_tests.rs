@@ -29,7 +29,20 @@ mod tests {
     }
 
     fn tz(scale: u32) -> SnowflakeTimestampTz {
-        SnowflakeTimestampTz { scale }
+        SnowflakeTimestampTz {
+            scale,
+            tz_offset_format: None,
+        }
+    }
+
+    fn tz_with_format(
+        scale: u32,
+        tz_offset_format: crate::conversion::timestamp::TzOffsetFormat,
+    ) -> SnowflakeTimestampTz {
+        SnowflakeTimestampTz {
+            scale,
+            tz_offset_format: Some(tz_offset_format),
+        }
     }
 
     fn make_struct_array(epoch: i64, fraction: i32) -> StructArray {
@@ -859,5 +872,196 @@ mod tests {
         let json = sn.write_json(tz_value("2024-01-15 14:30:45", 0)).unwrap();
         let s = json.as_str().unwrap();
         assert!(s.ends_with(" 1440"), "expected bias-only suffix, got {s}");
+    }
+
+    // ---- TZ -> CHAR/WCHAR with `tz_offset_format` set --------------------
+    //
+    // These tests cover the new fetch-side behaviour gated on the session
+    // having `TIMESTAMP_TZ_OUTPUT_FORMAT` set to a value containing a
+    // TZH/TZM/TZHTZM token. They mirror the legacy 3.16.0 driver's output
+    // for the same format strings so a Tableau / Excel migration that
+    // explicitly opted into TZ-aware output keeps seeing offsets.
+
+    use crate::conversion::timestamp::{TzOffsetFormat, parse_tz_offset_format};
+
+    #[test]
+    fn parse_tz_offset_format_picks_longest_token() {
+        // `TZH:TZM` and `TZHTZM` both contain `TZH`; the parser must
+        // prefer the longest match so the colon variant doesn't bleed
+        // into the no-colon variant for a user who configured the more
+        // verbose format.
+        assert_eq!(
+            parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS.FF TZH:TZM"),
+            Some(TzOffsetFormat::Colon)
+        );
+        assert_eq!(
+            parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS.FF TZHTZM"),
+            Some(TzOffsetFormat::NoColon)
+        );
+        assert_eq!(
+            parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS TZH"),
+            Some(TzOffsetFormat::HourOnly)
+        );
+        // Case-insensitive — Snowflake's format grammar is too.
+        assert_eq!(
+            parse_tz_offset_format("yyyy-mm-dd hh24:mi:ss tzhtzm"),
+            Some(TzOffsetFormat::NoColon)
+        );
+    }
+
+    #[test]
+    fn parse_tz_offset_format_returns_none_for_no_token() {
+        assert_eq!(parse_tz_offset_format(""), None);
+        assert_eq!(parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS.FF"), None);
+        // A bare "TZ" or stray Z must not match — only the documented
+        // TZH/TZM/TZHTZM tokens are honoured.
+        assert_eq!(parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS Z"), None);
+        assert_eq!(parse_tz_offset_format("any string with TZ but no H"), None);
+    }
+
+    #[test]
+    fn write_tz_char_with_colon_format_emits_local_wall_clock_and_offset() {
+        // 09:00:45 UTC with offset +05:30 = 14:30:45 local. The format is
+        // `+HH:MM` (the verbose Snowflake "TZH:TZM" token).
+        let sn = tz_with_format(9, TzOffsetFormat::Colon);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 +05:30");
+    }
+
+    #[test]
+    fn write_tz_char_with_no_colon_format_emits_compact_offset() {
+        // Same instant, `TZHTZM` token -> `+0530` (no colon).
+        let sn = tz_with_format(9, TzOffsetFormat::NoColon);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 +0530");
+    }
+
+    #[test]
+    fn write_tz_char_negative_offset_renders_with_minus_sign() {
+        // 22:30:45 UTC with offset -08:00 = 14:30:45 local in Pacific.
+        let sn = tz_with_format(9, TzOffsetFormat::Colon);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 22:30:45", -480), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 -08:00");
+    }
+
+    #[test]
+    fn write_tz_char_zero_offset_renders_plus_zero_zero() {
+        // UTC instant + offset 0 -> `+00:00` (not `-00:00`).
+        let sn = tz_with_format(9, TzOffsetFormat::Colon);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 14:30:45", 0), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 +00:00");
+    }
+
+    #[test]
+    fn write_tz_char_hour_only_falls_back_to_full_for_subhour_offset() {
+        // The `TZH` token is hour-only when the offset has no minute
+        // component, but +05:30 has 30 minutes — silently truncating to
+        // `+05` would describe a different instant, so we fall back to
+        // the full `+HH:MM` form (matches what the Snowflake server does
+        // for the same token).
+        let sn = tz_with_format(9, TzOffsetFormat::HourOnly);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:45 +05:30");
+    }
+
+    #[test]
+    fn write_tz_char_hour_only_emits_short_form_for_whole_hour_offset() {
+        // Whole-hour offset with `TZH` token -> `+08` (no colon, no minutes).
+        let sn = tz_with_format(9, TzOffsetFormat::HourOnly);
+        let mut buffer = [0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 06:30:00", 480), &binding, &mut None)
+            .unwrap();
+        assert_eq!(&buffer[..str_len as usize], b"2024-01-15 14:30:00 +08");
+    }
+
+    #[test]
+    fn write_tz_wchar_with_colon_format_emits_utf16_with_offset() {
+        // SQL_C_WCHAR path goes through the same formatter; only the
+        // string-write helper differs. Verify the offset reaches WCHAR.
+        let sn = tz_with_format(9, TzOffsetFormat::Colon);
+        let mut buffer = [0u8; 128];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::WChar, &mut buffer, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        // UTF-16 LE: each ASCII char occupies 2 bytes, low byte first.
+        let utf16: Vec<u16> = buffer[..str_len as usize]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let decoded = String::from_utf16(&utf16).unwrap();
+        assert_eq!(decoded, "2024-01-15 14:30:45 +05:30");
+    }
+
+    #[test]
+    fn write_tz_type_timestamp_with_format_still_returns_utc_ignoring_offset() {
+        // The `tz_offset_format` toggle is CHAR/WCHAR-only. SQL_C_TYPE_TIMESTAMP
+        // still has no offset field and the spec still requires UTC.
+        let sn = tz_with_format(9, TzOffsetFormat::Colon);
+        let mut value = sql::Timestamp::default();
+        let mut str_len: sql::Len = 0;
+        let binding =
+            binding_for_value::<sql::Timestamp>(CDataType::TypeTimestamp, &mut value, &mut str_len);
+        sn.write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap();
+        assert_eq!(value.year, 2024);
+        assert_eq!(value.hour, 9);
+        assert_eq!(value.minute, 0);
+        assert_eq!(value.second, 45);
+    }
+
+    #[test]
+    fn write_tz_char_with_format_buffer_too_small_returns_22003() {
+        // 25-byte buffer cannot hold `YYYY-MM-DD HH:MM:SS +HH:MM` (26 chars).
+        // The driver must report numeric out-of-range rather than silently
+        // truncating the offset off the end.
+        let sn = tz_with_format(0, TzOffsetFormat::Colon);
+        let mut buffer = [0u8; 25];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        let err = sn
+            .write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("Buffer too small"),
+            "expected `Buffer too small` error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn column_size_tz_with_offset_format_adds_seven() {
+        // `+ +HH:MM` worst-case = 7 chars. Verify the descriptor reports
+        // it so apps that size buffers from `column_size` are safe.
+        for scale in [0u32, 3, 6, 9] {
+            let base = if scale == 0 {
+                19
+            } else {
+                20 + scale as sql::ULen
+            };
+            let sn = tz_with_format(scale, TzOffsetFormat::Colon);
+            assert_eq!(sn.column_size(), base + 7);
+        }
     }
 }
