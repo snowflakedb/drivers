@@ -4,14 +4,6 @@ description: >
   target architecture, and propagate the resulting environment to subsequent
   steps. Fails fast if the toolchain isn't actually on PATH afterwards.
 
-  This exists because hard-coding e.g.
-  `C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`
-  silently breaks whenever GitHub rolls out a new runner image with a different
-  VS major version (e.g. the windows-2025 -> windows-2025-vs2026 migration that
-  shipped only VS 2026). `cmd`'s `call` to a missing .bat does NOT fail, which
-  produces a cryptic `'dumpbin' is not recognized` error after a successful
-  Rust-auto-detected build instead of failing fast.
-
 inputs:
   arch:
     description: >
