@@ -330,8 +330,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/windows-arm-tar \
-            | tar zxf - -C "${CARGO_HOME:-$USERPROFILE/.cargo}/bin"
+          # Use $HOME (POSIX, forward slashes on Git Bash) — $USERPROFILE is a
+          # Windows backslash path that mingw tar can't handle.
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -LsSf https://get.nexte.st/latest/windows-arm-tar | tar zxf - -C "$dest"
           cargo nextest --version
 
       # Single compile pass in the test profile; the `Run tests` step below
@@ -529,8 +532,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -LsSf https://get.nexte.st/latest/windows-tar \
-            | tar zxf - -C "${CARGO_HOME:-$USERPROFILE/.cargo}/bin"
+          # Use $HOME (POSIX, forward slashes on Git Bash) — $USERPROFILE is a
+          # Windows backslash path that mingw tar can't handle.
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -LsSf https://get.nexte.st/latest/windows-tar | tar zxf - -C "$dest"
           cargo nextest --version
 
       # Single compile pass in the test profile; the `Run tests` step below
