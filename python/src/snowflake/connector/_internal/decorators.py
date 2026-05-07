@@ -81,24 +81,11 @@ _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
 def api_telemetry(func: F) -> F:
-    """Send api_usage telemetry on the first public-method entry.
+    """Record ``{ClassName}.{method_name}`` telemetry for the outermost call.
 
-    When the decorated method is called and tracking is enabled (the default),
-    record the call via :pymeth:`TelemetryClient.send_api_usage` and then
-    *disable* tracking for the duration of the method body.  Any nested
-    decorated calls (e.g. ``commit`` -> ``cursor`` -> ``execute``) are
-    therefore suppressed automatically, ensuring only the outermost
-    user-initiated call is recorded.
-
-    For generator functions (including generators wrapped by other decorators),
-    tracking stays suppressed for the entire lifetime of the generator
-    (including iteration), so that nested decorated calls during ``yield``
-    are also suppressed.  Detection is done at runtime via ``isinstance``
-    on the return value rather than ``inspect.isgeneratorfunction``, which
-    would fail when intermediate decorators hide the generator nature.
-
-    The ``api_method`` string is derived at runtime as
-    ``"{ClassName}.{method_name}"``.
+    Suppresses ``_TRACKING`` for the method body so nested decorated calls
+    are not recorded.  Generator results are wrapped to suppress only during
+    each iteration step (see :func:`_suppress_tracking_generator`).
     """
 
     @functools.wraps(func)
@@ -113,18 +100,15 @@ def api_telemetry(func: F) -> F:
             elif isinstance(self, SnowflakeCursorBase):
                 self._connection._telemetry_client.send_api_usage(api_name)
 
-            token = _TRACKING.set(False)
+            _TRACKING.set(False)
             try:
                 result = func(self, *args, **kwargs)
-            except BaseException:
-                _TRACKING.reset(token)
-                raise
+            finally:
+                _TRACKING.set(True)
 
             if isinstance(result, types.GeneratorType):
-                # Keep tracking suppressed for the generator's entire lifetime.
-                return _suppress_tracking_generator(result, token)
+                return _suppress_tracking_generator(result)
 
-            _TRACKING.reset(token)
             return result
         return func(self, *args, **kwargs)
 
@@ -133,10 +117,21 @@ def api_telemetry(func: F) -> F:
 
 def _suppress_tracking_generator(
     gen: Generator[Any, Any, Any],
-    token: Any,
 ) -> Generator[Any, Any, Any]:
-    """Wrap a generator so ``_TRACKING`` stays ``False`` for its entire lifetime."""
+    """Suppress ``_TRACKING`` during each iteration step, restore between yields.
+
+    Safe against never-started generators: the wrapper body only runs when
+    iterated, and ``api_telemetry`` resets ``_TRACKING`` before creating it.
+    """
+    _TRACKING.set(False)
     try:
-        yield from gen
+        for value in gen:
+            _TRACKING.set(True)
+            try:
+                yield value
+            except GeneratorExit:
+                gen.close()
+                return
+            _TRACKING.set(False)
     finally:
-        _TRACKING.reset(token)
+        _TRACKING.set(True)
