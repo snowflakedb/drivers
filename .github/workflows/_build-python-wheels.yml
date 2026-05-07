@@ -430,6 +430,11 @@ jobs:
         with:
           arch: arm64
 
+      - name: Setup MSVC environment (ARM64)
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: arm64
+
       # ── sf_core build ──
       - name: Restore Rust cache
         id: rust-cache
@@ -441,9 +446,7 @@ jobs:
 
       - name: Build sf_core
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
 
       - name: Place sf_core in python package
         shell: pwsh
@@ -478,12 +481,12 @@ jobs:
         run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
 
       # ── Build ──
+      # MSVC env from the earlier setup-msvc step persists across steps via
+      # GITHUB_ENV, so no separate `call vcvarsall.bat` is needed here.
       - name: Build python wheel
         working-directory: ./python
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
       - name: Inspect wheel
         working-directory: ./python

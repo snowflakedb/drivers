@@ -34,12 +34,16 @@ runs:
         path: C:\vcpkg\installed\${{ steps.triplet.outputs.value }}
         key: vcpkg-openssl-${{ steps.triplet.outputs.value }}-${{ env.VCPKG_VER }}
 
+    - name: Setup MSVC environment (ARM64, for vcpkg build)
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'arm64'
+      uses: ./.github/actions/setup-msvc
+      with:
+        arch: arm64
+
     - name: Install OpenSSL via vcpkg (ARM64)
       if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'arm64'
       shell: cmd
-      run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-        vcpkg install openssl:${{ steps.triplet.outputs.value }}
+      run: vcpkg install openssl:${{ steps.triplet.outputs.value }}
 
     - name: Install OpenSSL via vcpkg (x86_64)
       if: steps.cache.outputs.cache-hit != 'true' && inputs.arch == 'x86_64'

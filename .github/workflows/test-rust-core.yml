@@ -317,20 +317,17 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
+      - name: Setup MSVC environment (ARM64)
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: arm64
+
       - name: Build and test
         id: run_rust_tests_windows_arm64
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
-          :: Set up ARM64 MSVC environment
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          :: Guard: verify MSVC env targets ARM64
-          if not "%VSCMD_ARG_TGT_ARCH%"=="arm64" (
-            echo ERROR: VSCMD_ARG_TGT_ARCH is '%VSCMD_ARG_TGT_ARCH%', expected 'arm64'
-            exit /b 1
-          )
 
           cargo build --package sf_core --target aarch64-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
@@ -354,14 +351,8 @@ jobs:
         run: |
           :: Full re-setup (not just cargo test) so reruns work even if the first run failed
           :: before reaching cargo test (e.g., build failure, DLL copy missed). Matches the
-          :: first-run steps above.
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          :: first-run steps above. The MSVC env from setup-msvc above persists across steps.
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          if not "%VSCMD_ARG_TGT_ARCH%"=="arm64" (
-            echo ERROR: VSCMD_ARG_TGT_ARCH is '%VSCMD_ARG_TGT_ARCH%', expected 'arm64'
-            exit /b 1
-          )
 
           cargo build --package sf_core --target aarch64-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
@@ -413,12 +404,16 @@ jobs:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
+      - name: Setup MSVC environment (ARM64, for vcpkg static OpenSSL build)
+        if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: arm64
+
       - name: Install ARM64 static OpenSSL via vcpkg (cache miss)
         if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
+        run: vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg ARM64 static OpenSSL cache (cache miss)
         if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
@@ -486,12 +481,16 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
+      - name: Setup MSVC environment (x86)
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: x86
+
       - name: Build and test
         id: run_rust_tests_x86
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
 
           cargo build --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
@@ -511,7 +510,6 @@ jobs:
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
 
