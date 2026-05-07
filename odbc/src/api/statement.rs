@@ -190,6 +190,31 @@ fn update_numeric_settings(
             settings.max_varchar_size = size;
             tracing::info!("Server parameter VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT = {size}");
         }
+
+        // TIMESTAMP_TZ_OUTPUT_FORMAT: read on every execute so an in-flight
+        // `ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = ...` takes effect
+        // for the next statement. Empty / unset / no-TZ-token formats keep
+        // the legacy UTC-only fetch behaviour (see
+        // `crate::conversion::timestamp::parse_tz_offset_format`).
+        let tz_format = if let Ok(resp) = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
+            })
+            .await
+        {
+            resp.value
+                .as_deref()
+                .and_then(crate::conversion::timestamp::parse_tz_offset_format)
+        } else {
+            None
+        };
+        if settings.tz_offset_format != tz_format {
+            tracing::info!(
+                "Server parameter TIMESTAMP_TZ_OUTPUT_FORMAT offset token = {tz_format:?}"
+            );
+        }
+        settings.tz_offset_format = tz_format;
     });
     Ok(())
 }

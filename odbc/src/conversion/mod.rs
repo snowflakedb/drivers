@@ -35,7 +35,7 @@ mod test_utils;
 mod time;
 #[cfg(test)]
 mod time_tests;
-mod timestamp;
+pub(crate) mod timestamp;
 #[cfg(test)]
 mod timestamp_tests;
 mod varchar;
@@ -384,6 +384,7 @@ impl SnowflakeFieldType {
             })),
             "TIMESTAMP_TZ" => Ok(Self::TimestampTz(timestamp::SnowflakeTimestampTz {
                 scale: timestamp_scale(field)?,
+                tz_offset_format: numeric_settings.tz_offset_format,
             })),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => {
