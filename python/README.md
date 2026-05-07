@@ -1,6 +1,10 @@
-# PEP 249 Database API 2.0 Implementation
+# ⚠️ PRIVATE PREVIEW DISCLAIMER ⚠️
 
-A Python library that implements [PEP 249 (Python Database API Specification 2.0)](https://peps.python.org/pep-0249/) with empty interface implementations. This library provides a complete skeleton implementation that follows the PEP 249 specification, making it an ideal starting point for creating new database drivers or for testing database API compliance.
+**IMPORTANT:** This release contains a **Private Preview** version of the Snowflake DB driver. By downloading or using this software, you acknowledge and agree to the following conditions:
+
+- **Restricted Access:** Usage of this driver is strictly limited to participants who are actively enrolled in the official Private Preview program for this specific driver. If you have not been explicitly invited and authorized to participate in this preview, do not download, install, or use this software.
+- **Testing Environments Only:** For authorized Private Preview partners, this driver is provided solely for evaluation, feedback, and testing purposes. It must be deployed exclusively in isolated, non-production environments.
+- **"As-Is" Software:** As a preview release, this driver is still under active development. It may contain bugs, lack features, or undergo significant breaking changes before general availability. It is provided "as-is" without any warranties, service level agreements (SLAs), or official support commitments.
 
 ## Development
 
