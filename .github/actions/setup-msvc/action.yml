@@ -47,8 +47,7 @@ runs:
         # Capture vcvarsall output to a variable BEFORE inspecting $LASTEXITCODE.
         # Piping `cmd /c ... | ForEach-Object` would succeed as a pipeline even if
         # vcvarsall.bat itself failed, leaving later steps running without cl.exe
-        # or link.exe on PATH. See test-odbc.yml's Setup MSVC step for the same
-        # rationale.
+        # or link.exe on PATH.
         $vcvarsOutput = cmd /c "`"$vcvars`" $arch && set" 2>&1
         if ($LASTEXITCODE -ne 0) {
           Write-Host "vcvarsall.bat output:"
