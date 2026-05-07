@@ -25,14 +25,29 @@ use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{OptionExt, ResultExt};
 
-pub const DEFAULT_PREFETCH_THREADS: usize = 8;
+pub const DEFAULT_PREFETCH_THREADS: usize = 4;
+
+/// Configuration for the chunk prefetch pipeline.
+#[derive(Debug, Clone)]
+pub struct PrefetchConfig {
+    /// Number of concurrent chunk download+parse tasks.
+    pub prefetch_threads: usize,
+}
+
+impl Default for PrefetchConfig {
+    fn default() -> Self {
+        Self {
+            prefetch_threads: DEFAULT_PREFETCH_THREADS,
+        }
+    }
+}
 
 pub async fn json_prefetch_reader(
     initial_rowset: &[Vec<Option<String>>],
     row_types: Vec<RowType>,
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
-    prefetch_concurrency: usize,
+    config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)?;
     let downloader = HttpChunkDownloader { client };
@@ -44,7 +59,7 @@ pub async fn json_prefetch_reader(
         chunk_download_data.into(),
         downloader,
         parser,
-        prefetch_concurrency,
+        config.prefetch_threads,
     )
     .await
 }
@@ -53,7 +68,7 @@ pub async fn arrow_prefetch_reader(
     initial_base64_opt: Option<&str>,
     mut chunk_download_data: VecDeque<ChunkDownloadData>,
     client: Client,
-    prefetch_concurrency: usize,
+    config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = if let Some(initial_base64) = initial_base64_opt {
         let bytes = BASE64.decode(initial_base64).context(Base64DecodingSnafu)?;
@@ -74,7 +89,7 @@ pub async fn arrow_prefetch_reader(
         chunk_download_data,
         downloader,
         parser,
-        prefetch_concurrency,
+        config.prefetch_threads,
     )
     .await
 }

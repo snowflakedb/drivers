@@ -2,8 +2,8 @@ use super::ColumnMetadata;
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
 use crate::chunks::{
-    ChunkError, DEFAULT_PREFETCH_THREADS, arrow_prefetch_reader, empty_reader,
-    json_prefetch_reader, schema_only_reader, single_chunk_reader,
+    ChunkError, PrefetchConfig, arrow_prefetch_reader, empty_reader, json_prefetch_reader,
+    schema_only_reader, single_chunk_reader,
 };
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
@@ -28,11 +28,12 @@ pub struct QueryResult {
 pub async fn process_query_response(
     data: &query_response::Data,
     http_client: &Client,
+    prefetch_config: &PrefetchConfig,
 ) -> Result<QueryResult, QueryResponseProcessingError> {
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
         None => {
-            let reader = read_batches(data.to_rowset_data(), http_client.clone())
+            let reader = read_batches(data.to_rowset_data(), http_client.clone(), prefetch_config)
                 .await
                 .context(BatchReadingSnafu)?;
             Ok(QueryResult { reader })
@@ -81,6 +82,7 @@ async fn perform_put_get(
 async fn read_batches<'a>(
     data: query_response::RowsetData<'a>,
     http_client: Client,
+    prefetch_config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
@@ -90,17 +92,14 @@ async fn read_batches<'a>(
         query_response::RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
-        } => {
-            // Handle chunk download case without base64 data
-            arrow_prefetch_reader(
-                initial_base64_opt,
-                chunk_download_data.into(),
-                http_client.clone(),
-                DEFAULT_PREFETCH_THREADS,
-            )
-            .await
-            .context(ChunkReadingSnafu)
-        }
+        } => arrow_prefetch_reader(
+            initial_base64_opt,
+            chunk_download_data.into(),
+            http_client.clone(),
+            prefetch_config,
+        )
+        .await
+        .context(ChunkReadingSnafu),
         query_response::RowsetData::SchemaOnly { rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             schema_only_reader(&row_types).context(ChunkReadingSnafu)
@@ -113,7 +112,7 @@ async fn read_batches<'a>(
                 row_types,
                 Vec::new(),
                 http_client.clone(),
-                DEFAULT_PREFETCH_THREADS,
+                prefetch_config,
             )
             .await
             .context(ChunkReadingSnafu)
@@ -131,7 +130,7 @@ async fn read_batches<'a>(
                 row_types,
                 chunk_download_data,
                 http_client.clone(),
-                DEFAULT_PREFETCH_THREADS,
+                prefetch_config,
             )
             .await
             .context(ChunkReadingSnafu)

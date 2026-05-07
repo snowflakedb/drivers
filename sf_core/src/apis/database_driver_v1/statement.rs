@@ -9,7 +9,7 @@ use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
     validate_statement_option_write,
 };
-use crate::chunks::{ChunkDownloadData, ChunkFormatKind};
+use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::config::ParamStore;
 use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
@@ -452,15 +452,18 @@ impl DatabaseDriverV1 {
 
         let descriptor = response_to_descriptor(&response.data);
 
+        let prefetch_config = resolve_prefetch_config(&conn_arc).await;
+
         // Build the Arrow stream eagerly — this handles all result formats
         // (Arrow, JSON, PUT/GET file transfers) via process_query_response.
         // Skip for multi-statement parents (they only contain metadata).
         let prebuilt_stream = if super::multistatement::is_multistatement(&response.data) {
             None
         } else {
-            let query_result = process_query_response(&response.data, &http_client)
-                .await
-                .context(QueryResponseProcessingSnafu)?;
+            let query_result =
+                process_query_response(&response.data, &http_client, &prefetch_config)
+                    .await
+                    .context(QueryResponseProcessingSnafu)?;
             Some(Box::new(FFI_ArrowArrayStream::new(query_result.reader)))
         };
 
@@ -805,6 +808,22 @@ fn put_get_columns(command: Option<&str>) -> Vec<ColumnMetadata> {
     }
 }
 
+/// Read the `CLIENT_PREFETCH_THREADS` session parameter from the connection
+/// and build a [`PrefetchConfig`].
+async fn resolve_prefetch_config(conn: &Arc<Mutex<Connection>>) -> PrefetchConfig {
+    let conn_guard = conn.lock().await;
+    let threads = conn_guard
+        .session_parameters
+        .read()
+        .await
+        .get(param_names::CLIENT_PREFETCH_THREADS.as_str())
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(crate::chunks::DEFAULT_PREFETCH_THREADS);
+    PrefetchConfig {
+        prefetch_threads: threads,
+    }
+}
+
 /// Fetch a query result from Snowflake by query_id via the connection,
 /// returning the raw response `Data` for further processing.
 async fn fetch_query_response_data(
@@ -866,9 +885,10 @@ async fn fetch_and_resolve_result_set(
     query_id: &str,
 ) -> Result<ResolvedResultSet, ApiError> {
     let (data, http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
+    let prefetch_config = resolve_prefetch_config(conn_ptr).await;
 
     let descriptor = response_to_descriptor(&data);
-    let query_result = process_query_response(&data, &http_client)
+    let query_result = process_query_response(&data, &http_client, &prefetch_config)
         .await
         .context(QueryResponseProcessingSnafu)?;
     let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
