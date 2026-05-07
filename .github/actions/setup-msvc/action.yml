@@ -1,0 +1,93 @@
+name: Setup MSVC
+description: >
+  Locate Visual Studio via vswhere, source vcvarsall.bat for the requested
+  target architecture, and propagate the resulting environment to subsequent
+  steps. Fails fast if the toolchain isn't actually on PATH afterwards.
+
+  This exists because hard-coding e.g.
+  `C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`
+  silently breaks whenever GitHub rolls out a new runner image with a different
+  VS major version (e.g. the windows-2025 -> windows-2025-vs2026 migration that
+  shipped only VS 2026). `cmd`'s `call` to a missing .bat does NOT fail, which
+  produces a cryptic `'dumpbin' is not recognized` error after a successful
+  Rust-auto-detected build instead of failing fast.
+
+inputs:
+  arch:
+    description: >
+      Architecture argument passed to vcvarsall.bat. Examples: x86, x64, amd64,
+      arm64, x86_arm64, amd64_arm64. The action verifies that
+      VSCMD_ARG_TGT_ARCH ends up matching the target portion of this value.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Locate MSVC and source vcvarsall.bat
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $arch = "${{ inputs.arch }}"
+
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vswhere)) {
+          throw "vswhere.exe not found at $vswhere"
+        }
+
+        $installPath = & $vswhere -latest -property installationPath
+        if (-not $installPath) {
+          throw "vswhere could not locate a Visual Studio installation"
+        }
+
+        $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
+        if (-not (Test-Path $vcvars)) {
+          throw "vcvarsall.bat not found at $vcvars"
+        }
+
+        # Capture vcvarsall output to a variable BEFORE inspecting $LASTEXITCODE.
+        # Piping `cmd /c ... | ForEach-Object` would succeed as a pipeline even if
+        # vcvarsall.bat itself failed, leaving later steps running without cl.exe
+        # or link.exe on PATH. See test-odbc.yml's Setup MSVC step for the same
+        # rationale.
+        $vcvarsOutput = cmd /c "`"$vcvars`" $arch && set" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "vcvarsall.bat output:"
+          $vcvarsOutput | ForEach-Object { Write-Host $_ }
+          throw "vcvarsall.bat $arch failed with exit code $LASTEXITCODE"
+        }
+
+        # Propagate every env var vcvarsall set to BOTH:
+        #   - $env:GITHUB_ENV     -> visible to subsequent steps in the job
+        #   - the current process -> so the post-condition checks below see
+        #                            the freshly-updated PATH (writes to
+        #                            GITHUB_ENV are buffered and only applied
+        #                            at step boundary).
+        $vcvarsOutput | ForEach-Object {
+          if ($_ -match '^([^=]+)=(.*)$') {
+            $name = $Matches[1]
+            $value = $Matches[2]
+            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
+          }
+        }
+
+        # vcvarsall.bat can exit 0 with a broken environment (missing components,
+        # wrong host arch). Verify the toolchain is actually usable so the next
+        # build step fails here with a clear message instead of producing a
+        # confusing missing-tool / linker error 3 minutes into the build.
+        foreach ($tool in @('cl.exe', 'link.exe', 'dumpbin.exe')) {
+          if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+            throw "MSVC environment setup completed but $tool is not on PATH (requested arch: $arch)"
+          }
+        }
+
+        # vcvarsall arch grammar is `[host_]target`: `x86`, `x64`, `arm64`,
+        # `amd64_arm64`, `x86_arm64`, etc. VSCMD_ARG_TGT_ARCH is set to the
+        # target portion using x64 (not amd64) terminology.
+        $expectedTgt = ($arch -split '_')[-1]
+        if ($expectedTgt -eq 'amd64') { $expectedTgt = 'x64' }
+        if ($env:VSCMD_ARG_TGT_ARCH -ne $expectedTgt) {
+          throw "VSCMD_ARG_TGT_ARCH is '$($env:VSCMD_ARG_TGT_ARCH)', expected '$expectedTgt' for arch '$arch'"
+        }
+
+        Write-Host "MSVC ready: VS at $installPath, target arch $env:VSCMD_ARG_TGT_ARCH"

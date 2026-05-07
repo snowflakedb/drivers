@@ -317,20 +317,17 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
+      - name: Setup MSVC environment (ARM64)
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: arm64
+
       - name: Build and test
         id: run_rust_tests_windows_arm64
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
-          :: Set up ARM64 MSVC environment
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          :: Guard: verify MSVC env targets ARM64
-          if not "%VSCMD_ARG_TGT_ARCH%"=="arm64" (
-            echo ERROR: VSCMD_ARG_TGT_ARCH is '%VSCMD_ARG_TGT_ARCH%', expected 'arm64'
-            exit /b 1
-          )
 
           cargo build --package sf_core --target aarch64-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
@@ -354,14 +351,8 @@ jobs:
         run: |
           :: Full re-setup (not just cargo test) so reruns work even if the first run failed
           :: before reaching cargo test (e.g., build failure, DLL copy missed). Matches the
-          :: first-run steps above.
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          :: first-run steps above. The MSVC env from setup-msvc above persists across steps.
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          if not "%VSCMD_ARG_TGT_ARCH%"=="arm64" (
-            echo ERROR: VSCMD_ARG_TGT_ARCH is '%VSCMD_ARG_TGT_ARCH%', expected 'arm64'
-            exit /b 1
-          )
 
           cargo build --package sf_core --target aarch64-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
@@ -413,12 +404,16 @@ jobs:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
+      - name: Setup MSVC environment (ARM64, for vcpkg static OpenSSL build)
+        if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: arm64
+
       - name: Install ARM64 static OpenSSL via vcpkg (cache miss)
         if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows-static-md
+        run: vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg ARM64 static OpenSSL cache (cache miss)
         if: always() && steps.vcpkg-static-cache.outputs.cache-hit != 'true'
@@ -486,43 +481,17 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      # Locate vcvarsall.bat dynamically via vswhere instead of hard-coding the
-      # VS 2022 path. The `windows-latest` image is being migrated from
-      # `windows-2025` to `windows-2025-vs2026` (rollout completing 2026-05-12),
-      # which only ships VS 2026, so the old hard-coded VS 2022 path silently
-      # disappears. `call` to a missing .bat does NOT fail in cmd, which is why
-      # the previous version produced an empty MSVC env and a confusing
-      # `'dumpbin' is not recognized` error rather than failing fast.
-      - name: Locate MSVC (vswhere)
-        id: vswhere
-        shell: cmd
-        run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VS_INSTALL=%%i"
-          if not defined VS_INSTALL (
-            echo ERROR: vswhere could not locate a Visual Studio installation
-            exit /b 1
-          )
-          if not exist "%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat" (
-            echo ERROR: vcvarsall.bat not found at "%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat"
-            exit /b 1
-          )
-          echo VCVARSALL=%VS_INSTALL%\VC\Auxiliary\Build\vcvarsall.bat>> %GITHUB_ENV%
+      - name: Setup MSVC environment (x86)
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: x86
 
       - name: Build and test
         id: run_rust_tests_x86
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
-          call "%VCVARSALL%" x86
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          :: Guard: vcvarsall.bat can succeed silently with a broken env, so
-          :: confirm the toolchain is actually on PATH before relying on it.
-          where dumpbin >nul 2>&1
-          if %ERRORLEVEL% neq 0 (
-            echo ERROR: dumpbin not on PATH after vcvarsall.bat x86
-            exit /b 1
-          )
 
           cargo build --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
@@ -541,7 +510,6 @@ jobs:
         if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         run: |
-          call "%VCVARSALL%" x86
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
 
