@@ -486,24 +486,47 @@ jobs:
         with:
           arch: x86
 
-      - name: Build and test
+      # Build everything once in the test profile (a separate `cargo build` in the
+      # dev profile would force a full ~600-crate recompile because dev and test
+      # profiles have distinct cargo fingerprints — that's where the previous
+      # ~14 minutes went). The subsequent `cargo test` in the next step reuses
+      # all of these artifacts and only does test execution.
+      - name: Compile (test profile, no run)
+        shell: cmd
+        run: cargo test --no-run --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
+
+      # Verify the toolchain actually emitted x86 binaries. Since `sf_core` is
+      # `crate-type = ["cdylib", "rlib"]` and `cargo test` only needs the rlib,
+      # `sf_core.dll` isn't produced here — but every test binary is, and they
+      # come from the same `--target i686-pc-windows-msvc`, so checking one of
+      # them proves the toolchain is x86. Build scripts live under `build\`,
+      # not `deps\`, so anything in `deps\` is target-arch.
+      - name: Verify test binaries are x86
+        shell: cmd
+        run: |
+          set "TEST_EXE="
+          for %%f in (target\i686-pc-windows-msvc\debug\deps\integration_tests-*.exe) do (
+            if not defined TEST_EXE set "TEST_EXE=%%f"
+          )
+          if not defined TEST_EXE (
+            echo ERROR: integration_tests binary not found under target\i686-pc-windows-msvc\debug\deps\
+            dir target\i686-pc-windows-msvc\debug\deps\
+            exit /b 1
+          )
+          echo Checking machine type of %TEST_EXE%
+          dumpbin /headers "%TEST_EXE%" | findstr "14C" >nul
+          if %ERRORLEVEL% neq 0 (
+            echo ERROR: %TEST_EXE% is not x86
+            dumpbin /headers "%TEST_EXE%" | findstr "machine"
+            exit /b 1
+          )
+
+      - name: Run tests
         id: run_rust_tests_x86
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          cargo build --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc
-          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-
-          :: Verify the DLL is 32-bit (machine type 14C = x86)
-          dumpbin /headers target\i686-pc-windows-msvc\debug\sf_core.dll | findstr "14C" >nul
-          if %ERRORLEVEL% neq 0 (
-            echo ERROR: sf_core.dll is not x86
-            dumpbin /headers target\i686-pc-windows-msvc\debug\sf_core.dll | findstr "machine"
-            exit /b 1
-          )
-
           cargo test --package sf_core --no-default-features --features protobuf,vendored-openssl --target i686-pc-windows-msvc -- --nocapture
 
       - name: Rerun tests (Windows x86)
