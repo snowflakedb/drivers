@@ -322,10 +322,17 @@ jobs:
         with:
           arch: arm64
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
+      # Direct binary download from upstream redirector. taiki-e/install-action
+      # is blocked by the org allow-list, so we install the same pre-built
+      # binary it would fetch. windows-arm-tar ships the aarch64-pc-windows-msvc
+      # build for the windows-11-arm host.
+      - name: Install cargo-nextest (Windows ARM64 host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/windows-arm-tar \
+            | tar zxf - -C "${CARGO_HOME:-$USERPROFILE/.cargo}/bin"
+          cargo nextest --version
 
       # Single compile pass in the test profile; the `Run tests` step below
       # reuses these artifacts. Splitting build and test across cargo profiles
@@ -514,10 +521,17 @@ jobs:
         with:
           arch: x86
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
+      # Direct binary download from upstream redirector. taiki-e/install-action
+      # is blocked by the org allow-list, so we install the same pre-built
+      # binary it would fetch. windows-tar ships the x86_64-pc-windows-msvc
+      # host build (the x86 target is just the cross-compile output).
+      - name: Install cargo-nextest (Windows x64 host)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -LsSf https://get.nexte.st/latest/windows-tar \
+            | tar zxf - -C "${CARGO_HOME:-$USERPROFILE/.cargo}/bin"
+          cargo nextest --version
 
       # Single compile pass in the test profile; the `Run tests` step below
       # reuses these artifacts. Splitting build and test across cargo profiles
