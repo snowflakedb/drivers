@@ -53,7 +53,7 @@ function(add_odbc_test name)
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
   endif()
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/../odbc/include)
-  catch_discover_tests(${name} TEST_PREFIX "${name}: ")
+  catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS)
 endfunction()
 
 add_subdirectory(tests)
