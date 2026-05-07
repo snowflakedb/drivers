@@ -322,43 +322,54 @@ jobs:
         with:
           arch: arm64
 
-      - name: Build and test
+      # Single compile pass in the test profile; the `Run tests` step below
+      # reuses these artifacts. Splitting build and test across cargo profiles
+      # would recompile the whole dependency tree twice.
+      - name: Compile (test profile, no run)
+        shell: cmd
+        run: cargo test --no-run --package sf_core --target aarch64-pc-windows-msvc
+
+      # sf_core's cdylib isn't built by `cargo test`, so check a test binary
+      # instead — same target triple, so same arch proof.
+      - name: Verify test binaries are ARM64
+        shell: cmd
+        run: |
+          set "TEST_EXE="
+          for %%f in (target\aarch64-pc-windows-msvc\debug\deps\integration_tests-*.exe) do (
+            if not defined TEST_EXE set "TEST_EXE=%%f"
+          )
+          if not defined TEST_EXE (
+            echo ERROR: integration_tests binary not found under target\aarch64-pc-windows-msvc\debug\deps\
+            dir target\aarch64-pc-windows-msvc\debug\deps\
+            exit /b 1
+          )
+          echo Checking machine type of %TEST_EXE%
+          dumpbin /headers "%TEST_EXE%" | findstr "AA64" >nul
+          if %ERRORLEVEL% neq 0 (
+            echo ERROR: %TEST_EXE% is not ARM64
+            dumpbin /headers "%TEST_EXE%" | findstr "machine"
+            exit /b 1
+          )
+
+      - name: Stage ARM64 OpenSSL DLLs next to test binaries
+        shell: cmd
+        run: |
+          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+
+      - name: Run tests
         id: run_rust_tests_windows_arm64
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          cargo build --package sf_core --target aarch64-pc-windows-msvc
-          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-
-          :: Guard: verify sf_core.dll is ARM64
-          dumpbin /headers target\aarch64-pc-windows-msvc\debug\sf_core.dll | findstr "AA64" >nul
-          if %ERRORLEVEL% neq 0 (
-            echo ERROR: sf_core.dll is not ARM64
-            dumpbin /headers target\aarch64-pc-windows-msvc\debug\sf_core.dll | findstr "machine"
-            exit /b 1
-          )
-
-          :: Copy ARM64 OpenSSL DLLs next to test binaries so Windows finds them
-          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
-          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
           cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
 
       - name: Rerun tests (Windows ARM64)
         if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         run: |
-          :: Full re-setup (not just cargo test) so reruns work even if the first run failed
-          :: before reaching cargo test (e.g., build failure, DLL copy missed). Matches the
-          :: first-run steps above. The MSVC env from setup-msvc above persists across steps.
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-
-          cargo build --package sf_core --target aarch64-pc-windows-msvc
-          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-
-          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
-          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
           cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
 
       # Post-mortem diagnostics for Windows ARM64 failures: ARM64-specific build issues
@@ -376,8 +387,9 @@ jobs:
           dir /s target\aarch64-pc-windows-msvc\debug > windows-arm64-diagnostics\target-listing.txt 2>&1
           :: OpenSSL DLLs present next to deps?
           dir target\aarch64-pc-windows-msvc\debug\deps\*.dll > windows-arm64-diagnostics\deps-dlls.txt 2>&1
-          :: sf_core.dll architecture header
-          where dumpbin >nul 2>&1 && dumpbin /headers target\aarch64-pc-windows-msvc\debug\sf_core.dll > windows-arm64-diagnostics\sf_core-headers.txt 2>&1
+          :: integration_tests binary architecture header (sf_core's cdylib
+          :: isn't built by `cargo test`; the test binary proves toolchain arch)
+          where dumpbin >nul 2>&1 && for %%f in (target\aarch64-pc-windows-msvc\debug\deps\integration_tests-*.exe) do dumpbin /headers "%%f" >> windows-arm64-diagnostics\test-binary-headers.txt 2>&1
 
       - name: Upload Windows ARM64 diagnostics
         if: failure()
