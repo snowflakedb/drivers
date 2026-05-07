@@ -130,6 +130,25 @@ jobs:
           path: .cache/reference-odbc
           key: ${{ runner.os }}-ref-odbc-${{ hashFiles('ci/reference-odbc-version') }}
 
+      # See odbc_tests below for rationale: VCPKG_VER must be in the cache key
+      # because vcpkg's package ABI hashes change with the runner's vcpkg version.
+      - name: Capture vcpkg version (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Restore vcpkg binary cache (Windows)
+        if: matrix.os == 'windows-latest'
+        id: vcpkg-cache-ref
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .vcpkg-binary-cache
+          key: ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-v3
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-
+            ${{ runner.os }}-vcpkg-x64-windows-
+
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -145,6 +164,9 @@ jobs:
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
+          # VCPKG_BINARY_SOURCES (workflow-level env) points at this directory;
+          # vcpkg refuses to use a missing path silently — create it before install.
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
@@ -288,6 +310,19 @@ jobs:
         with:
           path: .ccache
           key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+
+      - name: Save vcpkg binary cache (Windows)
+        if: always() && matrix.os == 'windows-latest' && steps.vcpkg-cache-ref.outputs.cache-hit != 'true'
+        # Cache save is best-effort — see cargo-cache action for rationale.
+        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .vcpkg-binary-cache
+          key: ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-v3
 
   # Build ODBC driver once per platform and share via artifact.
   # Avoids rebuilding in each of the 9 test matrix cells (3 OSes × 3 cloud providers).
@@ -513,6 +548,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-
 
+      # vcpkg's binary cache stores prebuilt packages keyed by an ABI hash that
+      # depends on the vcpkg version. When the runner image bumps vcpkg the
+      # ABI hashes change, the cached binaries become unusable, and vcpkg
+      # rebuilds zlib/openssl from source (~7-8 min). Including VCPKG_VER in
+      # the key invalidates stale entries on vcpkg version changes so we
+      # always either get a usable cache or build fresh, never both.
+      - name: Capture vcpkg version (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/vcpkg-version
+
       - name: Restore vcpkg binary cache (Windows)
         if: runner.os == 'Windows'
         id: vcpkg-cache
@@ -521,8 +566,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v2
+          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-v3
           restore-keys: |
+            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-
             ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-
 
       # Cache Homebrew bottle downloads to avoid re-fetching unixodbc/ccache on every run
@@ -770,7 +816,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-v2
+          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-v3
 
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
