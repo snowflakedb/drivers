@@ -1,4 +1,4 @@
-//! Integration tests for query log gating (sf_core/SNOW-XXXX).
+//! Integration tests for query log gating (sf_core/SNOW-3480688).
 //!
 //! Verifies that `log_query_text` / `log_query_parameters` toggle whether the
 //! INFO-level query log line includes the (truncated) SQL and JSON bindings.
