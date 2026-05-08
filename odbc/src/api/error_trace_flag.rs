@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// User-facing error-rendering policy toggle, seeded at env allocation time
 /// from `LogManager::error_trace_enabled()`. Defaults to `true` so errors
 /// produced before env init (lock poisoning, invalid handles) still print a
-/// full trace. `Relaxed` is sufficient: the flag is a standalone boolean that
-/// gates a formatting branch and publishes no other memory.
+/// full trace. `Relaxed` is sufficient: the flag is a standalone boolean that is
+/// initialized as a part of env allocation during sqlallochandle init.
+/// Nothing happens before that concludes.
 static ERROR_TRACE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Whether `OdbcError::message_text()` should append the full error trace.
@@ -24,7 +25,7 @@ mod tests {
     use crate::api::OdbcError;
     use std::sync::Mutex;
 
-    /// Serialises any test that reads or writes the process-wide
+    /// Serializes any test that reads or writes the process-wide
     /// `ERROR_TRACE_ENABLED`, so parallel test execution doesn't let two
     /// tests interleave their get/set pairs.
     static FLAG_TEST_LOCK: Mutex<()> = Mutex::new(());
