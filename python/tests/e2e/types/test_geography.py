@@ -18,9 +18,6 @@ from ...conftest import with_paramstyle
 from .utils import assert_geojson, assert_sequential_values, assert_type
 
 
-pytestmark = pytest.mark.skip_for_json_result_set(reason="GEOGRAPHY type is not supported in JSON result format")
-
-
 # =============================================================================
 # WKT TEST VALUES
 # =============================================================================

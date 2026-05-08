@@ -320,10 +320,17 @@ impl ColumnBuilder {
             | RowType::Variant { .. }
             | RowType::Object { .. }
             | RowType::Array { .. }
-            | RowType::Geography { .. }
-            | RowType::Geometry { .. }
             | RowType::Vector { .. } => ColumnBuilder::Text {
                 builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
+            },
+            RowType::Geography { representation, .. }
+            | RowType::Geometry { representation, .. } => match representation {
+                crate::query_types::GeoRepresentation::Text => ColumnBuilder::Text {
+                    builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
+                },
+                crate::query_types::GeoRepresentation::Binary => ColumnBuilder::Binary {
+                    builder: arrow::array::BinaryBuilder::with_capacity(capacity, capacity * 16),
+                },
             },
             RowType::Boolean { .. } => ColumnBuilder::Boolean {
                 builder: arrow::array::BooleanBuilder::with_capacity(capacity),

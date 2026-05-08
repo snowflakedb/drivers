@@ -564,6 +564,18 @@ pub enum RowsetData<'a> {
     NoData,
 }
 
+/// Selects the storage representation for a `GEOGRAPHY` / `GEOMETRY` column
+/// based on the underlying `type` field the server sends. The server routes
+/// text output formats (GeoJSON → `object`, WKT/EWKT → `text`) and binary
+/// output formats (WKB/EWKB → `binary`) through this field.
+fn geo_representation(underlying_type: &str) -> query_types::GeoRepresentation {
+    if underlying_type.eq_ignore_ascii_case("binary") {
+        query_types::GeoRepresentation::Binary
+    } else {
+        query_types::GeoRepresentation::Text
+    }
+}
+
 impl TryFrom<&RowType> for query_types::RowType {
     type Error = QueryResponseError;
 
@@ -678,8 +690,16 @@ impl TryFrom<&RowType> for query_types::RowType {
                     &name, nullable, precision, scale,
                 ))
             }
-            "GEOGRAPHY" => Ok(query_types::RowType::geography(&name, nullable)),
-            "GEOMETRY" => Ok(query_types::RowType::geometry(&name, nullable)),
+            "GEOGRAPHY" => Ok(query_types::RowType::geography(
+                &name,
+                nullable,
+                geo_representation(&value.type_),
+            )),
+            "GEOMETRY" => Ok(query_types::RowType::geometry(
+                &name,
+                nullable,
+                geo_representation(&value.type_),
+            )),
             "VECTOR" => Ok(query_types::RowType::vector(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
@@ -1229,6 +1249,78 @@ mod tests {
         ));
     }
 
+    /// Server sends `type=text` + `extTypeName=GEOGRAPHY` for WKT / EWKT output.
+    #[test]
+    fn test_geography_text_representation_from_text_underlying_type() {
+        let row_type = RowType {
+            name: "geo_col".to_string(),
+            type_: "text".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(134_217_728),
+            byte_length: Some(134_217_728),
+            ext_type_name: Some("GEOGRAPHY".to_string()),
+            _fields: None,
+        };
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geography {
+                representation: crate::query_types::GeoRepresentation::Text,
+                ..
+            }
+        ));
+    }
+
+    /// Server sends `type=object` + `extTypeName=GEOGRAPHY` for GeoJSON output.
+    #[test]
+    fn test_geography_object_underlying_type_maps_to_text_representation() {
+        let row_type = RowType {
+            name: "geo_col".to_string(),
+            type_: "object".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            ext_type_name: Some("GEOGRAPHY".to_string()),
+            _fields: None,
+        };
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geography {
+                representation: crate::query_types::GeoRepresentation::Text,
+                ..
+            }
+        ));
+    }
+
+    /// Server sends `type=binary` + `extTypeName=GEOGRAPHY` for WKB / EWKB output.
+    #[test]
+    fn test_geography_binary_representation_from_binary_underlying_type() {
+        let row_type = RowType {
+            name: "geo_col".to_string(),
+            type_: "binary".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(67_108_864),
+            byte_length: Some(67_108_864),
+            ext_type_name: Some("GEOGRAPHY".to_string()),
+            _fields: None,
+        };
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Geography {
+                representation: crate::query_types::GeoRepresentation::Binary,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn test_geometry_type_is_supported() {
         let row_type = RowType {
@@ -1385,6 +1477,7 @@ mod tests {
             crate::query_types::RowType::Geography {
                 ref name,
                 nullable: true,
+                ..
             } if name == "geo_col"
         ));
     }
