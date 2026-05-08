@@ -1035,7 +1035,7 @@ pub type DatabaseDriverClient =
         crate::protobuf::apis::RustTransport,
     >;
 
-pub use crate::apis::database_driver_v1::DriverProviders;
+pub use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use crate::chunks::ChunkFormatKind;
 use crate::query_types::RowType;
 

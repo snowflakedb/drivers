@@ -6,7 +6,7 @@ use jni::sys::{jint, jobject};
 use proto_utils::{ProtoError, Transport};
 use sf_core::logging::LogManager;
 use sf_core::protobuf::apis::RustTransport;
-use sf_core::protobuf::apis::database_driver_v1::DriverProviders;
+use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use sf_core::telemetry::snowflake_exporter::SessionRegistry;
 
 static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
@@ -23,6 +23,7 @@ impl JdbcBridge {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .take(),
+            wrapper_presets: WrapperPresets::jdbc(),
             ..Default::default()
         };
         Self {

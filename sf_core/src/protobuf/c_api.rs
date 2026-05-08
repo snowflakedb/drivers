@@ -1,7 +1,7 @@
 use std::ffi::c_char;
 use std::sync::OnceLock;
 
-use crate::apis::database_driver_v1::DriverProviders;
+use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
 use proto_utils::{ProtoError, Transport};
@@ -15,10 +15,11 @@ static STATE: OnceLock<CApiState> = OnceLock::new();
 
 /// Eagerly build the entire core state (tokio runtime + transport) using the
 /// given `LogManager`.  Called once from `sf_core_init`.
-pub(crate) fn init_core_state(lm: LogManager) {
+pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
     STATE.get_or_init(|| {
         let providers = DriverProviders {
             log_manager: Some(lm),
+            wrapper_presets,
             ..Default::default()
         };
 

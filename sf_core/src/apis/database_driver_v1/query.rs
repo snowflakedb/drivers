@@ -1,4 +1,5 @@
 use super::ColumnMetadata;
+use super::global_state::WrapperPresets;
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
 use crate::chunks::{
@@ -29,9 +30,10 @@ pub async fn process_query_response(
     data: &query_response::Data,
     http_client: &Client,
     prefetch_config: &PrefetchConfig,
+    wrapper_presets: &WrapperPresets,
 ) -> Result<QueryResult, QueryResponseProcessingError> {
     match data.command {
-        Some(ref command) => perform_put_get(command.clone(), data).await,
+        Some(ref command) => perform_put_get(command.clone(), data, wrapper_presets).await,
         None => {
             let reader = read_batches(data.to_rowset_data(), http_client.clone(), prefetch_config)
                 .await
@@ -44,6 +46,7 @@ pub async fn process_query_response(
 async fn perform_put_get(
     command: String,
     data: &query_response::Data,
+    wrapper_presets: &WrapperPresets,
 ) -> Result<QueryResult, QueryResponseProcessingError> {
     match command.as_str() {
         "UPLOAD" => {
@@ -53,8 +56,8 @@ async fn perform_put_get(
             let upload_results = upload_files(&file_upload_data)
                 .await
                 .context(FileUploadSnafu)?;
-            let reader =
-                upload_results_reader(upload_results).context(UploadResultsConversionSnafu)?;
+            let reader = upload_results_reader(upload_results, wrapper_presets)
+                .context(UploadResultsConversionSnafu)?;
             Ok(QueryResult { reader })
         }
         "DOWNLOAD" => {
@@ -68,7 +71,7 @@ async fn perform_put_get(
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
-            let reader = download_results_reader(download_results)
+            let reader = download_results_reader(download_results, wrapper_presets)
                 .context(DownloadResultsConversionSnafu)?;
             Ok(QueryResult { reader })
         }
@@ -183,7 +186,7 @@ macro_rules! int64_array {
     };
 }
 
-fn upload_row_types() -> Vec<(RowType, DataType)> {
+fn upload_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
@@ -196,7 +199,7 @@ fn upload_row_types() -> Vec<(RowType, DataType)> {
     ]
 }
 
-fn download_row_types() -> Vec<(RowType, DataType)> {
+fn download_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("file"),
         build_generic_fixed_rowtype("size"),
@@ -208,8 +211,10 @@ fn download_row_types() -> Vec<(RowType, DataType)> {
 /// Converts upload results to Arrow format
 pub fn upload_results_reader(
     upload_results: Vec<UploadResult>,
+    wrapper_presets: &WrapperPresets,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let schema = create_schema(&upload_row_types()).expect("Failed to create schema from RowTypes");
+    let schema = create_schema(&upload_row_types(wrapper_presets))
+        .expect("Failed to create schema from RowTypes");
 
     let columns: Vec<Arc<dyn Array>> = vec![
         string_array!(upload_results, source),
@@ -228,9 +233,10 @@ pub fn upload_results_reader(
 /// Converts download results to Arrow format
 pub fn download_results_reader(
     download_results: Vec<DownloadResult>,
+    wrapper_presets: &WrapperPresets,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let schema =
-        create_schema(&download_row_types()).expect("Failed to create schema from RowTypes");
+    let schema = create_schema(&download_row_types(wrapper_presets))
+        .expect("Failed to create schema from RowTypes");
 
     let columns: Vec<Arc<dyn Array>> = vec![
         string_array!(download_results, file),
@@ -297,16 +303,16 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
 }
 
 /// Build column metadata for PUT (UPLOAD) results.
-pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
-    upload_row_types()
+pub fn upload_column_metadata(wrapper_presets: &WrapperPresets) -> Vec<ColumnMetadata> {
+    upload_row_types(wrapper_presets)
         .iter()
         .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
 }
 
 /// Build column metadata for GET (DOWNLOAD) results.
-pub fn download_column_metadata() -> Vec<ColumnMetadata> {
-    download_row_types()
+pub fn download_column_metadata(wrapper_presets: &WrapperPresets) -> Vec<ColumnMetadata> {
+    download_row_types(wrapper_presets)
         .iter()
         .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
@@ -411,7 +417,7 @@ mod tests {
 
     #[test]
     fn upload_column_metadata_has_correct_structure() {
-        let columns = upload_column_metadata();
+        let columns = upload_column_metadata(&WrapperPresets::default());
 
         assert_eq!(columns.len(), 8, "PUT should have 8 columns");
 
@@ -448,7 +454,7 @@ mod tests {
 
     #[test]
     fn download_column_metadata_has_correct_structure() {
-        let columns = download_column_metadata();
+        let columns = download_column_metadata(&WrapperPresets::default());
 
         assert_eq!(columns.len(), 4, "GET should have 4 columns");
 

@@ -2,7 +2,7 @@ use std::ops::Deref;
 use std::sync::RwLock;
 
 use sf_core::protobuf::apis::database_driver_v1::{
-    DatabaseDriverClient, DriverProviders, database_driver_client_with,
+    DatabaseDriverClient, DriverProviders, WrapperPresets, database_driver_client_with,
 };
 use snafu::{Location, ResultExt, Snafu};
 
@@ -90,6 +90,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     if guard.globals.is_none() {
         let providers = DriverProviders {
             log_manager: sf_core::logging::LogManager::for_odbc(),
+            wrapper_presets: WrapperPresets::odbc(),
             ..Default::default()
         };
 
