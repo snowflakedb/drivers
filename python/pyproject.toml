@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "snowflake-connector-python"
 dynamic = ["version"]
-description = "A PEP 249 Database API 2.0 implementation for Snowflake"
+description = "Snowflake DB driver for Python (Private Preview)"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 keywords = ["database", "api", "pep249", "dbapi", "python", "snowflake"]
