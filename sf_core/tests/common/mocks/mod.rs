@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod external_browser;
 pub mod mfa;
+pub mod oauth;
 pub mod okta;
 pub mod password;
 pub mod put_get;
