@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from typing import Any
 
 from .protobuf_gen.database_driver_v1_pb2 import (
@@ -23,13 +25,21 @@ class FreezableProxy:
         self._db_api = db_api
         self._conn_handle = conn_handle
         self._cache: dict[str, Any] | None = None
+        self._freeze_lock = threading.Lock()
 
     def freeze(self) -> None:
-        """Take a snapshot and release references to db_api/conn_handle."""
-        if self._cache is None:
-            self._cache = self._fetch_all()
-            self._db_api = None
-            self._conn_handle = None
+        """Take a snapshot and release references to db_api/conn_handle.
+
+        Thread-safe: concurrent close() calls race through here; double-checked
+        locking ensures only the first caller fetches and the rest no-op.
+        """
+        if self._cache is not None:
+            return
+        with self._freeze_lock:
+            if self._cache is None:
+                self._cache = self._fetch_all()
+                self._db_api = None
+                self._conn_handle = None
 
     def _fetch_one(self, key: str) -> Any:
         raise NotImplementedError
