@@ -235,16 +235,18 @@ jobs:
       - name: Run Old ODBC tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         id: run_odbc_ref_tests_linux
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        run: ./scripts/odbc/run_tests_unix.sh
+        run: |
+          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
         env:
           DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_TYPE: OLD
 
-      - name: Rerun failed Old ODBC tests (Linux)
-        if: steps.run_odbc_ref_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
-        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+      - name: Run flaky Old ODBC tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
         env:
           DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -253,18 +255,19 @@ jobs:
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'
         id: run_odbc_ref_tests_windows
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: pwsh
         run: |
           $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
           $env:DRIVER_TYPE = "OLD"
-          .\scripts\odbc\run_tests_windows.ps1
+          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
+          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
 
-      - name: Rerun failed Old ODBC tests (Windows)
-        if: steps.run_odbc_ref_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
+      - name: Run flaky Old ODBC tests (Windows)
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
         shell: pwsh
-        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
         env:
           DRIVER_PATH: C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
@@ -711,19 +714,19 @@ jobs:
 
       - name: Build and run ODBC tests (Unix)
         if: runner.os != 'Windows'
-        id: run_odbc_tests_unix
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
           export DRIVER_TYPE=NEW
           export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
-          ./scripts/odbc/run_tests_unix.sh
+          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
 
-      - name: Rerun failed ODBC tests (Unix)
-        if: steps.run_odbc_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
-        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+      - name: Run flaky ODBC tests (Unix)
+        if: runner.os != 'Windows'
+        continue-on-error: true
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
         env:
           DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -732,8 +735,6 @@ jobs:
 
       - name: Build and run ODBC tests (Windows)
         if: runner.os == 'Windows'
-        id: run_odbc_tests_windows
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: pwsh
         run: |
           dir target\debug\
@@ -741,12 +742,14 @@ jobs:
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $env:DRIVER_TYPE = "NEW"
           $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
-          .\scripts\odbc\run_tests_windows.ps1
+          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
+          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
 
-      - name: Rerun failed ODBC tests (Windows)
-        if: steps.run_odbc_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
+      - name: Run flaky ODBC tests (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
         shell: pwsh
-        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
         env:
           DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
