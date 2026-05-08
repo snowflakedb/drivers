@@ -212,6 +212,15 @@ class ConnectionConfig:
     with snowflake-connector-python; never forwarded to the Rust core.  When
     ``None`` the wrapper treats it as ``True`` (legacy default)."""
 
+    converter_class: Any | None = None
+    """Custom ``SnowflakeConverter`` subclass (accepted for backward compatibility).
+
+    In the legacy snowflake-connector-python driver this selected the Python
+    class responsible for Snowflake-to-Python type conversion.  The universal
+    driver performs conversion in its Rust / Arrow layer; the value is retained
+    so ``connection.converter_class`` and ``connection.converter`` keep
+    returning the expected type, but it does not influence conversion."""
+
     _extra: dict[str, Any] = field(default_factory=dict, repr=False)
     """Unknown kwargs forwarded to the Rust core for validation.
 
@@ -269,6 +278,7 @@ class ConnectionConfig:
             "autocommit",
             "connections_file_path",
             "auto_cleanup",
+            "converter_class",
         }
     )
     """Fields handled only in Python, not forwarded to Rust."""
@@ -288,6 +298,7 @@ class ConnectionConfig:
             "client_store_temporary_credential",
             "connection_name",
             "connections_file_path",
+            "converter_class",
             "crl_allow_certificates_without_crl_url",
             "crl_cache_dir",
             "crl_check_mode",

@@ -58,6 +58,11 @@ from ._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
 from ._internal.text_utils import split_statements
 from .connection_config import ConnectionConfig
 from .constants import QueryStatus
+
+# Aliased with a leading underscore so the import does not re-expose
+# ``SnowflakeConverter`` (a ``@backward_compatibility``-marked class) in this
+# module's public globals. See ``test_no_internal_module_imports_a_stashed_backward_compat_name``.
+from .converter import SnowflakeConverter as _SnowflakeConverter
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import DatabaseError, Error, ErrorValue, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient as _BackwardCompatTelemetryClient
@@ -165,6 +170,13 @@ class Connection(ErrorHandlerMixin):
         # the legacy default ``True``.  The field is in ``_PYTHON_ONLY`` on
         # ``ConnectionConfig`` so it is never forwarded to the Rust core.
         self.auto_cleanup: bool = True if self.config.auto_cleanup is None else bool(self.config.auto_cleanup)
+
+        # Backward-compat: ``converter_class`` is accepted (and ignored) because
+        # user code reads ``connection.converter_class`` / ``connection.converter``.
+        # Data conversion happens in the Rust / Arrow layer; these attributes are
+        # no-op shims — see ``converter.py`` and ``converter_null.py``.
+        converter_class = cast("type[_SnowflakeConverter]", self.config.converter_class or _SnowflakeConverter)
+        self._converter: _SnowflakeConverter = converter_class(use_numpy=bool(self.config.numpy))
 
         self.db_api = database_driver_client()
         self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -700,6 +712,32 @@ class Connection(ErrorHandlerMixin):
     @client_prefetch_threads.setter
     def client_prefetch_threads(self, value: int) -> None:
         raise NotImplementedError("client_prefetch_threads is not yet implemented")
+
+    @property
+    @backward_compatibility
+    def converter_class(self) -> type[_SnowflakeConverter]:
+        """The converter class for Snowflake-to-Python type conversion.
+
+        .. deprecated::
+            This is a no-op compatibility property.  The universal driver
+            performs conversion in its C++ Arrow layer and Rust core; the
+            returned class has no effect on behaviour.  This property will
+            be removed in a future version.
+        """
+        return type(self._converter)
+
+    @property
+    @backward_compatibility
+    def converter(self) -> _SnowflakeConverter:
+        """The converter instance for Snowflake-to-Python type conversion.
+
+        .. deprecated::
+            This is a no-op compatibility property.  The universal driver
+            performs conversion in its C++ Arrow layer and Rust core; the
+            returned instance has no effect on behaviour.  This property will
+            be removed in a future version.
+        """
+        return self._converter
 
     @property
     def application(self) -> str:

@@ -319,6 +319,15 @@ for an example modifier that re-applies legacy ``LogoutConfig`` semantics.
     with snowflake-connector-python; never forwarded to the Rust core.  When
     ``None`` the wrapper treats it as ``True`` (legacy default)."""
 
+    converter_class: Any | None = None
+    """Custom ``SnowflakeConverter`` subclass (accepted for backward compatibility).
+
+    In the legacy snowflake-connector-python driver this selected the Python
+    class responsible for Snowflake-to-Python type conversion.  The universal
+    driver performs conversion in its Rust / Arrow layer; the value is retained
+    so ``connection.converter_class`` and ``connection.converter`` keep
+    returning the expected type, but it does not influence conversion."""
+
 "#,
     );
 
@@ -366,6 +375,7 @@ for an example modifier that re-applies legacy ``LogoutConfig`` semantics.
         "autocommit",
         "connections_file_path",
         "auto_cleanup",
+        "converter_class",
     ];
 
     // _PYTHON_ONLY
