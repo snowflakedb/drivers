@@ -23,7 +23,7 @@
 #include "conversion_checks.hpp"
 
 namespace {
-HandleWrapper prepare_binary_insert(Connection& conn) {
+StatementHandleWrapper prepare_binary_insert(Connection& conn) {
   conn.execute("CREATE OR REPLACE TEMPORARY TABLE cm_binary (val BINARY)");
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO cm_binary VALUES (?)"), SQL_NTS);
