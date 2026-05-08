@@ -472,4 +472,49 @@ mod tests {
         );
         assert!(got.is_none());
     }
+
+    // ─── Step 2.4 host_from_url edge cases ───────────────────────────────
+    // `host_from_url` is the private helper that powers every cache-key
+    // derivation. The cases below are exercised through the public
+    // `host_from_token_url` wrapper, since that is the only caller. The
+    // parameter set targets URL shapes that have historically tripped
+    // up token-cache key derivation in other drivers (analysis §7.3,
+    // §14 #3).
+
+    #[test]
+    fn host_from_token_url_treats_url_with_empty_host_as_no_host() {
+        // The url crate normalizes `https:///path` to `https://path/`,
+        // so to truly exercise the empty-host fallback branch we lean
+        // on `data:` URLs (which have no host segment at all). The
+        // cross-driver `host_from_token_url` contract (analysis §7.3)
+        // is "fall back to the Snowflake server URL host whenever the
+        // primary URL exposes no usable host".
+        let host = host_from_token_url("data:,", "https://acct.example.com");
+        assert_eq!(host.as_deref(), Some("acct.example.com"));
+    }
+
+    #[test]
+    fn host_from_token_url_falls_back_for_file_scheme_url() {
+        // `file:///etc/passwd` is a valid URL but has no network host.
+        // `Url::host_str` returns `None`, so we should fall back.
+        let host = host_from_token_url("file:///etc/passwd", "https://acct.example.com");
+        assert_eq!(host.as_deref(), Some("acct.example.com"));
+    }
+
+    #[test]
+    fn host_from_token_url_falls_back_for_opaque_scheme() {
+        // Opaque URLs like `mailto:` and `data:` parse but expose no
+        // host either. Same fallback expectation.
+        let host = host_from_token_url("mailto:ops@example.com", "https://acct.example.com");
+        assert_eq!(host.as_deref(), Some("acct.example.com"));
+        let host = host_from_token_url("data:text/plain,hello%20world", "https://acct.example.com");
+        assert_eq!(host.as_deref(), Some("acct.example.com"));
+    }
+
+    #[test]
+    fn host_from_token_url_returns_none_when_both_lack_a_host() {
+        // No usable host on either input → None. Caller is expected to
+        // skip caching entirely in this case.
+        assert!(host_from_token_url("file:///x", "data:,").is_none());
+    }
 }

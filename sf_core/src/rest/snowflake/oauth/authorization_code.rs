@@ -303,7 +303,25 @@ async fn try_cache_short_circuit(
             Ok(refreshed) => {
                 tracing::info!("Refreshed OAuth access token");
                 persist_access_token(config, cache_host_url, token_cache, &refreshed);
-                persist_refresh_token(config, cache_host_url, token_cache, &refreshed);
+                if refreshed.refresh_token.is_some() {
+                    persist_refresh_token(config, cache_host_url, token_cache, &refreshed);
+                } else {
+                    // Cross-driver convention (.NET / Node — analysis
+                    // §7.4 #4 / #6): when the IdP omits a new refresh
+                    // token, evict the cached one. It has either been
+                    // single-use-rotated server-side (Snowflake-IdP with
+                    // `enable_single_use_refresh_tokens=true`) or
+                    // otherwise invalidated, and re-presenting it on the
+                    // next refresh would fail.
+                    tracing::debug!(
+                        "Refresh response omitted refresh_token; evicting cached refresh token (analysis §7.4)"
+                    );
+                    token::remove_oauth_refresh_token(
+                        cache_host_url,
+                        &config.username,
+                        token_cache,
+                    );
+                }
                 return Some(refreshed);
             }
             Err(e) => {
@@ -719,6 +737,7 @@ mod tests {
     use super::*;
     use crate::config::rest_parameters::{DEFAULT_AUTHENTICATION_TIMEOUT_SECS, OAuthFlowOptions};
     use crate::token_cache::TokenCacheError;
+    use base64::Engine as _;
     use std::collections::HashMap;
     use std::sync::Mutex;
     use wiremock::matchers::{body_string_contains, method, path};
@@ -1032,5 +1051,464 @@ mod tests {
             .await
             .expect_err("must fail with state mismatch");
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
+    }
+    // ─── Step 2.4 coverage additions ─────────────────────────────────────
+    // The block below extends the inline tests with the gaps called out
+    // in `analysis_feature_oauth.md` §3.5, §5.1, §7.4, §11 and §14: token
+    // redaction in tracing, DPoP nonce retry, single-use refresh token
+    // body opt-in, refresh-token rotation persistence, eviction when the
+    // refresh response omits a new RT, scope-default behavior, and the
+    // non-fatal-ness of token-cache failures.
+
+    /// `TokenCache` whose mutating operations always fail. Used to prove
+    /// that `OAuthError::Cache`-equivalent failures inside the cache
+    /// callees are reduced to WARN logs rather than aborting the flow
+    /// (analysis §13 last column / §14 #6).
+    struct FaultingTokenCache;
+    impl crate::token_cache::TokenCache for FaultingTokenCache {
+        fn add_token(
+            &self,
+            _host: &str,
+            _username: &str,
+            _token_type: crate::token_cache::TokenType,
+            _token_value: &str,
+        ) -> Result<(), TokenCacheError> {
+            Err(TokenCacheError::TokenStorage {
+                source: "synthetic add_token failure".into(),
+                location: snafu::Location::new(file!(), line!(), column!()),
+            })
+        }
+        fn remove_token(
+            &self,
+            _host: &str,
+            _username: &str,
+            _token_type: crate::token_cache::TokenType,
+        ) -> Result<(), TokenCacheError> {
+            Err(TokenCacheError::TokenRemoval {
+                source: "synthetic remove_token failure".into(),
+                location: snafu::Location::new(file!(), line!(), column!()),
+            })
+        }
+        fn get_token(
+            &self,
+            _host: &str,
+            _username: &str,
+            _token_type: crate::token_cache::TokenType,
+        ) -> Result<Option<String>, TokenCacheError> {
+            // Pretend the cache is empty so the flow runs the full
+            // interactive path; we want add_token failures to dominate.
+            Ok(None)
+        }
+    }
+
+    /// Drive the loopback by connecting and writing the redirect line
+    /// for the supplied `code` (extracting the state from the authorize
+    /// URL the flow generated). Used by tests that need the interactive
+    /// branch to complete deterministically.
+    fn loopback_redirect_with(code: &'static str) -> BrowserLaunchFn {
+        Box::new(move |authorize_url, redirect_uri| {
+            Box::pin(async move {
+                let state = authorize_url
+                    .query_pairs()
+                    .find(|(k, _)| k == "state")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default();
+                let mut s = tokio::net::TcpStream::connect((
+                    redirect_uri.host_str().unwrap(),
+                    redirect_uri.port().unwrap(),
+                ))
+                .await
+                .expect("connect loopback");
+                use tokio::io::AsyncWriteExt;
+                let req =
+                    format!("GET /?code={code}&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+                let _ = s.write_all(req.as_bytes()).await;
+                // Hold the stream open long enough for the server to flush
+                // its response. Dropping immediately after write_all can
+                // race with axum's handler invocation (mirrors the same
+                // guard in `full_interactive_flow_drives_loopback_directly`).
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn dpop_nonce_retry_happens_exactly_once_with_nonce_claim() {
+        // First request without DPoP nonce returns 400 + use_dpop_nonce
+        // and a `DPoP-Nonce` header. The flow must retry exactly once
+        // with the supplied nonce embedded in the proof JWT.
+        let server = MockServer::start().await;
+
+        // Wiremock evaluates mounts in priority order; we use the
+        // built-in expectation+priority knobs to model the one-shot
+        // sequence: the first matching POST gets the 400 (priority 1),
+        // subsequent ones get the 200 (priority 5).
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .insert_header("DPoP-Nonce", "nonce-from-server")
+                    .set_body_raw(r#"{"error":"use_dpop_nonce"}"#, "application/json"),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-AFTER-NONCE","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .with_priority(5)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url.clone());
+        config.client_store_temporary_credential = false;
+        config.enable_dpop = true;
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+
+        let client = reqwest::Client::new();
+        let acquired = acquire_authorization_code_inner(
+            &client,
+            &server_url(),
+            &config,
+            None,
+            loopback_redirect_with("THE-CODE"),
+        )
+        .await
+        .expect("flow succeeds after one DPoP-nonce retry");
+        assert_eq!(acquired.access_token.reveal(), "AT-AFTER-NONCE");
+
+        let received = server.received_requests().await.unwrap();
+        // We should observe exactly two POSTs: the original request
+        // (without nonce in the proof) and the retry (with nonce).
+        let token_posts: Vec<_> = received
+            .iter()
+            .filter(|r| r.url.path() == "/oauth/token" && r.method.as_str() == "POST")
+            .collect();
+        assert_eq!(
+            token_posts.len(),
+            2,
+            "expected exactly one retry, observed {}",
+            token_posts.len()
+        );
+
+        let dpop_b = token_posts[1]
+            .headers
+            .get("DPoP")
+            .expect("retry must carry a DPoP header");
+        let proof = dpop_b.to_str().unwrap();
+        let claims_b64 = proof.split('.').nth(1).expect("DPoP proof has 3 segments");
+        let claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(claims_b64)
+            .expect("DPoP proof claims b64");
+        let claims: serde_json::Value = serde_json::from_slice(&claims_bytes).unwrap();
+        assert_eq!(claims["nonce"], "nonce-from-server", "claims={claims:?}");
+    }
+
+    #[tokio::test]
+    async fn enable_single_use_refresh_tokens_appears_in_body_only_when_enabled() {
+        // Two parallel mock servers: one expects the flag in the body,
+        // the other expects its absence. Each test arm runs its own AC
+        // exchange and asserts on the IdP-side body the wiremock saw.
+        for enable in [true, false] {
+            let server = MockServer::start().await;
+            let body_matcher: Box<dyn Fn(&str) -> bool + Send + Sync> = if enable {
+                Box::new(|b: &str| b.contains("enable_single_use_refresh_tokens=true"))
+            } else {
+                Box::new(|b: &str| !b.contains("enable_single_use_refresh_tokens"))
+            };
+            // Matcher is encoded via a custom mount that returns 200 only
+            // when the body satisfies the condition; otherwise wiremock
+            // returns its default 404 and the flow surfaces an error,
+            // which makes the assertion below crisp.
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .and(BodyMatcher(body_matcher))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    r#"{"access_token":"AT-OK","refresh_token":"RT-OK","token_type":"Bearer"}"#,
+                    "application/json",
+                ))
+                .mount(&server)
+                .await;
+
+            let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+            let mut config = cfg_with_token_url(token_url);
+            config.client_store_temporary_credential = false;
+            config.authorization_url =
+                Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+            config.enable_single_use_refresh_tokens = enable;
+
+            let client = reqwest::Client::new();
+            let acquired = acquire_authorization_code_inner(
+                &client,
+                &server_url(),
+                &config,
+                None,
+                loopback_redirect_with("CODE-OK"),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("enable={enable} flow failed: {e:?}"));
+            assert_eq!(acquired.access_token.reveal(), "AT-OK");
+        }
+    }
+
+    /// Custom wiremock body matcher backed by a closure. Used to assert
+    /// presence/absence of arbitrary substrings without polluting the
+    /// shared module surface.
+    struct BodyMatcher(Box<dyn Fn(&str) -> bool + Send + Sync>);
+    impl wiremock::Match for BodyMatcher {
+        fn matches(&self, request: &wiremock::Request) -> bool {
+            let body = std::str::from_utf8(&request.body).unwrap_or("");
+            (self.0)(body)
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_response_with_new_refresh_token_persists_rotated_rt_in_cache() {
+        // Sibling to `cached_refresh_token_is_exchanged_for_fresh_access_token`
+        // — that test only checks the AT got rotated; this one pins the
+        // RT side of the rotation (analysis §7.4 #1/#2/#5/#6).
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=RT-OLD"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-NEW","refresh_token":"RT-NEW","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache = StubTokenCache::new();
+        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
+        let config = cfg_with_token_url(token_url.clone());
+        let client = reqwest::Client::new();
+        let _ = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+            .await
+            .expect("refresh succeeds");
+
+        let stored_rt =
+            token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache))
+                .map(|s| s.reveal().to_string());
+        assert_eq!(
+            stored_rt.as_deref(),
+            Some("RT-NEW"),
+            "rotated refresh token must replace the cached one"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_response_without_refresh_token_evicts_cached_rt() {
+        // Cross-driver convention (.NET / Node — analysis §7.4 #4 / #6):
+        // when the IdP omits a new `refresh_token`, the old one must be
+        // evicted because it has either been single-use-rotated server
+        // side or otherwise invalidated.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=RT-STALE"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-NEW","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache = StubTokenCache::new();
+        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-STALE", Some(&cache));
+        let config = cfg_with_token_url(token_url.clone());
+        let client = reqwest::Client::new();
+        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+            .await
+            .expect("refresh without new RT still succeeds");
+        assert_eq!(acquired.access_token.reveal(), "AT-NEW");
+        assert!(acquired.refresh_token.is_none());
+
+        let stored_rt =
+            token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache));
+        assert!(
+            stored_rt.is_none(),
+            "stale refresh token must be evicted when the response omits a new one"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_add_token_failure_does_not_abort_the_flow() {
+        // Wire a faulting cache into a successful AC exchange and assert
+        // we still get the access token back. Mirrors the cross-driver
+        // expectation that token-cache I/O is best-effort (analysis §13).
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-DESPITE-CACHE","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = true;
+
+        let cache = FaultingTokenCache;
+        let client = reqwest::Client::new();
+        let acquired = acquire_authorization_code_inner(
+            &client,
+            &server_url(),
+            &config,
+            Some(&cache),
+            loopback_redirect_with("CODE"),
+        )
+        .await
+        .expect("faulting cache must not abort the flow");
+        assert_eq!(acquired.access_token.reveal(), "AT-DESPITE-CACHE");
+    }
+
+    #[tokio::test]
+    async fn ac_token_exchange_omits_scope_when_config_scope_is_none() {
+        // The AC code-exchange counterpart to the existing CC test
+        // `scope_is_added_to_body_when_provided`. We pin the negative
+        // case here: when scope is None, the body must NOT carry a
+        // `scope=` field.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(BodyMatcher(Box::new(|b: &str| !b.contains("scope="))))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-SCOPELESS","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+        // explicit None — already the cfg_with_token_url default but
+        // re-asserted here for clarity of intent.
+        config.scope = None;
+
+        let client = reqwest::Client::new();
+        let acquired = acquire_authorization_code_inner(
+            &client,
+            &server_url(),
+            &config,
+            None,
+            loopback_redirect_with("CODE"),
+        )
+        .await
+        .expect("scope-less AC succeeds");
+        assert_eq!(acquired.access_token.reveal(), "AT-SCOPELESS");
+    }
+
+    #[tokio::test]
+    async fn refresh_token_grant_omits_scope_when_config_scope_is_none() {
+        // Symmetric to the above for the refresh-token grant — the
+        // `scope` field is only optional and should be skipped when not
+        // set. Pinned here to lock the body shape across refactors.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(BodyMatcher(Box::new(|b: &str| !b.contains("scope="))))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-NEW","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache = StubTokenCache::new();
+        token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
+        let config = cfg_with_token_url(token_url);
+        assert!(config.scope.is_none());
+        let client = reqwest::Client::new();
+        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+            .await
+            .expect("refresh without scope succeeds");
+        assert_eq!(acquired.access_token.reveal(), "AT-NEW");
+    }
+
+    #[tokio::test]
+    async fn flow_does_not_log_secrets_at_any_level() {
+        // tracing_test::traced_test installs a dedicated subscriber and
+        // captures all tracing output for the lifetime of the test. We
+        // run a full happy-path AC exchange with deliberately distinctive
+        // secret-shaped strings on every spot a leak could plausibly
+        // occur (client secret, authorization code, token-endpoint
+        // response body) and assert NONE of them appear in the captured
+        // logs (analysis §11).
+        async fn body() {
+            const ACCESS_TOKEN: &str = "AT-LEAK-CANARY-AAAAAAAAAAAA";
+            const REFRESH_TOKEN: &str = "RT-LEAK-CANARY-BBBBBBBBBBBB";
+            const CLIENT_SECRET: &str = "client-secret-leak-canary-CCCCCC";
+            const AUTH_CODE: &str = "auth-code-leak-canary-DDDDDDDD";
+
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/oauth/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_raw(
+                    format!(
+                        r#"{{"access_token":"{ACCESS_TOKEN}","refresh_token":"{REFRESH_TOKEN}","token_type":"Bearer"}}"#
+                    ),
+                    "application/json",
+                ))
+                .mount(&server)
+                .await;
+
+            let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+            let mut config = cfg_with_token_url(token_url);
+            config.authorization_url =
+                Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+            config.client_store_temporary_credential = false;
+            config.client_secret = CLIENT_SECRET.into();
+
+            let client = reqwest::Client::new();
+            let acquired = acquire_authorization_code_inner(
+                &client,
+                &server_url(),
+                &config,
+                None,
+                loopback_redirect_with(AUTH_CODE),
+            )
+            .await
+            .expect("happy path");
+            assert_eq!(acquired.access_token.reveal(), ACCESS_TOKEN);
+
+            // Captured logs live in a thread-local buffer when the
+            // `tracing_test::traced_test` macro is on the wrapping
+            // function; `logs_contain` reads them.
+            for needle in [ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET, AUTH_CODE] {
+                assert!(
+                    !tracing_test::internal::logs_with_scope_contain("", needle),
+                    "secret value {needle:?} leaked into tracing output"
+                );
+            }
+        }
+        // Pull in the macro at call-site so this whole helper module
+        // doesn't pay the "global subscriber" cost when it's not under
+        // test.
+        #[tracing_test::traced_test]
+        async fn run() {
+            body().await
+        }
+        run().await
     }
 }

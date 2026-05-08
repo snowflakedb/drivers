@@ -219,4 +219,40 @@ mod tests {
         let acquired = acquire_client_credentials(&client, &c).await.expect("CC");
         assert_eq!(acquired.access_token.reveal(), "AT-SCOPED");
     }
+
+    /// Wiremock matcher that asserts the absence of a substring in the
+    /// request body. Used to lock body shapes across refactors without
+    /// pulling in extra dependencies.
+    struct BodyDoesNotContain(&'static str);
+    impl wiremock::Match for BodyDoesNotContain {
+        fn matches(&self, request: &wiremock::Request) -> bool {
+            let body = std::str::from_utf8(&request.body).unwrap_or("");
+            !body.contains(self.0)
+        }
+    }
+
+    #[tokio::test]
+    async fn scope_is_omitted_from_body_when_none() {
+        // Negative-case sibling to `scope_is_added_to_body_when_provided`.
+        // RFC 6749 §4.4.2 makes the `scope` parameter optional; when not
+        // configured, our request body must NOT carry an empty
+        // `scope=` field (which some IdPs reject).
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(BodyDoesNotContain("scope="))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-NOSCOPE","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/token", server.uri())).unwrap();
+        let c = cfg(token_url);
+        assert!(c.scope.is_none(), "default config has scope=None");
+        let client = reqwest::Client::new();
+        let acquired = acquire_client_credentials(&client, &c).await.expect("CC");
+        assert_eq!(acquired.access_token.reveal(), "AT-NOSCOPE");
+    }
 }
