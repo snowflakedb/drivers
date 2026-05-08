@@ -17,6 +17,9 @@ mod date;
 mod decfloat;
 #[cfg(test)]
 mod decfloat_tests;
+mod interval;
+#[cfg(test)]
+mod interval_tests;
 mod nullable;
 mod number;
 #[cfg(test)]
