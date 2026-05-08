@@ -514,12 +514,37 @@ EVENT_TO_LEVEL = {
 }
 
 
+# PR labels that force a higher trigger level than the event would produce.
+# When multiple are present the highest-scope label wins.
+LABEL_TO_LEVEL = {
+    "ci:scope-merge":   "merge",
+    "ci:scope-nightly": "nightly",
+}
+
+
 def level_for_event(event: str | None) -> str:
     """
     Map a GitHub Actions event name to a trigger level.
     Falls back to 'pr' for unknown events.
     """
     return EVENT_TO_LEVEL.get(event or "", "pr")
+
+
+def level_for_event_and_labels(event: str | None, labels: list[str] | None) -> str:
+    """
+    Resolve the active trigger level. PR labels override the event mapping;
+    when multiple scope-up labels are present, the highest level wins.
+    Labels can only upgrade scope — they never downgrade an event's level.
+    Unknown labels are ignored.
+    """
+    base = level_for_event(event)
+    if not labels:
+        return base
+    requested = [LABEL_TO_LEVEL[l] for l in labels if l in LABEL_TO_LEVEL]
+    if not requested:
+        return base
+    candidates = [base] + requested
+    return max(candidates, key=TRIGGER_LEVELS.index)
 
 
 def filter_active(rows: list[dict], level: str) -> list[dict]:
@@ -558,14 +583,15 @@ def run_driver(driver: str) -> bool:
     return True
 
 
-def emit_active(driver: str, event: str | None) -> None:
+def emit_active(driver: str, event: str | None, labels: list[str] | None = None) -> None:
     """
     Print `matrix=<json>` for the rows active at the level implied by `event`,
-    suitable for appending to $GITHUB_OUTPUT inside a workflow step.
+    optionally upgraded by scope-up PR labels (see LABEL_TO_LEVEL). Suitable
+    for appending to $GITHUB_OUTPUT inside a workflow step.
     """
     model_path = MODELS_DIR / f"{driver}.py"
     gha_rows = generate(model_path, driver)
-    level = level_for_event(event)
+    level = level_for_event_and_labels(event, labels)
     active = filter_active(gha_rows, level)
     print(f"matrix={json.dumps(active)}")
 
@@ -581,6 +607,13 @@ def main() -> None:
              "Used with --emit-active to pick the trigger level.",
     )
     parser.add_argument(
+        "--labels",
+        default="",
+        help="Comma-separated PR label names. Labels in LABEL_TO_LEVEL "
+             "(ci:scope-merge, ci:scope-nightly) override --event when "
+             "--emit-active is set; highest-scope label wins.",
+    )
+    parser.add_argument(
         "--emit-active",
         action="store_true",
         help="Print 'matrix=<json>' for the active level (requires --driver and --event). "
@@ -591,7 +624,8 @@ def main() -> None:
     if args.emit_active:
         if args.all or not args.driver:
             parser.error("--emit-active requires --driver and is incompatible with --all")
-        emit_active(args.driver, args.event)
+        labels = [l.strip() for l in args.labels.split(",") if l.strip()]
+        emit_active(args.driver, args.event, labels)
         return
 
     drivers = ["odbc", "python", "core"] if args.all else [args.driver]
