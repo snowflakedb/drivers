@@ -83,10 +83,14 @@ jobs:
       - name: Install Hatch
         run: uv tool install hatch --with "virtualenv<21.0.0"
 
+      - name: Mock parameters.json
+        run: echo '{"testconnection":{}}' > parameters.json
+
       - name: Run packaging tests
         working-directory: ./python
         run: hatch run packaging.py3.13:test -v --timeout=900
         env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/core-target
           PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
 
