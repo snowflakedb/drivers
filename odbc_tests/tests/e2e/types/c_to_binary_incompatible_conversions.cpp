@@ -211,34 +211,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail binding SQL_C_GUID to SQL_LONGV
   check_incompatible_bindparam(stmt, SQL_C_GUID, SQL_LONGVARBINARY, &v, sizeof(v), &ind);
 }
 
-// ============================================================================
-// POSITIVE PATH - the four legal source types must continue to work
-// ============================================================================
-
-TEST_CASE_METHOD(ConnSchemaFixture, "should accept SQL_C_BINARY, SQL_C_CHAR, SQL_C_WCHAR, SQL_C_DEFAULT to SQL_BINARY",
-                 "[c_to_binary][bindparam][positive]") {
-  // Given a temporary BINARY column exists and an INSERT statement is prepared
-  auto stmt = prepare_binary_insert(conn);
-
-  // When SQL_C_BINARY is bound to SQL_BINARY with raw bytes and executed
-  // Then the bind succeeds and the bytes land in Snowflake verbatim
-  {
-    SQLCHAR raw[] = {0xDE, 0xAD, 0xBE, 0xEF};
-    SQLLEN ind = sizeof(raw);
-    SQLRETURN ret =
-        SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_BINARY, 0, 0, raw, sizeof(raw), &ind);
-    REQUIRE_ODBC(ret, stmt);
-    REQUIRE(SQLExecute(stmt.getHandle()) == SQL_SUCCESS);
-  }
-
-  // And when SQL_C_CHAR is bound to SQL_BINARY with the ASCII hex literal "DEADBEEF"
-  // Then the bind succeeds and the driver hex-decodes the literal into 4 bytes server-side
-  {
-    SQLCHAR hex_lit[] = "DEADBEEF";
-    SQLLEN ind = SQL_NTS;
-    SQLRETURN ret =
-        SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BINARY, 0, 0, hex_lit, 0, &ind);
-    REQUIRE_ODBC(ret, stmt);
-    REQUIRE(SQLExecute(stmt.getHandle()) == SQL_SUCCESS);
-  }
-}
+// Positive-path coverage for the four legal source types
+// (SQL_C_BINARY, SQL_C_CHAR, SQL_C_WCHAR, SQL_C_DEFAULT) lives in
+// `c_binary_conversion_to_sql_binary.cpp` and `c_char_conversion_to_sql_binary.cpp`,
+// matching the codebase convention `c_<source>_conversion_to_sql_<target>.cpp`.

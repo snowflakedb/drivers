@@ -525,3 +525,17 @@ behavior_differences:
       Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification). The MS ODBC specification (Appendix C, "numeric-literal" grammar) restricts character inputs bound to numeric SQL types to the ANSI SQL numeric literal syntax, which does not include the tokens "Infinity", "-Infinity", or "NaN".
     impact: |
       Applications that need to insert non-finite IEEE-754 values should bind SQL_C_FLOAT or SQL_C_DOUBLE (both spec-permitted and supported) rather than passing a string representation.
+
+  49:
+    name: "SQL_C_CHAR/WCHAR to SQL_BINARY hex-decodes the ASCII literal instead of forwarding raw string bytes"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and a hex literal (e.g. "DEADBEEF") bound against a SQL_BINARY/SQL_VARBINARY/SQL_LONGVARBINARY parameter, the driver hex-encodes the raw string bytes and forwards them to the server. The 8-character literal "DEADBEEF" therefore lands as 8 bytes (0x44 0x45 0x41 0x44 0x42 0x45 0x45 0x46 — the ASCII representation) rather than the intended 4 bytes (0xDE 0xAD 0xBE 0xEF). Round-tripping the column back as SQL_C_BINARY returns the ASCII bytes, not the bytes the application intended.
+    new_driver_behavior: |
+      Per the MS ODBC specification ("C to SQL: Binary" appendix), character inputs bound against SQL_BINARY are interpreted as ASCII hex literals: each pair of characters decodes into one byte before being forwarded to Snowflake. "DEADBEEF" lands as the intended 4 bytes. SQL_C_WCHAR follows the same rule after UTF-16 → ASCII transcoding. Odd-length or non-hex inputs surface at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification).
+    impact: |
+      Applications that bind hex literals as SQL_C_CHAR/SQL_C_WCHAR to BINARY columns now store the intended bytes rather than the ASCII representation of those bytes. Applications that previously relied on the old broken behavior must re-encode their inputs (e.g. bind "44454144" instead of "DEAD" to land 0x44 0x45 0x41 0x44 in the column).
+    description: |
+      Spec reference: ODBC "C to SQL: Binary" conversion table lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_BINARY targets and prescribes hex-literal semantics. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
