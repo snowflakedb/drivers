@@ -116,22 +116,14 @@ class TestVectorLiteral:
         assert result[2] is None
 
     BOUNDARY_TEST_CASES = [
-        pytest.param("INT", "INT", [INT32_MIN, INT32_MAX, 0], id="INT"),
-        # Server's JSON serialization flushes subnormals to zero, so FLOAT32_SMALLEST_NORMAL
-        # round-trips as 0.0 when PYTHON_CONNECTOR_QUERY_RESULT_FORMAT=JSON. This is a server-side
-        # encoding limitation — Arrow format preserves the bit pattern.
-        pytest.param(
-            "FLOAT",
-            "FLOAT",
-            [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_SMALLEST_NORMAL, 0.0],
-            id="FLOAT",
-            marks=pytest.mark.skip_for_json_result_set(reason="JSON format flushes FLOAT subnormals to zero"),
-        ),
+        ("INT", "INT", [INT32_MIN, INT32_MAX, 0]),
+        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, 0.0]),
     ]
 
     @pytest.mark.parametrize(
         "subtype, vec_type, expected_value",
         BOUNDARY_TEST_CASES,
+        ids=[c[0] for c in BOUNDARY_TEST_CASES],
     )
     def test_should_select_subtype_vector_boundary_values(self, execute_query, subtype, vec_type, expected_value):
         # Given Snowflake client is logged in
@@ -150,6 +142,23 @@ class TestVectorLiteral:
         else:
             assert result[0] == expected_value
             assert_type(result[0], int)
+
+    @pytest.mark.skip_for_json_result_set(
+        reason="Server-side JSON serialization flushes FLOAT32 subnormals to zero; "
+        "Arrow format preserves the bit pattern"
+    )
+    def test_should_preserve_float_smallest_normal(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query selects a VECTOR(FLOAT, ...) containing FLOAT32_SMALLEST_NORMAL
+        expected = [FLOAT32_SMALLEST_NORMAL]
+        sql = f"SELECT {expected}::VECTOR(FLOAT, {len(expected)})"
+        result = execute_query(sql, single_row=True)
+
+        # Then the smallest-normal value must not underflow to zero
+        assert result[0] == pytest.approx(expected, rel=1e-6, abs=0)
+        assert_type(result[0], float)
 
     def test_should_select_max_dimension_vector(self, execute_query):
         # Given Snowflake client is logged in
