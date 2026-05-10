@@ -13,7 +13,7 @@ behavior_differences:
 
   3:
     name: "Encryption field is no longer included in the result"
-    status: unknown
+    status: fixed
     type: enhancement
     reviewed: false
 
