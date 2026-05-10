@@ -186,7 +186,8 @@ macro_rules! int64_array {
     };
 }
 
-fn upload_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+#[allow(unused_variables)]
+fn upload_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
@@ -199,7 +200,8 @@ fn upload_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType
     ]
 }
 
-fn download_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+#[allow(unused_variables)]
+fn download_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("file"),
         build_generic_fixed_rowtype("size"),

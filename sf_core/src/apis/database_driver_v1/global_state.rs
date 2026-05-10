@@ -15,6 +15,7 @@ use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
 /// Which shape the PUT/GET result set should take.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PutGetResultsetFlavor {
     #[default]
     Python,
@@ -26,6 +27,7 @@ pub enum PutGetResultsetFlavor {
 /// compile-time / init-time differences between wrappers so that shared Rust
 /// code can branch on them without hard-coding wrapper knowledge everywhere.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
 }
