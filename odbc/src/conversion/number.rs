@@ -11,6 +11,7 @@ use crate::conversion::error::{
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::interval::read_single_field_interval_i128;
 use crate::conversion::numeric_helpers::{
     check_integer_range, fractional_warning, reject_multi_field_interval, whole_digits_len,
     write_interval_second, write_numeric_as_binary, write_single_field_interval,
@@ -624,6 +625,23 @@ impl ReadODBC for SnowflakeNumber {
                     _ => unreachable!(),
                 }
             }
+            // Single-field SQL_C_INTERVAL_* sources resolve to the integer
+            // count of the leading interval field per ODBC Appendix D
+            // ("C to SQL Data Types: Interval"). For SQL_C_INTERVAL_SECOND
+            // any sub-second `fraction` is truncated toward zero — exact
+            // numeric SQL targets are integer-valued, and the server
+            // surfaces 22015 ("interval field overflow") if the receiving
+            // column actually rejects the loss of precision. Compound
+            // interval C types (YEAR_TO_MONTH, DAY_TO_*, HOUR_TO_*,
+            // MINUTE_TO_SECOND) carry more than one field and have no
+            // single-integer mapping; they fall through to the unsupported
+            // arm below and surface SQLSTATE 07006, matching the spec.
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond => read_single_field_interval_i128(binding),
             _ => {
                 return UnsupportedCDataTypeSnafu {
                     c_type: binding.value_type,
