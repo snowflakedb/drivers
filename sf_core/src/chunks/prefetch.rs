@@ -5,14 +5,13 @@ pub use super::json_parser::JsonChunkParser;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use snafu::ResultExt;
-use tokio::sync::Notify;
 use tokio::sync::mpsc::error::SendError;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::{ChunkDownloadData, ChunkError, ChunkReadingSnafu, PrefetchConfig};
 
@@ -27,59 +26,77 @@ pub trait ParseChunk: Send + Sync + Clone + 'static {
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError>;
 }
 
+/// Tracks a byte-granularity memory budget for prefetched chunks.
+///
+/// Cheap to clone (inner state is behind [`Arc`]). Hand out [`MemoryTicket`]s
+/// via [`acquire`](Self::acquire). Each ticket reserves `n` bytes and
+/// automatically returns them to the budget when dropped.
+///
+/// When a chunk is larger than the entire budget, [`acquire`](Self::acquire)
+/// requests all available permits, effectively waiting for exclusive access.
+/// This prevents deadlock on oversized chunks.
+///
+/// Backed by a [`tokio::sync::Semaphore`] which provides FIFO-fair async
+/// waiting with no polling loops.
+#[derive(Clone)]
 pub(crate) struct MemoryBudget {
-    committed: AtomicU64,
-    limit: u64,
-    notify: Notify,
+    semaphore: Arc<Semaphore>,
+    limit_permits: u32,
+}
+
+/// RAII guard for a memory reservation.
+///
+/// Dropping the ticket returns its permits to the parent [`MemoryBudget`].
+#[allow(dead_code)]
+pub(crate) struct MemoryTicket(Option<OwnedSemaphorePermit>);
+
+impl MemoryTicket {
+    fn empty() -> Self {
+        Self(None)
+    }
 }
 
 impl MemoryBudget {
     fn new(limit: u64) -> Self {
+        let limit_permits = u32::try_from(limit).unwrap_or(u32::MAX);
         Self {
-            committed: AtomicU64::new(0),
-            limit,
-            notify: Notify::new(),
+            semaphore: Arc::new(Semaphore::new(limit_permits as usize)),
+            limit_permits,
         }
     }
 
-    fn try_commit(&self, estimate: u64, is_first: bool) -> bool {
-        if self.limit == 0 || is_first {
-            self.committed.fetch_add(estimate, Ordering::Relaxed);
-            return true;
+    /// Wait until `bytes` worth of permits are available, then reserve them.
+    ///
+    /// If `bytes` exceeds the total budget, all permits are acquired instead,
+    /// which waits for exclusive access (no other tickets outstanding).
+    async fn acquire(&self, bytes: u64) -> MemoryTicket {
+        if self.limit_permits == 0 {
+            return MemoryTicket(None);
         }
-        let current = self.committed.load(Ordering::Relaxed);
-        if current + estimate <= self.limit {
-            self.committed.fetch_add(estimate, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
-    }
 
-    fn commit(&self, estimate: u64) {
-        self.committed.fetch_add(estimate, Ordering::Relaxed);
-    }
+        let permits = u32::try_from(bytes)
+            .unwrap_or(u32::MAX)
+            .min(self.limit_permits);
 
-    fn release(&self, estimate: u64) {
-        self.committed.fetch_sub(estimate, Ordering::Relaxed);
-        self.notify.notify_one();
-    }
+        let permit = self
+            .semaphore
+            .clone()
+            .acquire_many_owned(permits)
+            .await
+            .expect("semaphore is never closed");
 
-    async fn wait_for_capacity(&self, estimate: u64) {
-        loop {
-            let current = self.committed.load(Ordering::Relaxed);
-            if current + estimate <= self.limit {
-                return;
-            }
-            self.notify.notified().await;
-        }
+        MemoryTicket(Some(permit))
     }
 }
 
-/// Channel message: a RecordBatch plus an optional memory-release marker.
-/// When `release_bytes` is `Some`, the consumer must release that many bytes
-/// from the memory budget after receiving this batch.
-type BatchMsg = (RecordBatch, Option<u64>);
+/// Channel message carrying all record batches from a single chunk.
+///
+/// The ticket keeps the memory reservation alive; dropping it releases
+/// the bytes back to the budget. Initial (inline) batches use an empty ticket.
+struct Chunk {
+    batches: VecDeque<RecordBatch>,
+    ticket: MemoryTicket,
+}
 
 /// Prefetching chunk reader that downloads and parses chunks in the background.
 ///
@@ -93,8 +110,10 @@ type BatchMsg = (RecordBatch, Option<u64>);
 /// (e.g. [`tokio::task::spawn_blocking`]).
 pub struct PrefetchChunkReader<D: DownloadChunk, P: ParseChunk> {
     schema: SchemaRef,
-    batch_rx: tokio::sync::mpsc::Receiver<Result<BatchMsg, ArrowError>>,
-    memory_budget: Arc<MemoryBudget>,
+    batch_rx: tokio::sync::mpsc::Receiver<Result<Chunk, ArrowError>>,
+    /// Buffered batches from the current chunk, paired with the ticket that
+    /// keeps the memory reservation alive until all batches are yielded.
+    current: Option<Chunk>,
     phantom: PhantomData<(D, P)>,
 }
 
@@ -114,7 +133,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
         let prefetch_concurrency = config.prefetch_threads;
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
-        let memory_budget = Arc::new(MemoryBudget::new(config.memory_limit_bytes));
+        let memory_budget = MemoryBudget::new(config.memory_limit_bytes);
 
         tokio::spawn(Self::prefetch_batches(
             downloader,
@@ -123,13 +142,13 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
             initial,
             tx,
             prefetch_concurrency,
-            Arc::clone(&memory_budget),
+            memory_budget,
         ));
 
         Ok(Box::new(Self {
             schema,
             batch_rx: rx,
-            memory_budget,
+            current: None,
             phantom: PhantomData,
         }))
     }
@@ -139,14 +158,14 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
         parser: P,
         mut chunks: VecDeque<ChunkDownloadData>,
         initial: Vec<RecordBatch>,
-        tx: tokio::sync::mpsc::Sender<Result<BatchMsg, ArrowError>>,
+        tx: tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
         prefetch_concurrency: usize,
-        memory_budget: Arc<MemoryBudget>,
-    ) -> Result<(), SendError<Result<BatchMsg, ArrowError>>> {
-        let send_result = |result: Result<BatchMsg, ArrowError>| {
+        memory_budget: MemoryBudget,
+    ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
+        let send = |msg: Result<Chunk, ArrowError>| {
             let tx = &tx;
             async move {
-                if let Err(e) = tx.send(result).await {
+                if let Err(e) = tx.send(msg).await {
                     tracing::error!("Failed to send result to channel: {e:?}");
                     return Err(e);
                 }
@@ -154,86 +173,67 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
             }
         };
 
-        // Send initial rowset batches (already in memory, no budget tracking needed)
-        for batch in initial {
-            send_result(Ok((batch, None))).await?;
+        if !initial.is_empty() {
+            send(Ok(Chunk {
+                batches: VecDeque::from(initial),
+                ticket: MemoryTicket::empty(),
+            }))
+            .await?;
         }
 
-        let mut chunk_tasks: VecDeque<(
-            tokio::task::JoinHandle<Result<Vec<RecordBatch>, ArrowError>>,
-            u64,
-        )> = VecDeque::new();
-        let mut is_first_remote_chunk = true;
+        let mut chunk_tasks: VecDeque<tokio::task::JoinHandle<Result<Chunk, ArrowError>>> =
+            VecDeque::new();
 
-        // Fill initial concurrency window
         for _ in 0..prefetch_concurrency {
             if let Some(data) = chunks.pop_front() {
                 let estimate = data.estimated_memory_bytes();
-                if !memory_budget.try_commit(estimate, is_first_remote_chunk) {
-                    memory_budget.wait_for_capacity(estimate).await;
-                    memory_budget.commit(estimate);
-                }
-                is_first_remote_chunk = false;
+                let ticket = memory_budget.acquire(estimate).await;
 
                 let d = downloader.clone();
                 let p = parser.clone();
-                chunk_tasks.push_back((
-                    tokio::task::spawn(async move {
-                        let bytes = d.download_chunk(data).await?;
-                        p.parse_chunk(bytes)
-                    }),
-                    estimate,
-                ));
+                chunk_tasks.push_back(tokio::task::spawn(get_chunk(d, p, data, ticket)));
             }
         }
 
-        while let Some((task, estimate)) = chunk_tasks.pop_front() {
-            let prefetch_batch_result = task.await;
-            if let Err(e) = prefetch_batch_result {
-                memory_budget.release(estimate);
-                return send_result(Err(ArrowError::ExternalError(Box::new(e)))).await;
-            }
-
-            match prefetch_batch_result.unwrap() {
-                Ok(batches) => {
-                    let batch_count = batches.len();
-                    for (i, batch) in batches.into_iter().enumerate() {
-                        let release = if i == batch_count - 1 {
-                            Some(estimate)
-                        } else {
-                            None
-                        };
-                        send_result(Ok((batch, release))).await?;
-                    }
-                }
+        while let Some(task) = chunk_tasks.pop_front() {
+            match task.await {
                 Err(e) => {
-                    memory_budget.release(estimate);
-                    return send_result(Err(e)).await;
+                    return send(Err(ArrowError::ExternalError(Box::new(e)))).await;
+                }
+                Ok(Err(e)) => {
+                    return send(Err(e)).await;
+                }
+                Ok(Ok(chunk)) => {
+                    send(Ok(chunk)).await?;
                 }
             }
 
-            // Spawn replacement task (rolling window refill)
             if let Some(data) = chunks.pop_front() {
                 let next_estimate = data.estimated_memory_bytes();
-                if !memory_budget.try_commit(next_estimate, false) {
-                    memory_budget.wait_for_capacity(next_estimate).await;
-                    memory_budget.commit(next_estimate);
-                }
+                let ticket = memory_budget.acquire(next_estimate).await;
 
                 let d = downloader.clone();
                 let p = parser.clone();
-                chunk_tasks.push_back((
-                    tokio::task::spawn(async move {
-                        let bytes = d.download_chunk(data).await?;
-                        p.parse_chunk(bytes)
-                    }),
-                    next_estimate,
-                ));
+                chunk_tasks.push_back(tokio::task::spawn(get_chunk(d, p, data, ticket)));
             }
         }
 
         Ok(())
     }
+}
+
+async fn get_chunk(
+    downloader: impl DownloadChunk,
+    parser: impl ParseChunk,
+    data: ChunkDownloadData,
+    ticket: MemoryTicket,
+) -> Result<Chunk, ArrowError> {
+    let bytes = downloader.download_chunk(data).await?;
+    let batches = parser.parse_chunk(bytes)?;
+    Ok(Chunk {
+        batches: batches.into(),
+        ticket,
+    })
 }
 
 impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchChunkReader<D, P> {
@@ -246,15 +246,21 @@ impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchC
         skip_all
     )]
     fn next(&mut self) -> Option<Self::Item> {
-        match self.batch_rx.blocking_recv() {
-            Some(Ok((batch, release))) => {
-                if let Some(bytes) = release {
-                    self.memory_budget.release(bytes);
+        loop {
+            if let Some(ref mut chunk) = self.current {
+                if let Some(batch) = chunk.batches.pop_front() {
+                    return Some(Ok(batch));
                 }
-                Some(Ok(batch))
+                self.current = None;
             }
-            Some(Err(e)) => Some(Err(e)),
-            None => None,
+
+            match self.batch_rx.blocking_recv() {
+                Some(Ok(chunk)) => {
+                    self.current = Some(chunk);
+                }
+                Some(Err(e)) => return Some(Err(e)),
+                None => return None,
+            }
         }
     }
 }
@@ -271,51 +277,69 @@ impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> RecordBatchReader
 mod tests {
     use super::*;
 
-    #[test]
-    fn memory_budget_unlimited() {
-        let budget = MemoryBudget::new(0);
-        assert!(budget.try_commit(u64::MAX, false));
-    }
-
-    #[test]
-    fn memory_budget_first_chunk_escape() {
-        let budget = MemoryBudget::new(100);
-        assert!(budget.try_commit(200, true));
-    }
-
-    #[test]
-    fn memory_budget_within_limit() {
-        let budget = MemoryBudget::new(1000);
-        assert!(budget.try_commit(500, false));
-        assert!(budget.try_commit(400, false));
-        assert!(!budget.try_commit(200, false));
-    }
-
-    #[test]
-    fn memory_budget_release_frees_capacity() {
-        let budget = MemoryBudget::new(1000);
-        assert!(budget.try_commit(600, false));
-        assert!(!budget.try_commit(500, false));
-        budget.release(600);
-        assert!(budget.try_commit(500, false));
+    fn available(budget: &MemoryBudget) -> usize {
+        budget.semaphore.available_permits()
     }
 
     #[tokio::test]
-    async fn memory_budget_wait_wakes_on_release() {
-        let budget = Arc::new(MemoryBudget::new(100));
-        budget.commit(90);
+    async fn unlimited_budget() {
+        let budget = MemoryBudget::new(0);
+        let _ticket = budget.acquire(1_000_000).await;
+    }
 
-        let budget_clone = Arc::clone(&budget);
-        let handle = tokio::spawn(async move {
-            budget_clone.wait_for_capacity(50).await;
-        });
+    #[tokio::test]
+    async fn first_acquire_exceeds_limit() {
+        let budget = MemoryBudget::new(100);
+        let ticket = budget.acquire(200).await;
+        assert_eq!(available(&budget), 0);
+        drop(ticket);
+        assert_eq!(available(&budget), 100);
+    }
+
+    #[tokio::test]
+    async fn within_limit() {
+        let budget = MemoryBudget::new(1000);
+        let _t1 = budget.acquire(500).await;
+        let _t2 = budget.acquire(400).await;
+        assert_eq!(available(&budget), 100);
+    }
+
+    #[tokio::test]
+    async fn ticket_drop_frees_capacity() {
+        let budget = MemoryBudget::new(1000);
+        let ticket = budget.acquire(600).await;
+        assert_eq!(available(&budget), 400);
+        drop(ticket);
+        assert_eq!(available(&budget), 1000);
+    }
+
+    #[tokio::test]
+    async fn acquire_wakes_on_ticket_drop() {
+        let budget = MemoryBudget::new(100);
+        let ticket = budget.acquire(90).await;
+
+        let budget_clone = budget.clone();
+        let handle = tokio::spawn(async move { budget_clone.acquire(50).await });
 
         tokio::task::yield_now().await;
-        budget.release(80);
+        drop(ticket);
 
-        tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+        let _acquired = tokio::time::timeout(std::time::Duration::from_secs(1), handle)
             .await
-            .expect("wait_for_capacity should complete after release")
+            .expect("acquire should complete after ticket drop")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_outstanding_tickets_allows_exceeding_again() {
+        let budget = MemoryBudget::new(100);
+        let ticket = budget.acquire(200).await;
+        assert_eq!(available(&budget), 0);
+        drop(ticket);
+
+        let ticket = budget.acquire(150).await;
+        assert_eq!(available(&budget), 0);
+        drop(ticket);
+        assert_eq!(available(&budget), 100);
     }
 }
