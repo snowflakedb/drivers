@@ -77,6 +77,7 @@ COPY sf_mini_core/src/ ./sf_mini_core/src/
 COPY sf_mini_core_static/src/ ./sf_mini_core_static/src/
 COPY proto_utils/src/ ./proto_utils/src/
 COPY odbc/src/ ./odbc/src/
+COPY odbc/build.rs ./odbc/build.rs
 COPY proto_generator/src/ ./proto_generator/src/
 COPY jdbc_bridge/src/ ./jdbc_bridge/src/
 COPY error_trace/src/ ./error_trace/src/
