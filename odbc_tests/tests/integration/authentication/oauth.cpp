@@ -30,21 +30,18 @@
 // configuration is valid, and the CC flow performs an HTTP token
 // exchange against the configured IdP. Neither is appropriate for an
 // integration test that must run offline. Happy-path coverage lives in
-// the e2e suite (substep 6) gated behind a real IdP.
+// the e2e suite (oauth.cpp) gated behind a real IdP, and the
+// BROWSER_LAUNCH_DISABLED kill switch is exercised by sf_core's own
+// integration tests (sf_core/tests/integration/authentication/oauth.rs).
 //
-// What we DO cover here:
-//   * Missing-required-parameter diagnostics for AC, CC, and legacy
-//     OAUTH (sf_core surfaces these synchronously, before any browser
-//     launch or network call).
-//   * Case-insensitive AUTHENTICATOR matching for OAuth flow names.
-//   * Invalid AUTHENTICATOR rejection.
-//   * Legacy AUTHENTICATOR=OAUTH with a TOKEN forwards the token to
-//     sf_core (the localhost backend then fails to connect, but no
-//     missing-parameter diagnostic is raised for the token).
+// What we DO cover here, mapped to scenarios in
+// tests/definitions/shared/authentication/oauth.feature:
 //
-// Gherkin scenarios for these test cases live in
-// tests/definitions/shared/authentication/oauth.feature (added by
-// substep 6 of this stack).
+//   * @odbc_int validation paths for OAUTH_CLIENT_CREDENTIALS
+//   * @odbc_int legacy AUTHENTICATOR=OAUTH (token forwarding + missing token)
+//   * @odbc_int case-insensitive AUTHENTICATOR matching
+//   * @odbc_int unknown OAuth-like AUTHENTICATOR value rejection
+//   * @odbc_int OAUTH_CLIENT_SECRET literal redaction in diagnostic records
 
 using Catch::Matchers::ContainsSubstring;
 
@@ -76,8 +73,6 @@ ConnectionHandleWrapper get_oauth_connection_handle(EnvironmentHandleWrapper& en
 SQLRETURN attempt_oauth_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
-  // Connection failure is expected: no live Snowflake instance is
-  // reachable here. Fail loudly only if the driver itself is broken.
   REQUIRE(ret == SQL_ERROR);
 
   auto records = get_diag_rec(dbc);
@@ -109,9 +104,9 @@ bool diag_contains_missing(const std::vector<DiagRec>& records, const std::strin
 // We do NOT add validation tests for AC here. As soon as a complete
 // AC configuration is supplied, sf_core spawns the loopback listener
 // and launches the OS browser -- both unsafe in CI / offline test
-// environments. AC happy-path coverage lives in the e2e suite
-// (substep 6) gated behind a real IdP, and the BROWSER_LAUNCH_DISABLED
-// kill switch is exercised by sf_core's own integration tests
+// environments. AC happy-path coverage lives in the e2e suite (oauth.cpp)
+// gated behind a real IdP, and the BROWSER_LAUNCH_DISABLED kill switch is
+// exercised by sf_core's own integration tests
 // (sf_core/tests/integration/authentication/oauth.rs).
 
 // =============================================================================
@@ -119,15 +114,10 @@ bool diag_contains_missing(const std::vector<DiagRec>& records, const std::strin
 // hit the IdP; that path is exercised in the e2e suite).
 // =============================================================================
 
-// Gherkin: Scenario: should fail OAUTH_CLIENT_CREDENTIALS when client_id is missing
-TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_id is missing", "[oauth_auth]") {
+TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_id is missing", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests OAuth CC required-param validation");
 
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with the
-  //       client_id field omitted -- per analysis §4, all three of
-  //       client_id / client_secret / oauth_token_request_url are
-  //       required for CC because Snowflake's GS does not mint CC
-  //       tokens.
+  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_client_id
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::stringstream ss;
@@ -139,19 +129,16 @@ TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_id is missing", "[oa
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then Connection fails with a missing-parameter error citing
-  //      oauth_client_id.
+  // Then Connection fails with a missing-parameter error citing oauth_client_id
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   CHECK(diag_contains_missing(records, "oauth_client_id"));
 }
 
-// Gherkin: Scenario: should fail OAUTH_CLIENT_CREDENTIALS when client_secret is missing
-TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_secret is missing", "[oauth_auth]") {
+TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_secret is missing", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests OAuth CC required-param validation");
 
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without a
-  //       client_secret.
+  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_client_secret
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::stringstream ss;
@@ -163,20 +150,16 @@ TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_secret is missing", 
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then Connection fails with a missing-parameter error citing
-  //      oauth_client_secret.
+  // Then Connection fails with a missing-parameter error citing oauth_client_secret
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   CHECK(diag_contains_missing(records, "oauth_client_secret"));
 }
 
-// Gherkin: Scenario: should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missing
-TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missing", "[oauth_auth]") {
+TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missing", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests OAuth CC required-param validation");
 
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without
-  //       oauth_token_request_url -- mandatory because Snowflake does
-  //       not host a CC token endpoint.
+  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_token_request_url
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::stringstream ss;
@@ -188,8 +171,7 @@ TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missin
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then Connection fails with a missing-parameter error citing
-  //      oauth_token_request_url.
+  // Then Connection fails with a missing-parameter error citing oauth_token_request_url
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   CHECK(diag_contains_missing(records, "oauth_token_request_url"));
@@ -199,14 +181,10 @@ TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missin
 // Legacy AUTHENTICATOR=OAUTH (pre-acquired access token)
 // =============================================================================
 
-// Gherkin: Scenario: should forward AUTHENTICATOR=OAUTH with TOKEN to core
-TEST_CASE("should forward AUTHENTICATOR=OAUTH with TOKEN to core", "[oauth_auth]") {
+TEST_CASE("should forward AUTHENTICATOR=OAUTH with TOKEN to core", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests legacy OAuth token forwarding");
 
-  // Given Authentication is set to legacy OAUTH with a pre-acquired
-  //       access token (analysis §6 / §10.1). This path does NOT spawn
-  //       a browser or perform an IdP exchange -- the wrapper hands the
-  //       token straight to the Snowflake login request.
+  // Given Authentication is set to legacy OAUTH with a pre-acquired access token
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::stringstream ss;
@@ -217,18 +195,16 @@ TEST_CASE("should forward AUTHENTICATOR=OAUTH with TOKEN to core", "[oauth_auth]
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then Connection reaches sf_core without a missing-parameter
-  //      error for the token.
+  // Then The wrapper forwards the token to sf_core without raising a missing-parameter error for it
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   CHECK_FALSE(diag_contains_missing(records, "token"));
 }
 
-// Gherkin: Scenario: should fail AUTHENTICATOR=OAUTH when TOKEN is missing
-TEST_CASE("should fail AUTHENTICATOR=OAUTH when TOKEN is missing", "[oauth_auth]") {
+TEST_CASE("should fail AUTHENTICATOR=OAUTH when TOKEN is missing", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests legacy OAuth required-param validation");
 
-  // Given Authentication is set to legacy OAUTH without a TOKEN.
+  // Given Authentication is set to legacy OAUTH without a TOKEN
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::string connection_string = get_oauth_base_connection_string("OAUTH");
@@ -236,20 +212,16 @@ TEST_CASE("should fail AUTHENTICATOR=OAUTH when TOKEN is missing", "[oauth_auth]
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then Connection fails with a missing-parameter error citing the
-  //      token (analysis §6: legacy OAUTH requires `token=`).
+  // Then Connection fails with a missing-parameter error citing token
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   CHECK(diag_contains_missing(records, "token"));
 }
 
-// Gherkin: Scenario: should accept lowercase oauth authenticator value (legacy)
-TEST_CASE("should accept lowercase oauth authenticator value", "[oauth_auth]") {
+TEST_CASE("should accept lowercase oauth authenticator value", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests case-insensitive AUTHENTICATOR matching for legacy OAUTH");
 
-  // Given Authentication is set to lowercase oauth (legacy) with a
-  //       TOKEN. analysis §9 -- case-insensitive matching of OAuth
-  //       flow names.
+  // Given Authentication is set to lowercase oauth with a TOKEN
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::stringstream ss;
@@ -260,8 +232,7 @@ TEST_CASE("should accept lowercase oauth authenticator value", "[oauth_auth]") {
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then The wrapper does not reject the AUTHENTICATOR value as
-  //      unknown.
+  // Then The wrapper does not reject the AUTHENTICATOR value as unknown
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   for (const auto& record : records) {
@@ -274,12 +245,10 @@ TEST_CASE("should accept lowercase oauth authenticator value", "[oauth_auth]") {
 // Negative path: invalid authenticator value
 // =============================================================================
 
-// Gherkin: Scenario: should fail when AUTHENTICATOR is set to an unknown OAuth-like value
-TEST_CASE("should fail when AUTHENTICATOR is an unknown OAuth-like value", "[oauth_auth]") {
+TEST_CASE("should fail when AUTHENTICATOR is an unknown OAuth-like value", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests unknown-authenticator validation");
 
   // Given Authentication is set to a typo of an OAuth flow name
-  //       (e.g. OAUTH_AUTHORIZATION_TYPO).
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   std::stringstream ss;
@@ -290,10 +259,7 @@ TEST_CASE("should fail when AUTHENTICATOR is an unknown OAuth-like value", "[oau
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
 
-  // Then Connection fails with an authenticator-related error.
-  //      sf_core's exact wording may evolve; we only assert that some
-  //      diagnostic mentions the bogus authenticator value or flags it
-  //      as invalid/unknown.
+  // Then Connection fails with an authenticator-related error
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   bool found = diag_contains(records, "Invalid authenticator") || diag_contains(records, "Unknown authenticator") ||
@@ -305,12 +271,10 @@ TEST_CASE("should fail when AUTHENTICATOR is an unknown OAuth-like value", "[oau
 // Secret redaction in driver logs
 // =============================================================================
 
-// Gherkin: Scenario: should not echo OAUTH_CLIENT_SECRET back in any diagnostic record
-TEST_CASE("should not echo OAUTH_CLIENT_SECRET in diagnostics", "[oauth_auth]") {
+TEST_CASE("should not echo OAUTH_CLIENT_SECRET in diagnostics", "[oauth_int]") {
   SKIP_OLD_DRIVER("", "New-driver-only: secret redaction in OAuth diagnostics");
 
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a
-  //       distinctive client secret literal.
+  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a distinctive client secret literal
   auto env = setup_oauth_environment();
   auto dbc = get_oauth_connection_handle(env);
   const std::string secret_literal = "ZZ_SECRET_NEEDLE_OAUTH_CC_ZZ";
@@ -318,14 +282,13 @@ TEST_CASE("should not echo OAUTH_CLIENT_SECRET in diagnostics", "[oauth_auth]") 
   ss << get_oauth_base_connection_string("OAUTH_CLIENT_CREDENTIALS");
   ss << "OAUTH_CLIENT_ID=test-client-id;";
   ss << "OAUTH_CLIENT_SECRET=" << secret_literal << ";";
-  // Omit the token URL so the flow fails fast on validation.
   std::string connection_string = ss.str();
 
   // When Trying to Connect
   SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
   REQUIRE(ret == SQL_ERROR);
 
-  // Then No diagnostic record contains the literal secret.
+  // Then No diagnostic record contains the literal client secret
   auto records = get_diag_rec(dbc);
   for (const auto& record : records) {
     CHECK_THAT(record.messageText, !ContainsSubstring(secret_literal));
