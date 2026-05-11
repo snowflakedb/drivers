@@ -2,6 +2,7 @@ mod arrow_parser;
 mod error;
 mod http_downloader;
 mod json_parser;
+mod memory_budget;
 pub mod mock;
 pub mod prefetch;
 
