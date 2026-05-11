@@ -60,19 +60,126 @@ pub(crate) enum TzOffsetFormat {
 /// token. An empty / missing format falls through to the legacy UTC-only
 /// fetch behaviour, so existing applications see no change.
 ///
-/// The longest token wins (`TZH:TZM` and `TZHTZM` both contain `TZH`).
-/// Match is case-insensitive to mirror Snowflake's format grammar.
+/// Tokenisation rules (matching Snowflake's format grammar):
+///
+/// 1. Snowflake double-quoted literal runs (`"..."`) are stripped first,
+///    so a literal `'"server-side TZH note: " YYYY-MM-DD HH24:MI:SS'`
+///    does **not** activate `HourOnly`. Toggling wire-format bytes on a
+///    literal substring is a correctness bug — see PR #1068 review on
+///    `timestamp.rs:70`.
+/// 2. The remaining text is split on non-alphanumeric boundaries and
+///    matched whole-token, so `TZHACK` / `TZHELP` / `literal_TZH_marker`
+///    no longer false-fire as `HourOnly`.
+/// 3. Longest match wins on a per-token basis: `TZH:TZM` (split into two
+///    `TZH` and `TZM` tokens by step 2) is detected via the colon
+///    sequence test below before we ever reach the bare-`TZH` arm.
+/// 4. Match is case-insensitive to mirror Snowflake's format grammar
+///    (the server treats `tzh:tzm` and `TZH:TZM` identically).
+///
+/// Snowflake also accepts `TZHM` (4-char compact, no colon, no `TZ`
+/// prefix on the minutes) and bare `TZM`. The current driver only
+/// renders the three documented variants; an unrecognised but
+/// offset-shaped token (anything starting with `TZ`) emits a
+/// `tracing::warn!` so a customer who configured `TZHM` and gets bare
+/// UTC has at least *some* signal in the logs.
 pub(crate) fn parse_tz_offset_format(format: &str) -> Option<TzOffsetFormat> {
-    let upper = format.to_ascii_uppercase();
-    if upper.contains("TZH:TZM") {
-        Some(TzOffsetFormat::Colon)
-    } else if upper.contains("TZHTZM") {
-        Some(TzOffsetFormat::NoColon)
-    } else if upper.contains("TZH") {
-        Some(TzOffsetFormat::HourOnly)
-    } else {
-        None
+    let stripped = strip_snowflake_quoted_literals(format);
+    let upper = stripped.to_ascii_uppercase();
+
+    // `TZH:TZM` is the only token that crosses a non-alphanumeric
+    // boundary (the colon), so we detect it first before the
+    // alphanumeric tokenizer. The colon-separated check is itself
+    // boundary-anchored so `XTZH:TZMX` doesn't false-fire.
+    if contains_token_pair(&upper, "TZH", "TZM", ':') {
+        return Some(TzOffsetFormat::Colon);
     }
+
+    // Walk the remaining alphanumeric-token sequence and look for an
+    // exact whole-token match. We do a single pass and remember whether
+    // any TZ-shaped token was seen so we can emit a diagnostic warning
+    // for unrecognised variants like `TZHM` / `TZM`.
+    let mut saw_unknown_tz_token: Option<String> = None;
+    // Treat `_` as part of the surrounding token, not a separator. A
+    // user-supplied identifier-shaped literal like `literal_TZH_marker`
+    // is a single opaque token to us, not three (and `TZH` inside it
+    // must not activate the offset suffix).
+    for token in upper.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "TZHTZM" => return Some(TzOffsetFormat::NoColon),
+            "TZH" => return Some(TzOffsetFormat::HourOnly),
+            // Track but don't return — let a later, recognised token
+            // win if the format string mixes them.
+            t if t.starts_with("TZ") && saw_unknown_tz_token.is_none() => {
+                saw_unknown_tz_token = Some(t.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(unknown) = saw_unknown_tz_token {
+        tracing::warn!(
+            unknown_token = %unknown,
+            "TIMESTAMP_TZ_OUTPUT_FORMAT contains a TZ-shaped token the driver does not render \
+             (only TZH:TZM, TZHTZM, and TZH are supported); fetch will fall back to bare UTC"
+        );
+    }
+    None
+}
+
+/// Strip Snowflake double-quoted literal runs so the tokenizer can't
+/// false-fire on user-supplied literal text. Mirrors Snowflake's format
+/// grammar where `"..."` is a literal that must be emitted verbatim.
+///
+/// We do not implement the full grammar (e.g. escaped `""` inside a
+/// literal); the worst case of mishandling escapes is that a *real* TZ
+/// token after the unmatched run wins, which is the same outcome as
+/// before this fix and so a strict superset of the previous behaviour.
+fn strip_snowflake_quoted_literals(format: &str) -> String {
+    let mut out = String::with_capacity(format.len());
+    let mut in_quote = false;
+    for ch in format.chars() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if !in_quote {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Return `true` if `haystack` contains `left<sep>right` where both
+/// `left` and `right` are bordered by non-alphanumeric chars (or the
+/// string boundaries). Lets us spot `TZH:TZM` without false-firing on
+/// `XTZH:TZMX`. All inputs are expected to be ASCII-uppercased.
+fn contains_token_pair(haystack: &str, left: &str, right: &str, sep: char) -> bool {
+    let needle = format!("{left}{sep}{right}");
+    let bytes = haystack.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = haystack[start..].find(&needle) {
+        let begin = start + rel;
+        let end = begin + needle.len();
+        let prev_ok = begin == 0 || !is_ascii_alnum(bytes[begin - 1]);
+        let next_ok = end == bytes.len() || !is_ascii_alnum(bytes[end]);
+        if prev_ok && next_ok {
+            return true;
+        }
+        start = begin + 1;
+    }
+    false
+}
+
+/// In-token predicate. Mirrors the splitter in `parse_tz_offset_format`
+/// so `_TZH:TZM_` is treated as one opaque token, not as a colon-separated
+/// pair surrounded by underscores. Any change here must keep the two in
+/// lockstep or `contains_token_pair` will diverge from the splitter.
+#[inline]
+fn is_ascii_alnum(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 /// A TIMESTAMP_TZ value carrying both the UTC instant and its original
@@ -1117,44 +1224,29 @@ impl WriteODBCType for SnowflakeTimestampTz {
 }
 
 /// CHAR/WCHAR writer that appends `+/-HH[:]MM` to the wall-clock string.
+///
+/// Buffer-size handling follows the standard ODBC fetch contract: render
+/// the full string into a 64-byte stack buffer, then let
+/// `write_char_string` / `write_wchar_string` apply the spec-mandated
+/// 01004 ("String data, right truncation") + `SQL_SUCCESS_WITH_INFO` +
+/// indicator-set-to-untruncated-length contract when the application
+/// buffer is too small. Pre-emptively rejecting with 22003 ("Numeric
+/// value out of range") would be the wrong category and would also
+/// reject buffers that *would* have fit a shorter rendering (e.g. a
+/// 25-byte buffer for a `HourOnly` whole-hour value at ~23 chars). See
+/// PR #1068 review on `timestamp.rs:993`.
 fn write_timestamp_tz_to_char(
     value: &TzInstant,
     fmt: TzOffsetFormat,
     binding: &Binding,
     get_data_offset: &mut Option<usize>,
 ) -> Result<Warnings, WriteOdbcError> {
-    // 20 (`YYYY-MM-DD HH:MM:SS.`) + up to 9 fractional digits + 1 space +
-    // 6 (`+HH:MM`) = 36 characters max. We require enough buffer to hold
-    // the worst case of `YYYY-MM-DD HH:MM:SS +HH:MM` even at scale 0
-    // (= 26 bytes) so applications binding tight buffers don't get a
-    // half-rendered literal.
-    const MIN_CHAR_BYTES: sql::Len = 26;
-    const MIN_WCHAR_BYTES: sql::Len = MIN_CHAR_BYTES * 2;
-
-    let target = binding.target_type;
-    let min = if matches!(target, CDataType::WChar) {
-        MIN_WCHAR_BYTES
-    } else {
-        MIN_CHAR_BYTES
-    };
-    if binding.buffer_length > 0 && binding.buffer_length < min {
-        return NumericValueOutOfRangeSnafu {
-            reason: format!(
-                "Buffer too small for {} TIMESTAMP_TZ with offset suffix (minimum {} bytes)",
-                if matches!(target, CDataType::WChar) {
-                    "SQL_C_WCHAR"
-                } else {
-                    "SQL_C_CHAR"
-                },
-                min
-            ),
-        }
-        .fail();
-    }
-
+    // 20 (`YYYY-MM-DD HH:MM:SS.`) + up to 9 fractional digits + 1 space
+    // + 6 (`+HH:MM`) = 36 characters worst case, well under the 64-byte
+    // stack buffer.
     let mut buf = [0u8; 64];
     let s = format_timestamp_tz_string_into(value, fmt, &mut buf)?;
-    let warnings = if matches!(target, CDataType::WChar) {
+    let warnings = if matches!(binding.target_type, CDataType::WChar) {
         binding.write_wchar_string(s, get_data_offset)
     } else {
         binding.write_char_string(s, get_data_offset)
