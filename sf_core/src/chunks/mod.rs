@@ -147,9 +147,10 @@ impl ChunkDownloadData {
     pub fn estimated_memory_mb(&self) -> u64 {
         const MEMORY_ESTIMATE_NUMERATOR: u64 = 3;
         const MEMORY_ESTIMATE_DENOMINATOR: u64 = 2;
+        const BYTES_PER_MB: u64 = 1024 * 1024;
         let bytes = (self.uncompressed_size.max(0) as u64) * MEMORY_ESTIMATE_NUMERATOR
             / MEMORY_ESTIMATE_DENOMINATOR;
-        (bytes / (1024 * 1024)).max(1)
+        (bytes / BYTES_PER_MB).max(1)
     }
 }
 
