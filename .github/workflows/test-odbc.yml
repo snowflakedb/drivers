@@ -756,15 +756,6 @@ jobs:
           DRIVER_TYPE: NEW
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Cleanup test PATs
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_env.py \
-            --parameter-path "${{ github.workspace }}/parameters.json"
-
       - name: Cleanup orphaned test schemas
         if: always() && runner.os == 'Linux'
         run: |
@@ -833,6 +824,31 @@ jobs:
         with:
           path: ~/Library/Caches/Homebrew
           key: macos-brew-odbc-tests-v1
+
+  cleanup_odbc:
+    needs: [detect-changes, odbc_tests]
+    if: always() && needs.odbc_tests.result != 'skipped'
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    name: cleanup_odbc (${{ matrix.cloud_provider }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Cleanup test PATs
+        continue-on-error: true
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_env.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
 
   build_msi:
     needs: detect-changes
@@ -1159,7 +1175,7 @@ jobs:
           path: build/snowflake_odbc_ud-*.dmg
 
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi, build_dmg]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, cleanup_odbc, build_msi, build_dmg]
     if: always()
     runs-on: ubuntu-latest
     steps:

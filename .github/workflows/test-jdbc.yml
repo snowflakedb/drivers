@@ -144,6 +144,26 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
+  cleanup_jdbc:
+    needs: [detect-changes, jdbc_tests]
+    if: always() && needs.jdbc_tests.result != 'skipped'
+    runs-on: ubuntu-latest
+    name: cleanup_jdbc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Cleanup test PATs
+        continue-on-error: true
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_env.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
+
   jdbc_tests_reference:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc_reference == 'true'
@@ -225,7 +245,7 @@ jobs:
           key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
   jdbc-status:
-    needs: [detect-changes, jdbc_tests, jdbc_tests_reference]
+    needs: [detect-changes, jdbc_tests, cleanup_jdbc, jdbc_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:
