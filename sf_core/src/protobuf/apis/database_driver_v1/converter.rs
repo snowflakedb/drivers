@@ -1008,4 +1008,42 @@ mod tests {
         let err = async_query(424_242);
         assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
     }
+
+    #[test]
+    fn query_error_to_string_has_no_wrapper_prefixes() {
+        // Server errors should surface verbatim: no "Query execution failed:"
+        // and no "Query failed:" prefix — matching the legacy Python driver.
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::QueryFailed {
+                message: "SQL compilation error: Object 'FOO' does not exist.".to_owned(),
+                code: Some(2003),
+                sql_state: Some("42S02".to_owned()),
+                query_id: None,
+                location: loc(),
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "SQL compilation error: Object 'FOO' does not exist."
+        );
+    }
+
+    #[test]
+    fn query_error_driver_exception_message_has_no_wrapper_prefixes() {
+        // End-to-end: the DriverException.message field (what Python reads)
+        // should contain only the server error, no wrapper prefixes.
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::QueryFailed {
+                message: "SQL compilation error: syntax error line 1".to_owned(),
+                code: Some(1003),
+                sql_state: Some("42000".to_owned()),
+                query_id: None,
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.message, "SQL compilation error: syntax error line 1");
+    }
 }

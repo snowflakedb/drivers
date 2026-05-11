@@ -1600,7 +1600,7 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Query failed: {message}"))]
+    #[snafu(display("{message}"))]
     QueryFailed {
         message: String,
         /// Snowflake server error code (e.g. 1003 for syntax error).

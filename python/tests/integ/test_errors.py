@@ -170,3 +170,40 @@ class TestErrorAttributes:
         with pytest.raises(Error) as excinfo:
             cursor.execute("SELEC 1")
         assert excinfo.value.__cause__ is None
+
+
+class TestErrorMessageFormat:
+    """Reference tests asserting the exact on-the-wire error message format.
+
+    The formatted message surfaced to users must match the legacy
+    snowflake-connector-python driver exactly:
+        ``{errno:06d} ({sqlstate}): {server_message}``
+    with no wrapper prefixes like ``"Query execution failed:"`` or ``"Query failed:"``.
+    """
+
+    def test_query_error_message_has_no_wrapper_prefixes(self, cursor):
+        with pytest.raises(DatabaseError) as excinfo:
+            cursor.execute("SELEC 1")
+        msg = str(excinfo.value)
+        assert "Query execution failed" not in msg
+        assert "Query failed:" not in msg
+
+    def test_query_error_message_format_matches_old_driver(self, cursor):
+        """End-to-end: the formatted message has the exact shape the old driver produces."""
+        table_name = f"nonexistent_table_{uuid.uuid4().hex[:8]}"
+        with pytest.raises(DatabaseError) as excinfo:
+            cursor.execute(f"SELECT * FROM {table_name}")
+        error = excinfo.value
+        msg = str(error)
+        # Must start with zero-padded errno and sqlstate, e.g. "002003 (42S02): "
+        prefix = f"{error.errno:06d} ({error.sqlstate}): "
+        assert msg.startswith(prefix), f"Expected '<errno> (<sqlstate>): ...' prefix, got: {msg!r}"
+        body = msg[len(prefix) :]
+        # At INFO/DEBUG log level the old driver injects "{sfqid}: " before the
+        # server message. Strip it if present so we can assert on the server text.
+        if error.sfqid and body.startswith(f"{error.sfqid}: "):
+            body = body[len(f"{error.sfqid}: ") :]
+        # The body must start with the server's error class, not a wrapper.
+        assert body.lower().startswith("sql compilation error"), (
+            f"Expected body to start with 'SQL compilation error', got: {body!r}"
+        )

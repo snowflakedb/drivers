@@ -94,7 +94,7 @@ pub enum ApiError {
         location: Location,
         source: StatementError,
     },
-    #[snafu(display("Query execution failed: {source}"))]
+    #[snafu(display("{source}"))]
     Query {
         #[snafu(implicit)]
         location: Location,
