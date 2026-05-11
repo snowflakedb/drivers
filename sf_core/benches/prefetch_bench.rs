@@ -214,7 +214,7 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
                     let parser = ArrowChunkParser;
                     let config = PrefetchConfig {
                         prefetch_threads: concurrency,
-                        memory_limit_bytes: 0,
+                        memory_limit_mb: 0,
                     };
                     let mut reader = rt
                         .block_on(PrefetchChunkReader::reader(
@@ -315,7 +315,7 @@ fn bench_json_prefetch(c: &mut Criterion) {
                     };
                     let config = PrefetchConfig {
                         prefetch_threads: concurrency,
-                        memory_limit_bytes: 0,
+                        memory_limit_mb: 0,
                     };
                     let mut reader = rt
                         .block_on(PrefetchChunkReader::reader(

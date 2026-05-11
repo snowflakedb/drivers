@@ -26,22 +26,22 @@ pub trait ParseChunk: Send + Sync + Clone + 'static {
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError>;
 }
 
-/// Tracks a byte-granularity memory budget for prefetched chunks.
+/// Tracks a megabyte-granularity memory budget for prefetched chunks.
 ///
 /// Cheap to clone (inner state is behind [`Arc`]). Hand out [`MemoryTicket`]s
-/// via [`acquire`](Self::acquire). Each ticket reserves `n` bytes and
+/// via [`acquire`](Self::acquire). Each ticket reserves `n` MB and
 /// automatically returns them to the budget when dropped.
 ///
 /// When a chunk is larger than the entire budget, [`acquire`](Self::acquire)
 /// requests all available permits, effectively waiting for exclusive access.
 /// This prevents deadlock on oversized chunks.
 ///
-/// Backed by a [`tokio::sync::Semaphore`] which provides FIFO-fair async
-/// waiting with no polling loops.
+/// Backed by a [`tokio::sync::Semaphore`] (1 permit = 1 MB) which provides
+/// FIFO-fair async waiting with no polling loops.
 #[derive(Clone)]
 pub(crate) struct MemoryBudget {
     semaphore: Arc<Semaphore>,
-    limit_permits: u32,
+    limit_mb: u32,
 }
 
 /// RAII guard for a memory reservation.
@@ -57,26 +57,24 @@ impl MemoryTicket {
 }
 
 impl MemoryBudget {
-    fn new(limit: u64) -> Self {
-        let limit_permits = u32::try_from(limit).unwrap_or(u32::MAX);
+    fn new(limit_mb: u64) -> Self {
+        let limit_mb = u32::try_from(limit_mb).unwrap_or(u32::MAX);
         Self {
-            semaphore: Arc::new(Semaphore::new(limit_permits as usize)),
-            limit_permits,
+            semaphore: Arc::new(Semaphore::new(limit_mb as usize)),
+            limit_mb,
         }
     }
 
-    /// Wait until `bytes` worth of permits are available, then reserve them.
+    /// Wait until `mb` worth of permits are available, then reserve them.
     ///
-    /// If `bytes` exceeds the total budget, all permits are acquired instead,
+    /// If `mb` exceeds the total budget, all permits are acquired instead,
     /// which waits for exclusive access (no other tickets outstanding).
-    async fn acquire(&self, bytes: u64) -> MemoryTicket {
-        if self.limit_permits == 0 {
+    async fn acquire(&self, mb: u64) -> MemoryTicket {
+        if self.limit_mb == 0 {
             return MemoryTicket(None);
         }
 
-        let permits = u32::try_from(bytes)
-            .unwrap_or(u32::MAX)
-            .min(self.limit_permits);
+        let permits = u32::try_from(mb).unwrap_or(u32::MAX).min(self.limit_mb);
 
         let permit = self
             .semaphore
@@ -133,7 +131,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
         let prefetch_concurrency = config.prefetch_threads;
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
-        let memory_budget = MemoryBudget::new(config.memory_limit_bytes);
+        let memory_budget = MemoryBudget::new(config.memory_limit_mb);
 
         tokio::spawn(Self::prefetch_batches(
             downloader,
@@ -186,7 +184,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 
         for _ in 0..prefetch_concurrency {
             if let Some(data) = chunks.pop_front() {
-                let estimate = data.estimated_memory_bytes();
+                let estimate = data.estimated_memory_mb();
                 let ticket = memory_budget.acquire(estimate).await;
 
                 let d = downloader.clone();
@@ -209,7 +207,7 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
             }
 
             if let Some(data) = chunks.pop_front() {
-                let next_estimate = data.estimated_memory_bytes();
+                let next_estimate = data.estimated_memory_mb();
                 let ticket = memory_budget.acquire(next_estimate).await;
 
                 let d = downloader.clone();

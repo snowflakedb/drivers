@@ -33,15 +33,15 @@ pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 1536;
 pub struct PrefetchConfig {
     /// Number of concurrent chunk download+parse tasks.
     pub prefetch_threads: usize,
-    /// Memory budget in bytes for buffered chunks. 0 means unlimited.
-    pub memory_limit_bytes: u64,
+    /// Memory budget in MB for buffered chunks. 0 means unlimited.
+    pub memory_limit_mb: u64,
 }
 
 impl Default for PrefetchConfig {
     fn default() -> Self {
         Self {
             prefetch_threads: DEFAULT_PREFETCH_THREADS,
-            memory_limit_bytes: DEFAULT_MEMORY_LIMIT_MB * 1024 * 1024,
+            memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
         }
     }
 }
@@ -144,9 +144,10 @@ impl ChunkDownloadData {
         }
     }
 
-    pub fn estimated_memory_bytes(&self) -> u64 {
+    pub fn estimated_memory_mb(&self) -> u64 {
         const OVERHEAD_MULTIPLIER: u64 = 2;
-        (self.uncompressed_size.max(0) as u64) * OVERHEAD_MULTIPLIER
+        let bytes = (self.uncompressed_size.max(0) as u64) * OVERHEAD_MULTIPLIER;
+        (bytes / (1024 * 1024)).max(1)
     }
 }
 
