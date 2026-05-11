@@ -289,7 +289,7 @@ pub fn create_field_with_type(
             let data_type = data_type.unwrap_or_else(|| {
                 DataType::FixedSizeList(
                     Arc::new(Field::new_list_field(child_type, true)),
-                    *dimension,
+                    *dimension as i32,
                 )
             });
             Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))

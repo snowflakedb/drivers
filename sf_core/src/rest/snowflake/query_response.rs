@@ -723,11 +723,11 @@ fn parse_vector_row_type(
     let raw_dim = value.vector_dimension.context(MissingParameterSnafu {
         parameter: format!("row type -> vectorDimension for VECTOR column '{name}'"),
     })?;
-    // Snowflake VECTOR dimensions are bounded (<= 4096) and always fit in i32.
+    // Snowflake VECTOR dimensions are bounded (<= 4096) and always fit in usize.
     // Cast via `as` to match the trust-the-server convention used elsewhere for
-    // server-provided sizes; Arrow's FixedSizeListArray will reject a negative
-    // or zero size when the array is finalised.
-    let dimension = raw_dim as i32;
+    // server-provided sizes; Arrow's FixedSizeListArray will reject an invalid
+    // size when the array is finalised.
+    let dimension = raw_dim as usize;
 
     let element_field =
         value
@@ -1316,7 +1316,8 @@ mod tests {
             length: Some(134_217_728),
             byte_length: Some(134_217_728),
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -1340,7 +1341,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -1364,7 +1366,8 @@ mod tests {
             length: Some(67_108_864),
             byte_length: Some(67_108_864),
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(

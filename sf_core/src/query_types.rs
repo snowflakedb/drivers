@@ -95,9 +95,10 @@ pub enum RowType {
     Vector {
         name: String,
         nullable: bool,
-        /// Element count of the VECTOR column. Matches Arrow's `FixedSizeList`
-        /// size type (`i32`) so it can be forwarded without further conversion.
-        dimension: i32,
+        /// Element count of the VECTOR column. Snowflake guarantees a non-negative
+        /// dimension (SQL reference caps this at 4096), so `usize` mirrors the
+        /// value space directly and keeps capacity math cast-free.
+        dimension: usize,
         element_type: VectorElementType,
     },
 }
@@ -280,7 +281,7 @@ impl RowType {
     pub fn vector(
         name: &str,
         nullable: bool,
-        dimension: i32,
+        dimension: usize,
         element_type: VectorElementType,
     ) -> Self {
         RowType::Vector {

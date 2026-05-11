@@ -259,7 +259,7 @@ pub(super) enum ColumnBuilder {
         builder: arrow::array::StringBuilder,
     },
     Vector {
-        dimension: i32,
+        dimension: usize,
         values: VectorValuesBuilder,
         nulls: arrow::array::BooleanBufferBuilder,
     },
@@ -338,8 +338,10 @@ impl ColumnBuilder {
             RowType::Text { .. }
             | RowType::Variant { .. }
             | RowType::Object { .. }
-            | RowType::Array { .. }
-            | RowType::Geography { representation, .. }
+            | RowType::Array { .. } => ColumnBuilder::Text {
+                builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
+            },
+            RowType::Geography { representation, .. }
             | RowType::Geometry { representation, .. } => match representation {
                 crate::query_types::GeoRepresentation::Text => ColumnBuilder::Text {
                     builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
@@ -353,9 +355,9 @@ impl ColumnBuilder {
                 element_type,
                 ..
             } => {
-                // Dimension is bounded to VECTOR_MAX_DIMENSION at parse time, so
-                // capacity * dimension fits in usize on all supported platforms.
-                let elem_capacity = capacity.saturating_mul(*dimension as usize);
+                // Snowflake bounds VECTOR dimension at 4096, so the multiplication
+                // fits in usize on all supported platforms.
+                let elem_capacity = capacity.saturating_mul(*dimension);
                 let values = match element_type {
                     VectorElementType::Int32 => VectorValuesBuilder::Int32(
                         arrow::array::PrimitiveBuilder::with_capacity(elem_capacity),
@@ -764,7 +766,7 @@ impl ColumnBuilder {
                 let null_buf = arrow::buffer::NullBuffer::new(nulls.finish());
                 let list = arrow::array::FixedSizeListArray::try_new(
                     child_field,
-                    dimension,
+                    dimension as i32,
                     values_arr,
                     Some(null_buf),
                 )?;
@@ -960,14 +962,13 @@ fn empty_batch_from_row_types(row_types: &[RowType]) -> Result<Vec<RecordBatch>,
 /// Used when the outer list element is NULL: the FixedSizeList layout still reserves
 /// `dimension` child slots per outer row, and the outer null buffer masks them out.
 /// The placeholder value (zero) is never read — it just keeps the child buffer aligned.
-fn push_vector_placeholders(values: &mut VectorValuesBuilder, dimension: i32) {
-    let dim = dimension as usize;
+fn push_vector_placeholders(values: &mut VectorValuesBuilder, dimension: usize) {
     match values {
         VectorValuesBuilder::Int32(builder) => {
-            builder.append_values(&vec![0; dim], &vec![true; dim])
+            builder.append_values(&vec![0; dimension], &vec![true; dimension])
         }
         VectorValuesBuilder::Float32(builder) => {
-            builder.append_values(&vec![0.0; dim], &vec![true; dim])
+            builder.append_values(&vec![0.0; dimension], &vec![true; dimension])
         }
     }
 }
@@ -976,15 +977,14 @@ fn push_vector_placeholders(values: &mut VectorValuesBuilder, dimension: i32) {
 /// appends its `dimension` elements to the child values builder.
 fn push_vector_value(
     cell: &[u8],
-    dimension: i32,
+    dimension: usize,
     values: &mut VectorValuesBuilder,
 ) -> Result<(), ArrowError> {
-    let expected = dimension as usize;
     let elems: Vec<serde_json::Value> =
         serde_json::from_slice(cell).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
-    if elems.len() != expected {
+    if elems.len() != dimension {
         return Err(ArrowError::InvalidArgumentError(format!(
-            "VECTOR expected {expected} elements, got {}",
+            "VECTOR expected {dimension} elements, got {}",
             elems.len()
         )));
     }
