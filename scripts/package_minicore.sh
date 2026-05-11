@@ -103,7 +103,11 @@ if [[ "$PLATFORM" == aix-* ]]; then
 fi
 
 echo "=== Building static library version ==="
-"${STATIC_LTO_OVERRIDE[@]}" $CARGO_CMD build --release --package sf_mini_core_static --target $PLATFORM_TARGET
+# `${ARR[@]+"${ARR[@]}"}` expands to nothing when ARR is empty, but to the
+# array elements otherwise. Required because the script runs under `set -u`
+# and bash < 4.4 (notably macOS's bash 3.2) treats `"${EMPTY[@]}"` as an
+# unbound-variable reference instead of an empty expansion.
+${STATIC_LTO_OVERRIDE[@]+"${STATIC_LTO_OVERRIDE[@]}"} $CARGO_CMD build --release --package sf_mini_core_static --target $PLATFORM_TARGET
 
 # Determine dynamic library extension based on platform
 case "$PLATFORM" in
