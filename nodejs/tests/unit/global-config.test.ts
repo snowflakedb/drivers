@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from 'vitest';
 
-describe("Global Config", () => {
-  it.todo("works");
+describe('Global Config', () => {
+  it.todo('works');
 });
