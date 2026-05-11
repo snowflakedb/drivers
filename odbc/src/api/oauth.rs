@@ -438,6 +438,95 @@ mod tests {
         }
     }
 
+    /// Documentation guard: every key in `ALL_OAUTH_KEYS` either
+    /// has a canonical name AND is recognised by both
+    /// [`is_oauth_key`] and [`should_persist_to_dsn`] (with the
+    /// expected polarity for sensitive keys). This is the single
+    /// invariant that the wrapper relies on to safely round-trip a
+    /// DSN.
+    #[test]
+    fn all_oauth_keys_round_trip_through_every_helper() {
+        for &k in ALL_OAUTH_KEYS {
+            assert!(is_oauth_key(k), "{k} not recognised by is_oauth_key");
+            assert!(canonical_name(k).is_some(), "{k} has no canonical name");
+            let sensitive = is_sensitive_oauth_key(k);
+            assert_eq!(
+                should_persist_to_dsn(k),
+                !sensitive,
+                "{k}: DSN persistence policy disagrees with sensitivity"
+            );
+            // Non-secret values must NOT redact; secret values MUST.
+            let probe = "probe-value";
+            let redacted = redact_value(k, probe);
+            if sensitive {
+                assert_eq!(redacted, "****", "{k} should be redacted");
+            } else {
+                assert_eq!(redacted, probe, "{k} should not be redacted");
+            }
+        }
+    }
+
+    /// Documents the DSN-write contract enforced by
+    /// `setup_common::write_dsn_values`: every OAuth secret
+    /// (`OAUTH_CLIENT_SECRET`, `TOKEN`) is rejected, every other
+    /// OAuth key is persisted, and the result is independent of the
+    /// caller's letter-casing.
+    #[test]
+    fn dsn_persistence_policy_for_oauth_keys_is_case_insensitive() {
+        for &k in ALL_OAUTH_KEYS {
+            for variant in [
+                k.to_owned(),
+                k.to_lowercase(),
+                k.chars()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if i.is_multiple_of(2) {
+                            c.to_ascii_lowercase()
+                        } else {
+                            c.to_ascii_uppercase()
+                        }
+                    })
+                    .collect::<String>(),
+            ] {
+                assert_eq!(
+                    should_persist_to_dsn(&variant),
+                    !is_sensitive_oauth_key(k),
+                    "{variant:?} (variant of {k}) DSN persistence drifted"
+                );
+            }
+        }
+    }
+
+    /// `SENSITIVE_LOGGING_KEYS` is the single authoritative list of
+    /// connection-string keys that must never reach `tracing` sinks.
+    /// Verify both that every OAuth secret is in the list AND that
+    /// the legacy PWD-style keys are still covered after the
+    /// refactor — guards against accidental policy regression when a
+    /// future contributor edits `SENSITIVE_LOGGING_KEYS`.
+    #[test]
+    fn sensitive_logging_keys_covers_oauth_secrets_and_legacy_pwd_family() {
+        for legacy in [
+            "PWD",
+            "PRIV_KEY_FILE_PWD",
+            "PRIV_KEY_PWD",
+            "PRIV_KEY_BASE64",
+            "PASSCODE",
+        ] {
+            assert!(
+                SENSITIVE_LOGGING_KEYS
+                    .iter()
+                    .any(|k| k.eq_ignore_ascii_case(legacy)),
+                "legacy sensitive key {legacy} dropped from SENSITIVE_LOGGING_KEYS"
+            );
+        }
+        for &oauth_secret in SENSITIVE_OAUTH_KEYS {
+            assert!(
+                SENSITIVE_LOGGING_KEYS.contains(&oauth_secret),
+                "OAuth secret {oauth_secret} not in SENSITIVE_LOGGING_KEYS"
+            );
+        }
+    }
+
     #[test]
     fn all_oauth_keys_and_sensitive_oauth_keys_are_disjoint_modulo_token() {
         // Every entry in SENSITIVE_OAUTH_KEYS that comes from the

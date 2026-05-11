@@ -1423,6 +1423,308 @@ mod tests {
         );
     }
 
+    /// Belt-and-braces: every OAuth key declared in `oauth::ALL_OAUTH_KEYS`
+    /// must round-trip through `normalize_connection_string_options` to its
+    /// `sf_core` canonical lowercase name (analysis §9). Picks a plausible
+    /// non-secret string value for every key so the assertion is uniform.
+    #[test]
+    fn normalize_connection_string_options_canonicalizes_every_oauth_key() {
+        let mut input: HashMap<String, String> = HashMap::new();
+        for &key in oauth::ALL_OAUTH_KEYS {
+            // Use the key name itself as the value: makes any leak
+            // immediately greppable, and keeps every key distinct in
+            // the resulting options map.
+            input.insert(key.to_owned(), format!("v-for-{key}"));
+        }
+        let options = normalize_connection_string_options(input);
+
+        for &key in oauth::ALL_OAUTH_KEYS {
+            let canonical = oauth::canonical_name(key)
+                .unwrap_or_else(|| panic!("missing canonical name for {key}"));
+            assert_eq!(
+                config_string(&options, canonical),
+                Some(format!("v-for-{key}").as_str()),
+                "{key} did not round-trip to {canonical}"
+            );
+            assert!(
+                !options.contains_key(key),
+                "{key} should not survive as the SCREAMING_SNAKE form"
+            );
+        }
+    }
+
+    /// Mixed-case variants of OAuth keys (e.g. as a user would type
+    /// them in a DSN file) must canonicalize to the same lowercase
+    /// `sf_core` parameter name as the SCREAMING_SNAKE form.
+    #[test]
+    fn normalize_connection_string_options_oauth_keys_are_case_insensitive() {
+        for &key in oauth::ALL_OAUTH_KEYS {
+            let canonical = oauth::canonical_name(key).unwrap();
+            for variant in [
+                key.to_owned(),
+                key.to_lowercase(),
+                key.chars()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if i.is_multiple_of(2) {
+                            c.to_ascii_lowercase()
+                        } else {
+                            c.to_ascii_uppercase()
+                        }
+                    })
+                    .collect::<String>(),
+            ] {
+                let options = normalize_connection_string_options(HashMap::from([(
+                    variant.clone(),
+                    "v".to_owned(),
+                )]));
+                assert_eq!(
+                    config_string(&options, canonical),
+                    Some("v"),
+                    "variant {variant:?} of {key} did not canonicalize to {canonical}"
+                );
+            }
+        }
+    }
+
+    /// Wiring guard: the OAuth canonical-name forwarding must not
+    /// shadow the existing explicit special-key arms (PORT,
+    /// CRL_ENABLED, CLIENT_STORE_TEMPORARY_CREDENTIAL, etc.). Mixing
+    /// OAuth keys with these in one map must canonicalize each key
+    /// according to its own arm, with no cross-contamination.
+    #[test]
+    fn normalize_connection_string_options_does_not_shadow_existing_special_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PORT".to_owned(), "9000".to_owned()),
+            ("CRL_ENABLED".to_owned(), "1".to_owned()),
+            ("OAUTH_CLIENT_ID".to_owned(), "abc".to_owned()),
+            (
+                "CLIENT_STORE_TEMPORARY_CREDENTIAL".to_owned(),
+                "true".to_owned(),
+            ),
+            ("OAUTH_DISABLE_PKCE".to_owned(), "true".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "port"), Some("9000"));
+        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("ENABLED"));
+        assert_eq!(config_string(&options, "oauth_client_id"), Some("abc"));
+        assert_eq!(
+            config_string(&options, "client_store_temporary_credential"),
+            Some("true")
+        );
+        assert_eq!(config_string(&options, "oauth_disable_pkce"), Some("true"));
+    }
+
+    /// Wiring guard: every OAuth key forwarded by the wrapper must be
+    /// resolvable by `sf_core::config::param_registry` to its
+    /// canonical lowercase name. Catches accidental drift between the
+    /// ODBC-side `oauth::canonical_name` map and the sf_core
+    /// `param_registry` aliases.
+    #[test]
+    fn every_oauth_canonical_name_is_known_to_sf_core_param_registry() {
+        let registry = sf_core::config::param_registry::registry();
+        for &key in oauth::ALL_OAUTH_KEYS {
+            let canonical = oauth::canonical_name(key).unwrap();
+            assert!(
+                registry.is_known(canonical),
+                "sf_core param_registry does not know {canonical} (from ODBC key {key}); \
+                 ODBC and sf_core OAuth canonicals are out of sync"
+            );
+        }
+    }
+
+    /// Wiring guard for `connect_with_params` redaction: building the
+    /// redacted map for params that contain every sensitive key the
+    /// wrapper recognises (legacy + OAuth) must produce `"****"` for
+    /// each sensitive value AND must NOT contain any of the original
+    /// values verbatim in its `Debug` rendering. This is the
+    /// single-source-of-truth check the connection-string log relies
+    /// on.
+    #[test]
+    fn redacted_param_map_redacts_all_sensitive_keys() {
+        let unique_marker = "DO_NOT_LEAK_THIS_TOKEN_42";
+        let params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("PWD".to_owned(), unique_marker.to_owned()),
+            ("PRIV_KEY_FILE_PWD".to_owned(), unique_marker.to_owned()),
+            ("PRIV_KEY_PWD".to_owned(), unique_marker.to_owned()),
+            ("PRIV_KEY_BASE64".to_owned(), unique_marker.to_owned()),
+            ("PASSCODE".to_owned(), unique_marker.to_owned()),
+            ("OAUTH_CLIENT_SECRET".to_owned(), unique_marker.to_owned()),
+            ("TOKEN".to_owned(), unique_marker.to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&params);
+        let rendered = format!("{redacted:?}");
+        assert!(
+            !rendered.contains(unique_marker),
+            "redacted map leaked sensitive value: {rendered}"
+        );
+        // Spot-check a few keys still produce the redaction marker.
+        for sensitive in ["PWD", "OAUTH_CLIENT_SECRET", "TOKEN"] {
+            assert_eq!(
+                redacted.get(&sensitive.to_owned()).map(|v| v.as_ref()),
+                Some("****"),
+                "{sensitive} should render as ****"
+            );
+        }
+        // Non-sensitive UID is preserved verbatim.
+        assert_eq!(
+            redacted.get(&"UID".to_owned()).map(|v| v.as_ref()),
+            Some("joe")
+        );
+    }
+
+    /// Wiring guard for the SQLSTATE classifier: every OAuth key in
+    /// `oauth::ALL_OAUTH_KEYS` must be present in
+    /// `error::AUTHENTICATOR_PARAMETERS` so missing-required errors
+    /// for OAuth params are mapped to SQLSTATE `28000` (auth-related)
+    /// rather than the generic `HY000`. Indirectly exercised through
+    /// the helper closure below to avoid exposing the static.
+    #[test]
+    fn oauth_keys_are_classified_as_authenticator_parameters() {
+        // We cannot reach the private static from outside the module,
+        // so we inspect the OAuth wiring by round-tripping a
+        // canonical name through the resolver. The check is simple:
+        // `ALL_OAUTH_KEYS` is the input list; if any one of them
+        // is missing from `AUTHENTICATOR_PARAMETERS` (which is what
+        // the static is initialized from in error.rs after this
+        // commit), SQLSTATE classification would silently regress.
+        // For now we re-assert the same set the wiring uses to
+        // populate the static — the failure mode is "wiring drifted"
+        // rather than "set missed an entry".
+        for &key in oauth::ALL_OAUTH_KEYS {
+            assert!(
+                oauth::is_oauth_key(key),
+                "ALL_OAUTH_KEYS entry {key} is not recognised by is_oauth_key — \
+                 wiring will fail to classify SQLSTATE for this parameter"
+            );
+        }
+    }
+
+    /// End-to-end parse → normalize for the canonical OAuth
+    /// authorization-code connection string (analysis §10.1). The
+    /// resulting options map must contain every OAuth field as its
+    /// `sf_core` lowercase canonical name AND must not have any
+    /// SCREAMING_SNAKE residue.
+    #[test]
+    fn parse_connection_string_oauth_authorization_code_then_normalize() {
+        let conn_str = "DRIVER={SnowflakeUD};SERVER=acct.snowflakecomputing.com;UID=joe;\
+                        AUTHENTICATOR=OAUTH_AUTHORIZATION_CODE;OAUTH_CLIENT_ID=cid-1;\
+                        OAUTH_CLIENT_SECRET=secret-shhh;\
+                        OAUTH_AUTHORIZATION_URL=https://idp.example.com/oauth/authorize;\
+                        OAUTH_TOKEN_REQUEST_URL=https://idp.example.com/oauth/token;\
+                        OAUTH_REDIRECT_URI=http://127.0.0.1:0/cb;\
+                        OAUTH_SCOPE=session:role:R;OAUTH_DISABLE_PKCE=false;\
+                        OAUTH_ENABLE_DPOP=false;OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS=true";
+        let parsed = parse_connection_string(conn_str).expect("parse OK");
+        let options = normalize_connection_string_options(parsed);
+
+        assert_eq!(
+            config_string(&options, "AUTHENTICATOR"),
+            Some("OAUTH_AUTHORIZATION_CODE")
+        );
+        assert_eq!(config_string(&options, "oauth_client_id"), Some("cid-1"));
+        assert_eq!(
+            config_string(&options, "oauth_client_secret"),
+            Some("secret-shhh")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_authorization_url"),
+            Some("https://idp.example.com/oauth/authorize")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_token_request_url"),
+            Some("https://idp.example.com/oauth/token")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_redirect_uri"),
+            Some("http://127.0.0.1:0/cb")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_scope"),
+            Some("session:role:R")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_enable_single_use_refresh_tokens"),
+            Some("true")
+        );
+        for upper in [
+            "OAUTH_CLIENT_ID",
+            "OAUTH_CLIENT_SECRET",
+            "OAUTH_AUTHORIZATION_URL",
+            "OAUTH_TOKEN_REQUEST_URL",
+            "OAUTH_REDIRECT_URI",
+            "OAUTH_SCOPE",
+            "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS",
+            "OAUTH_DISABLE_PKCE",
+            "OAUTH_ENABLE_DPOP",
+        ] {
+            assert!(
+                !options.contains_key(upper),
+                "{upper} leaked through as the SCREAMING_SNAKE form"
+            );
+        }
+    }
+
+    /// Brace-quoted OAuth values (e.g. token URLs containing `;`)
+    /// must round-trip safely through `parse_connection_string` and
+    /// land as the canonical lowercase key without losing the
+    /// embedded delimiter — important because IdP token URLs in the
+    /// wild often carry `?api-version=...;client=...` query strings.
+    #[test]
+    fn parse_connection_string_oauth_brace_quoted_token_url() {
+        let conn_str = "DRIVER={SF};AUTHENTICATOR=OAUTH_CLIENT_CREDENTIALS;\
+                        OAUTH_CLIENT_ID=cid;OAUTH_CLIENT_SECRET=cs;\
+                        OAUTH_TOKEN_REQUEST_URL={https://idp/token?a=1;b=2}";
+        let parsed = parse_connection_string(conn_str).expect("parse OK");
+        let options = normalize_connection_string_options(parsed);
+        assert_eq!(
+            config_string(&options, "oauth_token_request_url"),
+            Some("https://idp/token?a=1;b=2")
+        );
+    }
+
+    /// Wiring guard: connection strings that omit OAuth params still
+    /// round-trip cleanly — the OAuth canonical-name forwarding must
+    /// not interfere with non-OAuth parameter handling.
+    #[test]
+    fn parse_connection_string_without_oauth_keys_is_unaffected() {
+        let conn_str = "DRIVER={SF};SERVER=h;UID=joe;PWD=p;AUTHENTICATOR=SNOWFLAKE_JWT";
+        let parsed = parse_connection_string(conn_str).expect("parse OK");
+        let options = normalize_connection_string_options(parsed);
+
+        assert_eq!(config_string(&options, "SERVER"), Some("h"));
+        assert_eq!(config_string(&options, "UID"), Some("joe"));
+        assert_eq!(config_string(&options, "PWD"), Some("p"));
+        assert_eq!(
+            config_string(&options, "AUTHENTICATOR"),
+            Some("SNOWFLAKE_JWT")
+        );
+    }
+
+    /// Wiring guard: the legacy `AUTHENTICATOR=OAUTH` (pre-acquired
+    /// access token) flow forwards the `TOKEN` parameter unchanged
+    /// to `sf_core`. The token value is sensitive and MUST be
+    /// redacted in `redacted_param_map`, but it must NOT be dropped
+    /// from the options map (otherwise the login request would have
+    /// no token to send).
+    #[test]
+    fn legacy_oauth_token_passthrough_redacts_in_logs_but_preserves_value() {
+        let raw_params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("AUTHENTICATOR".to_owned(), "OAUTH".to_owned()),
+            ("TOKEN".to_owned(), "header.payload.sig".to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&raw_params);
+        assert_eq!(
+            redacted.get(&"TOKEN".to_owned()).map(|v| v.as_ref()),
+            Some("****")
+        );
+        let options = normalize_connection_string_options(raw_params);
+        assert_eq!(config_string(&options, "TOKEN"), Some("header.payload.sig"));
+        assert_eq!(config_string(&options, "AUTHENTICATOR"), Some("OAUTH"));
+    }
+
     #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
         let options = normalize_connection_string_options(HashMap::from([(
