@@ -647,9 +647,10 @@ class Connection(ErrorHandlerMixin):
         return cast("int | None", self._connection_info["port"])
 
     @property
+    @backward_compatibility
     def region(self) -> str | None:
         """Deprecated. The region for the Snowflake account."""
-        raise NotImplementedError("region is not implemented")
+        return self.config.region
 
     @property
     def session_id(self) -> int:
