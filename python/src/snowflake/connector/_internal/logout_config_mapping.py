@@ -8,6 +8,7 @@ import warnings
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class LogoutOptionKeys(str, Enum):
@@ -156,3 +157,31 @@ def remap_keep_alive_for_backward_compat(
         )
         return None
     return server_session_keep_alive
+
+
+def logout_config_options_modifier(options: dict[str, Any]) -> dict[str, Any]:
+    """``ConnectionConfig.to_options`` modifier that re-applies legacy LogoutConfig logic.
+
+    The generated :class:`ConnectionConfig` exposes the logout-related fields as
+    plain optional values, so a user-supplied ``server_session_keep_alive=False``
+    would be forwarded verbatim to the Rust core and the Python-only
+    ``best_effort`` / auto-detection defaults would be lost.
+
+    This modifier reconstructs the previous ``Connection._parse_kwargs`` behaviour:
+
+    * Pops ``server_session_keep_alive`` and
+      ``enable_server_session_keep_alive_auto_detection`` from *options*.
+    * Builds a :class:`LogoutConfig`, which:
+        - Defaults ``enable_server_session_keep_alive_auto_detection`` to ``True``
+          (with a ``FutureWarning``) when the user did not provide a value.
+        - Applies the Phase 2 ``False + True → None`` remap for
+          ``server_session_keep_alive`` (with a ``FutureWarning``).
+        - Defaults ``error_strategy`` to ``ErrorStrategy.BEST_EFFORT``.
+    * Merges the resolved values back into *options*.
+
+    Designed to be passed as one of ``options_modifiers`` to
+    :meth:`ConnectionConfig.to_options` / :meth:`ConnectionConfig.to_proto_options`.
+    """
+    config = LogoutConfig.from_kwargs(options)
+    options.update(config.to_option_dict())
+    return options

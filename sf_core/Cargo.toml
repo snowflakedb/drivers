@@ -165,6 +165,10 @@ name = "collect_chunk_data"
 path = "src/bin/collect_chunk_data.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "param_defs_export"
+path = "src/bin/param_defs_export.rs"
+
 [[bench]]
 name = "prefetch_bench"
 harness = false

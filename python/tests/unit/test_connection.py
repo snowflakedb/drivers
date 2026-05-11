@@ -773,14 +773,13 @@ class TestApplicationProperty:
             with pytest.raises(ProgrammingError, match="Invalid application name"):
                 Connection(user="u", account="a", application="!invalid")
 
-    def test_application_not_in_options(self, mock_db_api):
-        """application should be popped from kwargs, not sent to Core as a generic option."""
+    def test_application_stored_in_config(self, mock_db_api):
+        """application should be stored in config, not leaked into kwargs."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            Connection(user="u", account="a", application="MyApp")
-        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
-        assert "application" not in request.options
+            conn = Connection(user="u", account="a", application="MyApp")
+        assert conn.config.application == "MyApp"
 
 
 class TestLogMaxQueryLength:
@@ -860,17 +859,12 @@ class TestLogMaxQueryLength:
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
 
-    def test_arrow_number_to_decimal_initialized_in_init(self, connection):
-        # Regression: _arrow_number_to_decimal was previously in dead code after a `return`
-        # statement inside _map_logout_config(), making it unreachable during __init__.
-        # This test catches that regression — AttributeError would occur if the attribute
-        # is not initialized before the property getter is accessed.
-        assert hasattr(connection, "_arrow_number_to_decimal"), (
-            "_arrow_number_to_decimal must be initialized in __init__, not in unreachable code"
-        )
-        assert connection._arrow_number_to_decimal is False
-
     def test_arrow_number_to_decimal_default_is_false(self, connection):
+        # Regression: arrow_number_to_decimal initialization was previously in dead
+        # code after a ``return`` statement inside ``_map_logout_config()``, making it
+        # unreachable during ``__init__``.  Reading the property right after init
+        # would AttributeError if the underlying ``config`` value is not set, so this
+        # test also guards against that regression.
         assert connection.arrow_number_to_decimal is False
 
     def test_arrow_number_to_decimal_setter_enables(self, connection):

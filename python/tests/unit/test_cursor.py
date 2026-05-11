@@ -1043,7 +1043,13 @@ class TestRownumber:
 
 
 class TestCreateRowIteratorNumpyFlag:
-    """Unit tests for _create_row_iterator passing connection._numpy."""
+    """Unit tests for _create_row_iterator passing ``connection.config.numpy``.
+
+    The numpy flag now lives on :class:`ConnectionConfig` (sourced from
+    ``PARAM_DEFS``); the legacy ``connection._numpy`` attribute has been
+    removed.  Cursors read ``self._connection.config.numpy`` and pass it
+    through to ``create_row_iterator``.
+    """
 
     @pytest.fixture
     def mock_connection(self):
@@ -1052,7 +1058,7 @@ class TestCreateRowIteratorNumpyFlag:
         return conn
 
     def test_passes_numpy_true_from_connection(self, mock_connection):
-        mock_connection._numpy = True
+        mock_connection.config.numpy = True
         cursor = SnowflakeCursor(mock_connection)
         cursor._query_result._stream_ptr = 42
 
@@ -1068,7 +1074,7 @@ class TestCreateRowIteratorNumpyFlag:
         )
 
     def test_passes_numpy_false_from_connection(self, mock_connection):
-        mock_connection._numpy = False
+        mock_connection.config.numpy = False
         cursor = SnowflakeCursor(mock_connection)
         cursor._query_result._stream_ptr = 42
 
