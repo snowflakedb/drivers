@@ -79,8 +79,8 @@ TEST_CASE("Replay: exec_direct_getdata_14col_26rows", "[dtm]") {
     SQLSMALLINT numCols = 0;
     SQLRETURN ret = SQLNumResultCols(stmt0, &numCols);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt0), OdbcMatchers::IsSuccess());
-    // Adapted: current Snowflake returns 22 cols (trace had 23)
-    CHECK(numCols == 22);
+    // Matches the recorded trace: SHOW TABLES returns 23 columns.
+    CHECK(numCols == 23);
   }
 
   // SQLDescribeCol col 1
