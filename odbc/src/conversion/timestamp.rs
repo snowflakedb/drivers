@@ -9,8 +9,9 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, InvalidDatetimeValueSnafu, JsonBindingError,
-    NumericValueOutOfRangeSnafu, UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidCharacterValueForCastSnafu,
+    InvalidDatetimeValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu,
+    UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -617,6 +618,16 @@ fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBin
 // -> datetime without timezone converts to UTC".
 // =============================================================================
 
+/// Static template used in both diagnostics and unit tests, so a future
+/// change to the accepted grammar updates the user-facing message and the
+/// pinning test in lockstep.
+const TZ_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM";
+
+/// Cap a (potentially adversarial / huge) bound string before stashing it on
+/// a diagnostic record. ODBC diagnostic message buffers are bounded and
+/// callers shouldn't be able to blow them up by binding a 1 MB literal.
+const TZ_CHAR_MAX_DIAG_LEN: usize = 64;
+
 /// Read a TIMESTAMP_TZ value from a parameter binding. Captures both the UTC
 /// instant and the offset so `write_timestamp_tz_json` can emit the legacy
 /// two-token wire format.
@@ -628,8 +639,13 @@ fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBin
 /// - `SQL_C_CHAR` / `SQL_C_WCHAR`: parse `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM`;
 ///   if no offset suffix is present, fall back to the offset-less parser and
 ///   treat as UTC (offset = 0). A genuinely unparseable string surfaces as
-///   `UnsupportedCDataType` (mapped to SQLSTATE HY000) so the caller learns
-///   the bind failed instead of silently storing the Unix epoch.
+///   `InvalidCharacterValueForCast` (mapped to SQLSTATE 22018), carrying a
+///   truncated copy of the input plus the expected format so the caller
+///   learns *what* was rejected and *why*. This is distinct from the 07006
+///   ("Restricted data type attribute violation") that signals an
+///   unsupported binding *shape*, and from 22008 ("Datetime field overflow")
+///   that the JSON writer emits when the parsed instant exceeds the
+///   nanosecond epoch range.
 fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, JsonBindingError> {
     match binding.value_type {
         CDataType::Char => {
@@ -654,8 +670,9 @@ fn read_timestamp_tz_odbc(binding: &ParameterBinding) -> Result<TzInstant, JsonB
 }
 
 /// Try `YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM` first, then fall back to the
-/// offset-less formats (treated as UTC). Returns `UnsupportedCDataType` if
-/// neither parse succeeds.
+/// offset-less formats (treated as UTC). Returns
+/// `InvalidCharacterValueForCast` (SQLSTATE 22018) if neither shape parses,
+/// carrying a truncated copy of the input and the expected format template.
 fn parse_tz_string_with_fallback(
     s: &str,
     c_type: CDataType,
@@ -674,13 +691,29 @@ fn parse_tz_string_with_fallback(
             utc,
             offset_minutes: 0,
         })
-        .map_err(|_| UnsupportedCDataTypeSnafu { c_type }.build())
+        .map_err(|_| {
+            InvalidCharacterValueForCastSnafu {
+                c_type,
+                value: s.chars().take(TZ_CHAR_MAX_DIAG_LEN).collect::<String>(),
+                expected_format: TZ_CHAR_EXPECTED_FORMAT,
+            }
+            .build()
+        })
 }
 
 fn write_timestamp_tz_json(value: TzInstant) -> Result<Value, JsonBindingError> {
+    // `timestamp_nanos_opt` returns `None` only when the UTC instant would
+    // overflow `i64` nanoseconds (~year 1677 to year 2262 outside this).
+    // That's exactly what 22008 ("Datetime field overflow") describes per
+    // ODBC Appendix D, so reusing the existing variant is more spec-correct
+    // than the previous `UnsupportedCDataType` catch-all (which would have
+    // surfaced as 07006 "Restricted data type attribute violation").
     let epoch_nanos = value.utc.and_utc().timestamp_nanos_opt().ok_or_else(|| {
-        UnsupportedCDataTypeSnafu {
-            c_type: CDataType::TypeTimestamp,
+        DatetimeFieldOverflowSnafu {
+            reason: format!(
+                "TIMESTAMP_TZ UTC instant {} exceeds the i64 nanosecond epoch range supported by the wire format",
+                value.utc
+            ),
         }
         .build()
     })?;
@@ -1007,5 +1040,131 @@ mod format_timestamp_string_into_tests {
             format_timestamp_string_into(&dt, &mut buf).expect("format_timestamp_string_into"),
             "0001-01-01 00:00:00"
         );
+    }
+}
+
+#[cfg(test)]
+mod parse_tz_string_with_fallback_tests {
+    use super::*;
+    use crate::conversion::error::JsonBindingError;
+
+    #[test]
+    fn unparseable_string_returns_invalid_character_value_for_cast() {
+        // The new error path: a string that matches none of the accepted
+        // formats must surface as `InvalidCharacterValueForCast` so the
+        // outer `to_sql_state` mapping returns 22018, not the previous
+        // 07006 from the catch-all `UnsupportedCDataType`. See PR #1005
+        // review on `timestamp.rs:643`.
+        let err = parse_tz_string_with_fallback("not-a-timestamp", CDataType::Char)
+            .expect_err("garbage input must not parse");
+        match err {
+            JsonBindingError::InvalidCharacterValueForCast {
+                c_type,
+                value,
+                expected_format,
+                ..
+            } => {
+                assert!(matches!(c_type, CDataType::Char));
+                assert_eq!(value, "not-a-timestamp");
+                assert_eq!(expected_format, TZ_CHAR_EXPECTED_FORMAT);
+            }
+            other => panic!("expected InvalidCharacterValueForCast, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn long_input_is_truncated_in_diagnostic() {
+        // Diagnostic-record buffers are bounded; pin the truncation
+        // contract so an adversarial caller can't blow them up by binding
+        // a megabyte literal. The expected format is static, so we only
+        // need to assert on `value.len()` here.
+        let huge = "x".repeat(1024);
+        let err = parse_tz_string_with_fallback(&huge, CDataType::WChar)
+            .expect_err("garbage input must not parse");
+        match err {
+            JsonBindingError::InvalidCharacterValueForCast { value, .. } => {
+                assert_eq!(
+                    value.len(),
+                    TZ_CHAR_MAX_DIAG_LEN,
+                    "diagnostic value must be truncated to TZ_CHAR_MAX_DIAG_LEN"
+                );
+            }
+            other => panic!("expected InvalidCharacterValueForCast, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn offset_suffix_parses_and_preserves_offset() {
+        // Sanity check that the happy path still works alongside the new
+        // error path -- a valid `+05:30` suffix yields the right
+        // `offset_minutes` and the offset-applied UTC instant.
+        let ti = parse_tz_string_with_fallback("2024-03-15 14:30:45 +05:30", CDataType::Char)
+            .expect("valid TZ string parses");
+        assert_eq!(ti.offset_minutes, 5 * 60 + 30);
+        // 14:30 +05:30 -> 09:00 UTC
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-03-15 09:00:45"
+        );
+    }
+
+    #[test]
+    fn offsetless_input_falls_back_to_utc() {
+        // Backward-compat path: a string with no offset suffix is treated
+        // as UTC. A regression that flipped this to a parse failure would
+        // break every legacy app that binds a naive timestamp string to a
+        // TZ column.
+        let ti = parse_tz_string_with_fallback("2024-03-15 14:30:45", CDataType::Char)
+            .expect("offset-less input must parse as UTC");
+        assert_eq!(ti.offset_minutes, 0);
+        assert_eq!(
+            ti.utc.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2024-03-15 14:30:45"
+        );
+    }
+}
+
+#[cfg(test)]
+mod write_timestamp_tz_json_tests {
+    use super::*;
+
+    #[test]
+    fn out_of_range_instant_returns_datetime_field_overflow() {
+        // `chrono::NaiveDateTime::and_utc().timestamp_nanos_opt()` returns
+        // `None` outside roughly 1677-09-21..2262-04-11 because it can't
+        // fit in `i64` nanoseconds. This must surface as 22008 (Datetime
+        // field overflow), not the previous 07006 from the catch-all
+        // `UnsupportedCDataType`. See PR #1005 review on `timestamp.rs:643`.
+        let out_of_range = NaiveDate::from_ymd_opt(9999, 12, 31)
+            .and_then(|d| d.and_hms_opt(23, 59, 59))
+            .expect("constant inputs");
+        let err = write_timestamp_tz_json(TzInstant {
+            utc: out_of_range,
+            offset_minutes: 0,
+        })
+        .expect_err("year 9999 cannot fit in i64 nanoseconds");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn in_range_instant_emits_two_token_wire_format() {
+        // Sanity check that the happy path still works -- the format is
+        // `<epoch_ns> <offset_minutes + 1440>`. A regression that reorders
+        // tokens or drops the bias would be caught by this unit test
+        // before it hit the wire.
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .and_then(|d| d.and_hms_opt(9, 0, 45))
+            .expect("constant inputs");
+        let v = write_timestamp_tz_json(TzInstant {
+            utc: dt,
+            offset_minutes: 5 * 60 + 30,
+        })
+        .expect("in-range UTC instant serialises");
+        // 2024-03-15T09:00:45 UTC == 1710493245 epoch seconds == 1710493245000000000 ns.
+        // 330 + 1440 = 1770.
+        assert_eq!(v, Value::String("1710493245000000000 1770".to_string()));
     }
 }
