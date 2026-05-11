@@ -31,6 +31,7 @@ from ._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
 )
+from ._internal.oauth import SENSITIVE_OAUTH_KWARGS
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
@@ -194,8 +195,20 @@ class Connection(ErrorHandlerMixin):
 
         self._connect()
 
-        self._session_parameters = SessionParametersProxy(self.conn_handle)
-        self._connection_info = ConnectionInfoProxy(self.conn_handle)
+        self._session_parameters = SessionParametersProxy(self.db_api, self.conn_handle)
+        self._connection_info = ConnectionInfoProxy(self.db_api, self.conn_handle)
+
+        # OAuth secrets (`oauth_client_secret`, `token`) join the legacy
+        # password/private-key family so the public `Connection.kwargs` view
+        # never echoes a credential — see analysis_feature_oauth.md §11.
+        _sensitive_keys = {
+            "password",
+            "private_key",
+            "passcode",
+            "private_key_password",
+            "private_key_file_pwd",
+        } | SENSITIVE_OAUTH_KWARGS
+        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
 
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
