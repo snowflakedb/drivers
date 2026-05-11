@@ -52,7 +52,13 @@ pipeline {
                       sh label: 'Rust Core VPN E2E tests', script: '''
                         set +x
                         export PARAMETER_PATH=$(pwd)/parameters.json
-                        cargo test --package sf_core -- --ignored
+                        # Run only VPN-gated tests. By convention (see sf_core/README.md)
+                        # tests that require VPN access to a preprod account are marked
+                        # `#[ignore]` AND named with a `vpn_` prefix. The positional name
+                        # filter below excludes other ignored tests (e.g. stress benches,
+                        # parked feature E2Es) that share the `#[ignore]` attribute but
+                        # are not meant to run here.
+                        cargo test --package sf_core -- --ignored vpn_
                       '''
                     } finally {
                       sh label: 'Cleanup test PATs', script: '''
