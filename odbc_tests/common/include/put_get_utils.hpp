@@ -34,6 +34,12 @@ static constexpr int PUT_ROW_ENCRYPTION_IDX = 8;
 static constexpr int PUT_ROW_MESSAGE_IDX = 9;
 static constexpr int PUT_ROW_NUM_COLS = 9;
 
+// Literal emitted in the PUT result's `message` column when the upload
+// outcome is SKIPPED (overwrite=false + file exists). Mirrors
+// `ODBC_PUT_MESSAGE_SKIPPED` in `sf_core::apis::database_driver_v1` and the
+// legacy libsnowflakeclient `MESSAGE_SKIPPED` macro.
+inline constexpr auto PUT_ROW_MESSAGE_SKIPPED = "File with same name already exists. SKIPPED";
+
 // Indices for GET output rowset
 static constexpr int GET_ROW_FILE_IDX = 1;
 static constexpr int GET_ROW_SIZE_IDX = 2;

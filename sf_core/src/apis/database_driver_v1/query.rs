@@ -39,11 +39,12 @@ const ODBC_GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
 pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
+    wrapper_presets: &WrapperPresets,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     match command {
         "UPLOAD" => {
             let file_upload_data = data
-                .to_file_upload_data()
+                .to_file_upload_data(wrapper_presets.put_get_resultset_flavor.clone())
                 .context(FileTransferPreparationSnafu)?;
             let upload_results = upload_files(&file_upload_data)
                 .await

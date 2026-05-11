@@ -2,7 +2,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -116,6 +115,7 @@ TEST_CASE("should return correct rowset for PUT", "[put_get]") {
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == "UPLOADED");
 
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_ENCRYPTION_IDX) == "ENCRYPTED");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX).empty());
 }
 
 TEST_CASE("should return correct rowset for GET", "[put_get]") {

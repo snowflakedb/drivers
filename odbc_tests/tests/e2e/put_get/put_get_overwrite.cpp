@@ -3,8 +3,6 @@
 #include <fstream>
 #include <random>
 #include <string>
-#include <tuple>
-#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -73,10 +71,12 @@ TEST_CASE("should not overwrite file when OVERWRITE is set to false", "[put_get]
   auto stmt_update = conn.execute_fetch("PUT 'file://" + as_file_uri(updated) + "' @" + stage + " OVERWRITE=FALSE");
   std::string src_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_SOURCE_IDX);
   std::string status_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_STATUS_IDX);
+  std::string message_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_MESSAGE_IDX);
 
   // Then SKIPPED status is returned
   CHECK(src_update == expected_put_source(updated));
   CHECK(status_update == "SKIPPED");
+  CHECK(message_update == PUT_ROW_MESSAGE_SKIPPED);
 
   // And File was not overwritten
   auto stmt_check = conn.execute_fetch("SELECT $1, $2, $3 FROM @" + stage);

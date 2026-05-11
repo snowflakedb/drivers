@@ -330,7 +330,7 @@ impl DatabaseDriverV1 {
         }
 
         let rowset_data = match data.command.as_deref() {
-            Some(command) => perform_put_get_transfer(command, &data)
+            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets)
                 .await
                 .context(QueryResponseProcessingSnafu)?,
             None => data.into_rowset_data(),
@@ -425,7 +425,7 @@ impl DatabaseDriverV1 {
         }
 
         let rowset_data = match data.command.as_deref() {
-            Some(command) => perform_put_get_transfer(command, &data)
+            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets)
                 .await
                 .context(QueryResponseProcessingSnafu)?,
             None => data.into_rowset_data(),
