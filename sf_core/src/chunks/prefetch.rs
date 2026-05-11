@@ -31,6 +31,7 @@ pub trait ParseChunk: Send + Sync + Clone + 'static {
 /// the bytes back to the budget. Initial (inline) batches use an empty ticket.
 struct Chunk {
     batches: VecDeque<RecordBatch>,
+    #[allow(dead_code)]
     ticket: MemoryTicket,
 }
 
