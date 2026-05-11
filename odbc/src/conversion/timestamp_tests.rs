@@ -540,44 +540,63 @@ mod tests {
         }
     }
 
-    /// LTZ JSON encoding must produce a wall-clock literal string (not the
-    /// epoch-nanoseconds integer that NTZ/TZ use). The server then parses
-    /// the string in the active session timezone, so a downstream
-    /// non-UTC-session test sees the correctly-shifted instant. See PR
-    /// #1004 review on `param_binding.rs:245` for the bug this guards
-    /// against.
+    /// LTZ JSON encoding must produce a wall-clock literal string with the
+    /// **process-local** TZ offset appended, matching the legacy 3.16.0
+    /// driver's `BindUploader::convertTimestampFormat`. The server rejects
+    /// bare wall-clock strings for LTZ (SQLSTATE 22000: "Invalid bind value
+    /// (...) for type (TIMESTAMP_LTZ)"), so the offset suffix is required.
+    ///
+    /// Process-local TZ varies across machines so we compute the expected
+    /// offset suffix from `chrono::Local` rather than hard-coding it.
     #[test]
-    fn ltz_write_json_emits_wall_clock_literal_string() {
+    fn ltz_write_json_emits_wall_clock_literal_with_local_offset() {
         use crate::conversion::traits::WriteJson;
-        use chrono::NaiveDate;
+        use chrono::{Local, NaiveDate, Offset, TimeZone};
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_nano_opt(14, 30, 45, 123_456_789))
             .expect("constant inputs");
         let v = ltz(9).write_json(dt).expect("write_json");
-        assert_eq!(
-            v,
-            serde_json::Value::String("2024-03-15 14:30:45.123456789".to_string()),
-            "LTZ must emit a wall-clock literal string so the server applies session TZ"
-        );
+
+        let offset = Local
+            .offset_from_utc_datetime(&dt)
+            .fix()
+            .local_minus_utc();
+        let total_minutes = offset / 60;
+        let sign = if total_minutes < 0 { '-' } else { '+' };
+        let abs_minutes = total_minutes.unsigned_abs();
+        let hh = abs_minutes / 60;
+        let mm = abs_minutes % 60;
+        let expected = format!("2024-03-15 14:30:45.123456789 {sign}{hh:02}:{mm:02}");
+
+        assert_eq!(v, serde_json::Value::String(expected));
     }
 
     /// Whole-second LTZ values must omit the fractional part entirely
     /// (matching legacy 3.16.0 and the existing fetch-side
     /// `format_timestamp_string_into` behaviour). Round-tripping a stored
     /// instant must not gain a `.000000000` suffix the application never
-    /// emitted.
+    /// emitted. Offset suffix is still required (LTZ wire contract).
     #[test]
-    fn ltz_write_json_omits_zero_nanos() {
+    fn ltz_write_json_omits_zero_nanos_keeps_offset() {
         use crate::conversion::traits::WriteJson;
-        use chrono::NaiveDate;
+        use chrono::{Local, NaiveDate, Offset, TimeZone};
         let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
             .and_then(|d| d.and_hms_opt(14, 30, 45))
             .expect("constant inputs");
         let v = ltz(9).write_json(dt).expect("write_json");
-        assert_eq!(
-            v,
-            serde_json::Value::String("2024-03-15 14:30:45".to_string())
-        );
+
+        let offset = Local
+            .offset_from_utc_datetime(&dt)
+            .fix()
+            .local_minus_utc();
+        let total_minutes = offset / 60;
+        let sign = if total_minutes < 0 { '-' } else { '+' };
+        let abs_minutes = total_minutes.unsigned_abs();
+        let hh = abs_minutes / 60;
+        let mm = abs_minutes % 60;
+        let expected = format!("2024-03-15 14:30:45 {sign}{hh:02}:{mm:02}");
+
+        assert_eq!(v, serde_json::Value::String(expected));
     }
 
     /// NTZ must keep emitting epoch-nanoseconds (the existing wire format).

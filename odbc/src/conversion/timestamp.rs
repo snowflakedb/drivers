@@ -2,7 +2,7 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
 
@@ -522,12 +522,7 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
 /// Treating the value as already-UTC is correct for TIMESTAMP_NTZ (where the
 /// server stores the bytes verbatim with no TZ interpretation) and for
 /// TIMESTAMP_TZ (which carries its own offset alongside this instant). It is
-/// **wrong** for TIMESTAMP_LTZ: legacy 3.16.0 sends a wall-clock literal
-/// string and lets the server parse it in the session timezone, so an LTZ
-/// bind of `2024-03-15 14:30:45` with `TIMEZONE='America/Los_Angeles'`
-/// stores the instant `2024-03-15T21:30:45Z`. Encoding LTZ as epoch_ns
-/// would store `2024-03-15T14:30:45Z` and silently misrepresent the
-/// wall-clock the application bound. See `write_timestamp_json_wallclock`
+/// **wrong** for TIMESTAMP_LTZ — see `write_timestamp_json_wallclock_with_local_offset`
 /// below for the LTZ path.
 fn write_timestamp_json_epoch_nanos(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
     let epoch_nanos = value.and_utc().timestamp_nanos_opt().ok_or_else(|| {
@@ -539,26 +534,61 @@ fn write_timestamp_json_epoch_nanos(value: NaiveDateTime) -> Result<Value, JsonB
     Ok(Value::String(epoch_nanos.to_string()))
 }
 
-/// Encode a `NaiveDateTime` as a wall-clock literal string for TIMESTAMP_LTZ
-/// binds. Format is `"YYYY-MM-DD HH:MM:SS"` with up to nine fractional
-/// digits appended after a `.`, matching the legacy 3.16.0 driver. The
-/// server then parses the string in the active session timezone, so an
-/// application that binds `2024-03-15 14:30:45` with
-/// `TIMEZONE='America/Los_Angeles'` stores the instant
-/// `2024-03-15T21:30:45Z` -- the wall-clock the user actually meant.
+/// Encode a `NaiveDateTime` as a wall-clock literal string with the
+/// process-local timezone offset appended, for TIMESTAMP_LTZ binds.
 ///
-/// Reuses the same `format_timestamp_string_into` helper that the fetch-side
-/// CHAR conversion uses, so format correctness (year padding, fractional
-/// trimming, buffer-overflow protection) is shared.
-fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
+/// Mirrors the legacy 3.16.0 driver
+/// (`Snowflake-odbc/Source/Platform/BindUploader.cpp::convertTimestampFormat`),
+/// which:
+///   1. Treats the bound `SQL_TIMESTAMP_STRUCT` as a wall-clock value.
+///   2. Computes the **process-local** TZ offset for that instant via
+///      `localtime`/`tm_gmtoff` (NOT the Snowflake session timezone).
+///   3. Appends the offset as `" +HH:MM"` / `" -HH:MM"`.
+///
+/// The server then parses the string as a fully-qualified UTC instant
+/// (`stored_utc = bound_wall_clock - process_local_offset`) and stores it
+/// for TIMESTAMP_LTZ. Re-displayed in the session timezone, the value will
+/// match the bound wall-clock exactly when `session TZ == process TZ` (the
+/// common case where a user runs e.g. `snowsql` on a Mac with the session
+/// TZ set to their local timezone). When the two differ, the displayed
+/// wall-clock is shifted by `(session_offset - process_offset)`.
+///
+/// Note: this is **not** "wall-clock interpreted in the session timezone".
+/// LTZ semantics on the bind side are anchored to the **process** TZ, not
+/// the session TZ. This matches every released Snowflake driver.
+///
+/// For DST gap times (`MappedLocalTime::None`) and ambiguous fall-back
+/// times (`MappedLocalTime::Ambiguous`), we pick the offset of the *UTC*
+/// instant that the bound wall-clock would correspond to if reinterpreted
+/// as UTC, which is what `chrono::Local.offset_from_utc_datetime(...)`
+/// returns. This mirrors the C `localtime(seconds_treated_as_utc)` call in
+/// the old driver and is deterministic across all inputs.
+fn write_timestamp_json_wallclock_with_local_offset(
+    value: NaiveDateTime,
+) -> Result<Value, JsonBindingError> {
     let mut buf = [0u8; 48];
-    match format_timestamp_string_into(&value, &mut buf) {
-        Ok(s) => Ok(Value::String(s.to_string())),
-        Err(_) => UnsupportedCDataTypeSnafu {
+    let wall_clock = format_timestamp_string_into(&value, &mut buf).map_err(|_| {
+        UnsupportedCDataTypeSnafu {
             c_type: CDataType::TypeTimestamp,
         }
-        .fail(),
-    }
+        .build()
+    })?;
+
+    // Match the C++ semantics: treat the bound wall-clock seconds AS-IF UTC,
+    // then ask the local TZ what its offset is at that UTC instant.
+    let offset = Local
+        .offset_from_utc_datetime(&value)
+        .fix()
+        .local_minus_utc();
+    let total_minutes = offset / 60;
+    let sign = if total_minutes < 0 { '-' } else { '+' };
+    let abs_minutes = total_minutes.unsigned_abs();
+    let hh = abs_minutes / 60;
+    let mm = abs_minutes % 60;
+
+    Ok(Value::String(format!(
+        "{wall_clock} {sign}{hh:02}:{mm:02}"
+    )))
 }
 
 // =============================================================================
@@ -569,10 +599,11 @@ fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBin
 //     TZ uses `read_struct_timestamp_tz` which needs `self.scale`).
 //   - The `SnowflakeLogicalType` returned by `sf_type()`.
 //   - The wire-format encoding in `write_json` (NTZ/TZ use epoch nanoseconds;
-//     LTZ uses a wall-clock literal string -- see
-//     `write_timestamp_json_wallclock` for why). The `ltz_wallclock_string`
-//     arm therefore intentionally skips the macro's `WriteJson` generation
-//     and the LTZ `WriteJson` impl is written by hand below.
+//     LTZ uses a wall-clock literal string with the process-local TZ offset
+//     appended -- see `write_timestamp_json_wallclock_with_local_offset` for
+//     why). The `ltz_wallclock_string` arm therefore intentionally skips the
+//     macro's `WriteJson` generation and the LTZ `WriteJson` impl is written
+//     by hand below.
 // =============================================================================
 
 macro_rules! impl_snowflake_timestamp {
@@ -711,16 +742,18 @@ pub(crate) struct SnowflakeTimestampLtz {
 impl_snowflake_timestamp!(SnowflakeTimestampLtz, ltz_wallclock_string);
 
 // LTZ-specific JSON encoder. Unlike NTZ/TZ (which encode as epoch_ns and let
-// the server take it verbatim), LTZ must emit a wall-clock literal string so
-// the server interprets it in the active session timezone -- matching the
-// legacy 3.16.0 driver's TIMESTAMP_LTZ binding semantics. See PR #1004
-// review on `param_binding.rs:245`.
+// the server take it verbatim), LTZ emits a wall-clock literal string with
+// the **process-local** TZ offset appended, matching the legacy 3.16.0
+// driver's `BindUploader::convertTimestampFormat`. The Snowflake server
+// rejects bare wall-clock strings for LTZ-typed binds (SQLSTATE 22000:
+// "Invalid bind value (...) for type (TIMESTAMP_LTZ)"); the offset suffix
+// is required.
 impl WriteJson for SnowflakeTimestampLtz {
     fn write_json(
         &self,
         value: <Self as SnowflakeType>::Representation<'_>,
     ) -> Result<Value, JsonBindingError> {
-        write_timestamp_json_wallclock(value)
+        write_timestamp_json_wallclock_with_local_offset(value)
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

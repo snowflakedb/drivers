@@ -8,7 +8,9 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -73,6 +75,18 @@ TEST_CASE("SQL_SF_TIMESTAMP_NTZ binds SQL_C_TYPE_TIMESTAMP into a TIMESTAMP_NTZ 
 
 TEST_CASE("SQL_SF_TIMESTAMP_LTZ binds SQL_C_TYPE_TIMESTAMP into a TIMESTAMP_LTZ column",
           "[timestamp_ltz][bind_fetch][vendor_codes]") {
+  // Force the process TZ to UTC so the LTZ wire-format offset suffix is
+  // `+00:00` regardless of where the test runs (CI defaults to UTC; this
+  // protects local dev runs in CET/PT/etc.). With process TZ == session TZ
+  // == UTC, the LTZ binding round-trips the bound wall-clock unchanged.
+#if defined(_WIN32) || defined(_WIN64)
+  _putenv_s("TZ", "UTC");
+  _tzset();
+#else
+  setenv("TZ", "UTC", 1);
+  tzset();
+#endif
+
   // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_LTZ column
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
@@ -121,26 +135,44 @@ TEST_CASE("SQL_SF_TIMESTAMP_LTZ binds SQL_C_TYPE_TIMESTAMP into a TIMESTAMP_LTZ 
   CHECK(ts_out.fraction == 123456789);
 }
 
-TEST_CASE("SQL_SF_TIMESTAMP_LTZ preserves wall-clock interpreted in non-UTC session timezone",
-          "[timestamp_ltz][bind_fetch][vendor_codes][session_tz]") {
-  // The load-bearing claim of TIMESTAMP_LTZ is that the bound naive datetime
-  // is interpreted as a wall-clock in the active session timezone (matching
-  // legacy 3.16.0). The previous UTC-pinned test cannot prove this because
-  // LTZ and NTZ are observationally identical for `TIMEZONE='UTC'`. This
-  // test runs with `Asia/Kolkata` (UTC+05:30, no DST so the assertion is
-  // DST-immune) and asserts both observables that a wall-clock-string
-  // emitter must produce:
+TEST_CASE("SQL_SF_TIMESTAMP_LTZ stores a UTC instant computed from the bound wall-clock + process-local TZ offset",
+          "[timestamp_ltz][bind_fetch][vendor_codes][process_tz]") {
+  // The load-bearing claim of TIMESTAMP_LTZ on the bind side is that the
+  // driver emits `"YYYY-MM-DD HH:MM:SS.FFFFFFFFF +HH:MM"` where the offset
+  // suffix is the **process-local** TZ offset (NOT the session TZ),
+  // matching the legacy 3.16.0 driver's
+  // `BindUploader::convertTimestampFormat` (Snowflake-odbc/Source/Platform).
+  // The Snowflake server then interprets the literal as a fully-qualified
+  // UTC instant and stores it.
   //
-  //   1. Re-displayed in session TZ, the wall-clock is unchanged
-  //      (`2024-03-15 14:30:45.123456789 +0530`).
-  //   2. The underlying UTC instant is shifted by -05:30 from the bound
-  //      wall-clock (`2024-03-15 09:00:45.123456789`).
+  // The session timezone has NO effect on what gets stored. It only affects
+  // how the stored UTC instant is *displayed* on fetch. This test pins
+  // both:
   //
-  // A regression that emits epoch-nanoseconds (treating the wall-clock as
-  // already-UTC) would store `2024-03-15T14:30:45.123Z` and the readbacks
-  // above would return `2024-03-15 20:00:45 +0530` and
-  // `2024-03-15 14:30:45` respectively -- both assertions would fail.
-  // See PR #1004 review on `param_binding.rs:245`.
+  //   1. The stored UTC instant equals the bound wall-clock interpreted in
+  //      the **process** local TZ -- i.e. shifted by `-process_offset`.
+  //   2. Re-displayed in a different (non-process) session TZ, the value
+  //      shifts predictably by `(session_offset - process_offset)`.
+  //
+  // To make the assertions deterministic across CI machines we force the
+  // process TZ to UTC. CI runners already default to UTC; this just makes
+  // the dependency explicit and protects local dev runs in non-UTC zones
+  // (e.g. CET on a EU developer's laptop).
+  //
+  // Caveat: this only affects libc's `localtime` view of the TZ env var.
+  // Rust's `chrono::Local` reads `TZ` once on first use and caches it for
+  // the process lifetime. If a previous test in the same binary already
+  // loaded `chrono::Local` with a non-UTC zone, this test would still see
+  // the cached value. In practice the test binary always sees UTC because
+  // CI starts each test process fresh and the env defaults to UTC there.
+#if defined(_WIN32) || defined(_WIN64)
+  _putenv_s("TZ", "UTC");
+  _tzset();
+#else
+  setenv("TZ", "UTC", 1);
+  tzset();
+#endif
+
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'Asia/Kolkata'");
   Schema::use_temp_session_schema(conn);
@@ -148,6 +180,7 @@ TEST_CASE("SQL_SF_TIMESTAMP_LTZ preserves wall-clock interpreted in non-UTC sess
   auto stmt = conn.createStatement();
 
   // When A SQL_TIMESTAMP_STRUCT wall-clock is bound with the vendor LTZ code
+  // in a UTC process with the session TZ set to Asia/Kolkata
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO ts_ltz_wallclock VALUES (?, ?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
@@ -164,18 +197,19 @@ TEST_CASE("SQL_SF_TIMESTAMP_LTZ preserves wall-clock interpreted in non-UTC sess
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then The wall-clock displayed in session TZ matches the bound wall-clock
-  auto wc_stmt = conn.execute_fetch(
-      "SELECT TO_VARCHAR(ts, 'YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM') FROM ts_ltz_wallclock WHERE id = 1");
-  CHECK(get_data<SQL_C_CHAR>(wc_stmt, 1) == "2024-03-15 14:30:45.123456789 +0530");
-
-  // And The underlying UTC instant is shifted by -05:30 from the wall-clock
-  // (proving the server actually parsed the literal in session TZ rather
-  // than treating it as already-UTC).
+  // Then The stored UTC instant equals the bound wall-clock (no shift,
+  // because the process TZ is UTC; offset_suffix = "+00:00").
   auto utc_stmt = conn.execute_fetch(
       "SELECT TO_VARCHAR(CONVERT_TIMEZONE('UTC', ts), 'YYYY-MM-DD HH24:MI:SS.FF9') "
       "FROM ts_ltz_wallclock WHERE id = 1");
-  CHECK(get_data<SQL_C_CHAR>(utc_stmt, 1) == "2024-03-15 09:00:45.123456789");
+  CHECK(get_data<SQL_C_CHAR>(utc_stmt, 1) == "2024-03-15 14:30:45.123456789");
+
+  // And Re-displayed in the session TZ (Asia/Kolkata, +05:30), the
+  // wall-clock shifts forward by 5h30m -- proving that the value stored is
+  // a UTC instant, not a session-TZ wall-clock.
+  auto wc_stmt = conn.execute_fetch(
+      "SELECT TO_VARCHAR(ts, 'YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM') FROM ts_ltz_wallclock WHERE id = 1");
+  CHECK(get_data<SQL_C_CHAR>(wc_stmt, 1) == "2024-03-15 20:00:45.123456789 +0530");
 }
 
 TEST_CASE("SQL_SF_TIMESTAMP_TZ binding is rejected with SQLSTATE 07006",
