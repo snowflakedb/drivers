@@ -600,11 +600,20 @@ jobs:
 
       - name: Run flaky tests
         working-directory: python
+        # Exit code 5 means "no tests collected" — expected when no tests are
+        # currently marked @pytest.mark.flaky. Treat it as success.
         run: |
           mkdir -p reports
+          set +e
           hatch run test.py3.13:flaky \
             --json-report --json-report-file=reports/flaky-${{ env.MATRIX_KEY }}.json \
             --junitxml=reports/flaky-${{ env.MATRIX_KEY }}.xml
+          status=$?
+          if [[ $status -eq 5 ]]; then
+            echo "::notice::No tests marked @pytest.mark.flaky — skipping."
+            exit 0
+          fi
+          exit $status
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
