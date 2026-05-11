@@ -306,13 +306,16 @@ TEST_CASE("SQL_SF_TIMESTAMP_TZ binds SQL_C_CHAR with offset suffix and round-tri
   // above only proves the UTC instant is right, which a buggy
   // implementation that always emitted `offset=0` (and let the server
   // derive UTC from session-TZ shenanigans) would also satisfy. Pinning
-  // the formatted readback here closes that gap end-to-end -- a
-  // regression that drops the offset on the wire reverts to
-  // `2024-03-15 09:00:45 +00:00` and fails this assertion. See PR #1005
-  // review on `timestamp_vendor_bindparam.cpp:223`.
-  auto str_stmt = conn.execute_fetch(
-      "SELECT TO_VARCHAR(ts, 'YYYY-MM-DD HH24:MI:SS TZH:TZM') FROM ts_tz_char_bind WHERE id = 1");
-  CHECK(get_data<SQL_C_CHAR>(str_stmt, 1) == "2024-03-15 09:00:45 +05:30");
+  // the formatted readback here closes that gap end-to-end: with the
+  // offset preserved on the wire, `TO_VARCHAR(..., 'TZH:TZM')` shows the
+  // wall-clock interpreted *in the stored offset* (= the original bind
+  // input) plus the offset annotation. A regression that drops the
+  // offset on the wire instead surfaces as `2024-03-15 09:00:45 +00:00`
+  // (UTC instant + zeroed offset) and fails this assertion. See PR
+  // #1005 review on `timestamp_vendor_bindparam.cpp:223`.
+  auto str_stmt =
+      conn.execute_fetch("SELECT TO_VARCHAR(ts, 'YYYY-MM-DD HH24:MI:SS TZH:TZM') FROM ts_tz_char_bind WHERE id = 1");
+  CHECK(get_data<SQL_C_CHAR>(str_stmt, 1) == "2024-03-15 14:30:45 +05:30");
 }
 
 TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with vendor codes",

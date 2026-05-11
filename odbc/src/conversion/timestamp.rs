@@ -861,7 +861,11 @@ pub(crate) struct SnowflakeTimestampNtz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(SnowflakeTimestampNtz, standard, SnowflakeLogicalType::TimestampNtz);
+impl_snowflake_timestamp!(
+    SnowflakeTimestampNtz,
+    standard,
+    SnowflakeLogicalType::TimestampNtz
+);
 
 pub(crate) struct SnowflakeTimestampLtz {
     pub(crate) scale: u32,
