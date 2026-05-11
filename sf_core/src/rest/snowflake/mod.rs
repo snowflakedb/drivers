@@ -7,6 +7,13 @@ pub mod heartbeat;
 pub mod logout;
 mod native_okta;
 mod oauth;
+
+/// Suppress the OS browser launcher used by the OAuth Authorization
+/// Code flow. Test-only re-export of [`oauth::disable_browser_launch_for_tests`]
+/// so integration tests in `sf_core/tests/` can opt-out without
+/// reaching into the private `oauth` module.
+#[cfg(any(test, feature = "test-utils"))]
+pub use oauth::disable_browser_launch_for_tests;
 pub mod query_request;
 pub mod query_response;
 pub mod sql_state;

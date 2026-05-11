@@ -123,9 +123,27 @@ pub(crate) struct AcquiredOAuthToken {
 /// deterministic driver that pokes the loopback directly.
 type BrowserLaunchFn = Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
+/// Process-wide kill switch for the real OS browser launcher.
+///
+/// Defaults to `false` (production behavior). Integration tests that
+/// drive the AC flow against a wiremock IdP — and which would otherwise
+/// spawn the OS browser against a localhost mock URL — must flip this
+/// to `true` via [`super::set_browser_launch_disabled`] before the first
+/// `acquire_authorization_code` call.
+pub(super) static BROWSER_LAUNCH_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn default_browser_launch() -> BrowserLaunchFn {
     Box::new(|authorize_url, _redirect_uri| {
         Box::pin(async move {
+            if BROWSER_LAUNCH_DISABLED.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::debug!(
+                    authority = %authorize_url.authority(),
+                    path = %authorize_url.path(),
+                    "Browser launch suppressed by test kill switch"
+                );
+                return;
+            }
             tracing::debug!(
                 authority = %authorize_url.authority(),
                 path = %authorize_url.path(),
