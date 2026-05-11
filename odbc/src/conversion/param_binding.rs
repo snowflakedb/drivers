@@ -1851,7 +1851,15 @@ mod tests {
     }
 
     #[test]
-    fn ltz_vendor_code_routes_to_timestamp_ltz_logical_type() -> TestResult {
+    fn ltz_vendor_code_routes_to_text_logical_type() -> TestResult {
+        // The legacy 3.16.0 driver
+        // (`Snowflake-odbc/Source/DataEngine/SFQueryExecutor.cpp:613-618`) tags
+        // every `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` bind as `TEXT` and lets the
+        // server's column-type coercion parse the wall-clock string into the
+        // destination logical type. Sending `type=TIMESTAMP_LTZ` with a string
+        // value is rejected by the server with SQLSTATE 22000 ("Invalid bind
+        // value (...) for type (TIMESTAMP_LTZ)"). This test pins the wire
+        // contract.
         let ts = sql::Timestamp {
             year: 2024,
             month: 6,
@@ -1869,7 +1877,7 @@ mod tests {
             std::ptr::null_mut(),
         );
         let (ty, _) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::TimestampLtz);
+        assert_eq!(ty, SnowflakeLogicalType::Text);
         Ok(())
     }
 

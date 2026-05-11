@@ -557,10 +557,7 @@ mod tests {
             .expect("constant inputs");
         let v = ltz(9).write_json(dt).expect("write_json");
 
-        let offset = Local
-            .offset_from_utc_datetime(&dt)
-            .fix()
-            .local_minus_utc();
+        let offset = Local.offset_from_utc_datetime(&dt).fix().local_minus_utc();
         let total_minutes = offset / 60;
         let sign = if total_minutes < 0 { '-' } else { '+' };
         let abs_minutes = total_minutes.unsigned_abs();
@@ -585,10 +582,7 @@ mod tests {
             .expect("constant inputs");
         let v = ltz(9).write_json(dt).expect("write_json");
 
-        let offset = Local
-            .offset_from_utc_datetime(&dt)
-            .fix()
-            .local_minus_utc();
+        let offset = Local.offset_from_utc_datetime(&dt).fix().local_minus_utc();
         let total_minutes = offset / 60;
         let sign = if total_minutes < 0 { '-' } else { '+' };
         let abs_minutes = total_minutes.unsigned_abs();

@@ -2,7 +2,9 @@ use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
-use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike};
+use chrono::{
+    DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike,
+};
 use odbc_sys as sql;
 use serde_json::Value;
 
@@ -586,9 +588,7 @@ fn write_timestamp_json_wallclock_with_local_offset(
     let hh = abs_minutes / 60;
     let mm = abs_minutes % 60;
 
-    Ok(Value::String(format!(
-        "{wall_clock} {sign}{hh:02}:{mm:02}"
-    )))
+    Ok(Value::String(format!("{wall_clock} {sign}{hh:02}:{mm:02}")))
 }
 
 // =============================================================================
@@ -741,13 +741,22 @@ pub(crate) struct SnowflakeTimestampLtz {
 
 impl_snowflake_timestamp!(SnowflakeTimestampLtz, ltz_wallclock_string);
 
-// LTZ-specific JSON encoder. Unlike NTZ/TZ (which encode as epoch_ns and let
-// the server take it verbatim), LTZ emits a wall-clock literal string with
-// the **process-local** TZ offset appended, matching the legacy 3.16.0
-// driver's `BindUploader::convertTimestampFormat`. The Snowflake server
-// rejects bare wall-clock strings for LTZ-typed binds (SQLSTATE 22000:
-// "Invalid bind value (...) for type (TIMESTAMP_LTZ)"); the offset suffix
-// is required.
+// LTZ-specific JSON encoder. Unlike NTZ/TZ (which encode as epoch_ns and
+// let the server take it verbatim), LTZ emits a wall-clock literal string
+// with the **process-local** TZ offset appended, matching the legacy 3.16.0
+// driver's `BindUploader::convertTimestampFormat`.
+//
+// The wire `type` is `TEXT`, NOT `TIMESTAMP_LTZ`. This mirrors the legacy
+// 3.16.0 driver's
+// `Snowflake-odbc/Source/DataEngine/SFQueryExecutor.cpp:613-618` which
+// tags every `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` bind as `TEXT` (with the
+// comment: "Maintain the existing behavior to treat the timestamp as wall
+// clock time and attach the session offset in the server when binding").
+// The Snowflake server then coerces the text into the destination
+// column's logical type. Sending `type=TIMESTAMP_LTZ` with a string value
+// is rejected by the server with SQLSTATE 22000 "Invalid bind value (...)
+// for type (TIMESTAMP_LTZ)", which is what made every LTZ e2e test fail
+// across all platforms before this fix.
 impl WriteJson for SnowflakeTimestampLtz {
     fn write_json(
         &self,
@@ -757,7 +766,7 @@ impl WriteJson for SnowflakeTimestampLtz {
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {
-        SnowflakeLogicalType::TimestampLtz
+        SnowflakeLogicalType::Text
     }
 }
 
