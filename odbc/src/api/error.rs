@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
+    api::{InfoType, SqlState, diagnostic::DiagnosticRecord, oauth},
     conversion::error::JsonBindingError,
     conversion::{ConversionError, error::WriteOdbcError},
 };
@@ -469,6 +469,12 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set.insert("AUTHENTICATOR".to_string());
     set.insert("USER".to_string());
     set.insert("PASSWORD".to_string());
+    // Pull every recognised OAuth DSN key from the OAuth helper so a
+    // future addition to `oauth::ALL_OAUTH_KEYS` automatically updates
+    // the set used for SQLSTATE classification of auth-time errors.
+    for &k in oauth::ALL_OAUTH_KEYS {
+        set.insert(k.to_string());
+    }
     set
 });
 

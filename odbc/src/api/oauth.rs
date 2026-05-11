@@ -16,6 +16,11 @@
 //! * never persist OAuth secrets to the DSN registry,
 //! * redact OAuth secrets from logs.
 //!
+//! The wrapper composes its connection-string-level redaction list
+//! ([`SENSITIVE_LOGGING_KEYS`]) from both the legacy PWD-style secrets
+//! and the OAuth secret list so [`redacted_param_map`] is the single
+//! place to update when a new sensitive key joins either family.
+//!
 //! The key list mirrors `analysis_feature_oauth.md` §9 (configuration
 //! matrix) and matches the `param_registry` aliases in
 //! `sf_core::config::param_registry`. All ODBC keys here are the
@@ -227,6 +232,56 @@ pub fn should_persist_to_dsn(key: &str) -> bool {
     !is_sensitive_oauth_key(key)
 }
 
+/// Combined list of connection-string keys that must be redacted at
+/// the wrapper's logging boundary (`connect_with_params`). It joins
+/// the legacy PWD-style secrets recognised by the ODBC layer with the
+/// OAuth secret list, so adding a new sensitive OAuth key in
+/// [`SENSITIVE_OAUTH_KEYS`] automatically flows through to log
+/// redaction without touching `connection.rs`.
+pub const SENSITIVE_LOGGING_KEYS: &[&str] = &[
+    // Pre-OAuth keys: kept here verbatim so the wrapper has a single
+    // grep target for "things that must never appear in logs".
+    "PWD",
+    "PRIV_KEY_FILE_PWD",
+    "PRIV_KEY_PWD",
+    "PRIV_KEY_BASE64",
+    "PASSCODE",
+    // OAuth keys (OAUTH_CLIENT_SECRET + TOKEN). TOKEN was already in
+    // the legacy redaction list; routing it through the OAuth list
+    // keeps the source of truth in one place.
+    OAUTH_CLIENT_SECRET,
+    TOKEN,
+];
+
+/// Returns a borrowed view of `params` with the value of every
+/// sensitive key (OAuth secrets + legacy PWD-style secrets) replaced
+/// by `"****"`. Non-sensitive entries borrow their value from
+/// `params`; redacted entries use the static `"****"` placeholder, so
+/// no allocation is performed in either branch.
+///
+/// Use this at every connection-string logging boundary so OAuth
+/// client secrets and access tokens never reach `tracing` sinks.
+/// Centralising the policy here means future additions to
+/// [`SENSITIVE_LOGGING_KEYS`] update every call site automatically.
+pub fn redacted_param_map(
+    params: &std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<&String, std::borrow::Cow<'_, str>> {
+    params
+        .iter()
+        .map(|(k, v)| {
+            let is_sensitive = SENSITIVE_LOGGING_KEYS
+                .iter()
+                .any(|r| k.eq_ignore_ascii_case(r));
+            let value: std::borrow::Cow<'_, str> = if is_sensitive {
+                std::borrow::Cow::Borrowed("****")
+            } else {
+                std::borrow::Cow::Borrowed(v.as_str())
+            };
+            (k, value)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +374,68 @@ mod tests {
         assert!(should_persist_to_dsn("OAUTH_REDIRECT_URI"));
         assert!(should_persist_to_dsn("OAUTH_SCOPE"));
         assert!(should_persist_to_dsn("UID"));
+    }
+
+    #[test]
+    fn redacted_param_map_redacts_legacy_and_oauth_secrets() {
+        use std::collections::HashMap;
+        let params: HashMap<String, String> = [
+            ("UID", "joe"),
+            ("PWD", "hunter2"),
+            ("PRIV_KEY_FILE_PWD", "kpwd"),
+            ("PRIV_KEY_PWD", "kpwd2"),
+            ("PRIV_KEY_BASE64", "AAA="),
+            ("PASSCODE", "123456"),
+            ("OAUTH_CLIENT_ID", "abc"),
+            ("OAUTH_CLIENT_SECRET", "shhh"),
+            ("TOKEN", "jwt.value"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+
+        let redacted = redacted_param_map(&params);
+
+        assert_eq!(
+            redacted.get(&"UID".to_owned()).map(|v| v.as_ref()),
+            Some("joe")
+        );
+        assert_eq!(
+            redacted
+                .get(&"OAUTH_CLIENT_ID".to_owned())
+                .map(|v| v.as_ref()),
+            Some("abc")
+        );
+        for sensitive in SENSITIVE_LOGGING_KEYS {
+            let key = sensitive.to_string();
+            assert_eq!(
+                redacted.get(&key).map(|v| v.as_ref()),
+                Some("****"),
+                "expected key {sensitive} to be redacted"
+            );
+        }
+    }
+
+    #[test]
+    fn redacted_param_map_redaction_is_case_insensitive() {
+        use std::collections::HashMap;
+        let params: HashMap<String, String> = [
+            ("oauth_client_secret", "shhh"),
+            ("Pwd", "hunter2"),
+            ("token", "jwt.value"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+
+        let redacted = redacted_param_map(&params);
+        for k in params.keys() {
+            assert_eq!(
+                redacted.get(k).map(|v| v.as_ref()),
+                Some("****"),
+                "expected key {k} to be redacted regardless of case"
+            );
+        }
     }
 
     #[test]

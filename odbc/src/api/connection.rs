@@ -10,6 +10,7 @@ use crate::api::error::{
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu,
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
+use crate::api::oauth;
 use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
@@ -65,6 +66,14 @@ fn normalize_connection_string_option(
     let upper = key.to_ascii_uppercase();
     if upper == "DRIVER" {
         return None;
+    }
+
+    // Forward known OAuth keys with their explicit `sf_core` canonical
+    // (lowercase) name instead of relying on the catch-all uppercase
+    // passthrough + alias resolution. Owning the mapping here keeps the
+    // OAuth surface self-documenting on the wrapper side.
+    if let Some(canonical) = oauth::canonical_name(&upper) {
+        return Some((canonical.to_owned(), value.into()));
     }
 
     match upper.as_str() {
@@ -207,25 +216,10 @@ fn connect_with_params(
     connection_handle: sql::Handle,
     params: HashMap<String, String>,
 ) -> OdbcResult<()> {
-    {
-        const REDACTED_KEYS: &[&str] = &[
-            "PWD",
-            "TOKEN",
-            "PRIV_KEY_FILE_PWD",
-            "PRIV_KEY_PWD",
-            "PRIV_KEY_BASE64",
-            "PASSCODE",
-        ];
-        let redacted_map: HashMap<&String, &str> = params
-            .iter()
-            .map(|(k, v)| {
-                let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
-                let v = if is_sensitive { "****" } else { v.as_str() };
-                (k, v)
-            })
-            .collect();
-        tracing::info!("connect_with_params: params={:?}", redacted_map);
-    }
+    tracing::info!(
+        "connect_with_params: params={:?}",
+        oauth::redacted_param_map(&params)
+    );
 
     let mut options = normalize_connection_string_options(params);
     if let Some(config_setting::Value::StringValue(raw_port)) = options
@@ -1370,6 +1364,63 @@ mod tests {
             Some("true")
         );
         assert!(!options.contains_key("CLIENT_STORE_TEMPORARY_CREDENTIAL"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_forwards_oauth_keys_with_canonical_names() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("OAUTH_CLIENT_ID".to_owned(), "client-123".to_owned()),
+            ("OAUTH_CLIENT_SECRET".to_owned(), "shhh".to_owned()),
+            (
+                "OAUTH_REDIRECT_URI".to_owned(),
+                "http://127.0.0.1:0".to_owned(),
+            ),
+            ("oauth_scope".to_owned(), "session:role:R".to_owned()),
+        ]));
+
+        // OAuth keys must be forwarded with their lowercase `sf_core`
+        // canonical name (not the original SCREAMING_SNAKE form).
+        assert_eq!(
+            config_string(&options, "oauth_client_id"),
+            Some("client-123")
+        );
+        assert_eq!(config_string(&options, "oauth_client_secret"), Some("shhh"));
+        assert_eq!(
+            config_string(&options, "oauth_redirect_uri"),
+            Some("http://127.0.0.1:0")
+        );
+        assert_eq!(
+            config_string(&options, "oauth_scope"),
+            Some("session:role:R")
+        );
+        for upper in [
+            "OAUTH_CLIENT_ID",
+            "OAUTH_CLIENT_SECRET",
+            "OAUTH_REDIRECT_URI",
+            "OAUTH_SCOPE",
+        ] {
+            assert!(
+                !options.contains_key(upper),
+                "{upper} must not be forwarded as the uppercase passthrough form"
+            );
+        }
+    }
+
+    #[test]
+    fn redacted_param_map_hides_oauth_client_secret_in_logs() {
+        // Wiring guard: the connection-string log line must never
+        // expose the OAUTH_CLIENT_SECRET value, regardless of the
+        // case the caller used.
+        let params = HashMap::from([
+            ("UID".to_owned(), "joe".to_owned()),
+            ("oauth_client_secret".to_owned(), "do-not-log".to_owned()),
+        ]);
+        let redacted = oauth::redacted_param_map(&params);
+        let rendered = format!("{redacted:?}");
+        assert!(
+            !rendered.contains("do-not-log"),
+            "redacted param map leaked the OAuth client secret: {rendered}"
+        );
     }
 
     #[test]
