@@ -26,9 +26,12 @@
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH:TZM",
           "[timestamp_tz][conversion][c_char][output_format]") {
-  SKIP_OLD_DRIVER("BD#000",
-                  "New driver opts into legacy `TZH:TZM`-aware TZ rendering only when the session "
-                  "format is set; legacy driver's behaviour for the same format is what we mirror");
+  // Run against both drivers. The new driver's behaviour mirrors the
+  // legacy 3.16.0 driver's rendering for the same `TZH:TZM` format
+  // string, so this serves as a parity assertion. If legacy diverges in
+  // CI we file a real BD entry documenting the gap and gate the case;
+  // until then, asserting parity catches accidental regressions on
+  // either side.
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -67,7 +70,8 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZHTZM",
           "[timestamp_tz][conversion][c_char][output_format]") {
-  SKIP_OLD_DRIVER("BD#000", "New driver opts into TZHTZM-aware TZ rendering only when the session format is set");
+  // Parity assertion against the legacy 3.16.0 driver -- see the
+  // sibling TZH:TZM TEST_CASE for rationale.
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -81,7 +85,8 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH:TZM",
           "[timestamp_tz][conversion][c_wchar][output_format]") {
-  SKIP_OLD_DRIVER("BD#000", "New driver opts into TZH:TZM-aware TZ rendering only when the session format is set");
+  // Parity assertion against the legacy 3.16.0 driver -- see the
+  // sibling TZH:TZM SQL_C_CHAR TEST_CASE for rationale.
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -99,4 +104,65 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZ
   std::u16string expected = u"2024-01-15 14:30:45 +05:30";
   std::u16string actual(reinterpret_cast<const char16_t*>(buffer), expected.size());
   CHECK(actual == expected);
+}
+
+TEST_CASE(
+    "TIMESTAMP_TZ_OUTPUT_FORMAT changes mid-connection take effect on the next execute",
+    "[timestamp_tz][conversion][c_char][output_format][per_execute_reread]") {
+  // The load-bearing claim of the per-execute sequential RPC in
+  // `update_numeric_settings` is that `ALTER SESSION SET / UNSET
+  // TIMESTAMP_TZ_OUTPUT_FORMAT` mid-connection takes effect on the next
+  // statement. Each of the other TEST_CASEs in this file does exactly
+  // one ALTER followed by one fetch -- a connection-time-only read
+  // would pass them identically, leaving the entire RPC cost
+  // unverified. This case toggles the format three times within one
+  // connection and asserts each fetch reflects the latest setting,
+  // including the UNSET path back to bare UTC. See PR #1068 review on
+  // `timestamp_tz_output_format.cpp:36`.
+  // Given Snowflake client is logged in
+  Connection conn;
+  const char* select = "SELECT '2024-01-15 14:30:45 +05:30'::TIMESTAMP_TZ";
+
+  // When TIMESTAMP_TZ_OUTPUT_FORMAT is toggled (set / re-set / unset) within one connection
+  // Then each subsequent execute reflects the latest setting
+
+  // Phase 1: no format set -> bare UTC wall-clock, no offset suffix.
+  // The `+05:30` of the source literal is converted to the equivalent
+  // UTC instant (09:00:45) and rendered without offset.
+  {
+    INFO("phase 1: no TIMESTAMP_TZ_OUTPUT_FORMAT -> bare UTC");
+    auto bare = check_char_success(conn.execute_fetch(select), 1);
+    CHECK(bare == "2024-01-15 09:00:45");
+  }
+
+  // Phase 2: SET to TZH:TZM -> next fetch must show `+HH:MM`. If
+  // `update_numeric_settings` only read at connect-time we'd still see
+  // bare UTC here.
+  {
+    INFO("phase 2: SET TZH:TZM -> +HH:MM suffix on next fetch");
+    conn.execute("ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'");
+    auto colon = check_char_success(conn.execute_fetch(select), 1);
+    CHECK(colon == "2024-01-15 14:30:45 +05:30");
+  }
+
+  // Phase 3: SET to TZHTZM -> next fetch must flip to `+HHMM`. Pins
+  // the per-execute reread again with a *different* token so a
+  // connection-time-only cache that happened to land on TZH:TZM
+  // wouldn't pass.
+  {
+    INFO("phase 3: SET TZHTZM -> +HHMM suffix on next fetch");
+    conn.execute("ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZHTZM'");
+    auto no_colon = check_char_success(conn.execute_fetch(select), 1);
+    CHECK(no_colon == "2024-01-15 14:30:45 +0530");
+  }
+
+  // Phase 4: UNSET -> revert to bare UTC. A driver that cached the
+  // last non-empty value and never re-checked would still emit the
+  // offset here.
+  {
+    INFO("phase 4: UNSET -> revert to bare UTC");
+    conn.execute("ALTER SESSION UNSET TIMESTAMP_TZ_OUTPUT_FORMAT");
+    auto bare_again = check_char_success(conn.execute_fetch(select), 1);
+    CHECK(bare_again == "2024-01-15 09:00:45");
+  }
 }

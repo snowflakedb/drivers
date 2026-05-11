@@ -919,6 +919,86 @@ mod tests {
         assert_eq!(parse_tz_offset_format("any string with TZ but no H"), None);
     }
 
+    /// Pin the substring-vs.-token boundary fix from PR #1068 review on
+    /// `timestamp.rs:70`. The previous implementation used
+    /// `String::contains`, which false-fired on every input below.
+    /// Toggling wire-format bytes on a literal substring is a
+    /// correctness bug: a customer who wrote a comment containing the
+    /// letters `TZH` would silently get an offset suffix on every TZ
+    /// fetch.
+    #[test]
+    fn parse_tz_offset_format_ignores_double_quoted_literals() {
+        // Snowflake `"..."` literal text must not activate the
+        // tokenizer. The literal is stripped before matching so even an
+        // exact `TZH` between quotes is invisible to the match.
+        assert_eq!(
+            parse_tz_offset_format("\"comment with TZH\" YYYY-MM-DD"),
+            None
+        );
+        assert_eq!(
+            parse_tz_offset_format("\"server-side TZH note: \" YYYY-MM-DD HH24:MI:SS"),
+            None,
+            "TZH inside a double-quoted literal must not activate HourOnly"
+        );
+        // But a real TZH token *outside* the literal still wins.
+        assert_eq!(
+            parse_tz_offset_format("\"comment\" YYYY-MM-DD TZH"),
+            Some(TzOffsetFormat::HourOnly)
+        );
+    }
+
+    #[test]
+    fn parse_tz_offset_format_rejects_alphanumeric_substrings() {
+        // Alphanumeric tokens longer than the documented variants must
+        // not match the bare `TZH` arm. Whole-token equality is the
+        // only safe rule: `TZHACK` could plausibly be a Snowflake
+        // pre-release token in the future, and silently rendering it as
+        // `+HH` would be a wire-format regression.
+        assert_eq!(parse_tz_offset_format("TZHACK"), None);
+        assert_eq!(parse_tz_offset_format("TZHELP"), None);
+        assert_eq!(parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS TZHIRD"), None);
+        assert_eq!(parse_tz_offset_format("literal_TZH_marker"), None);
+        // Underscore is treated as part of the surrounding token, so
+        // `_TZH_` is one identifier-shaped token (not three). This
+        // matches the spirit of Snowflake format strings, where `_` is
+        // a literal char rather than a token separator. A future
+        // tokenizer tweak that flips `_` back to a separator would
+        // re-introduce the false-positive class.
+        assert_eq!(parse_tz_offset_format("prefix_TZH_suffix"), None);
+    }
+
+    #[test]
+    fn parse_tz_offset_format_picks_longest_token_when_mixed() {
+        // `TZH:TZM TZHTZM` mixes both colon and no-colon variants. The
+        // colon variant is matched first and wins, mirroring the
+        // longest-match-wins rule documented on `parse_tz_offset_format`.
+        assert_eq!(
+            parse_tz_offset_format("TZH:TZM TZHTZM"),
+            Some(TzOffsetFormat::Colon)
+        );
+    }
+
+    #[test]
+    fn parse_tz_offset_format_colon_check_is_boundary_anchored() {
+        // `XTZH:TZMX` is a hypothetical user format that contains the
+        // colon-token sequence as a literal substring of two longer
+        // alphanumeric tokens. Per the boundary rule it must not match,
+        // because neither `TZH` nor `TZM` is a whole token.
+        assert_eq!(parse_tz_offset_format("XTZH:TZMX"), None);
+    }
+
+    #[test]
+    fn parse_tz_offset_format_unrecognised_tz_tokens_return_none() {
+        // Snowflake additionally accepts `TZHM` (compact 4-char) and
+        // bare `TZM`. The driver doesn't currently render these, so
+        // they fall through to bare UTC. The implementation emits a
+        // `tracing::warn!` for the fall-through (verified by reading
+        // the source -- testing the warning macro itself is a separate
+        // concern handled by tracing's own subscriber tests).
+        assert_eq!(parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS TZHM"), None);
+        assert_eq!(parse_tz_offset_format("YYYY-MM-DD HH24:MI:SS TZM"), None);
+    }
+
     #[test]
     fn write_tz_char_with_colon_format_emits_local_wall_clock_and_offset() {
         // 09:00:45 UTC with offset +05:30 = 14:30:45 local. The format is
@@ -1033,21 +1113,48 @@ mod tests {
     }
 
     #[test]
-    fn write_tz_char_with_format_buffer_too_small_returns_22003() {
-        // 25-byte buffer cannot hold `YYYY-MM-DD HH:MM:SS +HH:MM` (26 chars).
-        // The driver must report numeric out-of-range rather than silently
-        // truncating the offset off the end.
+    fn write_tz_char_with_format_buffer_too_small_truncates_with_warning() {
+        // A 25-byte buffer cannot hold `YYYY-MM-DD HH:MM:SS +HH:MM` (26
+        // chars). Per ODBC spec for `SQLGetData` / `SQLFetch` the driver
+        // must NOT pre-emptively reject with 22003 ("Numeric value out
+        // of range") -- that's reserved for numeric overflow. The
+        // correct behaviour is 01004 ("String data, right truncation")
+        // with `SQL_SUCCESS_WITH_INFO`: write `buffer_length-1` bytes,
+        // NUL-terminate, and set the indicator to the full untruncated
+        // length so the application can resize and reissue. See PR
+        // #1068 review on `timestamp.rs:993`.
+        //
+        // We assert with `matches!` against the exact `Warning` variant
+        // rather than the previous `format!("{err:?}").contains(...)`,
+        // which silently breaks on any rename. The test name and
+        // assertion together pin the spec contract: undersized CHAR
+        // buffer -> `StringDataTruncated` warning -> 01004 SQLSTATE on
+        // the outer `SQLGetData` call.
+        use crate::conversion::warning::Warning;
         let sn = tz_with_format(0, TzOffsetFormat::Colon);
         let mut buffer = [0u8; 25];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
-        let err = sn
+        let warnings = sn
             .write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
-            .unwrap_err();
+            .expect("undersized buffer must succeed-with-info, not fail");
         assert!(
-            format!("{err:?}").contains("Buffer too small"),
-            "expected `Buffer too small` error, got {err:?}"
+            warnings.iter().any(|w| matches!(w, Warning::StringDataTruncated)),
+            "expected StringDataTruncated warning on undersized CHAR buffer, got {warnings:?}"
         );
+        // Indicator must report the full untruncated length (26) so the
+        // application knows how big to resize.
+        assert_eq!(str_len, 26);
+        // And the buffer must be NUL-terminated at position
+        // `buffer_length - 1` per the ODBC C-string contract; the first
+        // 24 bytes must be the prefix of the rendered value.
+        assert_eq!(buffer[24], 0);
+        // The renderer applies the +330-minute offset to the UTC
+        // instant, so the rendered local wall-clock is 14:30:45, not
+        // the 09:00:45 UTC the test passed in. The 25-byte buffer fits
+        // 24 visible bytes + NUL, hence the truncation point lands
+        // mid-`+05:30`.
+        assert_eq!(&buffer[..24], b"2024-01-15 14:30:45 +05:");
     }
 
     #[test]
