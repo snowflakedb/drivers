@@ -1,4 +1,5 @@
 use crate::api::CDataType;
+use crate::api::TimestampSubtype;
 use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu,
@@ -664,6 +665,19 @@ pub fn bind_parameter(
     let sql_type = SqlType::try_from(raw_parameter_type)?;
     let parameter_type: sql::SqlDataType = sql_type.into();
 
+    // Normalise Snowflake vendor timestamp codes (2000/2001/2002) to the
+    // standard SQL_TYPE_TIMESTAMP (93) on the IPD, while remembering the
+    // chosen subtype on `sf_subtype`. Keeps `SQLDescribeParam` and
+    // `SQLGetDescField(IPD, SQL_DESC_TYPE)` returning spec-mandated codes
+    // while still letting the bind pipeline route to the right Snowflake
+    // logical type.
+    let sf_subtype = TimestampSubtype::from_parameter_type(parameter_type);
+    let stored_sql_data_type = if sf_subtype.is_some() {
+        sql::SqlDataType::TIMESTAMP
+    } else {
+        parameter_type
+    };
+
     if direction == ParamDirection::Input
         && parameter_value_ptr.is_null()
         && str_len_or_ind_ptr.is_null()
@@ -709,10 +723,11 @@ pub fn bind_parameter(
     inner.ipd.records.insert(
         parameter_number,
         IpdRecord {
-            sql_data_type: parameter_type,
+            sql_data_type: stored_sql_data_type,
             column_size,
             decimal_digits,
             direction: raw_input_output_type,
+            sf_subtype,
             ..IpdRecord::default()
         },
     );
