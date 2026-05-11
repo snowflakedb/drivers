@@ -165,6 +165,68 @@ pub fn is_oauth_authenticator(auth: &str) -> bool {
     .any(|v| auth.eq_ignore_ascii_case(v))
 }
 
+/// Lookup table mapping ODBC OAuth keys to their `sf_core` canonical
+/// (lowercase) name used by `param_registry`. The table is intentionally
+/// the identity map (lowercase form of the same key) for every entry —
+/// the wrapper exposes this function so callers don't have to re-derive
+/// it from each key, and so a future divergence between the ODBC key
+/// and the `sf_core` canonical name has a single place to land.
+const OAUTH_CANONICAL_NAMES: &[(&str, &str)] = &[
+    (OAUTH_CLIENT_ID, "oauth_client_id"),
+    (OAUTH_CLIENT_SECRET, "oauth_client_secret"),
+    (OAUTH_AUTHORIZATION_URL, "oauth_authorization_url"),
+    (OAUTH_TOKEN_REQUEST_URL, "oauth_token_request_url"),
+    (OAUTH_REDIRECT_URI, "oauth_redirect_uri"),
+    (OAUTH_SCOPE, "oauth_scope"),
+    (
+        OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS,
+        "oauth_enable_single_use_refresh_tokens",
+    ),
+    (OAUTH_DISABLE_PKCE, "oauth_disable_pkce"),
+    (OAUTH_ENABLE_DPOP, "oauth_enable_dpop"),
+    (OAUTH_DISABLE_CONSOLE_LOGIN, "oauth_disable_console_login"),
+];
+
+/// Returns the `sf_core` canonical (lowercase) parameter name for a
+/// known ODBC OAuth key, or `None` when `key` is not an OAuth key.
+///
+/// Case-insensitive in the input. Used by the connection-string
+/// normalizer to forward OAuth keys with explicit canonical names —
+/// avoiding any reliance on `sf_core`'s alias-resolution fallback for
+/// the OAuth surface, which keeps this layer self-documenting.
+pub fn canonical_name(key: &str) -> Option<&'static str> {
+    OAUTH_CANONICAL_NAMES
+        .iter()
+        .find(|(odbc_key, _)| key.eq_ignore_ascii_case(odbc_key))
+        .map(|(_, canonical)| *canonical)
+}
+
+/// Returns `value` unchanged when `key` is not sensitive, or `"****"`
+/// when `key` is an OAuth secret (analysis §11). The returned string
+/// is borrowed from `value` or is the static `"****"` placeholder, so
+/// no allocation is performed in either branch.
+///
+/// Use this when emitting connection-string parameter maps to logs.
+/// Does **not** redact non-OAuth secrets such as `PWD` /
+/// `PRIV_KEY_FILE_PWD`; callers compose this with their own redaction
+/// list.
+pub fn redact_value<'a>(key: &str, value: &'a str) -> &'a str {
+    if is_sensitive_oauth_key(key) {
+        "****"
+    } else {
+        value
+    }
+}
+
+/// Returns `false` when `key` is an OAuth secret that must never
+/// reach the on-disk DSN registry (analysis §11 / §14 #11). Returns
+/// `true` for all non-secret OAuth keys and for any non-OAuth key
+/// (callers compose this with their own DSN-skip rules for `PWD`,
+/// `DSN`, etc.).
+pub fn should_persist_to_dsn(key: &str) -> bool {
+    !is_sensitive_oauth_key(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +265,60 @@ mod tests {
         assert!(!is_oauth_authenticator("SNOWFLAKE_JWT"));
         assert!(!is_oauth_authenticator("PROGRAMMATIC_ACCESS_TOKEN"));
         assert!(!is_oauth_authenticator(""));
+    }
+
+    #[test]
+    fn canonical_name_maps_known_keys_case_insensitively() {
+        assert_eq!(canonical_name("OAUTH_CLIENT_ID"), Some("oauth_client_id"));
+        assert_eq!(canonical_name("oauth_client_id"), Some("oauth_client_id"));
+        assert_eq!(
+            canonical_name("OAuth_Client_Secret"),
+            Some("oauth_client_secret")
+        );
+        assert_eq!(
+            canonical_name("OAUTH_REDIRECT_URI"),
+            Some("oauth_redirect_uri")
+        );
+        assert_eq!(
+            canonical_name("OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS"),
+            Some("oauth_enable_single_use_refresh_tokens")
+        );
+        assert_eq!(canonical_name("UID"), None);
+        assert_eq!(canonical_name(""), None);
+    }
+
+    #[test]
+    fn canonical_name_covers_every_all_oauth_keys_entry() {
+        // Belt-and-braces: any OAuth key in ALL_OAUTH_KEYS must have
+        // a canonical name; otherwise the wrapper would silently drop
+        // it through the connection-string passthrough fallback.
+        for &k in ALL_OAUTH_KEYS {
+            assert!(
+                canonical_name(k).is_some(),
+                "missing canonical name for {k}"
+            );
+        }
+    }
+
+    #[test]
+    fn redact_value_replaces_secrets_with_stars() {
+        assert_eq!(redact_value("OAUTH_CLIENT_SECRET", "shhh"), "****");
+        assert_eq!(redact_value("oauth_client_secret", "shhh"), "****");
+        assert_eq!(redact_value("TOKEN", "abc.def.ghi"), "****");
+        assert_eq!(redact_value("OAUTH_CLIENT_ID", "client-123"), "client-123");
+        assert_eq!(redact_value("UID", "joe"), "joe");
+        assert_eq!(redact_value("OAUTH_CLIENT_SECRET", ""), "****");
+    }
+
+    #[test]
+    fn should_persist_to_dsn_returns_false_only_for_secrets() {
+        assert!(!should_persist_to_dsn("OAUTH_CLIENT_SECRET"));
+        assert!(!should_persist_to_dsn("oauth_client_secret"));
+        assert!(!should_persist_to_dsn("TOKEN"));
+        assert!(should_persist_to_dsn("OAUTH_CLIENT_ID"));
+        assert!(should_persist_to_dsn("OAUTH_REDIRECT_URI"));
+        assert!(should_persist_to_dsn("OAUTH_SCOPE"));
+        assert!(should_persist_to_dsn("UID"));
     }
 
     #[test]
