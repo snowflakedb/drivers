@@ -153,6 +153,9 @@ class ConnectionConfig:
     """Whether to verify the server hostname in TLS. Default: True"""
 
     # -- Session parameters --------------------------------------------------
+    client_prefetch_threads: int | None = 4
+    """Number of concurrent chunk prefetch threads for result set downloading. Default: 4"""
+
     database: str | None = None
     """Default database to use"""
 
@@ -230,6 +233,7 @@ class ConnectionConfig:
     """Lowercased alias -> Python field name."""
 
     _PYTHON_TO_RUST_NAME: ClassVar[dict[str, str]] = {
+        "client_prefetch_threads": "CLIENT_PREFETCH_THREADS",
         "passcode_in_password": "passcodeInPassword",
     }
     """Python field name -> Rust canonical name (only for names that differ)."""
@@ -269,6 +273,7 @@ class ConnectionConfig:
             "auto_cleanup",
             "autocommit",
             "client_app_id",
+            "client_prefetch_threads",
             "client_store_temporary_credential",
             "connection_name",
             "connections_file_path",

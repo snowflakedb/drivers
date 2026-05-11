@@ -22,9 +22,20 @@ fn py_type(vt: ValueType) -> &'static str {
 }
 
 /// Convert a canonical name to a Python-friendly snake_case identifier.
-/// Most canonical names are already snake_case; the exception is
-/// `passcodeInPassword` which becomes `passcode_in_password`.
+/// Most canonical names are already snake_case. Supports two other forms:
+///
+/// * camelCase (e.g. `passcodeInPassword`) — a `_` is inserted before each
+///   internal uppercase letter, then the whole string is lowercased.
+/// * SCREAMING_SNAKE_CASE (e.g. `CLIENT_PREFETCH_THREADS`) — already has
+///   underscores, so it's simply lowercased.
 fn to_python_field(canonical: &str) -> String {
+    // Names that already use underscores (snake_case or SCREAMING_SNAKE_CASE)
+    // just need lowercasing. Splitting every uppercase letter would turn
+    // `CLIENT_PREFETCH_THREADS` into `c_l_i_e_n_t__p_r_e_f_e_t_c_h__...`.
+    if canonical.contains('_') {
+        return canonical.to_ascii_lowercase();
+    }
+
     let mut result = String::with_capacity(canonical.len() + 4);
     for (i, ch) in canonical.chars().enumerate() {
         if ch.is_ascii_uppercase() && i > 0 {
@@ -174,12 +185,15 @@ for an example modifier that re-applies legacy ``LogoutConfig`` semantics.
         // Canonical name itself as an alias (lowercased)
         let canonical_lower = p.canonical_name.to_ascii_lowercase();
         if canonical_lower != py_field {
-            alias_entries.push((canonical_lower, py_field.clone()));
+            alias_entries.push((canonical_lower.clone(), py_field.clone()));
         }
 
         for alias in p.aliases {
             let alias_lower = alias.to_ascii_lowercase();
-            if alias_lower != py_field {
+            // Skip aliases that already match the python field (identical name)
+            // or the canonical's lowercase (already emitted above) to avoid
+            // duplicate dict keys in the generated ``_ALIAS_MAP``.
+            if alias_lower != py_field && alias_lower != canonical_lower {
                 alias_entries.push((alias_lower, py_field.clone()));
             }
         }
