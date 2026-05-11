@@ -26,18 +26,22 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{OptionExt, ResultExt};
 
 pub const DEFAULT_PREFETCH_THREADS: usize = 4;
+pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 1536;
 
 /// Configuration for the chunk prefetch pipeline.
 #[derive(Debug, Clone)]
 pub struct PrefetchConfig {
     /// Number of concurrent chunk download+parse tasks.
     pub prefetch_threads: usize,
+    /// Memory budget in bytes for buffered chunks. 0 means unlimited.
+    pub memory_limit_bytes: u64,
 }
 
 impl Default for PrefetchConfig {
     fn default() -> Self {
         Self {
             prefetch_threads: DEFAULT_PREFETCH_THREADS,
+            memory_limit_bytes: DEFAULT_MEMORY_LIMIT_MB * 1024 * 1024,
         }
     }
 }
@@ -59,7 +63,7 @@ pub async fn json_prefetch_reader(
         chunk_download_data.into(),
         downloader,
         parser,
-        config.prefetch_threads,
+        config,
     )
     .await
 }
@@ -89,7 +93,7 @@ pub async fn arrow_prefetch_reader(
         chunk_download_data,
         downloader,
         parser,
-        config.prefetch_threads,
+        config,
     )
     .await
 }
@@ -138,6 +142,11 @@ impl ChunkDownloadData {
             compressed_size: chunk.compressed_size,
             headers: chunk_headers.clone(),
         }
+    }
+
+    pub fn estimated_memory_bytes(&self) -> u64 {
+        const OVERHEAD_MULTIPLIER: u64 = 2;
+        (self.uncompressed_size.max(0) as u64) * OVERHEAD_MULTIPLIER
     }
 }
 

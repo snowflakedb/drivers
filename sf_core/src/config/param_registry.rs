@@ -100,6 +100,7 @@ pub mod param_names {
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
+    pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -852,6 +853,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Int(4)),
         sensitive: false,
         description: "Number of concurrent chunk prefetch threads for result set downloading",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_MEMORY_LIMIT.as_str(),
+        aliases: &["CLIENT_MEMORY_LIMIT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(1536)),
+        sensitive: false,
+        description: "Memory budget in MB for chunk prefetch buffer (0 = unlimited)",
         deprecated_by: None,
         scope: ParamScope::Session,
         used_at_connect: false,

@@ -820,19 +820,22 @@ fn put_get_columns(
     }
 }
 
-/// Read the `CLIENT_PREFETCH_THREADS` session parameter from the connection
+/// Read prefetch-related session parameters from the connection
 /// and build a [`PrefetchConfig`].
 async fn resolve_prefetch_config(conn: &Arc<Mutex<Connection>>) -> PrefetchConfig {
     let conn_guard = conn.lock().await;
-    let threads = conn_guard
-        .session_parameters
-        .read()
-        .await
+    let session_params = conn_guard.session_parameters.read().await;
+    let threads = session_params
         .get(param_names::CLIENT_PREFETCH_THREADS.as_str())
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(crate::chunks::DEFAULT_PREFETCH_THREADS);
+    let memory_limit_mb = session_params
+        .get(param_names::CLIENT_MEMORY_LIMIT.as_str())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(crate::chunks::DEFAULT_MEMORY_LIMIT_MB);
     PrefetchConfig {
         prefetch_threads: threads,
+        memory_limit_bytes: memory_limit_mb * 1024 * 1024,
     }
 }
 
