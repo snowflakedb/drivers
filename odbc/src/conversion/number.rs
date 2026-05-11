@@ -51,6 +51,14 @@ pub struct NumericSettings {
     /// in CHAR/WCHAR output (mirrors what the legacy 3.16.0 driver does
     /// when handed the same format).
     pub tz_offset_format: Option<crate::conversion::timestamp::TzOffsetFormat>,
+    /// Whether `tz_offset_format` has been initialised from the server
+    /// at least once on this connection. Used by
+    /// `update_numeric_settings` to skip the per-execute
+    /// `TIMESTAMP_TZ_OUTPUT_FORMAT` RPC for queries that cannot mutate
+    /// session parameters (everything except `ALTER SESSION`). Disambiguates
+    /// the otherwise-ambiguous `tz_offset_format == None` state ("not yet
+    /// loaded" vs "explicitly unset").
+    pub tz_format_loaded: bool,
 }
 
 /// Snowflake default max VARCHAR size (16 MB). Overridden by the server's
@@ -64,6 +72,7 @@ impl Default for NumericSettings {
             treat_big_number_as_string: false,
             max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
             tz_offset_format: None,
+            tz_format_loaded: false,
         }
     }
 }

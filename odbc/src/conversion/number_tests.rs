@@ -15,6 +15,7 @@ mod tests {
         treat_big_number_as_string: false,
         max_varchar_size: 16_777_216,
         tz_offset_format: None,
+        tz_format_loaded: false,
     };
 
     const SETTINGS_DECIMAL_AS_INT: NumericSettings = NumericSettings {
@@ -22,6 +23,7 @@ mod tests {
         treat_big_number_as_string: false,
         max_varchar_size: 16_777_216,
         tz_offset_format: None,
+        tz_format_loaded: false,
     };
 
     const SETTINGS_BOTH: NumericSettings = NumericSettings {
@@ -29,6 +31,7 @@ mod tests {
         treat_big_number_as_string: true,
         max_varchar_size: 16_777_216,
         tz_offset_format: None,
+        tz_format_loaded: false,
     };
 
     const SETTINGS_BIG_NUMBER_AS_STRING: NumericSettings = NumericSettings {
@@ -36,6 +39,7 @@ mod tests {
         treat_big_number_as_string: true,
         max_varchar_size: 16_777_216,
         tz_offset_format: None,
+        tz_format_loaded: false,
     };
 
     fn make_decimal(scale: u32, precision: u32) -> SnowflakeNumber {
