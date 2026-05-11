@@ -16,5 +16,16 @@
     "email": "support@snowflake.com",
     "url": "https://www.snowflake.com/"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test:unit": "vitest run --project unit",
+    "test:e2e": "vitest run --project e2e"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@vitest/coverage-v8": "^4.1.5",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
 }

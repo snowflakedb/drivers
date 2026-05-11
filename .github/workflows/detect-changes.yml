@@ -58,6 +58,9 @@ on:
       run_python_reference:
         description: "True if Python reference tests should run (e2e/integ tests changed)"
         value: ${{ jobs.detect.outputs.run_python_reference }}
+      run_nodejs_reference:
+        description: "True if Node.js reference tests should run (e2e tests changed)"
+        value: ${{ jobs.detect.outputs.run_nodejs_reference }}
 
 jobs:
   detect:
@@ -82,6 +85,7 @@ jobs:
       run_jdbc_reference: ${{ steps.computed.outputs.run_jdbc_reference }}
       run_odbc_reference: ${{ steps.computed.outputs.run_odbc_reference }}
       run_python_reference: ${{ steps.computed.outputs.run_python_reference }}
+      run_nodejs_reference: ${{ steps.computed.outputs.run_nodejs_reference }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -144,6 +148,8 @@ jobs:
               - 'python/hatch_build.py'
             nodejs:
               - 'nodejs/**'
+            nodejs_e2e_integ:
+              - 'nodejs/tests/e2e/**'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -259,6 +265,13 @@ jobs:
             echo "run_python_reference=false" >> $GITHUB_OUTPUT
           fi
 
+          # Node.js reference tests should run if: e2e tests changed
+          if [[ "${{ steps.filter.outputs.nodejs_e2e_integ }}" == "true" ]]; then
+            echo "run_nodejs_reference=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_nodejs_reference=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Output summary
         run: |
           echo "### Change Detection Summary" >> $GITHUB_STEP_SUMMARY
@@ -287,3 +300,4 @@ jobs:
           echo "| Python | ${{ steps.computed.outputs.run_python }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python Packaging | ${{ steps.computed.outputs.run_python_packaging }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | ${{ steps.computed.outputs.run_nodejs }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js Reference | ${{ steps.computed.outputs.run_nodejs_reference }} |" >> $GITHUB_STEP_SUMMARY
