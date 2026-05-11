@@ -95,8 +95,8 @@ pub enum RowType {
     Vector {
         name: String,
         nullable: bool,
-        /// VECTOR dimension, always in [1, VECTOR_MAX_DIMENSION]. Validated at parse time
-        /// so downstream code can cast to `usize` without bounds checks.
+        /// Element count of the VECTOR column. Matches Arrow's `FixedSizeList`
+        /// size type (`i32`) so it can be forwarded without further conversion.
         dimension: i32,
         element_type: VectorElementType,
     },
@@ -124,9 +124,6 @@ pub enum VectorElementType {
     Int32,
     Float32,
 }
-
-/// Maximum Snowflake VECTOR dimension (per SQL reference).
-pub const VECTOR_MAX_DIMENSION: i32 = 4096;
 
 impl RowType {
     pub fn fixed(name: &str, nullable: bool, precision: u64, scale: u64) -> Self {

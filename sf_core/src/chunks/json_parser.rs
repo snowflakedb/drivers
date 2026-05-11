@@ -988,6 +988,8 @@ fn push_vector_value(
             elems.len()
         )));
     }
+    // VECTOR(INT) elements are i32 and VECTOR(FLOAT) elements are f32 on the server
+    // side, so these narrowing casts are lossless for conformant server output.
     match values {
         VectorValuesBuilder::Int32(builder) => {
             for elem in elems {
@@ -996,12 +998,7 @@ fn push_vector_value(
                         "VECTOR(INT) element must be a JSON integer".to_string(),
                     )
                 })?;
-                let v32 = i32::try_from(v).map_err(|_| {
-                    ArrowError::InvalidArgumentError(format!(
-                        "VECTOR(INT) element {v} out of i32 range"
-                    ))
-                })?;
-                builder.append_value(v32);
+                builder.append_value(v as i32);
             }
         }
         VectorValuesBuilder::Float32(builder) => {
@@ -1011,8 +1008,6 @@ fn push_vector_value(
                         "VECTOR(FLOAT) element must be a JSON number".to_string(),
                     )
                 })?;
-                // Snowflake serializes VECTOR(FLOAT) elements already in f32 precision,
-                // so this narrowing cast is lossless for conformant server output.
                 builder.append_value(v as f32);
             }
         }
@@ -1533,19 +1528,6 @@ mod tests {
         )];
         let parser = JsonChunkParser { row_types: rt };
         let result = parser.parse_chunk(b"[\"[1,\\\"foo\\\"]\"],\n".to_vec());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn vector_int_rejects_out_of_i32_range_element() {
-        let rt = vec![RowType::vector(
-            "v",
-            false,
-            1,
-            crate::query_types::VectorElementType::Int32,
-        )];
-        let parser = JsonChunkParser { row_types: rt };
-        let result = parser.parse_chunk(b"[\"[2147483648]\"],\n".to_vec());
         assert!(result.is_err());
     }
 

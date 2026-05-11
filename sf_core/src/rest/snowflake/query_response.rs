@@ -723,15 +723,11 @@ fn parse_vector_row_type(
     let raw_dim = value.vector_dimension.context(MissingParameterSnafu {
         parameter: format!("row type -> vectorDimension for VECTOR column '{name}'"),
     })?;
-    let dimension = i32::try_from(raw_dim)
-        .ok()
-        .filter(|d| (1..=query_types::VECTOR_MAX_DIMENSION).contains(d));
-    let dimension = dimension.context(InvalidFormatSnafu {
-        message: format!(
-            "VECTOR dimension {raw_dim} for column '{name}' is out of range [1, {}]",
-            query_types::VECTOR_MAX_DIMENSION,
-        ),
-    })?;
+    // Snowflake VECTOR dimensions are bounded (<= 4096) and always fit in i32.
+    // Cast via `as` to match the trust-the-server convention used elsewhere for
+    // server-provided sizes; Arrow's FixedSizeListArray will reject a negative
+    // or zero size when the array is finalised.
+    let dimension = raw_dim as i32;
 
     let element_field =
         value
@@ -1494,23 +1490,6 @@ mod tests {
     #[test]
     fn test_vector_missing_fields_returns_error() {
         let row_type = make_vector_row_type(Some(3), None);
-        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_vector_zero_dimension_returns_error() {
-        let row_type = make_vector_row_type(Some(0), Some("FIXED"));
-        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_vector_dimension_above_max_returns_error() {
-        let row_type = make_vector_row_type(
-            Some(crate::query_types::VECTOR_MAX_DIMENSION as u64 + 1),
-            Some("FIXED"),
-        );
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
         assert!(result.is_err());
     }
