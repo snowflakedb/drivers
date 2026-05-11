@@ -1,0 +1,33 @@
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    // TODO: coverage will be added later
+    // coverage: {
+    //   provider: "v8",
+    //   reporter: ["text", "html", "lcov"],
+    //   include: ["src/**/*.ts"],
+    // },
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: { label: "unit", color: "cyan" },
+          environment: "node",
+          include: ["tests/unit/**/*.test.ts"],
+          testTimeout: 1_000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: { label: "e2e", color: "magenta" },
+          environment: "node",
+          include: ["tests/e2e/**/*.test.ts"],
+          testTimeout: 30_000,
+          hookTimeout: 30_000,
+        },
+      },
+    ],
+  },
+});
