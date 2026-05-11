@@ -23,7 +23,8 @@
 
 .PARAMETER Version
     Version string for the product (e.g. 0.0.1-abc1234).
-    Defaults to BASE_VERSION from odbc/version.sh with the git short hash appended.
+    Defaults to [package.metadata.odbc] odbc_preview_version from odbc/Cargo.toml
+    with the git short hash appended.
 
 .PARAMETER OutputDir
     Directory where the resulting MSI will be placed. Created if it doesn't exist.
@@ -72,13 +73,18 @@ foreach ($tool in @("candle.exe", "light.exe")) {
 }
 
 # --- Version ---
-if (-not $Version) {
-    $versionLine = Get-Content (Join-Path $SourceDir "odbc\version.sh") -Raw
-    if ($versionLine -match 'BASE_VERSION=(\S+)') {
-        $baseVersion = $Matches[1]
-    } else {
-        throw "Could not parse BASE_VERSION from odbc/version.sh"
+$cargoTomlContent = Get-Content (Join-Path $SourceDir "odbc\Cargo.toml") -Raw
+
+function Read-OdbcMetadata([string]$Key) {
+    $pattern = '(?m)^\[package\.metadata\.odbc\][^\[]*?' + [regex]::Escape($Key) + '\s*=\s*"([^"]+)"'
+    if ($cargoTomlContent -match $pattern) {
+        return $Matches[1]
     }
+    throw "Could not parse [package.metadata.odbc] $Key from odbc/Cargo.toml"
+}
+
+if (-not $Version) {
+    $baseVersion = Read-OdbcMetadata 'odbc_preview_version'
     $commitHash = "unknown"
     if (Get-Command git -ErrorAction SilentlyContinue) {
         $commitHash = (git -C $SourceDir rev-parse --short HEAD 2>$null)
@@ -89,6 +95,8 @@ if (-not $Version) {
 $versionParts = ($Version -replace '-.*', '').Split('.')
 while ($versionParts.Count -lt 3) { $versionParts += "0" }
 $WixVersion = ($versionParts[0..2]) -join '.'
+
+$OdbcApiVer = Read-OdbcMetadata 'odbc_api_version'
 
 # --- Driver DLL ---
 $DriverBinDir = (Resolve-Path $DriverBinDir).Path
@@ -145,13 +153,14 @@ $OutputDir = (Resolve-Path $OutputDir).Path
 $configSuffix = if ($BuildConfig -eq "debug") { "-debug" } else { "" }
 
 Write-Host "=== Building Snowflake ODBC Driver MSI ==="
-Write-Host "  Architecture : $Arch"
-Write-Host "  Config       : $BuildConfig"
-Write-Host "  Version      : $Version (MSI ProductVersion: $WixVersion)"
-Write-Host "  Driver dir   : $DriverBinDir"
-Write-Host "  VCRedist dir : $VCRedistDir"
-Write-Host "  Source dir   : $SourceDir"
-Write-Host "  Output dir   : $OutputDir"
+Write-Host "  Architecture     : $Arch"
+Write-Host "  Config           : $BuildConfig"
+Write-Host "  Version          : $Version (MSI ProductVersion: $WixVersion)"
+Write-Host "  ODBC API version : $OdbcApiVer"
+Write-Host "  Driver dir       : $DriverBinDir"
+Write-Host "  VCRedist dir     : $VCRedistDir"
+Write-Host "  Source dir       : $SourceDir"
+Write-Host "  Output dir       : $OutputDir"
 
 $ObjDir = Join-Path $OutputDir "wixobj"
 New-Item -ItemType Directory -Force -Path $ObjDir | Out-Null
@@ -167,6 +176,7 @@ Write-Host "`n--- Compiling WiX source ---"
     -arch $candleArch `
     -dProductVersion="$WixVersion" `
     -dFullVersion="$Version" `
+    -dOdbcApiVer="$OdbcApiVer" `
     -dDriverBinDir="$DriverBinDir" `
     -dVCRedistDir="$VCRedistDir" `
     -dSourceDir="$SourceDir" `
