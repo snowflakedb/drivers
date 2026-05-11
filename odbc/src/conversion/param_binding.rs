@@ -696,7 +696,7 @@ mod tests {
     fn convert_binding(
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-        let converter = make_converter(&binding)?;
+        let converter = make_converter(binding)?;
         converter.convert(binding)
     }
 
