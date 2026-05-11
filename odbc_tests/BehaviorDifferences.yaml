@@ -565,3 +565,15 @@ behavior_differences:
       Both bindings succeed with spec-aligned semantics. SQL_C_TYPE_TIMESTAMP -> SQL_SF_TIMESTAMP_TZ stores the wall-clock at UTC (offset = 0 on the wire), matching the Python connector's behavior for naive `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR (and SQL_C_WCHAR) with a trailing `+/-HH:MM` offset is parsed and emitted in the legacy `<epoch_ns> <offset_minutes_plus_1440>` two-token wire format, so the server stores the exact instant alongside the original offset. The vendor code 2001 sits in the ODBC vendor-specific range, where the driver is free to define behavior; the new semantics are spec-permitted and additive over the legacy 40620 error path.
     impact: |
       Migration is forward-compatible: any application that previously caught the legacy 40620 will now find these bindings succeed with predictable, spec-conformant results. Applications that intentionally relied on the failure (e.g. as a feature gate) should switch to validating their bind path explicitly. Round-tripping a non-UTC TIMESTAMP_TZ via SQLBindParameter is now possible without falling through TIMESTAMP_LTZ + session TIMEZONE.
+
+  52:
+    name: "TIMESTAMP_TZ -> SQL_C_CHAR/SQL_C_WCHAR fetch honors session TIMESTAMP_TZ_OUTPUT_FORMAT"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      SQLGetData / SQLBindCol of a TIMESTAMP_TZ column to SQL_C_CHAR or SQL_C_WCHAR always renders the bare UTC wall-clock string (e.g. `2024-01-15 09:00:45`) regardless of the session's TIMESTAMP_TZ_OUTPUT_FORMAT setting. The token's `TZH:TZM` / `TZHTZM` / `TZH` placeholders are silently dropped, so the original observer's offset is lost on the wire-to-application boundary even though the server stored it.
+    new_driver_behavior: |
+      The driver reads TIMESTAMP_TZ_OUTPUT_FORMAT once per execute (matching the rest of the per-execute sequential RPC) and formats the rendered string accordingly. With `TZH:TZM` the offset suffix is appended as `+HH:MM`; with `TZHTZM` as `+HHMM`; with `TZH` as `+HH`. The format is re-read on every execute, so `ALTER SESSION SET / UNSET TIMESTAMP_TZ_OUTPUT_FORMAT` mid-connection takes effect on the next statement. Unrecognised TZ-shaped tokens (`TZHM`, `TZM`, etc.) are tolerated -- the driver emits a `tracing::warn!` and falls back to the bare-UTC default rather than rejecting the format string.
+    impact: |
+      Migration is forward-compatible. Applications relying on the legacy bare-UTC rendering must either (a) leave TIMESTAMP_TZ_OUTPUT_FORMAT unset, (b) set it to a value containing none of `TZH:TZM`, `TZHTZM`, `TZH`, in which case the driver still emits bare UTC, or (c) parse the new offset-suffixed strings on the application side. The new behaviour matches what Snowsight, snowsql, and the Python connector already render for the same column with the same session format, removing a long-standing surprise where ODBC was the only client silently dropping the offset.

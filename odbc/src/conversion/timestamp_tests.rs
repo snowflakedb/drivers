@@ -1139,7 +1139,9 @@ mod tests {
             .write_odbc_type(tz_value("2024-01-15 09:00:45", 330), &binding, &mut None)
             .expect("undersized buffer must succeed-with-info, not fail");
         assert!(
-            warnings.iter().any(|w| matches!(w, Warning::StringDataTruncated)),
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::StringDataTruncated)),
             "expected StringDataTruncated warning on undersized CHAR buffer, got {warnings:?}"
         );
         // Indicator must report the full untruncated length (26) so the

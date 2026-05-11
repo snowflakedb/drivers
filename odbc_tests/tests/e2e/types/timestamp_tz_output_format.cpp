@@ -26,12 +26,7 @@
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH:TZM",
           "[timestamp_tz][conversion][c_char][output_format]") {
-  // Run against both drivers. The new driver's behaviour mirrors the
-  // legacy 3.16.0 driver's rendering for the same `TZH:TZM` format
-  // string, so this serves as a parity assertion. If legacy diverges in
-  // CI we file a real BD entry documenting the gap and gate the case;
-  // until then, asserting parity catches accidental regressions on
-  // either side.
+  SKIP_OLD_DRIVER("BD#52", "Old driver does not honor TIMESTAMP_TZ_OUTPUT_FORMAT for TIMESTAMP_TZ -> CHAR/WCHAR fetch");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -70,8 +65,7 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZHTZM",
           "[timestamp_tz][conversion][c_char][output_format]") {
-  // Parity assertion against the legacy 3.16.0 driver -- see the
-  // sibling TZH:TZM TEST_CASE for rationale.
+  SKIP_OLD_DRIVER("BD#52", "Old driver does not honor TIMESTAMP_TZ_OUTPUT_FORMAT for TIMESTAMP_TZ -> CHAR/WCHAR fetch");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -85,8 +79,7 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZH:TZM",
           "[timestamp_tz][conversion][c_wchar][output_format]") {
-  // Parity assertion against the legacy 3.16.0 driver -- see the
-  // sibling TZH:TZM SQL_C_CHAR TEST_CASE for rationale.
+  SKIP_OLD_DRIVER("BD#52", "Old driver does not honor TIMESTAMP_TZ_OUTPUT_FORMAT for TIMESTAMP_TZ -> CHAR/WCHAR fetch");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -106,9 +99,9 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZ
   CHECK(actual == expected);
 }
 
-TEST_CASE(
-    "TIMESTAMP_TZ_OUTPUT_FORMAT changes mid-connection take effect on the next execute",
-    "[timestamp_tz][conversion][c_char][output_format][per_execute_reread]") {
+TEST_CASE("TIMESTAMP_TZ_OUTPUT_FORMAT changes mid-connection take effect on the next execute",
+          "[timestamp_tz][conversion][c_char][output_format][per_execute_reread]") {
+  SKIP_OLD_DRIVER("BD#52", "Old driver does not honor TIMESTAMP_TZ_OUTPUT_FORMAT for TIMESTAMP_TZ -> CHAR/WCHAR fetch");
   // The load-bearing claim of the per-execute sequential RPC in
   // `update_numeric_settings` is that `ALTER SESSION SET / UNSET
   // TIMESTAMP_TZ_OUTPUT_FORMAT` mid-connection takes effect on the next

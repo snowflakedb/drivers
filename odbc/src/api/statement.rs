@@ -244,9 +244,7 @@ pub(crate) fn apply_tz_offset_format_update(
     match rpc_result {
         Ok(value) => {
             let new_format = match value.as_deref() {
-                Some(v) if !v.is_empty() => {
-                    crate::conversion::timestamp::parse_tz_offset_format(v)
-                }
+                Some(v) if !v.is_empty() => crate::conversion::timestamp::parse_tz_offset_format(v),
                 _ => None,
             };
             if *cached != new_format {
@@ -288,10 +286,7 @@ mod apply_tz_offset_format_update_tests {
         // for a custom format the driver doesn't render an offset for,
         // so we mustn't keep an old offset rendering active.
         let mut cached = Some(TzOffsetFormat::Colon);
-        apply_tz_offset_format_update(
-            &mut cached,
-            Ok(Some("YYYY-MM-DD HH24:MI:SS".to_string())),
-        );
+        apply_tz_offset_format_update(&mut cached, Ok(Some("YYYY-MM-DD HH24:MI:SS".to_string())));
         assert_eq!(cached, None);
     }
 
