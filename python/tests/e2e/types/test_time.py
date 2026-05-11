@@ -15,7 +15,7 @@ from datetime import time
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_sequential_values, assert_type, batch_insert
+from .utils import assert_sequential_values, assert_type, batch_insert, millis_to_time
 
 
 # =============================================================================
@@ -34,14 +34,6 @@ TIME_FRAC = TimeValue(time(14, 45, 30, 654321), "14:45:30.654321")
 # LARGE RESULT SET
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 100_000
-
-
-def _millis_to_time(ms: int) -> time:
-    """Convert an integer number of milliseconds since midnight to a time object."""
-    seconds, millis = divmod(ms, 1000)
-    minutes, secs = divmod(seconds, 60)
-    hours, mins = divmod(minutes, 60)
-    return time(hours, mins, secs, millis * 1000)
 
 
 class TestTimeTypeCasting:
@@ -142,7 +134,7 @@ class TestTimeLiteral:
         # Then Result should contain 100000 sequentially increasing time values from 00:00:00
         values = [row[0] for row in rows]
         assert_type(values, time)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=_millis_to_time)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=millis_to_time)
 
 
 class TestTimeTable:
@@ -220,7 +212,7 @@ class TestTimeTable:
         # Then Result should contain 100000 sequentially increasing time values from 00:00:00
         values = [row[0] for row in rows]
         assert_type(values, time)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=_millis_to_time)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=millis_to_time)
 
 
 @with_paramstyle("qmark")
