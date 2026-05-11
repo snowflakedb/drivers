@@ -135,6 +135,9 @@ addopts = [
     "-n", "auto",
     "--max-worker-restart=4",
     "--durations=0",
+    # Flaky tests are excluded by default; the python_flaky_tests CI job
+    # overrides this with `-m flaky` to run them in isolation.
+    "-m", "not flaky",
 ]
 # Default timeout for tests (2 minutes) - prevents hanging tests on CI
 timeout = 120
@@ -144,6 +147,7 @@ markers = [
     "slow: marks tests as slow (e.g., full sdist install with Rust compilation)",
     "skip_for_json_result_set(reason: str=''): skip when QUERY_RESULT_FORMAT=JSON (tests requiring Arrow precision)",
     "require_vpn: test requires VPN access (skipped outside Jenkins CI)",
+    "flaky: marks tests as flaky; skipped by default, run explicitly via the flaky CI job or `-m flaky` locally",
 ]
 log_cli = true
 log_cli_level = "INFO"
@@ -269,6 +273,9 @@ python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 # Install from wheel
 install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
 cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+# Runs only tests marked @pytest.mark.flaky. `-m flaky` overrides the default
+# `-m "not flaky"` from [tool.pytest.ini_options].addopts.
+flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas -m flaky --no-cov {args}"
 
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]
