@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "tabWidth": 2,
+  "endOfLine": "lf",
+  "printWidth": 100,
+  "sortPackageJson": false
+}
