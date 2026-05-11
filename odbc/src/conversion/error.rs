@@ -244,6 +244,21 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    /// The character input bound to a `SQL_BINARY` / `SQL_VARBINARY` /
+    /// `SQL_LONGVARBINARY` parameter is not a valid hex literal. Per
+    /// ODBC Appendix D ("Converting Data from C to SQL Data Types"), a
+    /// `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to a binary SQL target
+    /// must be a string whose characters are pairs of hexadecimal
+    /// digits (each pair representing one byte). Invalid input — odd
+    /// length, or any character outside `[0-9A-Fa-f]` — surfaces as
+    /// SQLSTATE 22018 ("Invalid character value for cast specification").
+    #[snafu(display("Invalid hex literal: {reason}"))]
+    InvalidHexLiteral {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Binding value out of range: {reason}"))]
     BindingNumericOutOfRange {
         reason: String,
