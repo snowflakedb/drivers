@@ -617,7 +617,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 pub(crate) fn convert_for_test(
     binding: &ParameterBinding,
 ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-    let converter = make_converter(&binding.sql_data_type)?;
+    let converter = make_converter(binding)?;
     converter.convert(binding)
 }
 

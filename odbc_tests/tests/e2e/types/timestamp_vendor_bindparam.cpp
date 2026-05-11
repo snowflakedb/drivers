@@ -241,6 +241,8 @@ TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with v
   // that switches on 93 in describe-param would silently fall through to an
   // unknown-type branch when the upstream code happens to bind via the
   // vendor opt-in. See PR #1004 review (odbc_types.rs:631).
+
+  // Given Snowflake client is logged in and a prepared two-parameter INSERT
   Connection conn;
   Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_describe_param (id INT, ts TIMESTAMP_NTZ)");
@@ -257,8 +259,9 @@ TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with v
   SQL_TIMESTAMP_STRUCT ts_in = {2024, 3, 15, 14, 30, 45, 0};
   SQLLEN ts_ind = 0;
 
-  // Try each vendor code in turn. After the bind, SQLDescribeParam must
-  // report 93 — not 2000/2001/2002 — for parameter #2.
+  // When parameter #2 is bound in turn with each Snowflake vendor TIMESTAMP code
+  // Then SQLDescribeParam reports the standard SQL_TYPE_TIMESTAMP (93) -- never
+  // the raw vendor code -- proving the vendor opt-in is input-only.
   for (SQLSMALLINT vendor_code : {SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_TZ}) {
     INFO("vendor code = " << vendor_code);
     ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, vendor_code, 29, 9, &ts_in,
