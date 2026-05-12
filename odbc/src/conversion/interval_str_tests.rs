@@ -319,7 +319,7 @@ fn missing_required_component_returns_22018() {
 }
 
 // ============================================================================
-// Sign-bit edge cases (Piotr's comments #1, #5, #9, #10)
+// Sign-bit edge cases
 // ============================================================================
 
 #[test]
@@ -400,7 +400,7 @@ fn negative_hour_to_minute_sets_sign_bit() {
 }
 
 // ============================================================================
-// 5:10.0 → H:M composites (Piotr's comment #2 / item #2)
+// 5:10.0 → H:M composites
 // ============================================================================
 
 #[test]
@@ -454,7 +454,7 @@ fn nonzero_fraction_two_component_still_rejects_hour_to_minute() {
 }
 
 // ============================================================================
-// >6 fraction digits via composite paths (Piotr's comment #8 / items #3, #13)
+// >6 fraction digits via composite paths
 // ============================================================================
 
 #[test]
@@ -505,7 +505,7 @@ fn minute_to_second_truncated_fraction_warns() {
 }
 
 // ============================================================================
-// 22015 leading-precision overflow (Piotr's comment #4 / items #6, #7)
+// 22015 leading-precision overflow
 // ============================================================================
 
 #[test]
@@ -543,7 +543,7 @@ fn u128_overflow_returns_22015_not_22018() {
 }
 
 // ============================================================================
-// Explicit datetime_interval_precision honored (Piotr's comment #9 item #8)
+// Explicit datetime_interval_precision honored
 // ============================================================================
 
 #[test]
@@ -579,7 +579,7 @@ fn explicit_precision_rejects_value_exceeding_range() {
 }
 
 // ============================================================================
-// Trailing-field truncation into composite targets (Piotr's items #11, #12)
+// Trailing-field truncation into composite targets
 // ============================================================================
 
 #[test]
@@ -637,7 +637,7 @@ fn year_to_month_truncates_into_month_target() {
 }
 
 // ============================================================================
-// Defensive arm in varchar_to_interval (Piotr's comment #7 / item #5)
+// Defensive arm in varchar_to_interval
 // ============================================================================
 
 #[test]
@@ -655,7 +655,7 @@ fn non_interval_target_returns_07006() {
 }
 
 // ============================================================================
-// Whitespace handling (Piotr's comment #9 item #14)
+// Whitespace handling
 //
 // `split_sign` calls `s.trim()` before extracting the sign — these tests
 // pin that down at the unit level so any future regression that breaks the
