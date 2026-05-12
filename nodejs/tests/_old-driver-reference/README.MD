@@ -36,3 +36,46 @@ The original test suite has several problems:
 ### Done
 
 Once every test has been migrated or dropped, **delete this folder entirely**.
+
+## Migration rules
+
+Apply these rules when migrating any test file from this folder into `tests/e2e/`.
+
+### Framework
+
+- Replace Mocha `describe`/`it`/`before`/`after` with Vitest `describe`/`it`/`beforeAll`/`afterAll` (imported from `vitest`).
+
+### SDK and types
+
+- Replace `require('../../lib/snowflake')` / `snowflake` globals with `getSnowflakeSDK()` from `tests/e2e/utils.ts`.
+- Import types (`Connection`, `ConnectionOptions`, `RowStatement`, etc.) from `tests/e2e/utils.ts` re-exports.
+
+### Connection lifecycle
+
+- Replace `testUtil.createConnection(overrides?)` with `createConnection(overrides?)` from `tests/e2e/utils.ts`. Env-var defaults (`SNOWFLAKE_TEST_ACCOUNT`, `SNOWFLAKE_TEST_USER`, etc.) are built in; pass only overrides.
+- Replace `testUtil.connectAsync(conn)` with `connectAsync(conn)` from `tests/e2e/utils.ts`.
+- Replace `testUtil.destroyConnectionAsync(conn)` with `destroyAsync(conn)` from `tests/e2e/utils.ts`.
+
+### Logger
+
+- Drop all logger configuration (`snowflake.configure({ logLevel: ... })`, `Logger()` calls, etc.).
+
+### Callbacks to promises
+
+- Convert `done()` callback patterns to `async`/`await` with promises.
+- Wrap remaining callback-based SDK methods (e.g. `statement.cancel(cb)`) in a `new Promise` inline.
+- Use smaller timeouts where the exact delay is not semantically important.
+
+### Assertions
+
+- Replace `assert.ok(!err)` / `testUtil.checkError(err)` with Vitest `expect()`.
+
+### Naming and location
+
+- Test file: kebab-case `<topic>.test.ts` in `tests/e2e/`.
+- `describe` block: human-readable title case (e.g. `"Query Cancelation"`).
+
+### After migration
+
+- Verify the migrated test passes against the old driver (`SNOWFLAKE_NODEJS_USE_OLD_DRIVER=1`).
+- Delete the original test file from this folder.
