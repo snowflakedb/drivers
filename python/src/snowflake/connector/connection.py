@@ -211,9 +211,6 @@ class Connection(ErrorHandlerMixin):
         self._session_parameters = SessionParametersProxy(self.db_api, self.conn_handle)
         self._connection_info = ConnectionInfoProxy(self.db_api, self.conn_handle)
 
-        _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
-        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
         self.db_api.connection_init(
