@@ -1,5 +1,5 @@
 use super::ColumnMetadata;
-use super::global_state::WrapperPresets;
+use super::global_state::{PutGetResultsetFlavor, WrapperPresets};
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
 use crate::chunks::{
@@ -20,6 +20,20 @@ use std::sync::Arc;
 
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
+
+/// Literal emitted by `PutGetResultsetFlavor::Odbc` in the PUT result's
+/// `encryption` column. Mirrors `#define ENCRYPTION_ENCRYPTED "ENCRYPTED"`
+/// from legacy libsnowflakeclient's `FileTransferExecutionResult.cpp`. The
+/// value is a constant string for *every* row (it advertises "your data
+/// ended up encrypted", not "this row's encryption material"). Any C++ /
+/// Python wrapper test that asserts on this column must use the same
+/// literal — kept here so the contract has one source of truth.
+const ODBC_PUT_ENCRYPTION_LITERAL: &str = "ENCRYPTED";
+
+/// Literal emitted by `PutGetResultsetFlavor::Odbc` in the GET result's
+/// `encryption` column. Mirrors `#define ENCRYPTION_DECRYPTED "DECRYPTED"`
+/// from legacy libsnowflakeclient. See `ODBC_PUT_ENCRYPTION_LITERAL`.
+const ODBC_GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
 
 /// Result of processing a query response, containing the Arrow reader.
 pub struct QueryResult {
@@ -186,8 +200,8 @@ macro_rules! int64_array {
     };
 }
 
-fn upload_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
-    vec![
+fn upload_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+    let mut row_types = vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
         build_generic_fixed_rowtype("source_size"),
@@ -195,17 +209,25 @@ fn upload_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType
         build_generic_text_rowtype("source_compression"),
         build_generic_text_rowtype("target_compression"),
         build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ]
+    ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        row_types.push(build_generic_text_rowtype("encryption"));
+    }
+    row_types.push(build_generic_text_rowtype("message"));
+    row_types
 }
 
-fn download_row_types(_wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
-    vec![
+fn download_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+    let mut row_types = vec![
         build_generic_text_rowtype("file"),
         build_generic_fixed_rowtype("size"),
         build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ]
+    ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        row_types.push(build_generic_text_rowtype("encryption"));
+    }
+    row_types.push(build_generic_text_rowtype("message"));
+    row_types
 }
 
 /// Converts upload results to Arrow format
@@ -216,7 +238,8 @@ pub fn upload_results_reader(
     let schema = create_schema(&upload_row_types(wrapper_presets))
         .expect("Failed to create schema from RowTypes");
 
-    let columns: Vec<Arc<dyn Array>> = vec![
+    let n = upload_results.len();
+    let mut columns: Vec<Arc<dyn Array>> = vec![
         string_array!(upload_results, source),
         string_array!(upload_results, target),
         int64_array!(upload_results, source_size),
@@ -224,8 +247,13 @@ pub fn upload_results_reader(
         string_array!(upload_results, source_compression),
         string_array!(upload_results, target_compression),
         string_array!(upload_results, status),
-        string_array!(upload_results, message),
     ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        columns.push(Arc::new(StringArray::from_iter_values(
+            std::iter::repeat_n(ODBC_PUT_ENCRYPTION_LITERAL, n),
+        )));
+    }
+    columns.push(string_array!(upload_results, message));
 
     boxed_arrow_reader(schema, columns)
 }
@@ -238,12 +266,18 @@ pub fn download_results_reader(
     let schema = create_schema(&download_row_types(wrapper_presets))
         .expect("Failed to create schema from RowTypes");
 
-    let columns: Vec<Arc<dyn Array>> = vec![
+    let n = download_results.len();
+    let mut columns: Vec<Arc<dyn Array>> = vec![
         string_array!(download_results, file),
         int64_array!(download_results, size),
         string_array!(download_results, status),
-        string_array!(download_results, message),
     ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        columns.push(Arc::new(StringArray::from_iter_values(
+            std::iter::repeat_n(ODBC_GET_ENCRYPTION_LITERAL, n),
+        )));
+    }
+    columns.push(string_array!(download_results, message));
 
     boxed_arrow_reader(schema, columns)
 }
@@ -416,10 +450,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn upload_column_metadata_has_correct_structure() {
-        let columns = upload_column_metadata(&WrapperPresets::default());
+    fn upload_column_metadata_has_correct_structure_python() {
+        let columns = upload_column_metadata(&WrapperPresets::python());
 
-        assert_eq!(columns.len(), 8, "PUT should have 8 columns");
+        assert_eq!(columns.len(), 8, "PUT (Python) should have 8 columns");
 
         assert_eq!(columns[0].name, "source");
         assert_eq!(columns[0].r#type, "TEXT");
@@ -453,10 +487,54 @@ mod tests {
     }
 
     #[test]
-    fn download_column_metadata_has_correct_structure() {
-        let columns = download_column_metadata(&WrapperPresets::default());
+    fn upload_column_metadata_has_correct_structure_odbc() {
+        let columns = upload_column_metadata(&WrapperPresets::odbc());
 
-        assert_eq!(columns.len(), 4, "GET should have 4 columns");
+        assert_eq!(
+            columns.len(),
+            9,
+            "PUT (ODBC) should have 9 columns including encryption"
+        );
+
+        assert_eq!(columns[0].name, "source");
+        assert_eq!(columns[0].r#type, "TEXT");
+        assert!(!columns[0].nullable);
+
+        assert_eq!(columns[1].name, "target");
+        assert_eq!(columns[1].r#type, "TEXT");
+
+        assert_eq!(columns[2].name, "source_size");
+        assert_eq!(columns[2].r#type, "FIXED");
+        assert_eq!(
+            columns[2].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[2].scale, Some(0));
+
+        assert_eq!(columns[3].name, "target_size");
+        assert_eq!(columns[3].r#type, "FIXED");
+
+        assert_eq!(columns[4].name, "source_compression");
+        assert_eq!(columns[4].r#type, "TEXT");
+
+        assert_eq!(columns[5].name, "target_compression");
+        assert_eq!(columns[5].r#type, "TEXT");
+
+        assert_eq!(columns[6].name, "status");
+        assert_eq!(columns[6].r#type, "TEXT");
+
+        assert_eq!(columns[7].name, "encryption");
+        assert_eq!(columns[7].r#type, "TEXT");
+
+        assert_eq!(columns[8].name, "message");
+        assert_eq!(columns[8].r#type, "TEXT");
+    }
+
+    #[test]
+    fn download_column_metadata_has_correct_structure_python() {
+        let columns = download_column_metadata(&WrapperPresets::python());
+
+        assert_eq!(columns.len(), 4, "GET (Python) should have 4 columns");
 
         assert_eq!(columns[0].name, "file");
         assert_eq!(columns[0].r#type, "TEXT");
@@ -475,6 +553,38 @@ mod tests {
 
         assert_eq!(columns[3].name, "message");
         assert_eq!(columns[3].r#type, "TEXT");
+    }
+
+    #[test]
+    fn download_column_metadata_has_correct_structure_odbc() {
+        let columns = download_column_metadata(&WrapperPresets::odbc());
+
+        assert_eq!(
+            columns.len(),
+            5,
+            "GET (ODBC) should have 5 columns including encryption"
+        );
+
+        assert_eq!(columns[0].name, "file");
+        assert_eq!(columns[0].r#type, "TEXT");
+        assert!(!columns[0].nullable);
+
+        assert_eq!(columns[1].name, "size");
+        assert_eq!(columns[1].r#type, "FIXED");
+        assert_eq!(
+            columns[1].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[1].scale, Some(0));
+
+        assert_eq!(columns[2].name, "status");
+        assert_eq!(columns[2].r#type, "TEXT");
+
+        assert_eq!(columns[3].name, "encryption");
+        assert_eq!(columns[3].r#type, "TEXT");
+
+        assert_eq!(columns[4].name, "message");
+        assert_eq!(columns[4].r#type, "TEXT");
     }
 
     #[test]
