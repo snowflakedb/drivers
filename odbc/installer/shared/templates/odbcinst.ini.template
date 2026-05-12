@@ -1,0 +1,7 @@
+[Snowflake ODBC UD]
+APILevel=1
+ConnectFunctions=YYY
+Description=Snowflake ODBC UD
+Driver=__DRIVER_PATH__
+DriverODBCVer=__ODBC_API_VERSION__
+SQLLevel=1

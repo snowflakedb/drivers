@@ -1,0 +1,8 @@
+[snowflake]
+Description=SnowflakeDB
+Driver=Snowflake ODBC UD
+Locale=en-US
+SERVER=__SF_ACCOUNT__.snowflakecomputing.com
+PORT=443
+SSL=on
+ACCOUNT=__SF_ACCOUNT__
