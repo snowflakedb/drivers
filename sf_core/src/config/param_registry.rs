@@ -45,7 +45,6 @@ pub mod param_names {
     use super::ParamKey;
 
     pub const ACCOUNT: ParamKey = ParamKey("account");
-    pub const REGION: ParamKey = ParamKey("region");
     pub const HOST: ParamKey = ParamKey("host");
     pub const PORT: ParamKey = ParamKey("port");
     pub const PROTOCOL: ParamKey = ParamKey("protocol");
@@ -189,20 +188,6 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: None,
         sensitive: false,
         description: "Snowflake account identifier",
-        deprecated_by: None,
-        scope: ParamScope::Connection,
-        used_at_connect: true,
-        mutable_after_connect: false,
-    },
-    ParamDef {
-        canonical_name: param_names::REGION.as_str(),
-        aliases: &["REGION"],
-        value_type: ValueType::String,
-        additional_value_type: None,
-        required: Required::Never,
-        default: None,
-        sensitive: false,
-        description: "Deprecated. Region name used to construct the hostname when 'host' is not set",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,

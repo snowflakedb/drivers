@@ -189,16 +189,17 @@ behavior_differences:
       All connection parameters must be provided at construction time.
 
   24:
-    name: "Connection.region property removed"
+    name: "region connection parameter and Connection.region property removed"
     status: unknown
     type: api_incompatibility
     reviewed: false
     old_driver_behavior: |
-      `Connection.region` returns the value passed at connection time, emitting
-      a `PendingDeprecationWarning` on each access. No known consumer (Airflow, Snow CLI,
-      Snowpark, SQLAlchemy) reads this property — they all store `region` independently
-      and only pass it as a `connect()` kwarg.
+      `region` is accepted as a `connect()` kwarg and used internally to
+      construct the Snowflake hostname. `Connection.region` returns the value, emitting a
+      `PendingDeprecationWarning`. No known consumer (Airflow, Snow CLI, Snowpark,
+      SQLAlchemy) reads the property — they all store `region` independently.
     new_driver_behavior: |
-      `Connection` does not have a `region` property. The `region` connection
-      parameter is still accepted as a keyword argument to `connect()` and used to derive
-      the hostname, but it cannot be read back from the connection object.
+      The `region` connection parameter is not accepted and `Connection` does
+      not have a `region` property. Callers that previously relied on `region` to derive
+      the hostname must supply the fully-qualified `account` identifier (e.g.
+      `"myaccount.us-east-1"`) or set `host` explicitly instead.

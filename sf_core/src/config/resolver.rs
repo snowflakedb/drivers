@@ -49,23 +49,12 @@ pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
 }
 
 /// If neither `host` nor `server_url` is explicitly set but `account` is,
-/// derive the hostname from `account` and the optional `region` parameter —
-/// matching the legacy `snowflake-connector-python` `construct_hostname()`
-/// behavior.
+/// derive the hostname from the account identifier — matching the legacy
+/// `snowflake-connector-python` driver behavior where `account="myaccount"`
+/// yields host `"myaccount.snowflakecomputing.com"`.
 ///
-/// Rules:
-///   - `region == "us-west-2"` is treated as no region (legacy default AWS
-///     region).
-///   - When `region` starts with `"cn-"`, the TLD is `.cn` (China);
-///     otherwise `.com`.
-///   - When `region` is set and `account` contains a dot, only the part
-///     before the first dot is used.
-///   - When `region` is absent and `account` contains a dot whose second
-///     segment starts with `"cn-"`, the TLD is `.cn`.
-///   - Account identifiers that already encode a region (e.g.
-///     `"myaccount.us-east-1"`) are passed through unchanged when no
-///     explicit `region` is set, producing
-///     `"myaccount.us-east-1.snowflakecomputing.com"`.
+/// Account identifiers that already encode a region (e.g. `"myaccount.us-east-1"`)
+/// are passed through unchanged, producing `"myaccount.us-east-1.snowflakecomputing.com"`.
 pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
     if store.get_string(param_names::HOST).is_some()
         || store.get_string(param_names::SERVER_URL).is_some()
@@ -77,37 +66,7 @@ pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
         return;
     };
 
-    let region = store.get_string(param_names::REGION);
-
-    let is_china_region = |r: &str| r.to_ascii_lowercase().starts_with("cn-");
-
-    // "us-west-2" is the legacy default AWS region — treat as empty.
-    let effective_region = region.as_deref().and_then(|r| {
-        if r.eq_ignore_ascii_case("us-west-2") || r.is_empty() {
-            None
-        } else {
-            Some(r)
-        }
-    });
-
-    let host = if let Some(region) = effective_region {
-        let acct = account.split('.').next().unwrap_or(&account);
-        let tld = if is_china_region(region) { "cn" } else { "com" };
-        format!("{acct}.{region}.snowflakecomputing.{tld}")
-    } else {
-        let tld = if account.contains('.') {
-            let segments: Vec<&str> = account.split('.').collect();
-            if segments.len() > 1 && is_china_region(segments[1]) {
-                "cn"
-            } else {
-                "com"
-            }
-        } else {
-            "com"
-        };
-        format!("{account}.snowflakecomputing.{tld}")
-    };
-
+    let host = format!("{account}.snowflakecomputing.com");
     tracing::debug!(derived_host = %host, account = %account, "Derived host from account");
     store.insert(param_names::HOST.into(), Setting::String(host));
 }
@@ -297,173 +256,6 @@ mod tests {
         derive_host_from_account(&mut store);
 
         assert_eq!(store.get(param_names::HOST), None);
-    }
-
-    // --- derive_host_from_account: region handling ---
-
-    #[test_case(
-        "myaccount", Some("us-east-1"), "myaccount.us-east-1.snowflakecomputing.com"
-        ; "account with explicit region"
-    )]
-    #[test_case(
-        "myaccount", Some("eu-central-1"), "myaccount.eu-central-1.snowflakecomputing.com"
-        ; "eu region"
-    )]
-    #[test_case(
-        "myaccount", Some("ap-southeast-2"), "myaccount.ap-southeast-2.snowflakecomputing.com"
-        ; "ap region"
-    )]
-    #[test_case(
-        "myaccount", Some("eu-central-1.privatelink"), "myaccount.eu-central-1.privatelink.snowflakecomputing.com"
-        ; "privatelink region"
-    )]
-    fn derive_host_from_account_with_region(
-        account: &str,
-        region: Option<&str>,
-        expected_host: &str,
-    ) {
-        let mut store = ParamStore::new();
-        store.insert(
-            param_names::ACCOUNT.into(),
-            Setting::String(account.to_owned()),
-        );
-        if let Some(r) = region {
-            store.insert(param_names::REGION.into(), Setting::String(r.to_owned()));
-        }
-
-        derive_host_from_account(&mut store);
-
-        assert_eq!(
-            store.get(param_names::HOST),
-            Some(&Setting::String(expected_host.to_owned())),
-        );
-    }
-
-    #[test_case("us-west-2" ; "lowercase")]
-    #[test_case("US-WEST-2" ; "uppercase")]
-    #[test_case("Us-West-2" ; "mixed case")]
-    fn derive_host_us_west_2_treated_as_no_region(region: &str) {
-        let mut store = ParamStore::new();
-        store.insert(
-            param_names::ACCOUNT.into(),
-            Setting::String("myaccount".to_owned()),
-        );
-        store.insert(
-            param_names::REGION.into(),
-            Setting::String(region.to_owned()),
-        );
-
-        derive_host_from_account(&mut store);
-
-        assert_eq!(
-            store.get(param_names::HOST),
-            Some(&Setting::String(
-                "myaccount.snowflakecomputing.com".to_owned()
-            )),
-        );
-    }
-
-    #[test_case(
-        "myaccount", Some("cn-northwest-1"), "myaccount.cn-northwest-1.snowflakecomputing.cn"
-        ; "china region uses cn TLD"
-    )]
-    #[test_case(
-        "myaccount", Some("CN-NORTHWEST-1"), "myaccount.CN-NORTHWEST-1.snowflakecomputing.cn"
-        ; "china region detection is case insensitive"
-    )]
-    #[test_case(
-        "myaccount.cn-northwest-1", None, "myaccount.cn-northwest-1.snowflakecomputing.cn"
-        ; "china inferred from dotted account"
-    )]
-    fn derive_host_china_region(account: &str, region: Option<&str>, expected_host: &str) {
-        let mut store = ParamStore::new();
-        store.insert(
-            param_names::ACCOUNT.into(),
-            Setting::String(account.to_owned()),
-        );
-        if let Some(r) = region {
-            store.insert(param_names::REGION.into(), Setting::String(r.to_owned()));
-        }
-
-        derive_host_from_account(&mut store);
-
-        assert_eq!(
-            store.get(param_names::HOST),
-            Some(&Setting::String(expected_host.to_owned())),
-        );
-    }
-
-    #[test_case(
-        "myaccount.us-east-1", Some("eu-central-1"), "myaccount.eu-central-1.snowflakecomputing.com"
-        ; "dotted account truncated when region set"
-    )]
-    #[test_case(
-        "a.b.c", Some("eu-west-1"), "a.eu-west-1.snowflakecomputing.com"
-        ; "multi-dot account uses first segment only"
-    )]
-    fn derive_host_dotted_account_with_region(
-        account: &str,
-        region: Option<&str>,
-        expected_host: &str,
-    ) {
-        let mut store = ParamStore::new();
-        store.insert(
-            param_names::ACCOUNT.into(),
-            Setting::String(account.to_owned()),
-        );
-        if let Some(r) = region {
-            store.insert(param_names::REGION.into(), Setting::String(r.to_owned()));
-        }
-
-        derive_host_from_account(&mut store);
-
-        assert_eq!(
-            store.get(param_names::HOST),
-            Some(&Setting::String(expected_host.to_owned())),
-        );
-    }
-
-    #[test]
-    fn derive_host_empty_region_treated_as_absent() {
-        let mut store = ParamStore::new();
-        store.insert(
-            param_names::ACCOUNT.into(),
-            Setting::String("myaccount".to_owned()),
-        );
-        store.insert(param_names::REGION.into(), Setting::String(String::new()));
-
-        derive_host_from_account(&mut store);
-
-        assert_eq!(
-            store.get(param_names::HOST),
-            Some(&Setting::String(
-                "myaccount.snowflakecomputing.com".to_owned()
-            )),
-        );
-    }
-
-    #[test]
-    fn derive_host_explicit_host_not_overridden_by_region() {
-        let mut store = ParamStore::new();
-        store.insert(
-            param_names::ACCOUNT.into(),
-            Setting::String("myaccount".to_owned()),
-        );
-        store.insert(
-            param_names::REGION.into(),
-            Setting::String("eu-central-1".to_owned()),
-        );
-        store.insert(
-            param_names::HOST.into(),
-            Setting::String("custom.host.com".to_owned()),
-        );
-
-        derive_host_from_account(&mut store);
-
-        assert_eq!(
-            store.get(param_names::HOST),
-            Some(&Setting::String("custom.host.com".to_owned())),
-        );
     }
 
     fn make_paths(dir: &TempDir) -> ConfigPaths {
@@ -691,90 +483,6 @@ database = "conn_db"
         assert_eq!(
             get_str(&resolved, param_names::PROTOCOL),
             Some("https".to_owned())
-        );
-    }
-
-    // --- resolve_with_paths: region integration ---
-
-    #[test]
-    fn resolve_derives_host_from_account_and_region() {
-        let temp_dir = TempDir::new().unwrap();
-        let paths = make_paths(&temp_dir);
-
-        let mut explicit = ParamStore::new();
-        explicit.insert(
-            "account".to_owned(),
-            Setting::String("myaccount".to_owned()),
-        );
-        explicit.insert(
-            "region".to_owned(),
-            Setting::String("eu-central-1".to_owned()),
-        );
-
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
-
-        assert_eq!(
-            get_str(&resolved, param_names::HOST),
-            Some("myaccount.eu-central-1.snowflakecomputing.com".to_owned()),
-        );
-    }
-
-    #[test]
-    fn resolve_explicit_host_overrides_region_derivation() {
-        let temp_dir = TempDir::new().unwrap();
-        let paths = make_paths(&temp_dir);
-
-        let mut explicit = ParamStore::new();
-        explicit.insert(
-            "account".to_owned(),
-            Setting::String("myaccount".to_owned()),
-        );
-        explicit.insert(
-            "region".to_owned(),
-            Setting::String("eu-central-1".to_owned()),
-        );
-        explicit.insert(
-            "host".to_owned(),
-            Setting::String("custom.host.com".to_owned()),
-        );
-
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
-
-        assert_eq!(
-            get_str(&resolved, param_names::HOST),
-            Some("custom.host.com".to_owned()),
-        );
-    }
-
-    #[test]
-    fn resolve_region_from_toml_derives_host() {
-        let temp_dir = TempDir::new().unwrap();
-        let paths = make_paths(&temp_dir);
-        write_config(
-            &temp_dir,
-            "connections.toml",
-            r#"
-[regionconn]
-account = "myaccount"
-region = "ap-southeast-2"
-"#,
-        );
-
-        let mut explicit = ParamStore::new();
-        explicit.insert(
-            "connection_name".to_owned(),
-            Setting::String("regionconn".to_owned()),
-        );
-
-        let resolved = resolve_with_paths(&explicit, &paths).unwrap();
-
-        assert_eq!(
-            get_str(&resolved, param_names::HOST),
-            Some("myaccount.ap-southeast-2.snowflakecomputing.com".to_owned()),
-        );
-        assert_eq!(
-            get_str(&resolved, param_names::ACCOUNT),
-            Some("myaccount".to_owned()),
         );
     }
 }

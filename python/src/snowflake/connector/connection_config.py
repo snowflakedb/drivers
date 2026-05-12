@@ -140,9 +140,6 @@ class ConnectionConfig:
     protocol: str | None = "https"
     """Connection protocol (http or https). Default: 'https'"""
 
-    region: str | None = None
-    """Deprecated. Region name used to construct the hostname when 'host' is not set"""
-
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 
@@ -323,7 +320,6 @@ class ConnectionConfig:
             "private_key_file",
             "private_key_password",
             "protocol",
-            "region",
             "role",
             "schema",
             "server_session_keep_alive",
