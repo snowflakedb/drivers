@@ -799,7 +799,9 @@ jobs:
   build_wix:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    runs-on: windows-latest
+    # Pinned to windows-2022 because WiX v7 sources reference the VS 2022 'v143'
+    # platform toolset. windows-latest is transitioning to VS 2026 which removes v143.
+    runs-on: windows-2022
     name: build_wix (WiX Toolset from source)
     env:
       DOTNET_NOLOGO: 'true'
