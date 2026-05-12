@@ -1,4 +1,15 @@
+// ODBC E2E: SQL_C_TYPE_TIMESTAMP bound via SQLBindParameter to a TIMESTAMP
+// target.
+//
+// Per ODBC Appendix G ("Driver Guidelines for Backward Compatibility"),
+// the ODBC 3.x code SQL_TYPE_TIMESTAMP (93) and its ODBC 2.x predecessor
+// SQL_TIMESTAMP (11) must be accepted as identical at the SQLBindParameter
+// boundary. Each TEST_CASE below is parametrized over both spellings
+// using Catch2 GENERATE so the alias contract is pinned for every
+// scenario.
+
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
@@ -6,8 +17,11 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back",
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to TIMESTAMP target and read back",
                  "[c_timestamp][conversion][sql_timestamp]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given Snowflake client is logged in
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
@@ -25,7 +39,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYP
   val.second = 45;
   val.fraction = 0;
   SQLLEN ind = sizeof(val);
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 0, 0, &val,
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, sql_type, 0, 0, &val,
                          sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
@@ -42,8 +56,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYP
   CHECK(result.second == 45);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to SQL_TYPE_TIMESTAMP",
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to TIMESTAMP target",
                  "[c_timestamp][conversion][sql_timestamp]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
@@ -52,8 +69,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with NULL 
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   SQLLEN ind = SQL_NULL_DATA;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 0, 0, nullptr,
-                         0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, sql_type, 0, 0, nullptr, 0,
+                         &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
