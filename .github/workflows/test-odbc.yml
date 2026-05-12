@@ -1025,6 +1025,8 @@ jobs:
           $env:PATH = "$toolPath;$env:PATH"
           Write-Host "`nwix --version:"
           & wix --version
+          & wix eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw "wix eula accept wix7 failed with exit code $LASTEXITCODE" }
 
           # --- Pre-stage WiX extensions directly into the global cache so `wix build` resolves
           # them locally without ever calling NuGet. `wix extension add` is intentionally not used
