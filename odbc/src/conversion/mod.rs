@@ -18,6 +18,9 @@ mod decfloat;
 #[cfg(test)]
 mod decfloat_tests;
 mod interval;
+mod interval_str;
+#[cfg(test)]
+mod interval_str_tests;
 #[cfg(test)]
 mod interval_tests;
 mod nullable;

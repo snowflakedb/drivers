@@ -645,3 +645,165 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle fractional seconds in interva
     CHECK(interval.intval.day_second.fraction == 500000);  // Microseconds
   }
 }
+
+// ============================================================================
+// END OF SPEC SCAFFOLDING (legacy `[.skip]`-tagged tests above)
+//
+// The active tests below exercise the
+// `crate::conversion::interval_str::varchar_to_interval` path that was
+// added alongside this file and intentionally use a small, focused set
+// of inputs so the matrix-coverage cells (VARCHAR × SQL_C_INTERVAL_*)
+// can flip from RED ("not implemented") to GREEN. The legacy `[.skip]`
+// scaffolding above documents the full ODBC Appendix D behavior and
+// will be progressively un-skipped in follow-up PRs as we widen
+// coverage of truncation / precision-loss / format-error paths.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as single-field SQL_C_INTERVAL_*",
+                 "[datatype][string][conversion][interval]") {
+  // Given a VARCHAR row carrying bare integer interval values
+  auto stmt = conn.execute_fetch(
+      "SELECT '5' AS years, '10' AS months, '15' AS days, "
+      "'8' AS hours, '30' AS minutes, '45' AS seconds");
+
+  // Then SQL_C_INTERVAL_YEAR reads year=5
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_YEAR);
+    CHECK(interval.interval_sign == SQL_FALSE);
+    CHECK(interval.intval.year_month.year == 5);
+  }
+  // And SQL_C_INTERVAL_MONTH reads month=10
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
+    CHECK(interval.interval_type == SQL_IS_MONTH);
+    CHECK(interval.intval.year_month.month == 10);
+  }
+  // And SQL_C_INTERVAL_DAY reads day=15
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
+    CHECK(interval.interval_type == SQL_IS_DAY);
+    CHECK(interval.intval.day_second.day == 15);
+  }
+  // And SQL_C_INTERVAL_HOUR reads hour=8
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 4);
+    CHECK(interval.interval_type == SQL_IS_HOUR);
+    CHECK(interval.intval.day_second.hour == 8);
+  }
+  // And SQL_C_INTERVAL_MINUTE reads minute=30
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 5);
+    CHECK(interval.interval_type == SQL_IS_MINUTE);
+    CHECK(interval.intval.day_second.minute == 30);
+  }
+  // And SQL_C_INTERVAL_SECOND reads second=45
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 6);
+    CHECK(interval.interval_type == SQL_IS_SECOND);
+    CHECK(interval.intval.day_second.second == 45);
+    CHECK(interval.intval.day_second.fraction == 0);
+  }
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite SQL_C_INTERVAL_YEAR_TO_MONTH",
+                 "[datatype][string][conversion][interval]") {
+  // Given a VARCHAR carrying a year-month interval literal
+  auto stmt = conn.execute_fetch("SELECT '3-6' AS year_month");
+
+  // Then SQL_C_INTERVAL_YEAR_TO_MONTH reads year=3, month=6
+  auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
+  CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
+  CHECK(interval.interval_sign == SQL_FALSE);
+  CHECK(interval.intval.year_month.year == 3);
+  CHECK(interval.intval.year_month.month == 6);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite day-time SQL_C_INTERVAL_*",
+                 "[datatype][string][conversion][interval]") {
+  // Given VARCHARs carrying day-time interval literals
+  auto stmt = conn.execute_fetch(
+      "SELECT '5 10' AS day_hour, '3 14:30' AS day_minute, "
+      "'2 08:15:30' AS day_second, '10:45' AS hour_minute, "
+      "'12:30:45' AS hour_second, '45:30' AS minute_second");
+
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_DAY_TO_HOUR);
+    CHECK(interval.intval.day_second.day == 5);
+    CHECK(interval.intval.day_second.hour == 10);
+  }
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 2);
+    CHECK(interval.interval_type == SQL_IS_DAY_TO_MINUTE);
+    CHECK(interval.intval.day_second.day == 3);
+    CHECK(interval.intval.day_second.hour == 14);
+    CHECK(interval.intval.day_second.minute == 30);
+  }
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
+    CHECK(interval.interval_type == SQL_IS_DAY_TO_SECOND);
+    CHECK(interval.intval.day_second.day == 2);
+    CHECK(interval.intval.day_second.hour == 8);
+    CHECK(interval.intval.day_second.minute == 15);
+    CHECK(interval.intval.day_second.second == 30);
+  }
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 4);
+    CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
+    CHECK(interval.intval.day_second.hour == 10);
+    CHECK(interval.intval.day_second.minute == 45);
+  }
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 5);
+    CHECK(interval.interval_type == SQL_IS_HOUR_TO_SECOND);
+    CHECK(interval.intval.day_second.hour == 12);
+    CHECK(interval.intval.day_second.minute == 30);
+    CHECK(interval.intval.day_second.second == 45);
+  }
+  {
+    auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 6);
+    CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
+    CHECK(interval.intval.day_second.minute == 45);
+    CHECK(interval.intval.day_second.second == 30);
+  }
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative VARCHAR as SQL_C_INTERVAL_DAY",
+                 "[datatype][string][conversion][interval]") {
+  // Given a VARCHAR carrying a negative day count
+  auto stmt = conn.execute_fetch("SELECT '-15' AS neg_days");
+
+  // Then SQL_C_INTERVAL_DAY preserves the negative sign
+  auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
+  CHECK(interval.interval_type == SQL_IS_DAY);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.day == 15);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch fractional VARCHAR as SQL_C_INTERVAL_SECOND",
+                 "[datatype][string][conversion][interval]") {
+  // Given a VARCHAR carrying a sub-second value
+  auto stmt = conn.execute_fetch("SELECT '12.500000' AS sec");
+
+  // Then the second component is 12 and the fraction is 500_000 microseconds
+  auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+  CHECK(interval.interval_type == SQL_IS_SECOND);
+  CHECK(interval.intval.day_second.second == 12);
+  CHECK(interval.intval.day_second.fraction == 500000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR with SQLSTATE 22018 for SQL_C_INTERVAL_YEAR",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR that is not a valid interval literal
+  auto stmt = conn.execute_fetch("SELECT 'not-an-interval' AS bad");
+
+  // Then SQLGetData fails with SQLSTATE 22018 (Invalid character value for cast)
+  SQL_INTERVAL_STRUCT interval = {};
+  SQLLEN indicator = -999;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_INTERVAL_YEAR, &interval, sizeof(interval), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto records = get_diag_rec(stmt);
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "22018");
+}
