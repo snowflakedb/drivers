@@ -15,6 +15,14 @@ from snowflake.connector.cursor import DictCursor
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
+# These tests heavily mutate the connection (close, autocommit, commit, rollback,
+# set_autocommit). Override the module-scoped default with a fresh function-scoped
+# connection per test so state does not leak across tests.
+@pytest.fixture
+def connection(function_connection):
+    yield function_connection
+
+
 class TestConnectionInfo:
     """Integration tests for Connection._get_connection_info."""
 
