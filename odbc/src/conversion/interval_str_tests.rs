@@ -698,3 +698,155 @@ fn outer_whitespace_is_trimmed_for_composite() {
         assert_eq!(iv.interval_value.year_month.month, 6);
     }
 }
+
+// ============================================================================
+// Out-of-range trailing-field rejection (MS ODBC spec — Piotr's #9 item #15)
+//
+// Per the MS ODBC spec ("Trailing fields must follow the usual constraints
+// of the Gregorian calendar"), composite interval qualifiers reject
+// out-of-range trailing fields with SQLSTATE 22015 (IntervalFieldOverflow).
+// The leading field stays unconstrained (already covered by the precision
+// suite above). Only the *consumed* trailing fields are validated; fields
+// the qualifier discards via 01S07 truncation are not checked.
+// ============================================================================
+
+fn assert_rejects_with_overflow(input: &str, target: CDataType) {
+    let (_iv, r) = run(input, target);
+    let err = r.expect_err(&format!("{input} must be rejected for {target:?}"));
+    assert!(
+        matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
+        "expected 22015 IntervalFieldOverflow for {input:?} -> {target:?}, got {err:?}"
+    );
+}
+
+#[test]
+fn year_to_month_rejects_month_above_11() {
+    assert_rejects_with_overflow("3-12", CDataType::IntervalYearToMonth);
+    assert_rejects_with_overflow("3-13", CDataType::IntervalYearToMonth);
+    assert_rejects_with_overflow("0-99", CDataType::IntervalYearToMonth);
+}
+
+#[test]
+fn year_to_month_accepts_month_eleven() {
+    let (iv, r) = run("3-11", CDataType::IntervalYearToMonth);
+    let warnings = r.expect("month=11 is the spec maximum and must be accepted");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.month, 11);
+    }
+}
+
+#[test]
+fn day_to_hour_rejects_hour_above_23() {
+    assert_rejects_with_overflow("5 24", CDataType::IntervalDayToHour);
+    assert_rejects_with_overflow("5 99", CDataType::IntervalDayToHour);
+}
+
+#[test]
+fn day_to_minute_rejects_out_of_range_components() {
+    assert_rejects_with_overflow("5 24:30", CDataType::IntervalDayToMinute);
+    assert_rejects_with_overflow("5 10:60", CDataType::IntervalDayToMinute);
+}
+
+#[test]
+fn day_to_second_rejects_out_of_range_components() {
+    assert_rejects_with_overflow("5 24:30:45", CDataType::IntervalDayToSecond);
+    assert_rejects_with_overflow("5 10:60:00", CDataType::IntervalDayToSecond);
+    assert_rejects_with_overflow("5 10:30:60", CDataType::IntervalDayToSecond);
+}
+
+#[test]
+fn hour_to_minute_rejects_minute_above_59() {
+    // Leading "hour" is unconstrained (subject to precision); trailing
+    // "minute" must be <= 59. "25:61" therefore fails on minute, not hour.
+    assert_rejects_with_overflow("25:61", CDataType::IntervalHourToMinute);
+    assert_rejects_with_overflow("10:60", CDataType::IntervalHourToMinute);
+}
+
+#[test]
+fn hour_to_minute_accepts_unconstrained_leading_hour() {
+    // Hour can exceed 23 — it's the leading field and only the precision
+    // check applies. Use an explicit precision so the value fits.
+    let mut buf = make_buffer();
+    let binding = make_binding_with_precision(CDataType::IntervalHourToMinute, &mut buf, 3);
+    let r = crate::conversion::interval_str::varchar_to_interval(
+        "100:30",
+        CDataType::IntervalHourToMinute,
+        &binding,
+    );
+    let warnings = r.expect("leading hour is unconstrained");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(buf.interval_value.day_second.hour, 100);
+        assert_eq!(buf.interval_value.day_second.minute, 30);
+    }
+}
+
+#[test]
+fn hour_to_second_rejects_out_of_range_components() {
+    assert_rejects_with_overflow("12:60:30", CDataType::IntervalHourToSecond);
+    assert_rejects_with_overflow("12:30:60", CDataType::IntervalHourToSecond);
+}
+
+#[test]
+fn minute_to_second_rejects_second_above_59() {
+    assert_rejects_with_overflow("30:60", CDataType::IntervalMinuteToSecond);
+    assert_rejects_with_overflow("30:61", CDataType::IntervalMinuteToSecond);
+    // Same rejection on the fraction-bearing path.
+    assert_rejects_with_overflow("30:75.5", CDataType::IntervalMinuteToSecond);
+}
+
+#[test]
+fn minute_to_second_accepts_unconstrained_leading_minute() {
+    // Minute is the leading field of MINUTE_TO_SECOND and is unconstrained;
+    // the spec applies only to the trailing seconds.
+    let mut buf = make_buffer();
+    let binding = make_binding_with_precision(CDataType::IntervalMinuteToSecond, &mut buf, 4);
+    let r = crate::conversion::interval_str::varchar_to_interval(
+        "1234:30",
+        CDataType::IntervalMinuteToSecond,
+        &binding,
+    );
+    let warnings = r.expect("leading minute is unconstrained");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(buf.interval_value.day_second.minute, 1234);
+        assert_eq!(buf.interval_value.day_second.second, 30);
+    }
+}
+
+#[test]
+fn truncated_trailing_field_does_not_validate_discarded_components() {
+    // For IntervalDayToHour the qualifier consumes only day+hour, so the
+    // out-of-range minute/second in the input are dropped with 01S07 and
+    // their values do NOT trigger 22015. The hour itself is in range.
+    let (iv, r) = run("5 10:99:99", CDataType::IntervalDayToHour);
+    let warnings = r.expect("hour is in range; trailing fields are discarded");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.day, 5);
+        assert_eq!(iv.interval_value.day_second.hour, 10);
+    }
+}
+
+#[test]
+fn single_field_target_does_not_validate_discarded_trailing_fields() {
+    // IntervalYear consumes only the year — the month=99 in the input
+    // is discarded via 01S07 and is not range-checked.
+    let (iv, r) = run("3-99", CDataType::IntervalYear);
+    let warnings = r.expect("year is in range; month is discarded");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.year, 3);
+    }
+}

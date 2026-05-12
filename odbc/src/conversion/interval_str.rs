@@ -444,11 +444,13 @@ fn build_composite(
         IntervalYearToMonth => {
             let y = read(parts.year, "year")?;
             let m = read(parts.month, "month")?;
+            check_trailing_gregorian("month", m, 11, target)?;
             (sql::Interval::YearToMonth as i32, y, None, Some((y, m)))
         }
         IntervalDayToHour => {
             let d = read(parts.day, "day")?;
             let h = read(parts.hour, "hour")?;
+            check_trailing_gregorian("hour", h, 23, target)?;
             (
                 sql::Interval::DayToHour as i32,
                 d,
@@ -460,6 +462,8 @@ fn build_composite(
             let d = read(parts.day, "day")?;
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
+            check_trailing_gregorian("hour", h, 23, target)?;
+            check_trailing_gregorian("minute", m, 59, target)?;
             (
                 sql::Interval::DayToMinute as i32,
                 d,
@@ -472,6 +476,9 @@ fn build_composite(
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
             let s = read(parts.second, "second")?;
+            check_trailing_gregorian("hour", h, 23, target)?;
+            check_trailing_gregorian("minute", m, 59, target)?;
+            check_trailing_gregorian("second", s, 59, target)?;
             (
                 sql::Interval::DayToSecond as i32,
                 d,
@@ -482,6 +489,7 @@ fn build_composite(
         IntervalHourToMinute => {
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
+            check_trailing_gregorian("minute", m, 59, target)?;
             (
                 sql::Interval::HourToMinute as i32,
                 h,
@@ -493,6 +501,8 @@ fn build_composite(
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
             let s = read(parts.second, "second")?;
+            check_trailing_gregorian("minute", m, 59, target)?;
+            check_trailing_gregorian("second", s, 59, target)?;
             (
                 sql::Interval::HourToSecond as i32,
                 h,
@@ -530,6 +540,7 @@ fn build_composite(
                     .fail();
                 }
             };
+            check_trailing_gregorian("second", s, 59, target)?;
             (
                 sql::Interval::MinuteToSecond as i32,
                 m,
@@ -593,6 +604,32 @@ fn field_overflow(name: &str, value: u128) -> WriteOdbcError {
         reason: format!("{name} value {value} exceeds u32 range"),
     }
     .build()
+}
+
+/// Validates that a *trailing* field value falls inside the Gregorian
+/// calendar range required by the Microsoft ODBC specification
+/// ("Trailing fields must follow the usual constraints of the
+/// Gregorian calendar"). The leading field of an interval qualifier
+/// is unconstrained — that case is covered by `check_leading_precision`.
+///
+/// Out-of-range trailing fields surface as SQLSTATE 22015
+/// (`IntervalFieldOverflow`).
+fn check_trailing_gregorian(
+    field: &str,
+    value: u128,
+    max: u128,
+    target: CDataType,
+) -> Result<(), WriteOdbcError> {
+    if value > max {
+        IntervalFieldOverflowSnafu {
+            reason: format!(
+                "{field} field value {value} is out of Gregorian range 0..={max} for {target:?}"
+            ),
+        }
+        .fail()
+    } else {
+        Ok(())
+    }
 }
 
 /// Returns 01S07 (`StringDataTruncated`) if the parsed input carried any

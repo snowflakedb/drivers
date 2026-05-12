@@ -431,44 +431,32 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval s
   check_invalid_string<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 4);
 }
 
-// TODO(driver): out-of-range trailing fields (month > 11, hour > 23, minute/second > 59) should
-// be rejected with SQLSTATE 22015 per the Microsoft ODBC spec ("Trailing fields must follow the
-// usual constraints of the Gregorian calendar"). The current implementation passes them through
-// and lets composite parsing decide. Keeping this test `[.skip]` until that validation lands; the
-// expected assertions below also reflect the legacy old-driver overflow-into-next-field behavior,
-// which we will replace with a 22015 rejection block when that work is taken on.
-TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting out-of-range component values",
-                 "[datatype][string][conversion][interval][failure][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range trailing component values with 22015",
+                 "[datatype][string][conversion][interval][failure]") {
   // Given Snowflake client is logged in
+  //
+  // Per the Microsoft ODBC spec ("Interval Data Types": "Trailing fields must follow the usual
+  // constraints of the Gregorian calendar"), composite interval qualifiers reject out-of-range
+  // trailing fields with SQLSTATE 22015. The leading field is unconstrained (subject to its own
+  // precision check), so e.g. hour=25 is fine in HOUR_TO_MINUTE -- the rejection is on minute=61.
 
-  // Month > 11 in year-month, hour > 23, minute > 59, second > 59
-  // When Query selecting interval strings with invalid component ranges is executed
+  // When Query selecting interval strings with invalid trailing component ranges is executed
   auto stmt = conn.execute_fetch(
-      "SELECT '3-13' AS invalid_month, '25:61' AS invalid_hour, "
+      "SELECT '3-13' AS invalid_month, '25:61' AS invalid_minute_in_hm, "
       "'10:61' AS invalid_minute, '30:61' AS invalid_second");
 
-  // Then out-of-range month values should fail with SQLSTATE 22018
-  check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
+  // Then '3-13' as YEAR_TO_MONTH fails: trailing month=13 > 11 -> 22015
+  check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
 
-  // And out-of-range time components should overflow to next field
-  {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 2);
-    CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
-    CHECK(interval.intval.day_second.hour == 26);
-    CHECK(interval.intval.day_second.minute == 1);
-  }
-  {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 3);
-    CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
-    CHECK(interval.intval.day_second.hour == 11);
-    CHECK(interval.intval.day_second.minute == 1);
-  }
-  {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 4);
-    CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
-    CHECK(interval.intval.day_second.minute == 31);
-    CHECK(interval.intval.day_second.second == 1);
-  }
+  // And '25:61' as HOUR_TO_MINUTE fails: leading hour=25 is allowed (precision permits 2 digits),
+  // but trailing minute=61 > 59 -> 22015
+  check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 2);
+
+  // And '10:61' as HOUR_TO_MINUTE fails: trailing minute=61 > 59 -> 22015
+  check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 3);
+
+  // And '30:61' as MINUTE_TO_SECOND fails: leading minute=30 allowed, trailing second=61 -> 22015
+  check_interval_precision_lost<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 4);
 }
 
 // ============================================================================
@@ -965,8 +953,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should not warn when extra fractional digit
   CHECK(interval.intval.day_second.fraction == 123456);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should treat explicit zero fraction in H:M as no fractional part",
+TEST_CASE_METHOD(ConnSchemaFixture, "should treat explicit zero fraction in H:M as no fractional part",
                  "[datatype][string][conversion][interval][fractional][edge]") {
   // Given a VARCHAR formatted as H:M with an explicit ".0" fractional appendix
   auto stmt = conn.execute_fetch("SELECT '5:10.0' AS hm_zero_frac");
@@ -980,8 +967,7 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   CHECK(interval.intval.day_second.minute == 10);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should reject H:M with non-zero fraction for SQL_C_INTERVAL_HOUR_TO_MINUTE",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject H:M with non-zero fraction for SQL_C_INTERVAL_HOUR_TO_MINUTE",
                  "[datatype][string][conversion][interval][negative][fractional]") {
   // Given a VARCHAR with a non-zero fraction ("5:10.125") that the parser must read as M:S.fraction
   auto stmt = conn.execute_fetch("SELECT '5:10.125' AS unambiguous_ms");
@@ -989,8 +975,8 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // When the column is fetched as SQL_C_INTERVAL_HOUR_TO_MINUTE (which has no fraction field)
   SQL_INTERVAL_STRUCT interval = {};
   SQLLEN indicator = -999;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_INTERVAL_HOUR_TO_MINUTE, &interval,
-                             sizeof(interval), &indicator);
+  SQLRETURN ret =
+      SQLGetData(stmt.getHandle(), 1, SQL_C_INTERVAL_HOUR_TO_MINUTE, &interval, sizeof(interval), &indicator);
 
   // Then SQLGetData fails with SQLSTATE 22018 because the input is unambiguously M:S, not H:M
   CHECK(ret == SQL_ERROR);
