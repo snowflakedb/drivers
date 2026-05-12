@@ -33,6 +33,7 @@ use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
+use uuid::Uuid;
 
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
@@ -1011,8 +1012,13 @@ async fn execute_async_with_fallback<'a>(
                 ..
             },
         ) => {
+            let RestError::AsyncQuery { request_id, .. } = &e else {
+                unreachable!()
+            };
+            // guarded with: query_log_text, query_log_parameters
             let (sql, bindings) = query_log_fields(query_parameters, &query_input);
             tracing::error!(
+                request_id = ?request_id,
                 sql = sql,
                 bindings = bindings,
                 "Error 612 after prior successful polls; not retrying"
@@ -1072,14 +1078,6 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
 
-    let (sql, bindings) = query_log_fields(query_parameters, query_input);
-    tracing::info!(
-        request_id = %request_id,
-        sql = sql,
-        bindings = bindings,
-        "Executing sync query"
-    );
-
     execute_sync_query(
         client,
         query_parameters,
@@ -1134,6 +1132,15 @@ async fn execute_sync_query<'a>(
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
+
+    // guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(query_parameters, query_input);
+    tracing::info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing sync query"
+    );
 
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
@@ -1213,7 +1220,14 @@ async fn execute_sync_query<'a>(
             retry_policy,
         )
         .await
-        .context(AsyncQuerySnafu)?
+        .context(AsyncQuerySnafu {
+            request_id: Some(request_id),
+            query_id: query_response
+                .data
+                .query_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+        })?
     } else {
         query_response
     };
@@ -1243,7 +1257,10 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu)
+    .context(AsyncQuerySnafu {
+        request_id: Some(request_id),
+        query_id: None,
+    })
 }
 
 /// Fetch the result of a previously executed query by its Snowflake Query ID.
@@ -1259,10 +1276,13 @@ pub async fn snowflake_get_query_result(
     query_id: &str,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
+    tracing::info!(query_id = query_id, "Fetching query result");
+
     let result_url = format!(
         "{}/queries/{}/result",
         query_parameters.server_url, query_id
     );
+    let uuid = Uuid::parse_str(query_id).expect("Failed to parse query_id");
     let query_response = async_exec::poll_query_status(
         client,
         &query_parameters.client_info,
@@ -1271,7 +1291,10 @@ pub async fn snowflake_get_query_result(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu)?;
+    .context(AsyncQuerySnafu {
+        request_id: None,
+        query_id: Some(uuid),
+    })?;
 
     into_query_result(query_response)
 }
@@ -1586,6 +1609,8 @@ pub enum RestError {
     #[snafu(display("Async Snowflake query failed"))]
     AsyncQuery {
         source: SfError,
+        request_id: Option<Uuid>,
+        query_id: Option<Uuid>,
         #[snafu(implicit)]
         location: Location,
     },
