@@ -827,23 +827,24 @@ jobs:
           path: wix-src
           fetch-depth: 0
 
-      - name: Disable NuGet audit in WiX nuget.config
+      - name: Disable NuGet audit in WiX Directory.Build.props
         if: steps.wix-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $configPath = Join-Path $PWD 'wix-src/nuget.config'
-          if (-not (Test-Path $configPath)) {
-              throw "WiX nuget.config not found at $configPath"
+          $propsPath = Join-Path $PWD 'wix-src/src/Directory.Build.props'
+          if (-not (Test-Path $propsPath)) {
+              throw "WiX Directory.Build.props not found at $propsPath"
           }
-          $content = Get-Content $configPath -Raw
-          if ($content -notmatch '<auditSources>') {
-              $injection = "  <auditSources>`r`n    <clear />`r`n  </auditSources>`r`n</configuration>"
-              $content = $content -replace '</configuration>', $injection
-              Set-Content -Path $configPath -Value $content -Encoding UTF8 -NoNewline
-              Write-Host "Patched nuget.config to disable NuGet audit:"
-              Get-Content $configPath
+          $content = Get-Content $propsPath -Raw
+          $patched = $content `
+              -replace '<NuGetAudit>true</NuGetAudit>',           '<NuGetAudit>false</NuGetAudit>' `
+              -replace '<NuGetAuditMode>all</NuGetAuditMode>',     '<NuGetAuditMode>direct</NuGetAuditMode>' `
+              -replace '<NuGetAuditLevel>low</NuGetAuditLevel>',   '<NuGetAuditLevel>critical</NuGetAuditLevel>'
+          if ($patched -eq $content) {
+              Write-Host "No NuGetAudit settings found to patch in $propsPath; continuing"
           } else {
-              Write-Host "auditSources already present in nuget.config; skipping patch"
+              Set-Content -Path $propsPath -Value $patched -Encoding UTF8 -NoNewline
+              Write-Host "Patched $propsPath to disable NuGet audit"
           }
 
       - name: Build WiX from source
