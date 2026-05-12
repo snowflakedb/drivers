@@ -27,15 +27,21 @@ def pytest_configure(config):
     # scripts/ is not a Python package (no __init__.py, not on sys.path), so
     # load setup_local_reg.py by file path via importlib. bootstrap() is a
     # no-op unless SNOWFLAKE_TEST_HOST points at a *.reg.local instance.
+    #
+    # Unit tests must not require parameters.json: when the file is absent
+    # we simply skip the bootstrap step — only integ / e2e suites need
+    # credentials, and those will fail with a clearer error downstream.
     import importlib.util
     import pathlib
 
     repo_root = pathlib.Path(__file__).resolve().parents[2]
+    param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
+    if not param_path.is_file():
+        return
+
     spec = importlib.util.spec_from_file_location("setup_local_reg", repo_root / "scripts" / "setup_local_reg.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-
-    param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
     module.bootstrap(parameters_path=param_path)
 
 
