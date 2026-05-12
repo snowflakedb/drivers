@@ -36,6 +36,16 @@ fn make_binding(target: CDataType, buf: &mut sql::IntervalStruct) -> Binding {
     }
 }
 
+fn make_binding_with_precision(
+    target: CDataType,
+    buf: &mut sql::IntervalStruct,
+    leading_precision: i16,
+) -> Binding {
+    let mut b = make_binding(target, buf);
+    b.datetime_interval_precision = Some(leading_precision);
+    b
+}
+
 fn run(
     value: &str,
     target: CDataType,
@@ -103,10 +113,34 @@ fn second_with_fraction_round_trips_fraction() {
 
 #[test]
 fn second_truncates_extra_fraction_digits() {
-    // ODBC normalises fractional seconds to 6 digits (microseconds);
-    // anything past the 6th digit is silently truncated.
+    // ODBC normalises fractional seconds to 6 digits (microseconds).
+    // When dropped digits are non-zero we owe the application a 01S07
+    // (`StringDataTruncated`) warning, mirroring
+    // `numeric_helpers::compute_interval_fraction`'s `was_truncated`.
     let (iv, r) = run("0.1234567", CDataType::IntervalSecond);
-    r.expect("parse should succeed");
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.fraction, 123_456);
+    }
+}
+
+#[test]
+fn second_zero_padded_extra_fraction_digits_does_not_warn() {
+    // `0.1234560000000` has nothing meaningful past the 6th digit, so
+    // no warning is owed even though the source was longer than 6
+    // characters.
+    let (iv, r) = run("0.1234560000", CDataType::IntervalSecond);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings.is_empty(),
+        "padded zeros should not trigger 01S07, got {warnings:?}"
+    );
     unsafe {
         assert_eq!(iv.interval_value.day_second.fraction, 123_456);
     }
@@ -281,5 +315,342 @@ fn missing_required_component_returns_22018() {
     assert!(
         matches!(err, WriteOdbcError::InvalidValue { .. }),
         "{err:?}"
+    );
+}
+
+// ============================================================================
+// Sign-bit edge cases (Piotr's comments #1, #5, #9, #10)
+// ============================================================================
+
+#[test]
+fn negative_fractional_only_second_sets_sign_bit() {
+    // `-0.5` must write `interval_sign = 1` for SQL_C_INTERVAL_SECOND;
+    // the integer-second `field` is zero but the magnitude carried by
+    // `fraction_micros` is non-zero.
+    let (iv, r) = run("-0.5", CDataType::IntervalSecond);
+    let warnings = r.expect("parse should succeed");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(iv.interval_sign, 1, "sign must be set for non-zero magnitude");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.second, 0);
+        assert_eq!(iv.interval_value.day_second.fraction, 500_000);
+    }
+}
+
+#[test]
+fn negative_zero_with_explicit_zero_fraction_keeps_sign_unset() {
+    // `-0.0` has zero magnitude — sign bit must NOT be set.
+    let (iv, _) = run("-0.0", CDataType::IntervalSecond);
+    assert_eq!(iv.interval_sign, 0);
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.second, 0);
+        assert_eq!(iv.interval_value.day_second.fraction, 0);
+    }
+}
+
+#[test]
+fn negative_year_to_month_sets_sign_bit() {
+    let (iv, r) = run("-3-6", CDataType::IntervalYearToMonth);
+    r.expect("parse should succeed");
+    assert_eq!(iv.interval_sign, 1);
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.year, 3);
+        assert_eq!(iv.interval_value.year_month.month, 6);
+    }
+}
+
+#[test]
+fn negative_day_to_second_sets_sign_bit() {
+    let (iv, r) = run("-2 08:15:30.250000", CDataType::IntervalDayToSecond);
+    r.expect("parse should succeed");
+    assert_eq!(iv.interval_sign, 1);
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.day, 2);
+        assert_eq!(iv.interval_value.day_second.hour, 8);
+        assert_eq!(iv.interval_value.day_second.minute, 15);
+        assert_eq!(iv.interval_value.day_second.second, 30);
+        assert_eq!(iv.interval_value.day_second.fraction, 250_000);
+    }
+}
+
+#[test]
+fn negative_hour_to_second_sets_sign_bit() {
+    let (iv, r) = run("-12:30:45", CDataType::IntervalHourToSecond);
+    r.expect("parse should succeed");
+    assert_eq!(iv.interval_sign, 1);
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.hour, 12);
+        assert_eq!(iv.interval_value.day_second.minute, 30);
+        assert_eq!(iv.interval_value.day_second.second, 45);
+    }
+}
+
+#[test]
+fn negative_hour_to_minute_sets_sign_bit() {
+    let (iv, r) = run("-10:45", CDataType::IntervalHourToMinute);
+    r.expect("parse should succeed");
+    assert_eq!(iv.interval_sign, 1);
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.hour, 10);
+        assert_eq!(iv.interval_value.day_second.minute, 45);
+    }
+}
+
+// ============================================================================
+// 5:10.0 → H:M composites (Piotr's comment #2 / item #2)
+// ============================================================================
+
+#[test]
+fn explicit_zero_fraction_two_component_routes_to_hour_to_minute() {
+    // Snowflake's INTERVAL HOUR TO MINUTE textual rendering can
+    // include a trailing `.0` — make sure we accept it instead of
+    // rejecting with 22018 ("missing required 'hour' component").
+    let (iv, r) = run("5:10.0", CDataType::IntervalHourToMinute);
+    let warnings = r.expect("explicit-zero-fraction H:M must succeed");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.hour, 5);
+        assert_eq!(iv.interval_value.day_second.minute, 10);
+    }
+}
+
+#[test]
+fn explicit_zero_fraction_three_component_routes_to_day_to_minute() {
+    // `D H:M.0` should populate (day, hour, minute) on a DAY_TO_MINUTE target.
+    let (iv, r) = run("3 5:10.0", CDataType::IntervalDayToMinute);
+    let warnings = r.expect("explicit-zero-fraction D H:M must succeed");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.day, 3);
+        assert_eq!(iv.interval_value.day_second.hour, 5);
+        assert_eq!(iv.interval_value.day_second.minute, 10);
+    }
+}
+
+#[test]
+fn explicit_zero_fraction_two_component_still_works_for_minute_to_second() {
+    // The MinuteToSecond target should still re-interpret `5:10.0` as
+    // `(minute=5, second=10, fraction=0)` — the ambiguity is resolved
+    // by the target qualifier.
+    let (iv, r) = run("5:10.0", CDataType::IntervalMinuteToSecond);
+    let warnings = r.expect("explicit-zero-fraction M:S must succeed");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.minute, 5);
+        assert_eq!(iv.interval_value.day_second.second, 10);
+        assert_eq!(iv.interval_value.day_second.fraction, 0);
+    }
+}
+
+#[test]
+fn nonzero_fraction_two_component_still_rejects_hour_to_minute() {
+    // `5:10.125` is unambiguously M:S.fraction (a minute field cannot
+    // carry a fractional component) — HOUR_TO_MINUTE must fail.
+    let (_, r) = run("5:10.125", CDataType::IntervalHourToMinute);
+    r.expect_err("non-zero fraction with H:M target must fail");
+}
+
+// ============================================================================
+// >6 fraction digits via composite paths (Piotr's comment #8 / items #3, #13)
+// ============================================================================
+
+#[test]
+fn day_to_second_truncated_fraction_warns() {
+    // 7-digit fraction with non-zero trailing digit — the parser
+    // truncates to 6 and we owe the application a 01S07.
+    let (iv, r) = run("1 02:03:04.1234567", CDataType::IntervalDayToSecond);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning for sub-microsecond loss in D-S, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.fraction, 123_456);
+    }
+}
+
+#[test]
+fn hour_to_second_truncated_fraction_warns() {
+    let (iv, r) = run("01:02:03.7654321", CDataType::IntervalHourToSecond);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "{warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.fraction, 765_432);
+    }
+}
+
+#[test]
+fn minute_to_second_truncated_fraction_warns() {
+    let (iv, r) = run("45:30.1234567", CDataType::IntervalMinuteToSecond);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "{warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.fraction, 123_456);
+    }
+}
+
+// ============================================================================
+// 22015 leading-precision overflow (Piotr's comment #4 / items #6, #7)
+// ============================================================================
+
+#[test]
+fn single_field_year_overflow_returns_22015_at_default_precision() {
+    // Default `datetime_interval_precision = 2` rejects values >= 100.
+    let (_, r) = run("999", CDataType::IntervalYear);
+    let err = r.expect_err("999 exceeds default precision of 2 digits");
+    assert!(
+        matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
+        "expected 22015 (IntervalFieldOverflow), got {err:?}"
+    );
+}
+
+#[test]
+fn composite_year_to_month_overflow_returns_22015_at_default_precision() {
+    let (_, r) = run("999-3", CDataType::IntervalYearToMonth);
+    let err = r.expect_err("year=999 exceeds default precision of 2 digits");
+    assert!(
+        matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
+        "expected 22015 (IntervalFieldOverflow), got {err:?}"
+    );
+}
+
+#[test]
+fn u128_overflow_returns_22015_not_22018() {
+    // Value too large to fit u128 — the literal IS a valid integer
+    // but exceeds storage; spec mandates 22015, not 22018.
+    let huge = "1".repeat(40); // ~10^40, well past u128 (10^38).
+    let (_, r) = run(&huge, CDataType::IntervalYear);
+    let err = r.expect_err("u128-overflowing input must fail");
+    assert!(
+        matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
+        "expected 22015 (IntervalFieldOverflow), got {err:?}"
+    );
+}
+
+// ============================================================================
+// Explicit datetime_interval_precision honored (Piotr's comment #9 item #8)
+// ============================================================================
+
+#[test]
+fn explicit_precision_allows_value_within_range() {
+    let mut buf = make_buffer();
+    let binding = make_binding_with_precision(CDataType::IntervalYear, &mut buf, 5);
+    let r = crate::conversion::interval_str::varchar_to_interval(
+        "12345",
+        CDataType::IntervalYear,
+        &binding,
+    );
+    let warnings = r.expect("12345 fits within 5 leading-precision digits");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(buf.interval_value.year_month.year, 12345);
+    }
+}
+
+#[test]
+fn explicit_precision_rejects_value_exceeding_range() {
+    let mut buf = make_buffer();
+    let binding = make_binding_with_precision(CDataType::IntervalYear, &mut buf, 3);
+    let r = crate::conversion::interval_str::varchar_to_interval(
+        "9999",
+        CDataType::IntervalYear,
+        &binding,
+    );
+    let err = r.expect_err("9999 exceeds 3 leading-precision digits");
+    assert!(
+        matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
+        "{err:?}"
+    );
+}
+
+// ============================================================================
+// Trailing-field truncation into composite targets (Piotr's items #11, #12)
+// ============================================================================
+
+#[test]
+fn day_to_second_truncates_into_day_to_hour() {
+    // `5 10:30:45` routed to IntervalDayToHour — the minute/second
+    // fields must be dropped with 01S07.
+    let (iv, r) = run("5 10:30:45", CDataType::IntervalDayToHour);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.day, 5);
+        assert_eq!(iv.interval_value.day_second.hour, 10);
+    }
+}
+
+#[test]
+fn hour_to_second_truncates_into_hour_to_minute() {
+    // `12:30:45` routed to IntervalHourToMinute — the second field
+    // is dropped with 01S07.
+    let (iv, r) = run("12:30:45", CDataType::IntervalHourToMinute);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.hour, 12);
+        assert_eq!(iv.interval_value.day_second.minute, 30);
+    }
+}
+
+#[test]
+fn year_to_month_truncates_into_month_target() {
+    // Symmetric to `year_to_month_into_year_truncates_month`: this
+    // time the YEAR field is dropped with 01S07 and only the month
+    // survives.
+    let (iv, r) = run("3-6", CDataType::IntervalMonth);
+    let warnings = r.expect("parse should succeed");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, Warning::StringDataTruncated)),
+        "expected 01S07 truncation warning, got {warnings:?}"
+    );
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.month, 6);
+    }
+}
+
+// ============================================================================
+// Defensive arm in varchar_to_interval (Piotr's comment #7 / item #5)
+// ============================================================================
+
+#[test]
+fn non_interval_target_returns_07006() {
+    // Direct call into `varchar_to_interval` with a non-interval
+    // target should map to 07006 (UnsupportedOdbcType), not 22003.
+    let mut buf = make_buffer();
+    let binding = make_binding(CDataType::SLong, &mut buf);
+    let r = crate::conversion::interval_str::varchar_to_interval(
+        "5",
+        CDataType::SLong,
+        &binding,
+    );
+    let err = r.expect_err("non-interval target must fail");
+    assert!(
+        matches!(err, WriteOdbcError::UnsupportedOdbcType { .. }),
+        "expected 07006 (UnsupportedOdbcType), got {err:?}"
     );
 }
