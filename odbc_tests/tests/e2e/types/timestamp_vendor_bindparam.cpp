@@ -18,7 +18,6 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 #include "snowflake_odbc_constants.hpp"
@@ -192,25 +191,26 @@ TEST_CASE("SQL_SF_TIMESTAMP_LTZ wall-clock is interpreted in the session timezon
   CHECK(get_data<SQL_C_CHAR>(wc_stmt, 1) == "2024-03-15 14:30:45.123456789 +0530");
 }
 
-TEST_CASE("SQL_SF_TIMESTAMP_TZ binding is rejected with SQLSTATE 07006",
-          "[timestamp_tz][bind_fetch][vendor_codes][.skip]") {
-  // SKIPPED: this test pins the *current gap* — the new driver rejects TZ
-  // binds because it doesn't yet emit the `<epoch_ns> <offset_minutes>`
-  // two-token wire format the legacy driver uses. A follow-up PR will add
-  // the offset round-trip and flip the assertion to a positive round-trip
-  // check. Skipping (rather than deleting) preserves the table setup,
-  // SQLBindParameter call, and SQLExecute scaffolding for that follow-up
-  // to reuse.
-  SKIP("Pending follow-up PR that adds TIMESTAMP_TZ binding (offset round-trip).");
-
-  // Faithfully binding TIMESTAMP_TZ requires preserving the offset (legacy
-  // emits `<epoch_ns> <offset_minutes>`), which the new driver doesn't yet
-  // emit. The driver therefore rejects the bind with `Restricted data type
-  // attribute violation` (07006) at SQLExecute time rather than silently
-  // dropping the offset.
+TEST_CASE("SQL_SF_TIMESTAMP_TZ binds SQL_C_TYPE_TIMESTAMP into a TIMESTAMP_TZ column as UTC",
+          "[timestamp_tz][bind_fetch][vendor_codes]") {
+  // SQL_TIMESTAMP_STRUCT has no offset field, so binding it to a TIMESTAMP_TZ
+  // column treats the wall-clock as UTC (offset = 0 on the wire). This matches
+  // the legacy Python connector's behavior for naive `datetime` values bound
+  // to TIMESTAMP_TZ. Applications that need to preserve a non-UTC offset must
+  // bind via SQL_C_CHAR / SQL_C_WCHAR with a `+/-HH:MM` suffix instead.
+  //
+  // The legacy 3.16.0 ODBC driver REJECTS this binding with SQLSTATE HY000 /
+  // NativeError 40620 ("Logic error during conversion") rather than accepting
+  // the naive value. The new driver implements the spec/Python-connector
+  // semantics; documenting the divergence in BehaviorDifferences.yaml under
+  // BD#51 and skipping on the reference driver here.
+  SKIP_OLD_DRIVER("BD#51",
+                  "Legacy driver returns 40620 for SQL_C_TYPE_TIMESTAMP -> SQL_SF_TIMESTAMP_TZ; new driver "
+                  "accepts and binds as UTC (offset=0) per Python connector parity");
 
   // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_TZ column
   Connection conn;
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_tz_vendor (id INT, ts TIMESTAMP_TZ)");
   auto stmt = conn.createStatement();
@@ -232,16 +232,90 @@ TEST_CASE("SQL_SF_TIMESTAMP_TZ binding is rejected with SQLSTATE 07006",
   ts_in.minute = 30;
   ts_in.second = 45;
   SQLLEN ts_ind = 0;
-  // SQLBindParameter itself accepts the vendor type; rejection happens when
-  // the driver actually serialises the binding during SQLExecute.
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_SF_TIMESTAMP_TZ, 35, 9, &ts_in,
                          sizeof(ts_in), &ts_ind);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-
-  // Then SQLExecute fails with SQLSTATE 07006
   ret = SQLExecute(stmt.getHandle());
-  REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "07006");
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The fetched UTC wall-clock matches the inserted naive value (session
+  // TIMEZONE = UTC, so SQL_C_TYPE_TIMESTAMP read returns the same components).
+  auto select_stmt = conn.execute_fetch("SELECT ts FROM ts_tz_vendor WHERE id = 1");
+  auto ts_out = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(select_stmt, 1);
+  CHECK(ts_out.year == 2024);
+  CHECK(ts_out.month == 3);
+  CHECK(ts_out.day == 15);
+  CHECK(ts_out.hour == 14);
+  CHECK(ts_out.minute == 30);
+  CHECK(ts_out.second == 45);
+}
+
+TEST_CASE("SQL_SF_TIMESTAMP_TZ binds SQL_C_CHAR with offset suffix and round-trips the offset",
+          "[timestamp_tz][bind_fetch][vendor_codes]") {
+  // Spec-correct path for binding a TIMESTAMP_TZ value with a non-UTC offset:
+  // SQL_C_CHAR with a `+/-HH:MM` suffix. The driver parses the offset, emits
+  // the legacy `<epoch_ns> <offset_minutes_plus_1440>` two-token wire format,
+  // and the server stores the original instant alongside the offset.
+  //
+  // The legacy 3.16.0 ODBC driver REJECTS this binding with SQLSTATE HY000 /
+  // NativeError 40620 ("Logic error during conversion") — it does not parse
+  // the `+/-HH:MM` suffix from SQL_C_CHAR for vendor TZ. The new driver
+  // implements offset parsing per the universal driver design. Documented
+  // under BD#51; skip on the reference driver.
+  SKIP_OLD_DRIVER("BD#51",
+                  "Legacy driver returns 40620 for SQL_C_CHAR with `+/-HH:MM` -> SQL_SF_TIMESTAMP_TZ; new "
+                  "driver parses and preserves the offset on wire");
+
+  // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_TZ column
+  Connection conn;
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+  Schema::use_temp_session_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE ts_tz_char_bind (id INT, ts TIMESTAMP_TZ)");
+  auto stmt = conn.createStatement();
+
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO ts_tz_char_bind VALUES (?, ?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLINTEGER id = 1;
+  SQLLEN id_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &id, 0, &id_ind);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // When A SQL_C_CHAR ISO-8601 string with a `+05:30` suffix is bound with the vendor TZ ParameterType
+  std::string ts_in = "2024-03-15 14:30:45 +05:30";
+  SQLLEN ts_ind = static_cast<SQLLEN>(ts_in.size());
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_SF_TIMESTAMP_TZ, 35, 0,
+                         const_cast<char*>(ts_in.data()), static_cast<SQLLEN>(ts_in.size()), &ts_ind);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The fetched UTC wall-clock matches the offset-applied instant: the
+  // `+05:30` suffix moved 14:30:45 back to 09:00:45 UTC before storage.
+  auto select_stmt = conn.execute_fetch("SELECT ts FROM ts_tz_char_bind WHERE id = 1");
+  auto ts_out = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(select_stmt, 1);
+  CHECK(ts_out.year == 2024);
+  CHECK(ts_out.month == 3);
+  CHECK(ts_out.day == 15);
+  CHECK(ts_out.hour == 9);
+  CHECK(ts_out.minute == 0);
+  CHECK(ts_out.second == 45);
+
+  // And The server-side rendering of the TZ value preserves *both* the
+  // wall-clock and the original `+05:30` offset on the wire. The check
+  // above only proves the UTC instant is right, which a buggy
+  // implementation that always emitted `offset=0` (and let the server
+  // derive UTC from session-TZ shenanigans) would also satisfy. Pinning
+  // the formatted readback here closes that gap end-to-end: with the
+  // offset preserved on the wire, `TO_VARCHAR(..., 'TZH:TZM')` shows the
+  // wall-clock interpreted *in the stored offset* (= the original bind
+  // input) plus the offset annotation. A regression that drops the
+  // offset on the wire instead surfaces as `2024-03-15 09:00:45 +00:00`
+  // (UTC instant + zeroed offset) and fails this assertion. See PR
+  // #1005 review on `timestamp_vendor_bindparam.cpp:223`.
+  auto str_stmt =
+      conn.execute_fetch("SELECT TO_VARCHAR(ts, 'YYYY-MM-DD HH24:MI:SS TZH:TZM') FROM ts_tz_char_bind WHERE id = 1");
+  CHECK(get_data<SQL_C_CHAR>(str_stmt, 1) == "2024-03-15 14:30:45 +05:30");
 }
 
 TEST_CASE("SQLDescribeParam returns SQL_TYPE_TIMESTAMP (93) after binding with vendor codes",
