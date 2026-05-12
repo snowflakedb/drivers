@@ -238,6 +238,11 @@ fn connect_with_params(
         options.insert("port".to_owned(), port_int.into());
     }
 
+    // Legacy ODBC silently swallows all logout errors (destructor catch-all).
+    options
+        .entry("logout_error_strategy".to_owned())
+        .or_insert_with(|| "best_effort".to_owned().into());
+
     let dbc = conn_from_handle(connection_handle)?;
     // Read pre-connection data under lock, then release before the async call.
     let (pre_connection_attrs, login_timeout_in_options, login_timeout_in_attrs) = {
