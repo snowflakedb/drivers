@@ -34,8 +34,8 @@
 		<!-- ================================================================ -->
 		<ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLDIR" />
 		<UI>
-			<Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
-			<Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+			<Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="1" />
+			<Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="1" />
 		</UI>
 
 		<!-- ================================================================ -->
@@ -49,50 +49,45 @@
 				Type="raw" />
 		</Property>
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" After="AppSearch"
-			Value="Visual C++ Redistributable for VS 2015-2022 is required. It will be installed on exit. Uncheck the box if you do not want to install it.">
-			<![CDATA[NOT VCREDIST2015INSTALLED]]>
-		</SetProperty>
+			Value="Visual C++ Redistributable for VS 2015-2022 is required. It will be installed on exit. Uncheck the box if you do not want to install it."
+			Condition="NOT VCREDIST2015INSTALLED" />
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" After="AppSearch"
-			Value="Install VC++ 2015-2022 Redistributable">
-			<![CDATA[NOT VCREDIST2015INSTALLED]]>
-		</SetProperty>
-		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1">
-			<![CDATA[NOT VCREDIST2015INSTALLED]]>
-		</SetProperty>
+			Value="Install VC++ 2015-2022 Redistributable"
+			Condition="NOT VCREDIST2015INSTALLED" />
+		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1"
+			Condition="NOT VCREDIST2015INSTALLED" />
 		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x64.exe" After="CostFinalize" Sequence="ui" />
 		<CustomAction Id="Install_vc_redist" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_$(sys.BUILDARCH)" />
 		<UI>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
-				Value="Install_vc_redist"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1"]]></Publish>
+				Value="Install_vc_redist" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1" />
 			<Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog"
-				Value="Return"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "0"]]></Publish>
+				Value="Return" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 0" />
 		</UI>
 
 		<!-- ================================================================ -->
 		<!-- Directory layout                                                  -->
 		<!-- ================================================================ -->
-		<Directory Id="TARGETDIR" Name="SourceDir">
-			<Directory Id="ProgramFiles6432Folder">
-				<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
-					<Directory Id="BinDir" Name="Bin" />
-					<Directory Id="IncludeDir" Name="include" />
-					<Directory Id="RedistDir" Name="Redistributable" />
-				</Directory>
+		<StandardDirectory Id="ProgramFiles6432Folder">
+			<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
+				<Directory Id="BinDir" Name="Bin" />
+				<Directory Id="IncludeDir" Name="include" />
+				<Directory Id="RedistDir" Name="Redistributable" />
 			</Directory>
-			<Directory Id="PersonalFolder">
-				<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
-					<Directory Id="LogDir" Name="log">
-						<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD">
+		</StandardDirectory>
+		<StandardDirectory Id="PersonalFolder">
+			<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
+				<Directory Id="LogDir" Name="log">
+					<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD">
 						<CreateFolder />
-							<RemoveFolder Id="LogDir" On="uninstall" />
-							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
+						<RemoveFolder Id="LogDir" On="uninstall" />
+						<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
 							Name="LogDirectory" Value="true" Type="string" KeyPath="yes" />
-						</Component>
-					</Directory>
+					</Component>
 				</Directory>
 			</Directory>
-		</Directory>
+		</StandardDirectory>
 
 		<!-- ================================================================ -->
 		<!-- Files: driver DLL                                                 -->
@@ -127,8 +122,7 @@
 		<!-- ================================================================ -->
 		<!-- ODBC driver registration                                          -->
 		<!-- ================================================================ -->
-		<DirectoryRef Id="TARGETDIR">
-			<Component Id="RegistryEntries" Guid="46CDADA1-59D9-4E4A-9F29-BB1BCD2F3946">
+		<Component Id="RegistryEntries" Directory="TARGETDIR" Guid="46CDADA1-59D9-4E4A-9F29-BB1BCD2F3946">
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
 				ForceCreateOnInstall="yes">
@@ -148,8 +142,7 @@
 				<RegistryValue Type="string" Name="FileUsage" Value="0" />
 				<RegistryValue Type="string" Name="CPTimeout" Value="60" />
 			</RegistryKey>
-			</Component>
-		</DirectoryRef>
+		</Component>
 
 		<!-- ================================================================ -->
 		<!-- Feature tree                                                       -->

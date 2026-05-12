@@ -10,9 +10,7 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 
 use crate::c_api::DLL_HINSTANCE;
-use crate::setup_common::{
-    self, SQLValidDSNW, from_wide, read_dsn_value, to_wide, write_dsn_values,
-};
+use crate::setup_common::{SQLValidDSNW, from_wide, read_dsn_value, to_wide, write_dsn_values};
 
 // ---------------------------------------------------------------------------
 // Win32 FFI
