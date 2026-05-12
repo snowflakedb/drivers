@@ -6,12 +6,7 @@ import threading
 
 from typing import Any
 
-from .protobuf_gen.database_driver_v1_pb2 import (
-    ConnectionGetAllParametersRequest,
-    ConnectionGetInfoRequest,
-    ConnectionGetInfoResponse,
-    ConnectionGetParameterRequest,
-)
+from .api_client.client_api import core_driver
 
 
 class FreezableProxy:
@@ -21,14 +16,13 @@ class FreezableProxy:
     Call freeze() before releasing the underlying handles.
     """
 
-    def __init__(self, db_api: Any, conn_handle: Any) -> None:
-        self._db_api = db_api
+    def __init__(self, conn_handle: Any) -> None:
         self._conn_handle = conn_handle
         self._cache: dict[str, Any] | None = None
         self._freeze_lock = threading.Lock()
 
     def freeze(self) -> None:
-        """Take a snapshot and release references to db_api/conn_handle.
+        """Take a snapshot and release references to conn_handle.
 
         Thread-safe: concurrent close() calls race through here; double-checked
         locking ensures only the first caller fetches and the rest no-op.
@@ -38,7 +32,6 @@ class FreezableProxy:
         with self._freeze_lock:
             if self._cache is None:
                 self._cache = self._fetch_all()
-                self._db_api = None
                 self._conn_handle = None
 
     def _fetch_one(self, key: str) -> Any:
@@ -57,13 +50,11 @@ class SessionParametersProxy(FreezableProxy):
     """Proxy for Snowflake session parameters (case-insensitive keys)."""
 
     def _fetch_one(self, name: str) -> str | None:
-        request = ConnectionGetParameterRequest(conn_handle=self._conn_handle, key=name)
-        response = self._db_api.connection_get_parameter(request)
+        response = core_driver.connection_get_parameter(conn_handle=self._conn_handle, key=name)
         return response.value if response.value else None
 
     def _fetch_all(self) -> dict[str, str]:
-        request = ConnectionGetAllParametersRequest(conn_handle=self._conn_handle)
-        response = self._db_api.connection_get_all_parameters(request)
+        response = core_driver.connection_get_all_parameters(conn_handle=self._conn_handle)
         return {k.upper(): v for k, v in response.parameters.items()}
 
     def __getitem__(self, name: str) -> str | None:
@@ -81,18 +72,15 @@ class ConnectionInfoProxy(FreezableProxy):
     This matches the pre-proxy behavior where each property did its own RPC.
     """
 
-    def _fetch_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
-        request = ConnectionGetInfoRequest(
-            conn_handle=self._conn_handle,
-            include_master_token=include_master_token,
-        )
-        result: ConnectionGetInfoResponse = self._db_api.connection_get_info(request)
-        return result
-
     def _fetch_one(self, field: str) -> Any:
-        info = self._fetch_info()
+        info = core_driver.connection_get_info(
+            conn_handle=self._conn_handle,
+        )
         return getattr(info, field) if info.HasField(field) else None  # type: ignore[arg-type]
 
     def _fetch_all(self) -> dict[str, Any]:
-        info = self._fetch_info(include_master_token=True)
+        info = core_driver.connection_get_info(
+            conn_handle=self._conn_handle,
+            include_master_token=True,
+        )
         return {desc.name: value for desc, value in info.ListFields()}

@@ -18,8 +18,7 @@ pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires univer
 def make_connection(mock_db_api, **kwargs):
     from snowflake.connector.connection import Connection
 
-    with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-        return Connection(user="test_user", account="test_account", **kwargs)
+    return Connection(user="test_user", account="test_account", **kwargs)
 
 
 class TestConnectionNumpyParameter:

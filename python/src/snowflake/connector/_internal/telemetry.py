@@ -10,16 +10,12 @@ import logging
 
 from typing import TYPE_CHECKING
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
-    TelemetrySendApiUsageRequest,
-    TelemetrySendWrapperErrorRequest,
-)
+from .api_client.client_api import core_driver
 
 
 if TYPE_CHECKING:
     from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
         ConnectionHandle,
-        DatabaseDriverClient,
     )
 
 logger = logging.getLogger(__name__)
@@ -32,18 +28,15 @@ class TelemetryClient:
     sends runtime events — sf_core attaches the stored identity automatically.
     """
 
-    def __init__(self, db_api: DatabaseDriverClient, conn_handle: ConnectionHandle) -> None:
-        self._db_api = db_api
+    def __init__(self, conn_handle: ConnectionHandle) -> None:
         self._conn_handle = conn_handle
 
     def send_api_usage(self, api_method: str) -> None:
         """Record an API method call for telemetry."""
         try:
-            self._db_api.telemetry_send_api_usage(
-                TelemetrySendApiUsageRequest(
-                    conn_handle=self._conn_handle,
-                    api_method=api_method,
-                )
+            core_driver.telemetry_send_api_usage(
+                conn_handle=self._conn_handle,
+                api_method=api_method,
             )
         except Exception:
             logger.debug("Failed to send api_usage telemetry", exc_info=True)
@@ -51,12 +44,10 @@ class TelemetryClient:
     def send_wrapper_error(self, exception_type: str, error_source: str) -> None:
         """Record a wrapper error for telemetry."""
         try:
-            self._db_api.telemetry_send_wrapper_error(
-                TelemetrySendWrapperErrorRequest(
-                    conn_handle=self._conn_handle,
-                    exception_type=exception_type,
-                    error_source=error_source,
-                )
+            core_driver.telemetry_send_wrapper_error(
+                conn_handle=self._conn_handle,
+                exception_type=exception_type,
+                error_source=error_source,
             )
         except Exception:
             logger.debug("Failed to send wrapper_error telemetry", exc_info=True)

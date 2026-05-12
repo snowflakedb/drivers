@@ -2,22 +2,15 @@ from __future__ import annotations
 
 import logging
 
-from typing import TYPE_CHECKING
-
+from .._internal.api_client.client_api import core_driver
 from .._internal.errorcode import ER_NO_DATA_FOUND
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ResultSetGetChunksRequest,
     ResultSetGetChunksResponse,
-    ResultSetGetStreamRequest,
     ResultSetHandle,
-    ResultSetReleaseRequest,
 )
 from .._internal.statement_utils import get_stream_ptr
 from ..errors import ProgrammingError
 
-
-if TYPE_CHECKING:
-    from .._internal.protobuf_gen.database_driver_v1_services import DatabaseDriverClient
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +29,9 @@ class _ResultSetWrapper:
     double-consumption.)
     """
 
-    __slots__ = ("_db_api", "_handle", "_stream_consumed")
+    __slots__ = ("_handle", "_stream_consumed")
 
-    def __init__(self, db_api: DatabaseDriverClient, handle: ResultSetHandle | None = None) -> None:
-        self._db_api = db_api
+    def __init__(self, handle: ResultSetHandle | None = None) -> None:
         self._handle: ResultSetHandle | None = handle
         self._stream_consumed: bool = False
 
@@ -64,8 +56,7 @@ class _ResultSetWrapper:
             return
         self._handle = None
         try:
-            request = ResultSetReleaseRequest(result_set_handle=handle)
-            self._db_api.result_set_release(request)
+            core_driver.result_set_release(result_set_handle=handle)
         except Exception:
             logger.warning("Failed to release ResultSet handle", exc_info=True)
 
@@ -90,8 +81,7 @@ class _ResultSetWrapper:
                 msg="No results available (arrow stream already consumed)",
                 errno=ER_NO_DATA_FOUND,
             )
-        request = ResultSetGetStreamRequest(result_set_handle=self._handle)
-        response = self._db_api.result_set_get_stream(request)
+        response = core_driver.result_set_get_stream(result_set_handle=self._handle)
         self._stream_consumed = True
         return get_stream_ptr(response)
 
@@ -104,5 +94,4 @@ class _ResultSetWrapper:
         """
         if self._handle is None:
             return None
-        request = ResultSetGetChunksRequest(result_set_handle=self._handle)
-        return self._db_api.result_set_get_chunks(request)
+        return core_driver.result_set_get_chunks(result_set_handle=self._handle)

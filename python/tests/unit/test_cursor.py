@@ -7,6 +7,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.api_client.client_api import core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.errorcode import ER_NO_PYARROW
 from snowflake.connector._internal.extras import (
@@ -35,6 +36,16 @@ def _no_native_stream_ops():
         patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
     ):
         yield
+
+
+@pytest.fixture
+def mock_core_client():
+    """Provide a MagicMock patched into core_driver.client for cursor tests."""
+    mock = MagicMock()
+    old = core_driver._client
+    core_driver.client = mock
+    yield mock
+    core_driver.client = old
 
 
 class MockRowIterator:
@@ -499,14 +510,14 @@ class TestHandleLifecycle:
     """
 
     @pytest.fixture
-    def mock_connection(self):
-        """Create a mock connection with db_api stubs for execute flow."""
+    def mock_connection(self, mock_core_client):
+        """Create a mock connection with core_driver stubs for execute flow."""
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
         rs_counter = 0
 
-        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
 
         def make_execute_response(*_args, **_kwargs):
             nonlocal rs_counter
@@ -520,7 +531,7 @@ class TestHandleLifecycle:
             response.single.result_descriptor.sql_state = "00000"
             return response
 
-        conn.db_api.statement_execute_query.side_effect = make_execute_response
+        mock_core_client.statement_execute_query.side_effect = make_execute_response
 
         return conn
 
@@ -529,70 +540,70 @@ class TestHandleLifecycle:
         """Create a cursor with the mocked connection."""
         return SnowflakeCursor(mock_connection)
 
-    def test_statement_handle_released_after_execute(self, cursor, mock_connection):
+    def test_statement_handle_released_after_execute(self, cursor, mock_core_client):
         """Statement handle is released within execute (context manager)."""
         cursor.execute("SELECT 1")
 
-        mock_connection.db_api.statement_release.assert_called_once()
+        mock_core_client.statement_release.assert_called_once()
 
-    def test_result_set_handle_survives_execute(self, cursor, mock_connection):
+    def test_result_set_handle_survives_execute(self, cursor, mock_core_client):
         """After execute(), the ResultSet handle is still held (not released)."""
         cursor.execute("SELECT 1")
 
-        mock_connection.db_api.result_set_release.assert_not_called()
+        mock_core_client.result_set_release.assert_not_called()
 
-    def test_reset_releases_result_set_handle(self, cursor, mock_connection):
+    def test_reset_releases_result_set_handle(self, cursor, mock_core_client):
         """reset() releases the ResultSet handle held by the cursor."""
         cursor.execute("SELECT 1")
         cursor.reset()
 
-        mock_connection.db_api.result_set_release.assert_called_once()
-        released_id = mock_connection.db_api.result_set_release.call_args.args[0].result_set_handle.id
+        mock_core_client.result_set_release.assert_called_once()
+        released_id = mock_core_client.result_set_release.call_args.args[0].result_set_handle.id
         assert released_id == 1
 
-    def test_close_releases_result_set_handle(self, cursor, mock_connection):
+    def test_close_releases_result_set_handle(self, cursor, mock_core_client):
         """close() releases the ResultSet handle held by the cursor."""
         cursor.execute("SELECT 1")
         cursor.close()
 
-        mock_connection.db_api.result_set_release.assert_called_once()
+        mock_core_client.result_set_release.assert_called_once()
 
-    def test_sequential_executes_release_previous_result_set_handles(self, cursor, mock_connection):
+    def test_sequential_executes_release_previous_result_set_handles(self, cursor, mock_core_client):
         """Each execute() releases the ResultSet handle from the previous execution."""
         n = 5
         for i in range(n):
             cursor.execute(f"SELECT {i}")
 
-        release = mock_connection.db_api.result_set_release
+        release = mock_core_client.result_set_release
         # First n-1 handles released by replace() at the start of each subsequent _apply_result_set;
         # the last handle is still alive.
         assert release.call_count == n - 1
         released_ids = [call.args[0].result_set_handle.id for call in release.call_args_list]
         assert released_ids == list(range(1, n))
 
-    def test_close_without_execute_does_not_release(self, cursor, mock_connection):
+    def test_close_without_execute_does_not_release(self, cursor, mock_core_client):
         """Closing a cursor that never executed should not call release."""
         cursor.close()
 
-        mock_connection.db_api.result_set_release.assert_not_called()
+        mock_core_client.result_set_release.assert_not_called()
 
 
 class TestSqlstate:
     """Unit tests for Cursor.sqlstate property."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
-        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
         return conn
 
     @pytest.fixture
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
-    def _stub_execute_result(self, mock_connection, **overrides):
+    def _stub_execute_result(self, mock_core_client, **overrides):
         """Set up the mock to return an execute result with the given overrides."""
         # Mock ResultSetDescriptor
         descriptor = MagicMock()
@@ -620,7 +631,7 @@ class TestSqlstate:
         execute_response.single.result_descriptor = descriptor
         execute_response.single.result_set_handle = ResultSetHandle(id=1)
         execute_response.HasField = MagicMock(side_effect=lambda f: f == "single")
-        mock_connection.db_api.statement_execute_query.return_value = execute_response
+        mock_core_client.statement_execute_query.return_value = execute_response
 
         return descriptor
 
@@ -628,79 +639,79 @@ class TestSqlstate:
         """sqlstate is None on a fresh cursor."""
         assert cursor.sqlstate is None
 
-    def test_sqlstate_none_after_successful_execute(self, cursor, mock_connection):
+    def test_sqlstate_none_after_successful_execute(self, cursor, mock_core_client):
         """sqlstate is None when server returns '00000' (successful completion)."""
-        self._stub_execute_result(mock_connection, sql_state="00000")
+        self._stub_execute_result(mock_core_client, sql_state="00000")
 
         cursor.execute("SELECT 1")
 
         assert cursor.sqlstate is None
 
-    def test_sqlstate_populated_with_error_code(self, cursor, mock_connection):
+    def test_sqlstate_populated_with_error_code(self, cursor, mock_core_client):
         """sqlstate reflects non-success sql_state from execute result."""
-        self._stub_execute_result(mock_connection, sql_state="42601")
+        self._stub_execute_result(mock_core_client, sql_state="42601")
 
         cursor.execute("SELECT 1")
 
         assert cursor.sqlstate == "42601"
 
-    def test_sqlstate_none_when_field_absent(self, cursor, mock_connection):
+    def test_sqlstate_none_when_field_absent(self, cursor, mock_core_client):
         """sqlstate is None when the server does not return sql_state."""
-        self._stub_execute_result(mock_connection, sql_state="")
+        self._stub_execute_result(mock_core_client, sql_state="")
 
         cursor.execute("SELECT 1")
 
         assert cursor.sqlstate is None
 
-    def test_sqlstate_updates_on_subsequent_execute(self, cursor, mock_connection):
+    def test_sqlstate_updates_on_subsequent_execute(self, cursor, mock_core_client):
         """sqlstate is refreshed on every execute call."""
         # First execute with error
-        self._stub_execute_result(mock_connection, sql_state="42601")
+        self._stub_execute_result(mock_core_client, sql_state="42601")
 
         cursor.execute("SELECT 1")
         assert cursor.sqlstate == "42601"
 
         # Second execute with success
-        self._stub_execute_result(mock_connection, sql_state="00000")
+        self._stub_execute_result(mock_core_client, sql_state="00000")
         cursor.execute("SELECT 2")
         assert cursor.sqlstate is None
 
-    def test_sqlstate_set_from_error_on_failed_execute(self, cursor, mock_connection):
+    def test_sqlstate_set_from_error_on_failed_execute(self, cursor, mock_core_client):
         """sqlstate is captured from PEP 249 Error when execute raises."""
-        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
 
         with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
 
         assert cursor.sqlstate == "42601"
 
-    def test_sqlstate_set_to_none_when_error_has_no_sqlstate(self, cursor, mock_connection):
+    def test_sqlstate_set_to_none_when_error_has_no_sqlstate(self, cursor, mock_core_client):
         """sqlstate is set to None when error carries no sqlstate."""
-        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate=None)
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", sqlstate=None)
 
         with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
 
         assert cursor.sqlstate is None
 
-    def test_sqlstate_transitions_across_success_and_failure(self, cursor, mock_connection):
+    def test_sqlstate_transitions_across_success_and_failure(self, cursor, mock_core_client):
         """sqlstate updates correctly through None -> error -> None."""
         success_result = MagicMock()
         success_result.columns = []
         success_result.sql_state = "00000"
 
-        mock_connection.db_api.statement_execute_query.return_value.result = success_result
-        mock_connection.db_api.statement_execute_query.side_effect = None
+        mock_core_client.statement_execute_query.return_value.result = success_result
+        mock_core_client.statement_execute_query.side_effect = None
         cursor.execute("SELECT 1")
         assert cursor.sqlstate is None
 
-        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
         with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
         assert cursor.sqlstate == "42601"
 
-        mock_connection.db_api.statement_execute_query.side_effect = None
-        mock_connection.db_api.statement_execute_query.return_value.result = success_result
+        mock_core_client.statement_execute_query.side_effect = None
+        mock_core_client.statement_execute_query.return_value.result = success_result
         cursor.execute("SELECT 2")
         assert cursor.sqlstate is None
 
@@ -709,29 +720,29 @@ class TestSfqidOnFailedQuery:
     """Unit tests for cursor.sfqid propagation when execute raises."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
-        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
         return conn
 
     @pytest.fixture
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
-    def test_sfqid_set_from_error_on_failed_execute(self, cursor, mock_connection):
+    def test_sfqid_set_from_error_on_failed_execute(self, cursor, mock_core_client):
         """sfqid is captured from ProgrammingError when execute raises."""
-        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sfqid="01abc-def-12345")
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", sfqid="01abc-def-12345")
 
         with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
 
         assert cursor.sfqid == "01abc-def-12345"
 
-    def test_sfqid_none_when_error_has_no_sfqid(self, cursor, mock_connection):
+    def test_sfqid_none_when_error_has_no_sfqid(self, cursor, mock_core_client):
         """sfqid is None when error carries no sfqid."""
-        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error")
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error")
 
         with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
@@ -1486,22 +1497,12 @@ class TestFetchModeValidation:
             cursor.fetchone()
             cursor.fetchone()
 
-    def test_execute_resets_fetch_mode(self, cursor, mock_connection):
-        mock_connection.is_closed.return_value = False
-        result = MagicMock()
-        result.columns = []
-        result.HasField.return_value = False
-        result.sql_state = ""
-        mock_connection.db_api.statement_execute_query.return_value.result = result
+    def test_execute_resets_fetch_mode(self, cursor, mock_connection, mock_core_client):
+        mock_connection.conn_handle = ConnectionHandle(id=1)
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
 
         cursor._fetch_mode = FetchMode.ARROW
-        with (
-            patch("snowflake.connector._internal.statement_utils.StatementNewRequest"),
-            patch("snowflake.connector._internal.statement_utils.StatementSetSqlQueryRequest"),
-            patch("snowflake.connector.cursor._base.StatementExecuteQueryRequest"),
-            patch("snowflake.connector._internal.statement_utils.StatementReleaseRequest"),
-        ):
-            cursor.execute("SELECT 1")
+        cursor.execute("SELECT 1")
 
         assert cursor._fetch_mode is None
 
@@ -1690,16 +1691,16 @@ class TestResetIntegration:
     """Integration tests for reset() with other cursor methods."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
-        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
         execute_result = MagicMock()
         execute_result.columns = []
         execute_result.HasField = MagicMock(return_value=False)
         execute_result.sql_state = "00000"
-        conn.db_api.statement_execute_query.return_value.result = execute_result
+        mock_core_client.statement_execute_query.return_value.result = execute_result
         return conn
 
     @pytest.fixture
@@ -1800,33 +1801,33 @@ class TestDescribe:
     """Unit tests for Cursor.describe method."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
-        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
         return conn
 
     @pytest.fixture
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
-    def _setup_prepare(self, mock_connection, columns=None, query_id="", query="", sql_state=None):
+    def _setup_prepare(self, mock_core_client, columns=None, query_id="", query="", sql_state=None):
         result = MagicMock()
         result.columns = columns or []
         result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
         result.query_id = query_id
         result.query = query
         result.sql_state = sql_state
-        mock_connection.db_api.statement_prepare.return_value.result = result
+        mock_core_client.statement_prepare.return_value.result = result
         return result
 
-    def test_describe_returns_column_metadata(self, cursor, mock_connection):
+    def test_describe_returns_column_metadata(self, cursor, mock_core_client):
         """describe() returns ResultMetadata and updates cursor.description."""
         col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
         col.name = "COL1"
         col.HasField = lambda f: f in ("precision", "scale")
-        self._setup_prepare(mock_connection, columns=[col])
+        self._setup_prepare(mock_core_client, columns=[col])
 
         result = cursor.describe("SELECT 1 AS COL1")
 
@@ -1835,19 +1836,19 @@ class TestDescribe:
         assert result[0].name == "COL1"
         assert cursor.description == result
 
-    def test_describe_returns_none_for_no_columns(self, cursor, mock_connection):
+    def test_describe_returns_none_for_no_columns(self, cursor, mock_core_client):
         """describe() returns None when the statement produces no result set."""
-        self._setup_prepare(mock_connection, columns=[])
+        self._setup_prepare(mock_core_client, columns=[])
 
         assert cursor.describe("INSERT INTO t VALUES (1)") is None
 
-    def test_describe_side_effects_with_columns(self, cursor, mock_connection):
+    def test_describe_side_effects_with_columns(self, cursor, mock_core_client):
         """describe() sets sfqid, query, sqlstate, rowcount when result has columns."""
         col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
         col.name = "COL1"
         col.HasField = lambda f: f in ("precision", "scale")
         self._setup_prepare(
-            mock_connection,
+            mock_core_client,
             columns=[col],
             query_id="01abc-def",
             query="SELECT 1",
@@ -1865,13 +1866,13 @@ class TestDescribe:
         assert cursor.rowcount == 0
         assert cursor._fetch_mode is None
 
-    def test_describe_forwards_non_success_sqlstate(self, cursor, mock_connection):
+    def test_describe_forwards_non_success_sqlstate(self, cursor, mock_core_client):
         """describe() forwards sqlstate when it differs from '00000'."""
         col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
         col.name = "COL1"
         col.HasField = lambda f: f in ("precision", "scale")
         self._setup_prepare(
-            mock_connection,
+            mock_core_client,
             columns=[col],
             sql_state="02000",
         )
@@ -1880,11 +1881,11 @@ class TestDescribe:
 
         assert cursor.sqlstate == "02000"
 
-    def test_describe_side_effects_without_columns(self, cursor, mock_connection):
+    def test_describe_side_effects_without_columns(self, cursor, mock_core_client):
         """describe() resets state; sfqid/query/sqlstate are set from result even without columns."""
         cursor._query_result.rowcount = 42
         cursor._fetch_mode = FetchMode.ARROW
-        self._setup_prepare(mock_connection)
+        self._setup_prepare(mock_core_client)
 
         cursor.describe("SELECT 1")
 
@@ -1892,15 +1893,15 @@ class TestDescribe:
         assert cursor.rowcount is None
         assert cursor._fetch_mode is None
 
-    def test_describe_releases_handle_and_stream(self, cursor, mock_connection):
+    def test_describe_releases_handle_and_stream(self, cursor, mock_core_client):
         """describe() allocates/releases statement handle and releases the arrow stream."""
-        self._setup_prepare(mock_connection)
+        self._setup_prepare(mock_core_client)
 
         with patch("snowflake.connector.cursor._query_result.release_arrow_stream") as mock_release:
             cursor.describe("SELECT 1")
 
-        mock_connection.db_api.statement_new.assert_called_once()
-        mock_connection.db_api.statement_release.assert_called_once()
+        mock_core_client.statement_new.assert_called_once()
+        mock_core_client.statement_release.assert_called_once()
         mock_release.assert_called()
 
     def test_describe_raises_when_closed(self, cursor, mock_connection):
@@ -1914,9 +1915,9 @@ class TestDescribe:
         with pytest.raises(InterfaceError):
             fresh.describe("SELECT 1")
 
-    def test_describe_propagates_prepare_error(self, cursor, mock_connection):
+    def test_describe_propagates_prepare_error(self, cursor, mock_core_client):
         """describe() propagates ProgrammingError and captures sqlstate."""
-        mock_connection.db_api.statement_prepare.side_effect = ProgrammingError("syntax error", sqlstate="42601")
+        mock_core_client.statement_prepare.side_effect = ProgrammingError("syntax error", sqlstate="42601")
 
         with pytest.raises(ProgrammingError):
             cursor.describe("INVALID SQL")
@@ -1928,7 +1929,7 @@ class TestQueryResult:
     """Unit tests for Cursor.query_result method."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
@@ -1938,7 +1939,7 @@ class TestQueryResult:
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
-    def _stub_result(self, mock_connection, **overrides):
+    def _stub_result(self, mock_core_client, **overrides):
         """Set up the mock RPC to return a result with the given overrides."""
         # Mock ResultSetDescriptor
         descriptor = MagicMock()
@@ -1972,11 +1973,11 @@ class TestQueryResult:
         query_result_response = MagicMock()
         query_result_response.single = result_set_response
         query_result_response.HasField = MagicMock(side_effect=lambda f: f == "single")
-        mock_connection.db_api.connection_get_query_result.return_value = query_result_response
+        mock_core_client.connection_get_query_result.return_value = query_result_response
 
         return descriptor
 
-    def test_query_result_populates_cursor_state(self, cursor, mock_connection):
+    def test_query_result_populates_cursor_state(self, cursor, mock_core_client):
         """query_result returns self, sends correct RPC args, and populates all cursor fields."""
         col = MagicMock()
         col.name = "ID"
@@ -1984,7 +1985,7 @@ class TestQueryResult:
         col.nullable = True
 
         self._stub_result(
-            mock_connection,
+            mock_core_client,
             columns=[col],
             rows_affected=42,
             has_rows_affected=True,
@@ -2000,17 +2001,17 @@ class TestQueryResult:
         assert cursor.rowcount == 42
         assert cursor.sqlstate == "02000"
 
-        request = mock_connection.db_api.connection_get_query_result.call_args.args[0]
+        request = mock_core_client.connection_get_query_result.call_args.args[0]
         assert request.conn_handle == ConnectionHandle(id=1)
         assert request.query_id == "01234567-abcd-ef01-0000-000000000001"
 
-    def test_query_result_resets_prior_state(self, cursor, mock_connection):
+    def test_query_result_resets_prior_state(self, cursor, mock_core_client):
         """query_result clears iterator and fetch mode from a previous execute."""
         cursor._query_result = _QueryResult(rowcount=99)
         cursor._iterator = iter([(1,)])
         cursor._fetch_mode = FetchMode.ROW
 
-        self._stub_result(mock_connection)
+        self._stub_result(mock_core_client)
         cursor.query_result("qid")
 
         assert cursor._fetch_mode is None
@@ -2027,9 +2028,9 @@ class TestQueryResult:
         with pytest.raises(InterfaceError):
             fresh.query_result("qid")
 
-    def test_query_result_propagates_rpc_error(self, cursor, mock_connection):
+    def test_query_result_propagates_rpc_error(self, cursor, mock_core_client):
         """query_result propagates ProgrammingError from the RPC layer."""
-        mock_connection.db_api.connection_get_query_result.side_effect = ProgrammingError("Query has expired")
+        mock_core_client.connection_get_query_result.side_effect = ProgrammingError("Query has expired")
         with pytest.raises(ProgrammingError, match="Query has expired"):
             cursor.query_result("expired-qid")
 
@@ -2091,7 +2092,7 @@ class TestGetResultsFromSfqid:
     """Unit tests for Cursor.get_results_from_sfqid."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
@@ -2101,7 +2102,7 @@ class TestGetResultsFromSfqid:
         result.columns = []
         result.HasField = MagicMock(return_value=False)
         result.sql_state = ""
-        conn.db_api.connection_get_query_result.return_value.result = result
+        mock_core_client.connection_get_query_result.return_value.result = result
         return conn
 
     @pytest.fixture
@@ -2146,26 +2147,20 @@ class TestGetResultsFromSfqid:
         with pytest.raises(ProgrammingError, match="Query failed"):
             cursor.get_results_from_sfqid("bad-qid")
 
-    def test_execute_clears_pending_hook(self, cursor, mock_connection):
+    def test_execute_clears_pending_hook(self, cursor, mock_core_client):
         """A new execute() cancels a pending prefetch hook."""
         cursor.get_results_from_sfqid("test-qid")
         assert cursor._prefetch_hook is not None
 
         handle_resp = MagicMock()
         handle_resp.stmt_handle = StatementHandle(id=1)
-        mock_connection.db_api.statement_new.return_value = handle_resp
+        mock_core_client.statement_new.return_value = handle_resp
         result = MagicMock()
         result.columns = []
         result.HasField = MagicMock(return_value=False)
         result.sql_state = ""
-        mock_connection.db_api.statement_execute_query.return_value.result = result
-        with (
-            patch("snowflake.connector._internal.statement_utils.StatementNewRequest"),
-            patch("snowflake.connector._internal.statement_utils.StatementSetSqlQueryRequest"),
-            patch("snowflake.connector.cursor._base.StatementExecuteQueryRequest"),
-            patch("snowflake.connector._internal.statement_utils.StatementReleaseRequest"),
-        ):
-            cursor.execute("SELECT 1")
+        mock_core_client.statement_execute_query.return_value.result = result
+        cursor.execute("SELECT 1")
 
         assert cursor._prefetch_hook is None
 
@@ -2174,7 +2169,7 @@ class TestAbortQuery:
     """Unit tests for Cursor.abort_query method."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
@@ -2184,28 +2179,28 @@ class TestAbortQuery:
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
-    def test_abort_query_returns_true_on_success(self, cursor, mock_connection):
+    def test_abort_query_returns_true_on_success(self, cursor, mock_core_client):
         """abort_query sends correct RPC args and returns True on success."""
-        mock_connection.db_api.connection_abort_query.return_value.success = True
+        mock_core_client.connection_abort_query.return_value.success = True
 
         result = cursor.abort_query("01234567-abcd-ef01-0000-000000000001")
 
         assert result is True
-        request = mock_connection.db_api.connection_abort_query.call_args.args[0]
+        request = mock_core_client.connection_abort_query.call_args.args[0]
         assert request.conn_handle == ConnectionHandle(id=1)
         assert request.query_id == "01234567-abcd-ef01-0000-000000000001"
 
-    def test_abort_query_returns_false_on_failure(self, cursor, mock_connection):
+    def test_abort_query_returns_false_on_failure(self, cursor, mock_core_client):
         """abort_query returns False when the server reports failure."""
-        mock_connection.db_api.connection_abort_query.return_value.success = False
+        mock_core_client.connection_abort_query.return_value.success = False
 
         result = cursor.abort_query("some-qid")
 
         assert result is False
 
-    def test_abort_query_does_not_mutate_cursor_state(self, cursor, mock_connection):
+    def test_abort_query_does_not_mutate_cursor_state(self, cursor, mock_core_client):
         """abort_query does not modify description, rowcount, or execute_result."""
-        mock_connection.db_api.connection_abort_query.return_value.success = True
+        mock_core_client.connection_abort_query.return_value.success = True
 
         cursor.abort_query("some-qid")
 
@@ -2223,9 +2218,9 @@ class TestAbortQuery:
         with pytest.raises(InterfaceError):
             fresh.abort_query("qid")
 
-    def test_abort_query_propagates_rpc_error(self, cursor, mock_connection):
+    def test_abort_query_propagates_rpc_error(self, cursor, mock_core_client):
         """abort_query propagates ProgrammingError from the RPC layer."""
-        mock_connection.db_api.connection_abort_query.side_effect = ProgrammingError("Request failed")
+        mock_core_client.connection_abort_query.side_effect = ProgrammingError("Request failed")
         with pytest.raises(ProgrammingError, match="Request failed"):
             cursor.abort_query("bad-qid")
 
@@ -2251,7 +2246,7 @@ class TestExecuteAsync:
     """Unit tests for Cursor.execute_async method."""
 
     @pytest.fixture
-    def mock_connection(self):
+    def mock_connection(self, mock_core_client):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
         conn.is_closed.return_value = False
@@ -2259,11 +2254,11 @@ class TestExecuteAsync:
 
         handle_resp = MagicMock()
         handle_resp.stmt_handle = StatementHandle(id=42)
-        conn.db_api.statement_new.return_value = handle_resp
+        mock_core_client.statement_new.return_value = handle_resp
 
         async_resp = MagicMock()
         async_resp.query_id = "01abc-fake-query-id"
-        conn.db_api.statement_execute_async.return_value = async_resp
+        mock_core_client.statement_execute_async.return_value = async_resp
 
         return conn
 
@@ -2285,29 +2280,29 @@ class TestExecuteAsync:
 
         assert cursor.sfqid == "01abc-fake-query-id"
 
-    def test_calls_statement_execute_async_rpc(self, cursor, mock_connection):
+    def test_calls_statement_execute_async_rpc(self, cursor, mock_core_client):
         """execute_async creates a statement and invokes the async RPC."""
         cursor.execute_async("SELECT 42")
 
-        mock_connection.db_api.statement_new.assert_called_once()
-        mock_connection.db_api.statement_set_sql_query.assert_called_once()
-        mock_connection.db_api.statement_execute_async.assert_called_once()
-        mock_connection.db_api.statement_release.assert_called_once()
+        mock_core_client.statement_new.assert_called_once()
+        mock_core_client.statement_set_sql_query.assert_called_once()
+        mock_core_client.statement_execute_async.assert_called_once()
+        mock_core_client.statement_release.assert_called_once()
 
-    def test_resets_cursor_state(self, cursor, mock_connection):
+    def test_resets_cursor_state(self, cursor):
         """execute_async resets cursor state before submission."""
         cursor._fetch_mode = FetchMode.ROW
         cursor.execute_async("SELECT 1")
 
         assert cursor._fetch_mode is None
 
-    def test_with_parameters_passes_bindings(self, cursor, mock_connection):
+    def test_with_parameters_passes_bindings(self, cursor, mock_core_client):
         """execute_async forwards parameter bindings to the RPC request."""
-        mock_connection.paramstyle = ParamStyle.QMARK
+        cursor._connection.paramstyle = ParamStyle.QMARK
 
         cursor.execute_async("SELECT ?", [42])
 
-        request = mock_connection.db_api.statement_execute_async.call_args.args[0]
+        request = mock_core_client.statement_execute_async.call_args.args[0]
         assert request.bindings is not None
 
     def test_raises_on_closed_cursor(self, cursor):
@@ -2317,16 +2312,16 @@ class TestExecuteAsync:
         with pytest.raises(InterfaceError):
             cursor.execute_async("SELECT 1")
 
-    def test_propagates_rpc_error(self, cursor, mock_connection):
+    def test_propagates_rpc_error(self, cursor, mock_core_client):
         """execute_async propagates errors from the RPC layer."""
-        mock_connection.db_api.statement_execute_async.side_effect = ProgrammingError("Async submission failed")
+        mock_core_client.statement_execute_async.side_effect = ProgrammingError("Async submission failed")
 
         with pytest.raises(ProgrammingError, match="Async submission failed"):
             cursor.execute_async("SELECT 1")
 
-    def test_handles_empty_query_id(self, cursor, mock_connection):
+    def test_handles_empty_query_id(self, cursor, mock_core_client):
         """execute_async returns None queryId when server returns empty string."""
-        mock_connection.db_api.statement_execute_async.return_value.query_id = ""
+        mock_core_client.statement_execute_async.return_value.query_id = ""
 
         result = cursor.execute_async("SELECT 1")
 

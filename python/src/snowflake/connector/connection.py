@@ -18,7 +18,7 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, TypeVar, cast
 
-from ._internal.api_client.client_api import database_driver_client
+from ._internal.api_client.client_api import core_driver
 from ._internal.binding_converters import ParamStyle
 from ._internal.config_utils import create_config_settings_from_dict
 from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
@@ -37,21 +37,8 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     WrapperIdentity,
 )
 from ._internal.protobuf_gen.database_driver_v1_services import (
-    ConnectionCloseRequest,
-    ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
-    ConnectionGetQueryStatusRequest,
     ConnectionGetQueryStatusResponse,
-    ConnectionHeartbeatRequest,
-    ConnectionInitRequest,
-    ConnectionIsClosedRequest,
-    ConnectionNewRequest,
-    ConnectionReleaseRequest,
-    ConnectionSetOptionsRequest,
-    ConnectionSetSessionParametersRequest,
-    DatabaseInitRequest,
-    DatabaseNewRequest,
-    DatabaseReleaseRequest,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
@@ -173,10 +160,9 @@ class Connection(ErrorHandlerMixin):
         # Defaults to False to match the old connector's behavior.
         self._interpolate_empty_sequences: bool = False
 
-        self.db_api = database_driver_client()
-        self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
-        self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
-        self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+        self.db_handle: DatabaseHandle | None = core_driver.database_new().db_handle
+        core_driver.database_init(db_handle=self.db_handle)
+        self.conn_handle: ConnectionHandle | None = core_driver.connection_new().conn_handle
 
         # The LogoutConfig modifier re-applies the legacy Python wrapper
         # behaviour (default ``enable_server_session_keep_alive_auto_detection=True``
@@ -189,21 +175,14 @@ class Connection(ErrorHandlerMixin):
         )
 
         if options:
-            response = self.db_api.connection_set_options(
-                ConnectionSetOptionsRequest(
-                    conn_handle=self.conn_handle,
-                    options=options,
-                )
-            )
+            response = core_driver.connection_set_options(conn_handle=self.conn_handle, options=options)
             for warning in response.warnings:
                 warnings.warn(warning.message, stacklevel=2)
 
         # Set session parameters if provided (before connection_init)
         session_params = self.config.session_parameters
         if session_params:
-            self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
-            )
+            core_driver.connection_set_session_parameters(conn_handle=self.conn_handle, parameters=session_params)
 
         # Initialise close-lifecycle state before ``_connect()`` so that the
         # ``__del__`` / atexit fail-safes always observe a sane object even
@@ -215,28 +194,25 @@ class Connection(ErrorHandlerMixin):
 
         self._connect()
 
-        self._session_parameters = SessionParametersProxy(self.db_api, self.conn_handle)
-        self._connection_info = ConnectionInfoProxy(self.db_api, self.conn_handle)
+        self._session_parameters = SessionParametersProxy(self.conn_handle)
+        self._connection_info = ConnectionInfoProxy(self.conn_handle)
 
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
-        self.db_api.connection_init(
-            ConnectionInitRequest(
-                conn_handle=self.conn_handle,
-                db_handle=self.db_handle,
-                wrapper_identity=WrapperIdentity(
-                    driver_name=_APPLICATION_NAME,
-                    driver_version=__version__,
-                    language_runtime=platform.python_implementation(),
-                    language_version=platform.python_version(),
-                    language_compiler=platform.python_compiler(),
-                ),
-            )
+        core_driver.connection_init(
+            conn_handle=self.conn_handle,  # type: ignore[arg-type]
+            db_handle=self.db_handle,  # type: ignore[arg-type]
+            wrapper_identity=WrapperIdentity(
+                driver_name=_APPLICATION_NAME,
+                driver_version=__version__,
+                language_runtime=platform.python_implementation(),
+                language_version=platform.python_version(),
+                language_compiler=platform.python_compiler(),
+            ),
         )
         from ._internal.telemetry import TelemetryClient
 
         self._telemetry_client = TelemetryClient(
-            db_api=self.db_api,
             conn_handle=cast(ConnectionHandle, self.conn_handle),
         )
 
@@ -280,18 +256,13 @@ class Connection(ErrorHandlerMixin):
         try:
             if conn_handle:
                 if not retry:
-                    self.db_api.connection_set_options(
-                        ConnectionSetOptionsRequest(
-                            conn_handle=conn_handle,
-                            options=create_config_settings_from_dict({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
-                        )
+                    core_driver.connection_set_options(
+                        conn_handle=conn_handle,
+                        options=create_config_settings_from_dict({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
                     )
 
-                # Logout + mark closed in Core (network I/O, bounded by Core's timeout)
-                self.db_api.connection_close(ConnectionCloseRequest(conn_handle=conn_handle))
+                core_driver.connection_close(conn_handle=conn_handle)
         finally:
-            # Release handles in Core's object store.
-            # Separated from connection_close for future connection pooling.
             if conn_handle:
                 self._release_connection_handle(conn_handle)
             if db_handle:
@@ -325,14 +296,14 @@ class Connection(ErrorHandlerMixin):
     def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
         """Release the Rust-side connection handle."""
         try:
-            self.db_api.connection_release(ConnectionReleaseRequest(conn_handle=conn_handle))
+            core_driver.connection_release(conn_handle=conn_handle)
         except Exception:
             logger.warning("Failed to release connection handle", exc_info=True)
 
     def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
         """Release the Rust-side database handle."""
         try:
-            self.db_api.database_release(DatabaseReleaseRequest(db_handle=db_handle))
+            core_driver.database_release(db_handle=db_handle)
         except Exception:
             logger.warning("Failed to release database handle", exc_info=True)
 
@@ -491,10 +462,9 @@ class Connection(ErrorHandlerMixin):
         since a released handle means close() already completed.
         """
         try:
-            response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
+            response = core_driver.connection_is_closed(conn_handle=self.conn_handle)  # type: ignore[arg-type]
             return bool(response.is_closed)
         except Exception:
-            # Handle released or FFI unavailable — connection is closed
             return True
 
     def is_valid(self) -> bool:
@@ -505,9 +475,8 @@ class Connection(ErrorHandlerMixin):
         if self.is_closed():
             return False
         try:
-            request = ConnectionHeartbeatRequest(conn_handle=self.conn_handle)
-            response = self.db_api.connection_heartbeat(request)
-            return response.valid
+            response = core_driver.connection_heartbeat(conn_handle=self.conn_handle)  # type: ignore[arg-type]
+            return bool(response.valid)
         except Exception:
             return False
 
@@ -598,11 +567,9 @@ class Connection(ErrorHandlerMixin):
     @internal_api
     def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
         """Return connection details from Core."""
-        return self.db_api.connection_get_info(
-            ConnectionGetInfoRequest(
-                conn_handle=self.conn_handle,
-                include_master_token=include_master_token,
-            )
+        return core_driver.connection_get_info(
+            conn_handle=self.conn_handle,  # type: ignore[arg-type]
+            include_master_token=include_master_token,
         )
 
     @internal_api
@@ -842,9 +809,7 @@ class Connection(ErrorHandlerMixin):
         """Fetch query status from the server and map the status name to a QueryStatus enum value."""
         if self.is_closed():
             return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
-        response = self.db_api.connection_get_query_status(
-            ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sf_qid)
-        )
+        response = core_driver.connection_get_query_status(conn_handle=self.conn_handle, query_id=sf_qid)  # type: ignore[arg-type]
         try:
             status = QueryStatus[response.status_name]
         except KeyError:

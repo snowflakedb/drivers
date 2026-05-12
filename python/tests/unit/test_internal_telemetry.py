@@ -2,7 +2,7 @@
 
 import platform
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,17 +22,22 @@ class TestConnectionInitIdentity:
 
     @pytest.fixture
     def full_mock_db_api(self):
+        from snowflake.connector._internal.api_client.client_api import core_driver
+
         db_api = MagicMock()
         db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
         db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
         db_api.connection_get_parameter.return_value = MagicMock(value="")
-        return db_api
+
+        old_client = core_driver._client
+        core_driver.client = db_api
+        yield db_api
+        core_driver.client = old_client
 
     def test_connection_init_includes_identity_fields(self, full_mock_db_api):
         from snowflake.connector.connection import Connection
 
-        with patch("snowflake.connector.connection.database_driver_client", return_value=full_mock_db_api):
-            Connection(user="test_user", account="test_account")
+        Connection(user="test_user", account="test_account")
 
         full_mock_db_api.connection_init.assert_called_once()
         req = full_mock_db_api.connection_init.call_args[0][0]
