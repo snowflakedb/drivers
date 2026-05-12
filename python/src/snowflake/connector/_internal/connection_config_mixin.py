@@ -14,6 +14,7 @@ touch.
 from __future__ import annotations
 
 import re
+import warnings
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, fields
@@ -112,11 +113,27 @@ class ConnectionConfigMixin:
     )
     """Fields handled only in Python, not forwarded to Rust."""
 
-    _LEGACY_REWRITES: ClassVar[dict[str, str]] = {
-        "private_key_file_pwd": "private_key_password",
+    _LEGACY_REWRITES: ClassVar[dict[str, str]] = {}
+    """Legacy parameter names -> canonical replacements (silent)."""
+
+    _DEPRECATED_REWRITES: ClassVar[dict[str, str]] = {
+        "client_fetch_threads": "client_prefetch_threads",
         "client_request_mfa_token": "client_store_temporary_credential",
+        "private_key_file_pwd": "private_key_password",
     }
-    """Legacy parameter names -> canonical replacements."""
+    """Deprecated parameter names -> canonical replacements.
+
+    Each hit emits a ``DeprecationWarning``.  Unlike ``_LEGACY_REWRITES`` these
+    names are not silently supported forever — they exist so users migrating
+    from ``snowflake-connector-python`` get a pointer to the new name.
+    """
+
+    _UNSUPPORTED_PARAMS: ClassVar[dict[str, str]] = {
+        "client_fetch_use_mp": (
+            "not supported; universal driver uses a thread pool for chunk fetch (see BehaviorDifferences)"
+        ),
+    }
+    """Legacy kwargs that are accepted for source compatibility but have no effect."""
 
     _APPLICATION_NAME: ClassVar[str] = "PythonConnector"
     """Default application name."""
@@ -153,11 +170,39 @@ class ConnectionConfigMixin:
         Resolves case-insensitive aliases, applies legacy parameter name
         rewrites, and collects unknown keys into ``_extra``.
         """
+        # Apply legacy rewrites first (silent — canonical replacements).
         for old_name, new_name in cls._LEGACY_REWRITES.items():
             if old_name in kwargs:
                 value = kwargs.pop(old_name)
                 if new_name not in kwargs:
                     kwargs[new_name] = value
+
+        # Apply deprecated rewrites with a ``DeprecationWarning`` so callers
+        # migrating from snowflake-connector-python see a pointer to the new
+        # name.  ``stacklevel=3`` surfaces the caller of ``Connection(...)`` /
+        # ``ConnectionConfig.from_kwargs(...)`` rather than this file.
+        for old_name, new_name in cls._DEPRECATED_REWRITES.items():
+            if old_name in kwargs:
+                value = kwargs.pop(old_name)
+                warnings.warn(
+                    f"{old_name!r} is deprecated; use {new_name!r} instead.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+                if new_name not in kwargs:
+                    kwargs[new_name] = value
+
+        # Drop unsupported legacy kwargs with a warning so the caller knows
+        # they had no effect instead of silently forwarding them to Rust.
+        for key in list(kwargs):
+            if key.lower() in cls._UNSUPPORTED_PARAMS:
+                reason = cls._UNSUPPORTED_PARAMS[key.lower()]
+                warnings.warn(
+                    f"{key!r} has no effect in the universal driver: {reason}.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+                kwargs.pop(key)
 
         known_fields = cls._all_field_names()
         resolved: dict[str, Any] = {}
