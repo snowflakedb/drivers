@@ -272,9 +272,12 @@ def parse_codeowners(path: Path = DEFAULT_CODEOWNERS_PATH) -> list[str]:
             individuals.add(handle)
 
     if skipped_teams:
-        log.warning(
-            "Ignoring team reference(s) in %s: %s. List individual @logins "
-            "to make them eligible reviewers.",
+        # The bot intentionally does not resolve team membership (no
+        # read:org needed). Teams are commonly kept alongside individuals
+        # for native CODEOWNERS purposes, so this is INFO, not a warning.
+        log.info(
+            "Skipped team reference(s) in %s: %s (individuals are used "
+            "for random reviewer selection).",
             path,
             ", ".join(sorted(skipped_teams)),
         )

@@ -1,6 +1,14 @@
-# Owners of every file in the repo. Listed as individual @logins so the
-# PR review bot (see .github/workflows/pr-review-bot.yml) can pick one at
-# random as the reviewer for new PRs.
+# Owners of every file in the repo.
+#
+# The team alias @snowflakedb/snow-drivers-warsaw is kept so that
+# GitHub-native CODEOWNERS behaviour (e.g. branch protection rules
+# requiring code-owner approval, organization-wide policies) keeps
+# working against the team as a whole.
+#
+# The individual @sfc-gh-* logins are listed explicitly so that the PR
+# review bot (see .github/workflows/pr-review-bot.yml) can pick one at
+# random as the reviewer for new PRs. The bot ignores team references
+# on purpose so it does not need the read:org scope.
 #
 # Names for reference (handle -- person):
 #   sfc-gh-daniszewski    -- Dariusz Aniszewski
@@ -19,4 +27,4 @@
 #   sfc-gh-makowalski     -- Maxymilian Kowalski
 #   sfc-gh-asolarski      -- Antoni Solarski
 #   sfc-gh-mcepiga        -- Michal Cepiga
-*  @sfc-gh-daniszewski @sfc-gh-turbaszek @sfc-gh-rsavenok @sfc-gh-boler @sfc-gh-rkowalski @sfc-gh-pbulawa @sfc-gh-dheyman @sfc-gh-pfus @sfc-gh-mhofman @sfc-gh-pczajka @sfc-gh-jszczerbinski @sfc-gh-fpawlowski @sfc-gh-ddas @sfc-gh-makowalski @sfc-gh-asolarski @sfc-gh-mcepiga
+*  @snowflakedb/snow-drivers-warsaw @sfc-gh-daniszewski @sfc-gh-turbaszek @sfc-gh-rsavenok @sfc-gh-boler @sfc-gh-rkowalski @sfc-gh-pbulawa @sfc-gh-dheyman @sfc-gh-pfus @sfc-gh-mhofman @sfc-gh-pczajka @sfc-gh-jszczerbinski @sfc-gh-fpawlowski @sfc-gh-ddas @sfc-gh-makowalski @sfc-gh-asolarski @sfc-gh-mcepiga
