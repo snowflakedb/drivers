@@ -94,7 +94,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to single-co
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should convert negative c_type string literals",
-                 "[datatype][string][conversion][interval][.skip]") {
+                 "[datatype][string][conversion][interval]") {
   // Given Snowflake client is logged in
 
   // When Query selecting negative interval values is executed
@@ -129,7 +129,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert negative c_type string liter
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to year-month interval type",
-                 "[datatype][string][conversion][interval][.skip]") {
+                 "[datatype][string][conversion][interval]") {
   // Given Snowflake client is logged in
 
   // When Query selecting year-month interval string is executed
@@ -164,7 +164,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to year-mont
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to compound c_type",
-                 "[datatype][string][conversion][interval][.skip]") {
+                 "[datatype][string][conversion][interval]") {
   // Given Snowflake client is logged in
 
   // When Query selecting day-time interval strings is executed
@@ -233,7 +233,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to compound 
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields when converting interval strings",
-                 "[datatype][string][conversion][interval][truncation][.skip]") {
+                 "[datatype][string][conversion][interval][truncation]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval strings with more precision than target type is executed
@@ -265,12 +265,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields when conver
     // Minute and second fields are truncated
   }
 
-  // And minute-second to minute will lose precision since driver treats it as hour-minute
-  check_interval_precision_lost<SQL_C_INTERVAL_MINUTE>(stmt, 4);
+  // And minute-second to minute: the new driver parses 2-component non-fractional strings as H:M,
+  // so '45:30' becomes hour=45/minute=30. Reading as IntervalMinute keeps minute=30 and warns 01S07
+  // for the dropped hour component. (See BehaviorDifferences for divergence from old driver, which
+  // returned 22015 here.)
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 4);
+    CHECK(interval.interval_type == SQL_IS_MINUTE);
+    CHECK(interval.intval.day_second.minute == 30);
+  }
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields in day-time intervals",
-                 "[datatype][string][conversion][interval][truncation][.skip]") {
+                 "[datatype][string][conversion][interval][truncation]") {
   // Given Snowflake client is logged in
 
   // When Query selecting day-time interval strings with more precision is executed
@@ -312,7 +319,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields in day-time
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for year intervals",
-                 "[datatype][string][conversion][interval][precision][.skip]") {
+                 "[datatype][string][conversion][interval][precision]") {
   // Given Snowflake client is logged in
 
   // Default leading precision is typically 2 digits for intervals
@@ -325,7 +332,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for month intervals",
-                 "[datatype][string][conversion][interval][precision][.skip]") {
+                 "[datatype][string][conversion][interval][precision]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval values with leading field exceeding precision is executed
@@ -337,7 +344,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for day intervals",
-                 "[datatype][string][conversion][interval][precision][.skip]") {
+                 "[datatype][string][conversion][interval][precision]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval values with leading field exceeding precision is executed
@@ -349,7 +356,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for hour intervals",
-                 "[datatype][string][conversion][interval][precision][.skip]") {
+                 "[datatype][string][conversion][interval][precision]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval values with leading field exceeding precision is executed
@@ -361,7 +368,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for compound intervals",
-                 "[datatype][string][conversion][interval][precision][.skip]") {
+                 "[datatype][string][conversion][interval][precision]") {
   // Given Snowflake client is logged in
 
   // When Query selecting compound interval values with leading field exceeding precision is executed
@@ -377,7 +384,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting invalid interval string formats",
-                 "[datatype][string][conversion][interval][failure][.skip]") {
+                 "[datatype][string][conversion][interval][failure]") {
   // Given Snowflake client is logged in
 
   // When Query selecting invalid interval strings is executed
@@ -393,7 +400,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting invalid interval str
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval strings for year-month type",
-                 "[datatype][string][conversion][interval][failure][.skip]") {
+                 "[datatype][string][conversion][interval][failure]") {
   // Given Snowflake client is logged in
 
   // When Query selecting malformed year-month interval strings is executed
@@ -409,7 +416,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval s
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval strings for day-time types",
-                 "[datatype][string][conversion][interval][failure][.skip]") {
+                 "[datatype][string][conversion][interval][failure]") {
   // Given Snowflake client is logged in
 
   // When Query selecting malformed day-time interval strings is executed
@@ -424,6 +431,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval s
   check_invalid_string<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 4);
 }
 
+// TODO(driver): out-of-range trailing fields (month > 11, hour > 23, minute/second > 59) should
+// be rejected with SQLSTATE 22015 per the Microsoft ODBC spec ("Trailing fields must follow the
+// usual constraints of the Gregorian calendar"). The current implementation passes them through
+// and lets composite parsing decide. Keeping this test `[.skip]` until that validation lands; the
+// expected assertions below also reflect the legacy old-driver overflow-into-next-field behavior,
+// which we will replace with a 22015 rejection block when that work is taken on.
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting out-of-range component values",
                  "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
@@ -463,7 +476,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting out-of-range compone
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle whitespace in interval strings",
-                 "[datatype][string][conversion][interval][edge][.skip]") {
+                 "[datatype][string][conversion][interval][edge]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval strings with leading/trailing whitespace is executed
@@ -493,7 +506,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle whitespace in interval string
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle zero values in interval strings",
-                 "[datatype][string][conversion][interval][edge][.skip]") {
+                 "[datatype][string][conversion][interval][edge]") {
   // Given Snowflake client is logged in
 
   // When Query selecting zero interval values is executed
@@ -544,7 +557,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle zero values in interval strin
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL string when converting to interval types",
-                 "[datatype][string][conversion][interval][null][.skip]") {
+                 "[datatype][string][conversion][interval][null]") {
   // Given Snowflake client is logged in
 
   // When Query selecting NULL is executed
@@ -565,7 +578,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL string when converting t
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to interval types using SQLBindCol",
-                 "[datatype][string][conversion][interval][.skip]") {
+                 "[datatype][string][conversion][interval]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval value is executed with SQLBindCol for SQL_C_INTERVAL_YEAR
@@ -610,7 +623,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to interval types us
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle fractional seconds in interval strings",
-                 "[datatype][string][conversion][interval][fractional][.skip]") {
+                 "[datatype][string][conversion][interval][fractional]") {
   // Given Snowflake client is logged in
 
   // When Query selecting interval strings with fractional seconds is executed
@@ -813,4 +826,187 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR with SQLSTA
   auto records = get_diag_rec(stmt);
   REQUIRE(!records.empty());
   CHECK(records[0].sqlState == "22018");
+}
+
+// ============================================================================
+// EXTENDED GAP COVERAGE - Negative composites, sub-microsecond truncation,
+// fractional-only sign, explicit zero fraction, wider malformed matrix.
+//
+// These exercise edge cases of `varchar_to_interval` that aren't reachable
+// through the legacy scaffolding above. Pure-Rust equivalents already live in
+// `odbc/src/conversion/interval_str_tests.rs`; the e2e variants here also
+// confirm the dispatch from `SnowflakeVarchar::write_odbc` and the wire
+// representation of the produced `SQL_INTERVAL_STRUCT`.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative composite VARCHAR as SQL_C_INTERVAL_DAY_TO_SECOND",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR carrying a negative day-to-second interval literal
+  auto stmt = conn.execute_fetch("SELECT '-2 08:15:30.250000' AS neg_day_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_DAY_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 1);
+
+  // Then every component is preserved and the sign bit reflects the negative magnitude
+  CHECK(interval.interval_type == SQL_IS_DAY_TO_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.day == 2);
+  CHECK(interval.intval.day_second.hour == 8);
+  CHECK(interval.intval.day_second.minute == 15);
+  CHECK(interval.intval.day_second.second == 30);
+  CHECK(interval.intval.day_second.fraction == 250000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative composite VARCHAR as SQL_C_INTERVAL_HOUR_TO_SECOND",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR carrying a negative hour-to-second interval literal
+  auto stmt = conn.execute_fetch("SELECT '-12:30:45' AS neg_hour_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_HOUR_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
+
+  // Then the hour/minute/second components are populated and the sign bit is set
+  CHECK(interval.interval_type == SQL_IS_HOUR_TO_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.hour == 12);
+  CHECK(interval.intval.day_second.minute == 30);
+  CHECK(interval.intval.day_second.second == 45);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative composite VARCHAR as SQL_C_INTERVAL_MINUTE_TO_SECOND",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR carrying a negative minute-to-second interval literal with fractional seconds
+  auto stmt = conn.execute_fetch("SELECT '-45:30.750000' AS neg_minute_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_MINUTE_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 1);
+
+  // Then minute, second, fraction are populated and the sign bit is set
+  CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.minute == 45);
+  CHECK(interval.intval.day_second.second == 30);
+  CHECK(interval.intval.day_second.fraction == 750000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should set sign bit on negative fractional-only SQL_C_INTERVAL_SECOND",
+                 "[datatype][string][conversion][interval][negative][fractional]") {
+  // Given a VARCHAR whose magnitude lives entirely in the fractional part
+  auto stmt = conn.execute_fetch("SELECT '-0.5' AS neg_half_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+
+  // Then the sign bit is TRUE even though the integer part is zero (Microsoft ODBC spec: sign
+  // reflects the overall interval value, not just the leading field).
+  CHECK(interval.interval_type == SQL_IS_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.second == 0);
+  CHECK(interval.intval.day_second.fraction == 500000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should treat -0.0 SQL_C_INTERVAL_SECOND as positive zero",
+                 "[datatype][string][conversion][interval][edge][fractional]") {
+  // Given a VARCHAR carrying an explicit "negative zero" with an explicit zero fraction
+  auto stmt = conn.execute_fetch("SELECT '-0.0' AS neg_zero_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+
+  // Then the sign bit is FALSE because the magnitude is exactly zero.
+  CHECK(interval.interval_type == SQL_IS_SECOND);
+  CHECK(interval.interval_sign == SQL_FALSE);
+  CHECK(interval.intval.day_second.second == 0);
+  CHECK(interval.intval.day_second.fraction == 0);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should warn 01S07 on sub-microsecond fractional truncation",
+                 "[datatype][string][conversion][interval][truncation][fractional]") {
+  // Given VARCHARs whose fractional parts carry more than 6 significant digits
+  auto stmt = conn.execute_fetch(
+      "SELECT '12:30:45.1234567' AS hour_second_extra, "
+      "'2 08:15:30.7654321' AS day_second_extra, "
+      "'45:30.1234567' AS minute_second_extra");
+
+  // When fetched as composite SQL_C_INTERVAL_* with second precision
+  // Then the value is truncated to microseconds and SQLSTATE 01S07 is reported
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
+    CHECK(interval.intval.day_second.hour == 12);
+    CHECK(interval.intval.day_second.minute == 30);
+    CHECK(interval.intval.day_second.second == 45);
+    CHECK(interval.intval.day_second.fraction == 123456);
+  }
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 2);
+    CHECK(interval.intval.day_second.day == 2);
+    CHECK(interval.intval.day_second.hour == 8);
+    CHECK(interval.intval.day_second.minute == 15);
+    CHECK(interval.intval.day_second.second == 30);
+    CHECK(interval.intval.day_second.fraction == 765432);
+  }
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 3);
+    CHECK(interval.intval.day_second.minute == 45);
+    CHECK(interval.intval.day_second.second == 30);
+    CHECK(interval.intval.day_second.fraction == 123456);
+  }
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should not warn when extra fractional digits are zero padding",
+                 "[datatype][string][conversion][interval][fractional]") {
+  // Given a VARCHAR whose extra fractional digits are all zeros (no actual precision lost)
+  auto stmt = conn.execute_fetch("SELECT '12:30:45.1234560000' AS padded");
+
+  // When fetched as SQL_C_INTERVAL_HOUR_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
+
+  // Then no truncation warning is emitted because the dropped digits are insignificant zeros.
+  CHECK(interval.intval.day_second.fraction == 123456);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should treat explicit zero fraction in H:M as no fractional part",
+                 "[datatype][string][conversion][interval][fractional][edge]") {
+  // Given a VARCHAR formatted as H:M with an explicit ".0" fractional appendix
+  auto stmt = conn.execute_fetch("SELECT '5:10.0' AS hm_zero_frac");
+
+  // When the column is fetched as SQL_C_INTERVAL_HOUR_TO_MINUTE
+  auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
+
+  // Then the parser keeps the H:M shape and the explicit zero fraction is ignored
+  CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
+  CHECK(interval.intval.day_second.hour == 5);
+  CHECK(interval.intval.day_second.minute == 10);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should reject H:M with non-zero fraction for SQL_C_INTERVAL_HOUR_TO_MINUTE",
+                 "[datatype][string][conversion][interval][negative][fractional]") {
+  // Given a VARCHAR with a non-zero fraction ("5:10.125") that the parser must read as M:S.fraction
+  auto stmt = conn.execute_fetch("SELECT '5:10.125' AS unambiguous_ms");
+
+  // When the column is fetched as SQL_C_INTERVAL_HOUR_TO_MINUTE (which has no fraction field)
+  SQL_INTERVAL_STRUCT interval = {};
+  SQLLEN indicator = -999;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_INTERVAL_HOUR_TO_MINUTE, &interval,
+                             sizeof(interval), &indicator);
+
+  // Then SQLGetData fails with SQLSTATE 22018 because the input is unambiguously M:S, not H:M
+  CHECK(ret == SQL_ERROR);
+  auto records = get_diag_rec(stmt);
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "22018");
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR for every composite SQL_C_INTERVAL_*",
+                 "[datatype][string][conversion][interval][negative][failure]") {
+  // Given a VARCHAR carrying a string that looks like an interval but uses wrong separators
+  auto stmt = conn.execute_fetch("SELECT '12.34.56' AS dotted, '5/10' AS slashed, 'abc' AS letters");
+
+  // When fetched as a variety of composite SQL_C_INTERVAL_* targets
+  // Then SQLGetData fails with SQLSTATE 22018 in each case
+  check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
+  check_invalid_string<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 2);
+  check_invalid_string<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 3);
 }
