@@ -56,10 +56,13 @@ pub async fn upload_to_s3_or_skip(
     credential_refresher: Option<Arc<dyn CredentialRefresher>>,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
-    // Creds used by the S3 client for this iteration. Starts as `stage_info.creds`
-    // (via `None` → `create_s3_client` falls back to stage_info) and is replaced
-    // by refreshed creds after an ExpiredToken.
-    let mut active_creds: Option<CloudCredentials> = None;
+    // Creds used by the S3 client for this iteration. Seeded from the
+    // refresher's cache so a refresh triggered by an earlier file in the
+    // same PUT batch is picked up without a wasted ExpiredToken round-trip.
+    // `None` → `create_s3_client` falls back to `stage_info.creds`.
+    let mut active_creds: Option<CloudCredentials> = credential_refresher
+        .as_deref()
+        .and_then(|r| r.cached_creds());
     let mut refreshes_done: u32 = 0;
     loop {
         let s3_client =
@@ -114,6 +117,11 @@ async fn try_upload_once(
 /// `on_refresh_error` lifts a `CredentialRefreshError` into the caller's
 /// storage-client error type — each caller picks the right variant (e.g.
 /// `UploadFileError::CredentialRefresh` vs `DownloadFileError::CredentialRefresh`).
+///
+/// The cache-version snapshot is taken *before* calling `refresh` so concurrent
+/// callers racing on the same refresher coalesce: whoever wins the mutex
+/// advances the version, the losers find `cache.version > seen_version` and
+/// receive the cached creds without a second server round-trip.
 async fn try_refresh_after_expired_token<E>(
     is_expired_token: bool,
     refresher: Option<&dyn CredentialRefresher>,
@@ -138,8 +146,9 @@ async fn try_refresh_after_expired_token<E>(
         refreshes_done,
         "Refreshing S3 credentials after ExpiredToken"
     );
+    let seen_version = refresher.cache_version();
     refresher
-        .refresh()
+        .refresh(seen_version)
         .await
         .map(Some)
         .map_err(on_refresh_error)
@@ -235,15 +244,16 @@ pub async fn download_from_s3(
     credential_refresher: Option<Arc<dyn CredentialRefresher>>,
 ) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
-    let mut active_creds: Option<CloudCredentials> = None;
+    // Seed from the refresher's cache — see the matching comment on
+    // `upload_to_s3_or_skip`.
+    let mut active_creds: Option<CloudCredentials> = credential_refresher
+        .as_deref()
+        .and_then(|r| r.cached_creds());
     let mut refreshes_done: u32 = 0;
     loop {
-        let s3_client = create_s3_client(
-            stage_info,
-            SNOWFLAKE_DOWNLOAD_PROVIDER,
-            active_creds.as_ref(),
-        )
-        .await?;
+        let s3_client =
+            create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, active_creds.as_ref())
+                .await?;
         match try_download_once(&s3_client, stage_info, &s3_key).await {
             Ok(parsed) => return Ok(parsed),
             Err(e) => match try_refresh_after_expired_token(
@@ -707,11 +717,19 @@ mod tests {
         }
     }
 
-    /// Refresher that records how many times it was called and returns fresh
-    /// creds each time. Stand-in for the production PUT/GET re-execution.
+    /// Refresher that records how many times it was called and caches the
+    /// last successful refresh. Stand-in for the production PUT/GET
+    /// re-execution.
     struct CountingRefresher {
         calls: Arc<AtomicUsize>,
-        creds: StdMutex<Option<CloudCredentials>>,
+        fresh: StdMutex<CloudCredentials>,
+        cache: StdMutex<RefreshCacheState>,
+    }
+
+    #[derive(Default)]
+    struct RefreshCacheState {
+        creds: Option<CloudCredentials>,
+        version: u64,
     }
 
     impl CountingRefresher {
@@ -719,25 +737,39 @@ mod tests {
             let calls = Arc::new(AtomicUsize::new(0));
             let this = Arc::new(Self {
                 calls: calls.clone(),
-                creds: StdMutex::new(Some(creds)),
+                fresh: StdMutex::new(creds),
+                cache: StdMutex::new(RefreshCacheState::default()),
             });
             (this, calls)
         }
     }
 
     impl CredentialRefresher for CountingRefresher {
+        fn cached_creds(&self) -> Option<CloudCredentials> {
+            self.cache.lock().unwrap().creds.clone()
+        }
+
+        fn cache_version(&self) -> u64 {
+            self.cache.lock().unwrap().version
+        }
+
         fn refresh(
             &self,
+            seen_version: u64,
         ) -> futures::future::BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>>
         {
             use futures::FutureExt;
+            let mut cache = self.cache.lock().unwrap();
+            if cache.version > seen_version
+                && let Some(ref creds) = cache.creds
+            {
+                let cached = creds.clone();
+                return async move { Ok(cached) }.boxed();
+            }
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let creds = self
-                .creds
-                .lock()
-                .unwrap()
-                .clone()
-                .expect("test refresher should always have creds ready");
+            let creds = self.fresh.lock().unwrap().clone();
+            cache.creds = Some(creds.clone());
+            cache.version = cache.version.saturating_add(1);
             async move { Ok(creds) }.boxed()
         }
     }
@@ -1024,5 +1056,117 @@ mod tests {
         );
         assert!(matches!(err, UploadFileError::S3Upload { .. }));
         assert!(!is_expired_token_upload_error(&err));
+    }
+
+    #[tokio::test]
+    async fn second_upload_uses_cached_creds_and_skips_refresh() {
+        // Scenario: a PUT batch uploads two files. The first file sees an
+        // ExpiredToken, the refresher runs once and caches fresh creds. The
+        // second file's upload starts from the cached creds and succeeds on
+        // the first try — no second refresh, no wasted ExpiredToken.
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        // First PUT → ExpiredToken; all subsequent PUTs → 200. ExpireThenSucceed
+        // with count=1 covers both files: it expires once then succeeds
+        // forever after.
+        Mock::given(method("PUT"))
+            .respond_with(ExpireThenSucceed::new(
+                1,
+                200,
+                b"".to_vec(),
+                vec![("ETag".into(), "\"abc\"".into())],
+            ))
+            .mount(&server)
+            .await;
+
+        let stage_info = make_stage_info(
+            &server.uri(),
+            make_s3_creds("STALE_KEY", "STALE_SECRET", "STALE_TOKEN"),
+        );
+        let (refresher, calls) =
+            CountingRefresher::new(make_s3_creds("FRESH_KEY", "FRESH_SECRET", "FRESH_TOKEN"));
+        let r: Arc<dyn CredentialRefresher> = refresher;
+
+        // File 1 — ExpiredToken triggers a refresh.
+        upload_to_s3_or_skip(
+            PreparedUpload {
+                data: b"one".to_vec(),
+                digest: "d1".into(),
+                encryption_metadata: None,
+            },
+            &stage_info,
+            "file1.txt",
+            true,
+            Some(r.clone()),
+        )
+        .await
+        .expect("file 1 should succeed after refresh");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // File 2 — must pick up the cached creds and avoid a second refresh.
+        upload_to_s3_or_skip(
+            PreparedUpload {
+                data: b"two".to_vec(),
+                digest: "d2".into(),
+                encryption_metadata: None,
+            },
+            &stage_info,
+            "file2.txt",
+            true,
+            Some(r.clone()),
+        )
+        .await
+        .expect("file 2 should succeed on the first attempt using cached creds");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "file 2 must NOT trigger a second refresh",
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_with_stale_version_returns_cached_without_round_trip() {
+        // Direct test of the version-based coalescing on a `CredentialRefresher`:
+        // two callers observe version=0 before either refreshes, both call
+        // `refresh(0)`. The first performs the refresh and advances the cache
+        // version to 1; the second finds `cache.version > seen_version` and
+        // returns the cached value without invoking the server. This is
+        // Python's `cur_timestamp < self.timestamp` short-circuit.
+        let (refresher, calls) =
+            CountingRefresher::new(make_s3_creds("FRESH_KEY", "FRESH_SECRET", "FRESH_TOKEN"));
+        let r: Arc<dyn CredentialRefresher> = refresher;
+
+        let seen_version = r.cache_version();
+        assert_eq!(seen_version, 0, "fresh refresher starts at version 0");
+
+        let first = r.refresh(seen_version).await.expect("first refresh");
+        let second = r.refresh(seen_version).await.expect("second refresh");
+
+        // Both callers got the same creds — the second was served from cache.
+        assert!(
+            matches!(first, CloudCredentials::S3 { ref aws_key_id, .. } if aws_key_id == "FRESH_KEY")
+        );
+        assert!(
+            matches!(second, CloudCredentials::S3 { ref aws_key_id, .. } if aws_key_id == "FRESH_KEY")
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "second refresh must be served from cache, not the server",
+        );
+        assert_eq!(r.cache_version(), 1, "version advances exactly once");
+    }
+
+    #[tokio::test]
+    async fn cached_creds_is_none_before_first_refresh() {
+        let (refresher, _calls) =
+            CountingRefresher::new(make_s3_creds("F_KEY", "F_SECRET", "F_TOKEN"));
+        let r: Arc<dyn CredentialRefresher> = refresher;
+        assert!(r.cached_creds().is_none());
+        r.refresh(0).await.unwrap();
+        assert!(r.cached_creds().is_some(), "cache populated after refresh");
     }
 }

@@ -154,11 +154,35 @@ pub enum CredentialRefreshError {
 /// expired token mid-transfer. Implementations typically re-execute the
 /// originating PUT/GET SQL command and parse fresh `stageInfo.creds`.
 ///
-/// The trait is dyn-compat (`Arc<dyn CredentialRefresher>`), so `refresh`
-/// returns a `BoxFuture` — matching `CallerIdentityProvider` in
-/// `telemetry::platform_detection::aws`.
+/// One refresher instance is shared across every file in a PUT/GET batch
+/// (`Arc<dyn CredentialRefresher>`): a refresh triggered by file #1 is
+/// visible to files #2..N without another server round-trip, and concurrent
+/// refresh calls coalesce via the `cache_version` / `seen_version` pairing.
+///
+/// The trait is dyn-compat, so `refresh` returns a `BoxFuture` — matching
+/// `CallerIdentityProvider` in `telemetry::platform_detection::aws`.
 pub trait CredentialRefresher: Send + Sync + 'static {
-    fn refresh(&self) -> BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>>;
+    /// Returns the latest refreshed credentials if any refresh has succeeded,
+    /// else `None`. Storage clients call this before each file's first attempt
+    /// so a refresh by an earlier file is picked up without an `ExpiredToken`
+    /// round-trip.
+    fn cached_creds(&self) -> Option<CloudCredentials>;
+
+    /// Version of the in-process credential cache; incremented on every
+    /// successful refresh. Paired with `refresh` to coalesce concurrent
+    /// expired-token events: a caller that sees `ExpiredToken`, reads version
+    /// `N`, and calls `refresh(N)` triggers a server round-trip; other
+    /// callers that held `N` but arrive after the refresh completed get the
+    /// cached value without hitting the server. "Version" rather than "epoch"
+    /// to avoid collision with the Snowflake session epoch.
+    fn cache_version(&self) -> u64;
+
+    /// Produces refreshed credentials, skipping the server round-trip if
+    /// another caller has already advanced past `seen_version`.
+    fn refresh(
+        &self,
+        seen_version: u64,
+    ) -> BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>>;
 }
 
 /// Cloud storage credentials.

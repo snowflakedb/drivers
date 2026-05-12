@@ -117,12 +117,29 @@ async fn perform_put_get(
 /// credentials when S3 reports `ExpiredToken`. Re-execution is serialized
 /// against other queries on the same connection by the `Mutex` inside
 /// `RefreshContext`.
+///
+/// One refresher instance is shared across every file in a PUT/GET batch via
+/// `Arc<dyn CredentialRefresher>`; the cache holds the last successful refresh
+/// plus an ever-increasing version so files 2..N pick up the fresh creds
+/// without another round-trip and concurrent refresh calls coalesce.
 pub(super) struct PutGetCredentialRefresher {
     conn: Arc<Mutex<super::connection::Connection>>,
     command: String,
     query_parameters: QueryParameters,
     http_client: Client,
     retry_policy: RetryPolicy,
+    // `std::sync::Mutex` (not `tokio::sync::Mutex`): the critical sections
+    // are pure reads/writes with no `.await`, so a sync mutex is correct and
+    // lets `cached_creds` / `cache_version` stay non-async (matching the
+    // `CredentialRefresher` trait shape) without the `try_lock()` fallback
+    // that would silently defeat coalescing under contention.
+    cache: std::sync::Mutex<RefreshCache>,
+}
+
+#[derive(Default)]
+struct RefreshCache {
+    creds: Option<CloudCredentials>,
+    version: u64,
 }
 
 impl PutGetCredentialRefresher {
@@ -139,6 +156,7 @@ impl PutGetCredentialRefresher {
             query_parameters,
             http_client,
             retry_policy,
+            cache: std::sync::Mutex::new(RefreshCache::default()),
         }
     }
 
@@ -220,11 +238,46 @@ fn truncate_server_message(msg: Option<&str>) -> String {
 }
 
 impl CredentialRefresher for PutGetCredentialRefresher {
-    fn refresh(&self) -> BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>> {
+    fn cached_creds(&self) -> Option<CloudCredentials> {
+        self.cache.lock().unwrap().creds.clone()
+    }
+
+    fn cache_version(&self) -> u64 {
+        self.cache.lock().unwrap().version
+    }
+
+    fn refresh(
+        &self,
+        seen_version: u64,
+    ) -> BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>> {
         async move {
-            self.execute_refresh()
+            // Short-read. If another caller already refreshed past
+            // `seen_version` while we were still deciding to refresh, return
+            // their result. The cache uses `std::sync::Mutex` (no `.await`
+            // held across locks), so read contention never silently falls
+            // back — a key correctness property of the coalescing contract.
+            if let Some(hit) = {
+                let cache = self.cache.lock().unwrap();
+                (cache.version > seen_version).then(|| cache.creds.clone()).flatten()
+            } {
+                return Ok(hit);
+            }
+
+            let fresh = self
+                .execute_refresh()
                 .await
-                .map_err(|e| RefreshFailedSnafu.into_error(Box::new(e)))
+                .map_err(|e| RefreshFailedSnafu.into_error(Box::new(e)))?;
+
+            // Commit. If `cache.version` is still at `seen_version`, nobody
+            // raced us — publish our result and bump the version. If it's
+            // higher, another caller already committed a later refresh;
+            // leave their value in place and return our fresh creds locally.
+            let mut cache = self.cache.lock().unwrap();
+            if cache.version <= seen_version {
+                cache.creds = Some(fresh.clone());
+                cache.version = cache.version.saturating_add(1);
+            }
+            Ok(fresh)
         }
         .boxed()
     }
