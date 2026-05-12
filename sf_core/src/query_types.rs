@@ -81,15 +81,35 @@ pub enum RowType {
     Geography {
         name: String,
         nullable: bool,
+        /// Underlying representation chosen by the server based on
+        /// `GEOGRAPHY_OUTPUT_FORMAT` (text for GeoJSON/WKT/EWKT, binary for WKB/EWKB).
+        representation: GeoRepresentation,
     },
     Geometry {
         name: String,
         nullable: bool,
+        /// Underlying representation chosen by the server based on
+        /// `GEOMETRY_OUTPUT_FORMAT` (text for GeoJSON/WKT/EWKT, binary for WKB/EWKB).
+        representation: GeoRepresentation,
     },
     Vector {
         name: String,
         nullable: bool,
     },
+}
+
+/// Underlying storage representation for GEOGRAPHY / GEOMETRY columns.
+/// Values in JSON result format arrive as UTF-8 strings when the output format
+/// produces text (GeoJSON/WKT/EWKT), and as hex-encoded strings when the format
+/// produces binary (WKB/EWKB).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeoRepresentation {
+    /// Textual output: GeoJSON object (returned by Snowflake as `type=object`),
+    /// or WKT/EWKT strings (returned as `type=text`).
+    Text,
+    /// Binary output: WKB/EWKB, returned as hex-encoded strings with
+    /// `type=binary` — decoded into Arrow `Binary` by the JSON parser.
+    Binary,
 }
 
 impl RowType {
@@ -228,17 +248,19 @@ impl RowType {
         }
     }
 
-    pub fn geography(name: &str, nullable: bool) -> Self {
+    pub fn geography(name: &str, nullable: bool, representation: GeoRepresentation) -> Self {
         RowType::Geography {
             name: name.to_string(),
             nullable,
+            representation,
         }
     }
 
-    pub fn geometry(name: &str, nullable: bool) -> Self {
+    pub fn geometry(name: &str, nullable: bool, representation: GeoRepresentation) -> Self {
         RowType::Geometry {
             name: name.to_string(),
             nullable,
+            representation,
         }
     }
 
