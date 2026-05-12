@@ -1,0 +1,126 @@
+# Automate PR review pings.
+#
+# On a new (or freshly-undrafted) PR, pick a random reviewer from
+# .github/CODEOWNERS, request review + add as assignee via `gh pr edit`,
+# and ping #drivers-review via slackapi/slack-github-action. Every 2h,
+# post a digest of open non-draft PRs that have no APPROVED /
+# CHANGES_REQUESTED review yet.
+#
+# All GitHub I/O goes through the `gh` CLI (with GITHUB_TOKEN) and all
+# Slack I/O goes through slackapi/slack-github-action. The Python script
+# in scripts/pr_review_bot.py only orchestrates and formats messages.
+#
+# Required repository configuration:
+#   secrets.SLACK_BOT_TOKEN
+#       Slack bot token (xoxb-...) with scope `chat:write` so the bot
+#       can post in #drivers-review via chat.postMessage. No other Slack
+#       scopes are needed — the bot does not call users.list.
+#   vars.SLACK_CHANNEL (optional)
+#       Channel name (no leading '#') or channel ID. Defaults to
+#       'drivers-review'.
+#
+# Reviewer pool comes from .github/CODEOWNERS — list each reviewer
+# explicitly as @login (team references like @org/team-slug are skipped, so
+# the bot does not need read:org).
+#
+# Reviewers are shown by their real name (git commit.author.name from
+# their most recent commit in this repo). The reviewer was already
+# notified by GitHub via the review_requested API call; this channel
+# message is informational for the rest of the team.
+name: PR review bot
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review, reopened]
+  schedule:
+    # Every 2 hours, on the hour.
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode to run"
+        required: true
+        type: choice
+        default: remind
+        options:
+          - assign
+          - remind
+      pr_number:
+        description: "PR number (only used when mode=assign)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-review-bot-${{ github.event_name }}-${{ github.event.pull_request.number || 'global' }}
+  cancel-in-progress: false
+
+jobs:
+  assign-reviewer:
+    name: Assign random reviewer
+    if: |
+      (github.event_name == 'pull_request_target' && github.event.pull_request.draft == false)
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'assign')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Assign reviewer and prepare Slack payload
+        id: build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL || 'drivers-review' }}
+          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
+        run: python scripts/pr_review_bot.py assign
+
+      - name: Post assignment notification to Slack
+        if: steps.build.outputs.skip != 'true'
+        uses: slackapi/slack-github-action@v2
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload-file-path: ${{ runner.temp }}/slack_payload.json
+
+  remind-reviewers:
+    name: Remind pending reviewers
+    if: |
+      github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'remind')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build reminder digest payload
+        id: build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL || 'drivers-review' }}
+          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
+        run: python scripts/pr_review_bot.py remind
+
+      - name: Post reminder digest to Slack
+        if: steps.build.outputs.skip != 'true'
+        uses: slackapi/slack-github-action@v2
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload-file-path: ${{ runner.temp }}/slack_payload.json
