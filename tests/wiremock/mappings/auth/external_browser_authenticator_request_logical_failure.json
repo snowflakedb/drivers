@@ -1,0 +1,19 @@
+{
+  "name": "Snowflake authenticator-request logical failure for external browser",
+  "request": {
+    "urlPathPattern": "/session/authenticator-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": false,
+      "message": "External browser authentication is not enabled for this account"
+    }
+  }
+}
