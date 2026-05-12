@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "Subprocess.hpp"
 #include "platform.hpp"
@@ -108,6 +109,36 @@ class WiremockClient {
       throw std::runtime_error("WireMock count response missing 'count' field: " + response);
     }
     return static_cast<int>(it->second.get<double>());
+  }
+
+  /// Find requests matching a URL path pattern and return their bodies as parsed JSON.
+  std::vector<picojson::value> find_requests(const std::string& url_path_pattern) const {
+    std::string body = R"({"urlPathPattern":")" + url_path_pattern + R"("})";
+
+    auto tmp = tmp_file("find_requests");
+    {
+      std::ofstream f(tmp);
+      f << body;
+    }
+    std::string cmd = curl_post("/__admin/requests/find", tmp);
+    std::string response = platform::exec_command(cmd);
+    std::filesystem::remove(tmp);
+
+    picojson::value json;
+    std::string err = picojson::parse(json, response);
+    if (!err.empty() || !json.is<picojson::object>()) {
+      throw std::runtime_error("WireMock find_requests parse error: " + err + " | body: " + response);
+    }
+
+    std::vector<picojson::value> results;
+    const auto& obj = json.get<picojson::object>();
+    auto it = obj.find("requests");
+    if (it != obj.end() && it->second.is<picojson::array>()) {
+      for (const auto& req : it->second.get<picojson::array>()) {
+        results.push_back(req);
+      }
+    }
+    return results;
   }
 
  private:
