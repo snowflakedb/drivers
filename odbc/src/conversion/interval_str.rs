@@ -148,8 +148,7 @@ fn parse_seconds_with_fraction(s: &str) -> Result<SecondParse, WriteOdbcError> {
         // Anything past the 6th fractional digit is silently dropped
         // ONLY when those digits are all `0`; otherwise we owe the
         // application a 01S07 warning.
-        let fraction_was_truncated =
-            frac.len() > 6 && frac.bytes().skip(6).any(|b| b != b'0');
+        let fraction_was_truncated = frac.len() > 6 && frac.bytes().skip(6).any(|b| b != b'0');
         Ok(SecondParse {
             second,
             fraction_micros: micros,
