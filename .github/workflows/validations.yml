@@ -2,8 +2,6 @@ name: Validate generated data
 
 on:
   pull_request:
-  push:
-    branches: [ main ]
   merge_group:
     types: [ checks_requested ]
 
