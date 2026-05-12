@@ -800,7 +800,7 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     runs-on: windows-latest
-    name: build_wix (WiX Toolset ${{ env.WIX_REF }} from source)
+    name: build_wix (WiX Toolset from source)
     env:
       DOTNET_NOLOGO: 'true'
       DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
