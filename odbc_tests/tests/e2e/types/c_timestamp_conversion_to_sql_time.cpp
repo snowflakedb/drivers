@@ -25,8 +25,8 @@
 
 namespace {
 
-void bind_timestamp_and_execute(StatementHandleWrapper& stmt, SQLSMALLINT target_sql_type,
-                                SQL_TIMESTAMP_STRUCT& val, SQLLEN& ind) {
+void bind_timestamp_and_execute(StatementHandleWrapper& stmt, SQLSMALLINT target_sql_type, SQL_TIMESTAMP_STRUCT& val,
+                                SQLLEN& ind) {
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, target_sql_type, 0, 0,
                                    &val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
@@ -180,8 +180,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with NULL 
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   SQLLEN ind = SQL_NULL_DATA;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, sql_type, 0, 0, nullptr, 0,
-                         &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, sql_type, 0, 0, nullptr, 0, &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);

@@ -320,8 +320,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with day=0 bo
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should reject SQL_C_TYPE_DATE with non-leap-year Feb 29 bound to TIMESTAMP target",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE with non-leap-year Feb 29 bound to TIMESTAMP target",
                  "[c_date][conversion][sql_timestamp][invalid]") {
   const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
   CAPTURE(sql_type);

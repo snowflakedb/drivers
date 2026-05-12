@@ -33,8 +33,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIME target 
   val.minute = 30;
   val.second = 45;
   SQLLEN ind = sizeof(val);
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, sql_type, 0, 0, &val, sizeof(val),
-                         &ind);
+  ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, sql_type, 0, 0, &val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
