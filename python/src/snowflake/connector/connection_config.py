@@ -42,7 +42,7 @@ class ConnectionConfig:
     """Timeout in seconds for native Okta SSO authentication. Default: 120"""
 
     authenticator: str | None = None
-    """Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)"""
+    """Authenticator type for the connection"""
 
     client_app_id: str | None = None
     """Application identifier sent by the client wrapper (e.g. PythonConnector)"""
@@ -91,6 +91,12 @@ class ConnectionConfig:
 
     log_max_query_length: int | None = 80
     """Maximum number of characters of a query string to include in log messages. Default: 80"""
+
+    log_query_parameters: bool | str | None = False
+    """Include the (truncated) JSON bindings in INFO query logs (requires log_query_text). Default: False"""
+
+    log_query_text: bool | str | None = False
+    """Include the (truncated) SQL text in INFO query logs. Default: False"""
 
     logout_error_strategy: str | None = None
     """Error handling strategy for logout: 'best_effort' or 'strict'"""
@@ -291,6 +297,8 @@ class ConnectionConfig:
             "enable_server_session_keep_alive_auto_detection",
             "host",
             "log_max_query_length",
+            "log_query_parameters",
+            "log_query_text",
             "logout_error_strategy",
             "logout_max_attempts",
             "logout_request_timeout_seconds",

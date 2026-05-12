@@ -1,6 +1,6 @@
 use crate::config::rest_parameters::{LoginParameters, NativeOktaConfig};
 use crate::config::retry::RetryPolicy;
-use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
+use crate::http::retry::{HttpContext, HttpError};
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
 use html_escape::decode_html_entities;
 use reqwest::header;
@@ -182,22 +182,6 @@ fn extract_form_action(html: &str) -> Option<String> {
     Some(decode_html_entities(raw).into_owned())
 }
 
-async fn request_text_with_retry(
-    build: impl Fn() -> reqwest::RequestBuilder,
-    ctx: &HttpContext,
-    policy: &RetryPolicy,
-) -> Result<(StatusCode, String), HttpError> {
-    execute_with_retry(build, ctx, policy, |resp| async move {
-        let status = resp.status();
-        let text = resp.text().await.map_err(|e| HttpError::Transport {
-            source: e,
-            location: Location::new(file!(), line!(), column!()),
-        })?;
-        Ok((status, text))
-    })
-    .await
-}
-
 fn remaining_policy(
     base: &RetryPolicy,
     start: Instant,
@@ -275,7 +259,7 @@ async fn request_authenticator_endpoints(
 
     let body_string = serde_json::to_string(&authn_req).context(JsonSerializeSnafu)?;
     let ctx = HttpContext::new(Method::POST, SF_AUTHENTICATOR_REQUEST_PATH).allow_post_retry();
-    let (status, text) = request_text_with_retry(
+    let (status, text) = super::request_text_with_retry(
         || {
             client
                 .post(&authn_url)
@@ -421,7 +405,7 @@ async fn fetch_saml_with_retries(
         let mut single_attempt_policy = remaining_policy(base_policy, start, budget)?;
         single_attempt_policy.max_attempts = 1;
         let saml_ctx = HttpContext::new(Method::GET, "okta:saml");
-        let saml_result = request_text_with_retry(
+        let saml_result = super::request_text_with_retry(
             || {
                 client.get(sso_url.clone()).query(&[
                     ("RelayState", relay_state.as_str()),
@@ -517,7 +501,7 @@ async fn request_okta_token(
         "password": password,
     });
     let token_body_string = token_body.to_string();
-    let (status, text) = request_text_with_retry(
+    let (status, text) = super::request_text_with_retry(
         || {
             client
                 .post(token_url.clone())
