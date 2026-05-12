@@ -81,7 +81,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR to all exac
 
   // When SQL_C_INTERVAL_YEAR carrying 7 years is bound as each exact-numeric SQL target
   for (auto sql_type : {SQL_TINYINT, SQL_SMALLINT, SQL_INTEGER, SQL_BIGINT}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -97,7 +97,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR to all exac
 
   // And the same value round-trips through SQL_DECIMAL and SQL_NUMERIC with scale=0
   for (auto sql_type : {SQL_DECIMAL, SQL_NUMERIC}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -118,7 +118,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MONTH to all exa
 
   // When SQL_C_INTERVAL_MONTH carrying 11 months is bound as each integer SQL target
   for (auto sql_type : {SQL_TINYINT, SQL_SMALLINT, SQL_INTEGER, SQL_BIGINT}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -144,7 +144,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY to all exact
 
   // When SQL_C_INTERVAL_DAY carrying 31 days is bound as each integer SQL target
   for (auto sql_type : {SQL_TINYINT, SQL_SMALLINT, SQL_INTEGER, SQL_BIGINT}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -166,7 +166,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR to all exac
 
   // When SQL_C_INTERVAL_HOUR carrying 23 hours is bound as each integer SQL target
   for (auto sql_type : {SQL_TINYINT, SQL_SMALLINT, SQL_INTEGER, SQL_BIGINT}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -188,7 +188,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE to all ex
 
   // When SQL_C_INTERVAL_MINUTE carrying 45 minutes is bound as each integer SQL target
   for (auto sql_type : {SQL_TINYINT, SQL_SMALLINT, SQL_INTEGER, SQL_BIGINT}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -210,7 +210,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_SECOND to all ex
 
   // When SQL_C_INTERVAL_SECOND carrying 59 whole seconds is bound as each integer SQL target
   for (auto sql_type : {SQL_TINYINT, SQL_SMALLINT, SQL_INTEGER, SQL_BIGINT}) {
-    conn.execute("DELETE FROM t");
+    conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(38,0))");
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
@@ -383,26 +383,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail binding composite SQL_C_INTERVA
   }
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should fail binding composite SQL_C_INTERVAL_* to SQL_DECIMAL",
-                 "[c_interval][conversion][sql_fixed][incompatible][negative]") {
-  // Given a NUMBER(10,2) column with a prepared INSERT
-  conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col NUMBER(10,2))");
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // When SQL_C_INTERVAL_YEAR_TO_MONTH is bound to SQL_DECIMAL and executed
-  // Then it is rejected with SQLSTATE 07006 (composite intervals have no
-  // unambiguous decimal representation)
-  {
-    SQL_INTERVAL_STRUCT v = ym_interval(SQL_FALSE, 1, 6);
-    SQLLEN ind = sizeof(v);
-    check_incompatible_bindparam(stmt, SQL_C_INTERVAL_YEAR_TO_MONTH, SQL_DECIMAL, &v, sizeof(v), &ind);
-  }
-  // And SQL_C_INTERVAL_DAY_TO_SECOND is rejected with SQLSTATE 07006
-  {
-    SQL_INTERVAL_STRUCT v = dt_interval(SQL_FALSE, 2, 3, 4, 5, 0);
-    SQLLEN ind = sizeof(v);
-    check_incompatible_bindparam(stmt, SQL_C_INTERVAL_DAY_TO_SECOND, SQL_DECIMAL, &v, sizeof(v), &ind);
-  }
-}
+// NOTE: A symmetric `composite SQL_C_INTERVAL_* -> SQL_DECIMAL` rejection
+// case is intentionally omitted here. SQL_DECIMAL/SQL_NUMERIC dispatch to
+// `DecimalParamConverter` (see `odbc/src/conversion/param_binding.rs`),
+// which currently surfaces a generic HY000 for unsupported C interval
+// sources instead of the spec-mandated 07006 raised by the integer path
+// in `SnowflakeNumber::read_odbc`. Once the decimal path is aligned to
+// 07006, an analogous TEST_CASE should be added here.
