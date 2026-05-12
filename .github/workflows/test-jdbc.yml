@@ -96,7 +96,7 @@ jobs:
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
       - name: Upload NEW driver test artifacts
-        if: always()
+        if: always() && matrix.result_format == 'default'
         uses: actions/upload-artifact@v4
         with:
           name: jdbc-tests-artifacts
