@@ -31,7 +31,7 @@ behavior_differences:
 
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
-    status: unknown
+    status: fixed
     type: bug
     reviewed: false
 
