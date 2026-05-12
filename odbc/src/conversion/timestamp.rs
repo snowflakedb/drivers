@@ -32,6 +32,156 @@ use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 /// timezone offset and matches the legacy 3.16.0 ODBC and Python connectors.
 const TZ_OFFSET_BIAS_MINUTES: i32 = 1440;
 
+/// Style in which the `+/-HH:MM` offset suffix is appended to a
+/// TIMESTAMP_TZ -> SQL_C_CHAR / SQL_C_WCHAR fetch result.
+///
+/// The variant is selected by inspecting `TIMESTAMP_TZ_OUTPUT_FORMAT` for
+/// the longest matching offset token. Snowflake's date-time format grammar
+/// (see <https://docs.snowflake.com/en/sql-reference/date-time-input-output>)
+/// recognises three offset tokens; we mirror the same set so customers who
+/// migrated from the 3.16.0 driver get the wire format they configured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TzOffsetFormat {
+    /// `TZH:TZM` — colon-separated, e.g. `+05:30`.
+    Colon,
+    /// `TZHTZM`  — no separator, e.g. `+0530`.
+    NoColon,
+    /// `TZH`     — hour only, e.g. `+05`. Sub-hour offsets always emit
+    /// `+HH:MM` instead so customers don't silently lose minutes; this is
+    /// what the Snowflake server does for the same token.
+    HourOnly,
+}
+
+/// Parse a `TIMESTAMP_TZ_OUTPUT_FORMAT` value to decide whether — and how —
+/// the TZ -> CHAR/WCHAR fetch path should append the offset suffix.
+///
+/// Token detection is **opt-in**: the new behaviour is gated on the
+/// customer explicitly setting a format string that contains an offset
+/// token. An empty / missing format falls through to the legacy UTC-only
+/// fetch behaviour, so existing applications see no change.
+///
+/// Tokenisation rules (matching Snowflake's format grammar):
+///
+/// 1. Snowflake double-quoted literal runs (`"..."`) are stripped first,
+///    so a literal `'"server-side TZH note: " YYYY-MM-DD HH24:MI:SS'`
+///    does **not** activate `HourOnly`. Toggling wire-format bytes on a
+///    literal substring is a correctness bug — see PR #1068 review on
+///    `timestamp.rs:70`.
+/// 2. The remaining text is split on non-alphanumeric boundaries and
+///    matched whole-token, so `TZHACK` / `TZHELP` / `literal_TZH_marker`
+///    no longer false-fire as `HourOnly`.
+/// 3. Longest match wins on a per-token basis: `TZH:TZM` (split into two
+///    `TZH` and `TZM` tokens by step 2) is detected via the colon
+///    sequence test below before we ever reach the bare-`TZH` arm.
+/// 4. Match is case-insensitive to mirror Snowflake's format grammar
+///    (the server treats `tzh:tzm` and `TZH:TZM` identically).
+///
+/// Snowflake also accepts `TZHM` (4-char compact, no colon, no `TZ`
+/// prefix on the minutes) and bare `TZM`. The current driver only
+/// renders the three documented variants; an unrecognised but
+/// offset-shaped token (anything starting with `TZ`) emits a
+/// `tracing::warn!` so a customer who configured `TZHM` and gets bare
+/// UTC has at least *some* signal in the logs.
+pub(crate) fn parse_tz_offset_format(format: &str) -> Option<TzOffsetFormat> {
+    let stripped = strip_snowflake_quoted_literals(format);
+    let upper = stripped.to_ascii_uppercase();
+
+    // `TZH:TZM` is the only token that crosses a non-alphanumeric
+    // boundary (the colon), so we detect it first before the
+    // alphanumeric tokenizer. The colon-separated check is itself
+    // boundary-anchored so `XTZH:TZMX` doesn't false-fire.
+    if contains_token_pair(&upper, "TZH", "TZM", ':') {
+        return Some(TzOffsetFormat::Colon);
+    }
+
+    // Walk the remaining alphanumeric-token sequence and look for an
+    // exact whole-token match. We do a single pass and remember whether
+    // any TZ-shaped token was seen so we can emit a diagnostic warning
+    // for unrecognised variants like `TZHM` / `TZM`.
+    let mut saw_unknown_tz_token: Option<String> = None;
+    // Treat `_` as part of the surrounding token, not a separator. A
+    // user-supplied identifier-shaped literal like `literal_TZH_marker`
+    // is a single opaque token to us, not three (and `TZH` inside it
+    // must not activate the offset suffix).
+    for token in upper.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "TZHTZM" => return Some(TzOffsetFormat::NoColon),
+            "TZH" => return Some(TzOffsetFormat::HourOnly),
+            // Track but don't return — let a later, recognised token
+            // win if the format string mixes them.
+            t if t.starts_with("TZ") && saw_unknown_tz_token.is_none() => {
+                saw_unknown_tz_token = Some(t.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(unknown) = saw_unknown_tz_token {
+        tracing::warn!(
+            unknown_token = %unknown,
+            "TIMESTAMP_TZ_OUTPUT_FORMAT contains a TZ-shaped token the driver does not render \
+             (only TZH:TZM, TZHTZM, and TZH are supported); fetch will fall back to bare UTC"
+        );
+    }
+    None
+}
+
+/// Strip Snowflake double-quoted literal runs so the tokenizer can't
+/// false-fire on user-supplied literal text. Mirrors Snowflake's format
+/// grammar where `"..."` is a literal that must be emitted verbatim.
+///
+/// We do not implement the full grammar (e.g. escaped `""` inside a
+/// literal); the worst case of mishandling escapes is that a *real* TZ
+/// token after the unmatched run wins, which is the same outcome as
+/// before this fix and so a strict superset of the previous behaviour.
+fn strip_snowflake_quoted_literals(format: &str) -> String {
+    let mut out = String::with_capacity(format.len());
+    let mut in_quote = false;
+    for ch in format.chars() {
+        if ch == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if !in_quote {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Return `true` if `haystack` contains `left<sep>right` where both
+/// `left` and `right` are bordered by non-alphanumeric chars (or the
+/// string boundaries). Lets us spot `TZH:TZM` without false-firing on
+/// `XTZH:TZMX`. All inputs are expected to be ASCII-uppercased.
+fn contains_token_pair(haystack: &str, left: &str, right: &str, sep: char) -> bool {
+    let needle = format!("{left}{sep}{right}");
+    let bytes = haystack.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = haystack[start..].find(&needle) {
+        let begin = start + rel;
+        let end = begin + needle.len();
+        let prev_ok = begin == 0 || !is_ascii_alnum(bytes[begin - 1]);
+        let next_ok = end == bytes.len() || !is_ascii_alnum(bytes[end]);
+        if prev_ok && next_ok {
+            return true;
+        }
+        start = begin + 1;
+    }
+    false
+}
+
+/// In-token predicate. Mirrors the splitter in `parse_tz_offset_format`
+/// so `_TZH:TZM_` is treated as one opaque token, not as a colon-separated
+/// pair surrounded by underscores. Any change here must keep the two in
+/// lockstep or `contains_token_pair` will diverge from the splitter.
+#[inline]
+fn is_ascii_alnum(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 /// A TIMESTAMP_TZ value carrying both the UTC instant and its original
 /// timezone offset in minutes.
 ///
@@ -323,6 +473,77 @@ fn format_timestamp_string_into<'a>(
     }
     // SAFETY: only ASCII digits, '-', ':', ' ', and '.' were written above.
     Ok(unsafe { std::str::from_utf8_unchecked(&buf[..end]) })
+}
+
+/// Format a `TzInstant` as a wall-clock literal followed by the requested
+/// `+/-HH[:]MM` (or `+/-HH`) offset suffix, into a stack buffer. The
+/// wall-clock half mirrors `format_timestamp_string_into`; the offset half
+/// is always preceded by a single ASCII space to match the Snowflake
+/// server's default `YYYY-MM-DD HH24:MI:SS.FF TZHTZM` output and the
+/// legacy 3.16.0 driver.
+///
+/// `TzOffsetFormat::HourOnly` falls back to `+HH:MM` when the offset has a
+/// non-zero minute component; this matches Snowflake's behaviour for the
+/// `TZH` token (it does not silently truncate sub-hour offsets like
+/// `+05:30`).
+fn format_timestamp_tz_string_into<'a>(
+    value: &TzInstant,
+    fmt: TzOffsetFormat,
+    buf: &'a mut [u8; 64],
+) -> Result<&'a str, WriteOdbcError> {
+    let mut wall_buf = [0u8; 48];
+    let wall = format_timestamp_string_into(&value.utc_at_offset(), &mut wall_buf)?;
+
+    let abs_minutes = value.offset_minutes.unsigned_abs();
+    let hours = abs_minutes / 60;
+    let minutes = abs_minutes % 60;
+    let sign = if value.offset_minutes < 0 { '-' } else { '+' };
+
+    let len = {
+        let mut cur = Cursor::new(&mut buf[..]);
+        let result = cur.write_all(wall.as_bytes()).and_then(|()| match fmt {
+            TzOffsetFormat::Colon => write!(cur, " {sign}{hours:02}:{minutes:02}"),
+            TzOffsetFormat::NoColon => write!(cur, " {sign}{hours:02}{minutes:02}"),
+            TzOffsetFormat::HourOnly if minutes == 0 => {
+                write!(cur, " {sign}{hours:02}")
+            }
+            // Sub-hour offset: fall back to `+HH:MM` so we don't drop the
+            // minutes silently. Server does the same for the `TZH` token.
+            TzOffsetFormat::HourOnly => write!(cur, " {sign}{hours:02}:{minutes:02}"),
+        });
+        if result.is_err() {
+            return NumericValueOutOfRangeSnafu {
+                reason: format!(
+                    "TIMESTAMP_TZ value does not fit in the {}-byte format buffer",
+                    buf.len()
+                ),
+            }
+            .fail();
+        }
+        cur.position() as usize
+    };
+    // SAFETY: only ASCII digits, '-', '+', ':', ' ', and '.' were written.
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
+}
+
+impl TzInstant {
+    /// Reconstruct the **local** wall-clock the user originally observed
+    /// (`utc + offset_minutes`). Used when emitting a CHAR/WCHAR with the
+    /// offset suffix preserved — printing the UTC wall-clock together with
+    /// a non-UTC offset would describe a different instant.
+    fn utc_at_offset(&self) -> NaiveDateTime {
+        if self.offset_minutes == 0 {
+            return self.utc;
+        }
+        // chrono::NaiveDateTime + chrono::Duration is checked; for any
+        // offset within +/-1439 minutes (well past +/-14:00 the spec
+        // requires) the addition cannot overflow a representable
+        // NaiveDateTime, so unwrap_or returns the UTC value as a safe
+        // fallback the formatter then renders without surprise.
+        self.utc
+            .checked_add_signed(chrono::Duration::minutes(self.offset_minutes as i64))
+            .unwrap_or(self.utc)
+    }
 }
 
 fn to_sql_timestamp(dt: &NaiveDateTime) -> sql::Timestamp {
@@ -904,6 +1125,14 @@ impl WriteJson for SnowflakeTimestampLtz {
 
 pub(crate) struct SnowflakeTimestampTz {
     pub(crate) scale: u32,
+    /// Set from the session's `TIMESTAMP_TZ_OUTPUT_FORMAT` at converter
+    /// construction time. `None` means "keep the legacy UTC-only fetch
+    /// behaviour" (the driver emits the bare wall-clock and drops the
+    /// offset, matching ODBC's "drop offset" rule). `Some(_)` means the
+    /// customer's format string contains a `TZH/TZM/TZHTZM` token, so
+    /// CHAR/WCHAR fetches emit `<utc_wall_clock> <offset_suffix>` to
+    /// preserve the original observer's offset.
+    pub(crate) tz_offset_format: Option<TzOffsetFormat>,
 }
 
 impl SnowflakeType for SnowflakeTimestampTz {
@@ -945,10 +1174,20 @@ impl WriteODBCType for SnowflakeTimestampTz {
     }
 
     fn column_size(&self) -> sql::ULen {
-        if self.scale == 0 {
+        let base: sql::ULen = if self.scale == 0 {
             19
         } else {
             20 + self.scale as sql::ULen
+        };
+        // When the session asked for a format with an offset token, the
+        // CHAR/WCHAR fetch path appends ` +HH:MM` (7 chars worst-case;
+        // `+HHMM` = 6, `+HH` = 4 for the trimmed variants). Advertising
+        // the worst case keeps applications that size buffers from the
+        // column descriptor safe regardless of which token they chose.
+        if self.tz_offset_format.is_some() {
+            base + 7
+        } else {
+            base
         }
     }
 
@@ -962,15 +1201,57 @@ impl WriteODBCType for SnowflakeTimestampTz {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
-        // TZ -> ODBC fetch path drops the offset and renders the UTC instant.
-        // This matches the legacy 3.16.0 driver's default behavior (which only
-        // emits +/-HH:MM when TIMESTAMP_TZ_OUTPUT_FORMAT explicitly contains
-        // TZH/TZM tokens) and the ODBC spec rule "datetime with timezone ->
-        // datetime without timezone drops the offset". The original offset
-        // is still preserved on the bind side via `write_timestamp_tz_json`,
-        // so the value round-trips correctly when written *to* the server.
+        // For SQL_C_CHAR / SQL_C_WCHAR specifically: if the session set
+        // `TIMESTAMP_TZ_OUTPUT_FORMAT` to a value containing TZH/TZM/TZHTZM
+        // tokens, render `<wall_clock> +/-HH:MM` (matching the legacy
+        // 3.16.0 driver and the format the server itself produces for the
+        // same token). For every other C target — and when no offset
+        // format is configured — keep the legacy UTC-only behaviour: the
+        // ODBC spec rule "datetime with timezone -> datetime without
+        // timezone drops the offset" applies to the typed targets, and
+        // omitting it from CHAR/WCHAR by default avoids surprising apps
+        // that already parse the bare `YYYY-MM-DD HH:MM:SS` shape. The
+        // original offset is still preserved on the *bind* side via
+        // `write_timestamp_tz_json`, so values round-trip correctly when
+        // written back to the server regardless of fetch rendering.
+        if let Some(fmt) = self.tz_offset_format
+            && matches!(binding.target_type, CDataType::Char | CDataType::WChar)
+        {
+            return write_timestamp_tz_to_char(&snowflake_value, fmt, binding, get_data_offset);
+        }
         write_timestamp_to_odbc(&snowflake_value.utc, binding, get_data_offset)
     }
+}
+
+/// CHAR/WCHAR writer that appends `+/-HH[:]MM` to the wall-clock string.
+///
+/// Buffer-size handling follows the standard ODBC fetch contract: render
+/// the full string into a 64-byte stack buffer, then let
+/// `write_char_string` / `write_wchar_string` apply the spec-mandated
+/// 01004 ("String data, right truncation") + `SQL_SUCCESS_WITH_INFO` +
+/// indicator-set-to-untruncated-length contract when the application
+/// buffer is too small. Pre-emptively rejecting with 22003 ("Numeric
+/// value out of range") would be the wrong category and would also
+/// reject buffers that *would* have fit a shorter rendering (e.g. a
+/// 25-byte buffer for a `HourOnly` whole-hour value at ~23 chars). See
+/// PR #1068 review on `timestamp.rs:993`.
+fn write_timestamp_tz_to_char(
+    value: &TzInstant,
+    fmt: TzOffsetFormat,
+    binding: &Binding,
+    get_data_offset: &mut Option<usize>,
+) -> Result<Warnings, WriteOdbcError> {
+    // 20 (`YYYY-MM-DD HH:MM:SS.`) + up to 9 fractional digits + 1 space
+    // + 6 (`+HH:MM`) = 36 characters worst case, well under the 64-byte
+    // stack buffer.
+    let mut buf = [0u8; 64];
+    let s = format_timestamp_tz_string_into(value, fmt, &mut buf)?;
+    let warnings = if matches!(binding.target_type, CDataType::WChar) {
+        binding.write_wchar_string(s, get_data_offset)
+    } else {
+        binding.write_char_string(s, get_data_offset)
+    };
+    Ok(warnings)
 }
 
 impl ReadODBC for SnowflakeTimestampTz {

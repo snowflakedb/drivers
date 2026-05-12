@@ -14,24 +14,28 @@ mod tests {
         treat_decimal_as_int: false,
         treat_big_number_as_string: false,
         max_varchar_size: 16_777_216,
+        tz_offset_format: None,
     };
 
     const SETTINGS_DECIMAL_AS_INT: NumericSettings = NumericSettings {
         treat_decimal_as_int: true,
         treat_big_number_as_string: false,
         max_varchar_size: 16_777_216,
+        tz_offset_format: None,
     };
 
     const SETTINGS_BOTH: NumericSettings = NumericSettings {
         treat_decimal_as_int: true,
         treat_big_number_as_string: true,
         max_varchar_size: 16_777_216,
+        tz_offset_format: None,
     };
 
     const SETTINGS_BIG_NUMBER_AS_STRING: NumericSettings = NumericSettings {
         treat_decimal_as_int: false,
         treat_big_number_as_string: true,
         max_varchar_size: 16_777_216,
+        tz_offset_format: None,
     };
 
     fn make_decimal(scale: u32, precision: u32) -> SnowflakeNumber {

@@ -231,8 +231,15 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             // `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR /
             // SQL_C_WCHAR binds parse a `+/-HH:MM` suffix from the
             // string and preserve that offset on the wire.
+            //
+            // `tz_offset_format` is a fetch-side concern only -- the
+            // bind path's `WriteJson` always emits the offset
+            // unconditionally -- so `None` is correct here.
             Some(TimestampSubtype::Tz) => Ok(Box::new(JsonParamConverter {
-                snowflake_type: SnowflakeTimestampTz { scale: 9 },
+                snowflake_type: SnowflakeTimestampTz {
+                    scale: 9,
+                    tz_offset_format: None,
+                },
             })),
         },
 

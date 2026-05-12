@@ -190,8 +190,143 @@ fn update_numeric_settings(
             settings.max_varchar_size = size;
             tracing::info!("Server parameter VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT = {size}");
         }
+
+        // TIMESTAMP_TZ_OUTPUT_FORMAT: read on every execute so an in-flight
+        // `ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = ...` takes effect
+        // for the next statement. Empty / unset / no-TZ-token formats keep
+        // the legacy UTC-only fetch behaviour (see
+        // `crate::conversion::timestamp::parse_tz_offset_format`).
+        //
+        // Update semantics differ from the other settings in this
+        // function: those have meaningful server-side defaults so
+        // resetting to default on a transient RPC failure is harmless.
+        // `tz_offset_format` does NOT -- the customer set it
+        // deliberately via `ALTER SESSION` and a transient blip silently
+        // flipping the next fetch from `+HH:MM` rendering back to bare
+        // UTC is a wire-format regression with no diagnostic the
+        // application can correlate. So:
+        //   - On `Ok(resp)` with a non-empty value -> overwrite cache
+        //     (parse_tz_offset_format collapses unrecognised values to
+        //     None, which is the spec-correct fall-through to bare UTC).
+        //   - On `Ok(resp)` with `None` or empty value -> the user
+        //     explicitly UNSET the parameter, so clear the cache.
+        //   - On `Err(_)` -> leave the cache untouched and warn.
+        // See PR #1068 review on `statement.rs:209`.
+        let rpc_result = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
+            })
+            .await
+            .map(|resp| resp.value)
+            .map_err(|e| format!("{e:?}"));
+        apply_tz_offset_format_update(&mut settings.tz_offset_format, rpc_result);
     });
     Ok(())
+}
+
+/// Cache-update decision logic for `TIMESTAMP_TZ_OUTPUT_FORMAT`. Pure
+/// function so the four-way state table (Ok+set / Ok+empty / Ok+None /
+/// Err) can be unit-tested without standing up an RPC mock.
+///
+/// Semantics (see PR #1068 review on `statement.rs:209`):
+/// - `Ok(Some(non_empty))` -> overwrite cache with parsed token (which
+///   may itself be `None` if the format string carries no recognised
+///   TZ token, the spec-correct fall-through to bare UTC).
+/// - `Ok(Some(""))` / `Ok(None)` -> the user explicitly UNSET the
+///   parameter, clear the cache.
+/// - `Err(_)` -> a transient RPC blip; leave the cache untouched and
+///   warn so a customer-configured wire format isn't silently lost.
+pub(crate) fn apply_tz_offset_format_update(
+    cached: &mut Option<crate::conversion::timestamp::TzOffsetFormat>,
+    rpc_result: Result<Option<String>, String>,
+) {
+    match rpc_result {
+        Ok(value) => {
+            let new_format = match value.as_deref() {
+                Some(v) if !v.is_empty() => crate::conversion::timestamp::parse_tz_offset_format(v),
+                _ => None,
+            };
+            if *cached != new_format {
+                tracing::info!(
+                    "Server parameter TIMESTAMP_TZ_OUTPUT_FORMAT offset token = {new_format:?}"
+                );
+            }
+            *cached = new_format;
+        }
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "failed to refresh TIMESTAMP_TZ_OUTPUT_FORMAT; keeping cached value {:?}",
+                cached
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod apply_tz_offset_format_update_tests {
+    use super::apply_tz_offset_format_update;
+    use crate::conversion::timestamp::TzOffsetFormat;
+
+    #[test]
+    fn ok_with_recognised_format_overwrites_cache() {
+        let mut cached = None;
+        apply_tz_offset_format_update(
+            &mut cached,
+            Ok(Some("YYYY-MM-DD HH24:MI:SS.FF TZH:TZM".to_string())),
+        );
+        assert_eq!(cached, Some(TzOffsetFormat::Colon));
+    }
+
+    #[test]
+    fn ok_with_unrecognised_format_clears_cache() {
+        // A non-empty format string with no recognised TZ token is the
+        // spec-correct fall-through to bare UTC -- the user is asking
+        // for a custom format the driver doesn't render an offset for,
+        // so we mustn't keep an old offset rendering active.
+        let mut cached = Some(TzOffsetFormat::Colon);
+        apply_tz_offset_format_update(&mut cached, Ok(Some("YYYY-MM-DD HH24:MI:SS".to_string())));
+        assert_eq!(cached, None);
+    }
+
+    #[test]
+    fn ok_with_empty_string_clears_cache() {
+        // Server returns an explicit empty string for an unset parameter
+        // on some configurations; treat it as UNSET and revert to bare
+        // UTC.
+        let mut cached = Some(TzOffsetFormat::NoColon);
+        apply_tz_offset_format_update(&mut cached, Ok(Some(String::new())));
+        assert_eq!(cached, None);
+    }
+
+    #[test]
+    fn ok_with_none_clears_cache() {
+        let mut cached = Some(TzOffsetFormat::HourOnly);
+        apply_tz_offset_format_update(&mut cached, Ok(None));
+        assert_eq!(cached, None);
+    }
+
+    /// The load-bearing assertion: a transient RPC failure must NOT
+    /// silently flip a customer-configured `+HH:MM` rendering back to
+    /// bare UTC. Pre-fix, the closure overwrote the cache with `None`
+    /// on `Err(_)`, breaking the next fetch with no diagnostic. See PR
+    /// #1068 review on `statement.rs:209`.
+    #[test]
+    fn err_keeps_existing_cached_value() {
+        let mut cached = Some(TzOffsetFormat::Colon);
+        apply_tz_offset_format_update(&mut cached, Err("transient transport error".to_string()));
+        assert_eq!(cached, Some(TzOffsetFormat::Colon));
+    }
+
+    /// Symmetric: an `Err` against an already-empty cache must remain
+    /// empty (i.e. we don't accidentally synthesise a value).
+    #[test]
+    fn err_leaves_empty_cache_empty() {
+        let mut cached: Option<TzOffsetFormat> = None;
+        apply_tz_offset_format_update(&mut cached, Err("transient transport error".to_string()));
+        assert_eq!(cached, None);
+    }
 }
 
 /// Prepare a SQL statement (SQLPrepare / SQLPrepareW).
