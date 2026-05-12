@@ -700,7 +700,7 @@ fn outer_whitespace_is_trimmed_for_composite() {
 }
 
 // ============================================================================
-// Out-of-range trailing-field rejection (MS ODBC spec — Piotr's #9 item #15)
+// Out-of-range trailing-field rejection (MS ODBC spec)
 //
 // Per the MS ODBC spec ("Trailing fields must follow the usual constraints
 // of the Gregorian calendar"), composite interval qualifiers reject
