@@ -666,6 +666,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as single-field SQL_C_
       "SELECT '5' AS years, '10' AS months, '15' AS days, "
       "'8' AS hours, '30' AS minutes, '45' AS seconds");
 
+  // When each column is fetched as the matching single-field SQL_C_INTERVAL_*
   // Then SQL_C_INTERVAL_YEAR reads year=5
   {
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
@@ -711,7 +712,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite SQL_C_INT
   // Given a VARCHAR carrying a year-month interval literal
   auto stmt = conn.execute_fetch("SELECT '3-6' AS year_month");
 
-  // Then SQL_C_INTERVAL_YEAR_TO_MONTH reads year=3, month=6
+  // When the column is fetched as SQL_C_INTERVAL_YEAR_TO_MONTH
+  // Then both year and month components are populated
   auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
   CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
   CHECK(interval.interval_sign == SQL_FALSE);
@@ -727,6 +729,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite day-time 
       "'2 08:15:30' AS day_second, '10:45' AS hour_minute, "
       "'12:30:45' AS hour_second, '45:30' AS minute_second");
 
+  // When each column is fetched as the matching composite SQL_C_INTERVAL_*
+  // Then every leading-to-trailing component is populated correctly
   {
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_HOUR);
@@ -774,6 +778,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative VARCHAR as SQL_C_INTE
   // Given a VARCHAR carrying a negative day count
   auto stmt = conn.execute_fetch("SELECT '-15' AS neg_days");
 
+  // When the column is fetched as SQL_C_INTERVAL_DAY
   // Then SQL_C_INTERVAL_DAY preserves the negative sign
   auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
   CHECK(interval.interval_type == SQL_IS_DAY);
@@ -786,6 +791,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch fractional VARCHAR as SQL_C_IN
   // Given a VARCHAR carrying a sub-second value
   auto stmt = conn.execute_fetch("SELECT '12.500000' AS sec");
 
+  // When the column is fetched as SQL_C_INTERVAL_SECOND
   // Then the second component is 12 and the fraction is 500_000 microseconds
   auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
   CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -798,6 +804,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR with SQLSTA
   // Given a VARCHAR that is not a valid interval literal
   auto stmt = conn.execute_fetch("SELECT 'not-an-interval' AS bad");
 
+  // When the column is fetched as SQL_C_INTERVAL_YEAR
   // Then SQLGetData fails with SQLSTATE 22018 (Invalid character value for cast)
   SQL_INTERVAL_STRUCT interval = {};
   SQLLEN indicator = -999;
