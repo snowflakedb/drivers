@@ -539,4 +539,61 @@ mod tests {
             assert_eq!(sn.decimal_digits(), scale as sql::SmallInt);
         }
     }
+
+    /// LTZ JSON encoding must produce a **bare** wall-clock literal string
+    /// with no timezone offset suffix. The wire `type` is `TEXT` (see
+    /// `SnowflakeTimestampLtz::sf_type`), and the Snowflake server uses the
+    /// session timezone to interpret the wall-clock string when coercing
+    /// into a TIMESTAMP_LTZ column. Mirrors the legacy 3.16.0 driver's
+    /// JSON-bind path in `SFQueryExecutor.cpp`.
+    #[test]
+    fn ltz_write_json_emits_bare_wall_clock_literal() {
+        use crate::conversion::traits::WriteJson;
+        use chrono::NaiveDate;
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .and_then(|d| d.and_hms_nano_opt(14, 30, 45, 123_456_789))
+            .expect("constant inputs");
+        let v = ltz(9).write_json(dt).expect("write_json");
+        assert_eq!(
+            v,
+            serde_json::Value::String("2024-03-15 14:30:45.123456789".to_string())
+        );
+    }
+
+    /// Whole-second LTZ values must omit the fractional part entirely
+    /// (matching legacy 3.16.0 and the existing fetch-side
+    /// `format_timestamp_string_into` behaviour). Round-tripping a stored
+    /// instant must not gain a `.000000000` suffix the application never
+    /// emitted. No offset suffix either — LTZ JSON binds are bare wall-clock.
+    #[test]
+    fn ltz_write_json_omits_zero_nanos_no_offset() {
+        use crate::conversion::traits::WriteJson;
+        use chrono::NaiveDate;
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .and_then(|d| d.and_hms_opt(14, 30, 45))
+            .expect("constant inputs");
+        let v = ltz(9).write_json(dt).expect("write_json");
+        assert_eq!(
+            v,
+            serde_json::Value::String("2024-03-15 14:30:45".to_string())
+        );
+    }
+
+    /// NTZ must keep emitting epoch-nanoseconds (the existing wire format).
+    /// Pinning this here so that any future refactor of the macro that
+    /// accidentally swaps the encoder gets caught at unit-test time.
+    #[test]
+    fn ntz_write_json_emits_epoch_nanos_string() {
+        use crate::conversion::traits::WriteJson;
+        use chrono::NaiveDate;
+        let dt = NaiveDate::from_ymd_opt(2024, 3, 15)
+            .and_then(|d| d.and_hms_nano_opt(14, 30, 45, 123_456_789))
+            .expect("constant inputs");
+        let v = ntz(9).write_json(dt).expect("write_json");
+        // 2024-03-15T14:30:45.123456789 UTC == 1710513045123456789 ns.
+        assert_eq!(
+            v,
+            serde_json::Value::String("1710513045123456789".to_string())
+        );
+    }
 }

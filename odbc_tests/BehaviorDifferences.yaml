@@ -539,3 +539,17 @@ behavior_differences:
       Applications that bind hex literals as SQL_C_CHAR/SQL_C_WCHAR to BINARY columns now store the intended bytes rather than the ASCII representation of those bytes. Applications that previously relied on the old broken behavior must re-encode their inputs (e.g. bind "44454144" instead of "DEAD" to land 0x44 0x45 0x41 0x44 in the column).
     description: |
       Spec reference: ODBC "C to SQL: Binary" conversion table lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_BINARY targets and prescribes hex-literal semantics. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
+
+  50:
+    name: "SQLDescribeParam normalises Snowflake vendor TIMESTAMP codes (2000/2001/2002) to SQL_TYPE_TIMESTAMP (93)"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with ParameterType set to one of the Snowflake vendor TIMESTAMP codes (SQL_SF_TIMESTAMP_LTZ=2000, SQL_SF_TIMESTAMP_TZ=2001, SQL_SF_TIMESTAMP_NTZ=2002), the old driver stores the raw vendor code on the IPD and returns it verbatim from SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE).
+    new_driver_behavior: |
+      The vendor code is normalised to the standard SQL_TYPE_TIMESTAMP (93) on the IPD. SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE) return 93 for all three vendor codes; the chosen subtype (NTZ/LTZ/TZ) is remembered internally and used to dispatch the correct Snowflake logical type at SQLExecute time. Applications distinguish the three subtypes via SQLColAttribute(SQL_DESC_TYPE_NAME) on the IRD after execution.
+    impact: |
+      Applications that switch on SQLDescribeParam's data type code with cases for 1..=12 / 91..=95 / 101..=113 (the standard ODBC type codes) will no longer fall through to an unknown-type branch when the upstream code happens to bind via the vendor opt-in. Applications that explicitly test for the 2000/2001/2002 vendor codes after SQLBindParameter must update to test SQLColAttribute(SQL_DESC_TYPE_NAME) instead.
+    description: |
+      The MS ODBC specification for SQLDescribeParam describes returning standard SQL type codes (1..=12, 91..=95, 101..=113). The vendor codes 2000/2001/2002 are an *input-only* aliasing on SQLBindParameter; leaking them through SQLDescribeParam violates the spec contract.

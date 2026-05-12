@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use snafu::ResultExt;
 
 use crate::api::CDataType;
+use crate::api::TimestampSubtype;
 use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding};
 use odbc_sys as sql;
 
@@ -27,7 +28,7 @@ use super::interval::{
 use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
 use super::time::SnowflakeTime;
-use super::timestamp::SnowflakeTimestampNtz;
+use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz};
 use super::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use super::varchar::SnowflakeVarchar;
 
@@ -146,12 +147,18 @@ impl ParamConverter for DecimalParamConverter {
 // (returning `Option<…Subtype>`) rather than on raw `sql::SqlDataType`
 // values.
 
-/// Select the appropriate `ParamConverter` for the given SQL data type.
+/// Select the appropriate `ParamConverter` for the given parameter binding.
 /// The SQL type determines the Snowflake logical type, which in turn knows
 /// how to read various C data types from the ODBC buffer.
-fn make_converter(
-    sql_type: &sql::SqlDataType,
-) -> Result<Box<dyn ParamConverter>, JsonBindingError> {
+///
+/// For `SQL_TYPE_TIMESTAMP` the dispatch additionally consults
+/// `binding.sf_subtype`: `None` (and `Some(Ntz)`) routes to TIMESTAMP_NTZ
+/// for backward compatibility with Tableau/Excel/Power BI; `Some(Ltz)` and
+/// `Some(Tz)` route to the matching Snowflake logical type. Vendor-code
+/// normalisation happens at `bind_parameter` time, so by the time we get
+/// here `sql_data_type` is always a standard ODBC code.
+fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>, JsonBindingError> {
+    let sql_type = &binding.sql_data_type;
     match *sql_type {
         sql::SqlDataType::INTEGER
         | sql::SqlDataType::SMALLINT
@@ -204,11 +211,34 @@ fn make_converter(
             snowflake_type: SnowflakeTime { scale: 9 },
         })),
 
-        sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => {
-            Ok(Box::new(JsonParamConverter {
+        // SQL_TYPE_TIMESTAMP (93) routing depends on the optional Snowflake
+        // vendor opt-in. Default (no opt-in) maps to TIMESTAMP_NTZ for
+        // backward compatibility with Tableau/Excel/Power BI; explicit LTZ
+        // and TZ opt-ins map to the corresponding Snowflake logical types.
+        sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => match binding.sf_subtype {
+            None | Some(TimestampSubtype::Ntz) => Ok(Box::new(JsonParamConverter {
                 snowflake_type: SnowflakeTimestampNtz { scale: 9 },
-            }))
-        }
+            })),
+            Some(TimestampSubtype::Ltz) => Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeTimestampLtz { scale: 9 },
+            })),
+            Some(TimestampSubtype::Tz) => {
+                // Faithfully binding TIMESTAMP_TZ requires preserving the
+                // offset (legacy emits `<epoch_ns> <offset_minutes>`), which
+                // the new driver doesn't emit yet. A clear error -- mapped to
+                // SQLSTATE 07006 by `JsonBindingError -> SqlState` -- is
+                // safer than silently dropping the offset and storing a
+                // wrong instant.
+                tracing::error!(
+                    "TIMESTAMP_TZ parameter binding is not supported yet; \
+                     binding the offset is required to avoid a lossy conversion."
+                );
+                UnsupportedParameterTypeSnafu {
+                    sql_type: *sql_type,
+                }
+                .fail()
+            }
+        },
 
         // SQL_INTERVAL_* parameter types route through dedicated
         // year-month / day-time converters that enforce the C-source
@@ -292,7 +322,7 @@ pub fn odbc_bindings_to_json(
             if binding.parameter_value_ptr.is_null() {
                 return NullPointerSnafu.fail();
             }
-            let converter = make_converter(&binding.sql_data_type)?;
+            let converter = make_converter(&binding)?;
             converter.convert(&binding)?
         };
 
@@ -587,7 +617,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 pub(crate) fn convert_for_test(
     binding: &ParameterBinding,
 ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-    let converter = make_converter(&binding.sql_data_type)?;
+    let converter = make_converter(binding)?;
     converter.convert(binding)
 }
 
@@ -599,6 +629,7 @@ pub(crate) fn convert_for_test(
 mod tests {
     use super::*;
     use crate::api::CDataType;
+    use crate::api::types::{SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ};
     use crate::api::{ApdRecord, IpdRecord};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -610,12 +641,22 @@ mod tests {
         buffer_length: sql::Len,
         ind_ptr: *mut sql::Len,
     ) -> ParameterBinding {
+        // Mirror what `bind_parameter` does: normalise vendor codes to the
+        // standard SQL_TYPE_TIMESTAMP and stash the subtype on `sf_subtype`
+        // so converter dispatch sees the same shape it would in production.
+        let sf_subtype = TimestampSubtype::from_parameter_type(parameter_type);
+        let sql_data_type = if sf_subtype.is_some() {
+            sql::SqlDataType::TIMESTAMP
+        } else {
+            parameter_type
+        };
         ParameterBinding {
-            sql_data_type: parameter_type,
+            sql_data_type,
             value_type,
             parameter_value_ptr: ptr,
             buffer_length,
             str_len_or_ind_ptr: ind_ptr,
+            sf_subtype,
         }
     }
 
@@ -655,7 +696,7 @@ mod tests {
     fn convert_binding(
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-        let converter = make_converter(&binding.sql_data_type)?;
+        let converter = make_converter(binding)?;
         converter.convert(binding)
     }
 
@@ -1775,7 +1816,123 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(make_converter(&binding.sql_data_type).is_err());
+        assert!(make_converter(&binding).is_err());
+    }
+
+    // -- vendor TIMESTAMP code routing ---------------------------------------
+    //
+    // The Snowflake-specific vendor codes `SQL_SF_TIMESTAMP_LTZ` (2000),
+    // `SQL_SF_TIMESTAMP_TZ` (2001), and `SQL_SF_TIMESTAMP_NTZ` (2002) -- mirror
+    // the legacy 3.16.0 driver -- are routed through `make_converter` so
+    // applications can opt into the matching wire `SnowflakeLogicalType`
+    // rather than always landing on NTZ via the standard `SQL_TYPE_TIMESTAMP`.
+
+    #[test]
+    fn ntz_vendor_code_routes_to_timestamp_ntz_logical_type() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            SQL_SF_TIMESTAMP_NTZ,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, _) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        Ok(())
+    }
+
+    #[test]
+    fn ltz_vendor_code_routes_to_text_logical_type() -> TestResult {
+        // The legacy 3.16.0 driver
+        // (`Snowflake-odbc/Source/DataEngine/SFQueryExecutor.cpp:613-618`) tags
+        // every `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` bind as `TEXT` and lets the
+        // server's column-type coercion parse the wall-clock string into the
+        // destination logical type. Sending `type=TIMESTAMP_LTZ` with a string
+        // value is rejected by the server with SQLSTATE 22000 ("Invalid bind
+        // value (...) for type (TIMESTAMP_LTZ)"). This test pins the wire
+        // contract.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            SQL_SF_TIMESTAMP_LTZ,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, _) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        Ok(())
+    }
+
+    #[test]
+    fn standard_sql_timestamp_still_routes_to_ntz_for_backward_compat() -> TestResult {
+        // Tableau / Excel / Power BI bind via the standard `SQL_TYPE_TIMESTAMP`
+        // (93) today and expect an NTZ logical type. Adding the vendor codes
+        // must not change that legacy route.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, _) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        Ok(())
+    }
+
+    #[test]
+    fn tz_vendor_code_is_explicitly_rejected() {
+        // TIMESTAMP_TZ binding requires preserving the offset; the new driver
+        // doesn't emit it yet, so it must reject the bind rather than silently
+        // store a wrong instant. See PR D / the legacy "<epoch_ns> <offset>"
+        // wire format.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            SQL_SF_TIMESTAMP_TZ,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            make_converter(&binding),
+            Err(JsonBindingError::UnsupportedParameterType { .. })
+        ));
     }
 
     // -- end-to-end pipeline tests -------------------------------------------

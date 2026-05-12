@@ -516,7 +516,15 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
     }
 }
 
-fn write_timestamp_json(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
+/// Encode a `NaiveDateTime` as the epoch-nanoseconds string the Snowflake
+/// server expects for TIMESTAMP_NTZ / TIMESTAMP_TZ binds.
+///
+/// Treating the value as already-UTC is correct for TIMESTAMP_NTZ (where the
+/// server stores the bytes verbatim with no TZ interpretation) and for
+/// TIMESTAMP_TZ (which carries its own offset alongside this instant). It is
+/// **wrong** for TIMESTAMP_LTZ — see `write_timestamp_json_wallclock` below
+/// for the LTZ path.
+fn write_timestamp_json_epoch_nanos(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
     let epoch_nanos = value.and_utc().timestamp_nanos_opt().ok_or_else(|| {
         UnsupportedCDataTypeSnafu {
             c_type: CDataType::TypeTimestamp,
@@ -526,18 +534,71 @@ fn write_timestamp_json(value: NaiveDateTime) -> Result<Value, JsonBindingError>
     Ok(Value::String(epoch_nanos.to_string()))
 }
 
+/// Encode a `NaiveDateTime` as a bare wall-clock literal string, with no
+/// timezone offset suffix, for TIMESTAMP_LTZ JSON binds.
+///
+/// Mirrors the legacy 3.16.0 driver's JSON-bind path
+/// (`Snowflake-odbc/Source/DataEngine/SFQueryExecutor.cpp`), which tags every
+/// `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` parameter as `"type": "TEXT"` and emits a
+/// bare `"YYYY-MM-DD HH:MM:SS.FFFFFFFFF"` string. The Snowflake server then
+/// coerces the text into the destination column's logical type using the
+/// **session timezone** to interpret the wall-clock for TIMESTAMP_LTZ:
+///
+///   `stored_utc = bound_wall_clock - session_tz_offset`
+///
+/// (BindUploader.cpp's process-local-offset format is a *separate* CSV-staging
+/// path that this driver doesn't use — JSON binds always go through the
+/// SFQueryExecutor TEXT path.)
+fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBindingError> {
+    let mut buf = [0u8; 48];
+    let wall_clock = format_timestamp_string_into(&value, &mut buf).map_err(|_| {
+        UnsupportedCDataTypeSnafu {
+            c_type: CDataType::TypeTimestamp,
+        }
+        .build()
+    })?;
+    Ok(Value::String(wall_clock.to_string()))
+}
+
 // =============================================================================
-// Macro to generate the five trait impls shared by NTZ, LTZ, and TZ.
+// Macro to generate the trait impls shared by NTZ, LTZ, and TZ.
 //
-// The only variation is:
+// The variation across variants is:
 //   - The struct reader for StructArray (NTZ/LTZ use `read_struct_timestamp`;
 //     TZ uses `read_struct_timestamp_tz` which needs `self.scale`).
 //   - The `SnowflakeLogicalType` returned by `sf_type()`.
+//   - The wire-format encoding in `write_json` (NTZ/TZ use epoch nanoseconds;
+//     LTZ uses a bare wall-clock literal string and tags `type=TEXT` so the
+//     server interprets it in the session timezone -- see
+//     `write_timestamp_json_wallclock` for why). The `ltz_wallclock_string`
+//     arm therefore intentionally skips the macro's `WriteJson` generation
+//     and the LTZ `WriteJson` impl is written by hand below.
 // =============================================================================
 
 macro_rules! impl_snowflake_timestamp {
-    // NTZ/LTZ path: StructArray reader ignores scale.
+    // NTZ path: StructArray reader ignores scale, JSON encodes as epoch_ns.
     ($name:ident, standard, $logical_type:expr) => {
+        impl_snowflake_timestamp!(@struct_array_standard $name);
+        impl_snowflake_timestamp!(@common $name);
+        impl_snowflake_timestamp!(@write_json_epoch_nanos $name, $logical_type);
+    };
+
+    // LTZ path: same readers as NTZ but wall-clock-string JSON. The
+    // `WriteJson` impl is intentionally NOT generated here — see the
+    // hand-written `impl WriteJson for SnowflakeTimestampLtz` below.
+    ($name:ident, ltz_wallclock_string) => {
+        impl_snowflake_timestamp!(@struct_array_standard $name);
+        impl_snowflake_timestamp!(@common $name);
+    };
+
+    // TZ path: StructArray reader uses scale to handle 2- vs 3-column layouts.
+    ($name:ident, tz, $logical_type:expr) => {
+        impl_snowflake_timestamp!(@struct_array_tz $name);
+        impl_snowflake_timestamp!(@common $name);
+        impl_snowflake_timestamp!(@write_json_epoch_nanos $name, $logical_type);
+    };
+
+    (@struct_array_standard $name:ident) => {
         impl ReadArrowType<StructArray> for $name {
             fn read_arrow_type<'a>(
                 &self,
@@ -547,12 +608,9 @@ macro_rules! impl_snowflake_timestamp {
                 read_struct_timestamp(array, row_idx)
             }
         }
-
-        impl_snowflake_timestamp!(@common $name, $logical_type);
     };
 
-    // TZ path: StructArray reader uses scale to handle 2- vs 3-column layouts.
-    ($name:ident, tz, $logical_type:expr) => {
+    (@struct_array_tz $name:ident) => {
         impl ReadArrowType<StructArray> for $name {
             fn read_arrow_type<'a>(
                 &self,
@@ -562,11 +620,9 @@ macro_rules! impl_snowflake_timestamp {
                 read_struct_timestamp_tz(array, row_idx, self.scale)
             }
         }
-
-        impl_snowflake_timestamp!(@common $name, $logical_type);
     };
 
-    (@common $name:ident, $logical_type:expr) => {
+    (@common $name:ident) => {
         impl SnowflakeType for $name {
             type Representation<'a> = NaiveDateTime;
         }
@@ -616,13 +672,15 @@ macro_rules! impl_snowflake_timestamp {
                 read_timestamp_odbc(binding)
             }
         }
+    };
 
+    (@write_json_epoch_nanos $name:ident, $logical_type:expr) => {
         impl WriteJson for $name {
             fn write_json(
                 &self,
                 value: Self::Representation<'_>,
             ) -> Result<Value, JsonBindingError> {
-                write_timestamp_json(value)
+                write_timestamp_json_epoch_nanos(value)
             }
 
             fn sf_type(&self) -> SnowflakeLogicalType {
@@ -650,11 +708,36 @@ pub(crate) struct SnowflakeTimestampLtz {
     pub(crate) scale: u32,
 }
 
-impl_snowflake_timestamp!(
-    SnowflakeTimestampLtz,
-    standard,
-    SnowflakeLogicalType::TimestampLtz
-);
+impl_snowflake_timestamp!(SnowflakeTimestampLtz, ltz_wallclock_string);
+
+// LTZ-specific JSON encoder. Unlike NTZ/TZ (which encode as epoch_ns and
+// let the server take it verbatim), LTZ emits a bare wall-clock literal
+// string and relies on the server to interpret it in the **session
+// timezone**.
+//
+// The wire `type` is `TEXT`, NOT `TIMESTAMP_LTZ`. This mirrors the legacy
+// 3.16.0 driver's
+// `Snowflake-odbc/Source/DataEngine/SFQueryExecutor.cpp:613-618` which
+// tags every `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` bind as `TEXT` (with the
+// comment: "Maintain the existing behavior to treat the timestamp as wall
+// clock time and attach the session offset in the server when binding").
+// The Snowflake server then coerces the text into the destination
+// column's logical type. Sending `type=TIMESTAMP_LTZ` with a string value
+// is rejected by the server with SQLSTATE 22000 "Invalid bind value (...)
+// for type (TIMESTAMP_LTZ)", which is what made every LTZ e2e test fail
+// across all platforms before this fix.
+impl WriteJson for SnowflakeTimestampLtz {
+    fn write_json(
+        &self,
+        value: <Self as SnowflakeType>::Representation<'_>,
+    ) -> Result<Value, JsonBindingError> {
+        write_timestamp_json_wallclock(value)
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Text
+    }
+}
 
 pub(crate) struct SnowflakeTimestampTz {
     pub(crate) scale: u32,
