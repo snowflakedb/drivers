@@ -1,5 +1,6 @@
 use super::types::{
-    EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo, UploadStatus,
+    DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo,
+    UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use snafu::{Location, ResultExt, Snafu};
@@ -113,10 +114,14 @@ async fn upload_to_s3(
 
 /// Downloads a file from S3 and returns the data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
+///
+/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
+/// the blob — taken from the collected body length, which equals the S3
+/// `Content-Length` for non-streamed responses.
 pub async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), DownloadFileError> {
+) -> Result<DownloadResponse, DownloadFileError> {
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
@@ -164,8 +169,14 @@ pub async fn download_from_s3(
         .context(download_file_error::ByteStreamSnafu)?
         .into_bytes()
         .to_vec();
+    let cloud_byte_count = data.len() as i64;
 
-    Ok((data, digest, file_metadata))
+    Ok(DownloadResponse {
+        data,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
 }
 
 /// Returns a retry policy tuned for S3 file-transfer operations.

@@ -52,13 +52,15 @@ pub(super) async fn perform_put_get_transfer(
             Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
-            let file_download_data = data.to_file_download_data().map_err(|e| {
-                if e.to_string().contains("source locations") {
-                    RemoteFileNotFoundSnafu.build()
-                } else {
-                    FileTransferPreparationSnafu.into_error(e)
-                }
-            })?;
+            let file_download_data = data
+                .to_file_download_data(&wrapper_presets.put_get_resultset_flavor)
+                .map_err(|e| {
+                    if e.to_string().contains("source locations") {
+                        RemoteFileNotFoundSnafu.build()
+                    } else {
+                        FileTransferPreparationSnafu.into_error(e)
+                    }
+                })?;
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;

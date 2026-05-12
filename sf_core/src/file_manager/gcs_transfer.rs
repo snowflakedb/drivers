@@ -1,6 +1,6 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
+    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -38,10 +38,16 @@ pub async fn upload_to_gcs_or_skip(
 
 /// Downloads a file from GCS and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
+///
+/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
+/// the object — taken from the collected body length, which equals the
+/// GCS `Content-Length` (i.e. the stored object size) for non-streamed
+/// responses. This is the wire byte count, not the decrypted/decoded
+/// size of the original file.
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), GcsDownloadError> {
+) -> Result<DownloadResponse, GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
@@ -104,8 +110,14 @@ pub async fn download_from_gcs(
         .await
         .map_err(|source| GcsRequestError::Http { source })?
         .to_vec();
+    let cloud_byte_count = data.len() as i64;
 
-    Ok((data, digest, file_metadata))
+    Ok(DownloadResponse {
+        data,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
 }
 
 /// Check if a file exists in GCS via HEAD request.

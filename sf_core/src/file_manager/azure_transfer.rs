@@ -1,6 +1,6 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, EncryptionData, MaterialDescription, PreparedUpload,
-    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
+    PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -38,10 +38,16 @@ pub async fn upload_to_azure_or_skip(
 
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
+///
+/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
+/// the blob — taken from the collected body length, which equals the
+/// Azure `Content-Length` (i.e. the stored blob size) for non-streamed
+/// responses. This is the wire byte count, not the decrypted/decoded
+/// size of the original file.
 pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), AzureDownloadError> {
+) -> Result<DownloadResponse, AzureDownloadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
@@ -82,8 +88,14 @@ pub async fn download_from_azure(
             detail: sanitize_sas(e.to_string()),
         })?
         .to_vec();
+    let cloud_byte_count = data.len() as i64;
 
-    Ok((data, digest, file_metadata))
+    Ok(DownloadResponse {
+        data,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
 }
 
 /// Check if a blob exists in Azure via HEAD request.

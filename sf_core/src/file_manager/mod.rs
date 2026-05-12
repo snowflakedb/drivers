@@ -223,6 +223,7 @@ pub async fn download_files(
             local_location: data.local_location.clone(),
             stage_info: data.stage_info.clone(),
             encryption_material,
+            flavor: data.flavor.clone(),
         };
 
         let result = download_single_file(single_download_data).await?;
@@ -235,7 +236,12 @@ pub async fn download_files(
 pub async fn download_single_file(
     data: SingleDownloadData,
 ) -> Result<DownloadResult, FileManagerError> {
-    let (raw_data, digest, file_metadata) = match data.stage_info.location_type {
+    let DownloadResponse {
+        data: raw_data,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    } = match data.stage_info.location_type {
         LocationType::S3 => download_from_s3(&data.stage_info, data.src_location.as_str())
             .await
             .context(S3DownloadSnafu)?,
@@ -276,10 +282,25 @@ pub async fn download_single_file(
 
     Ok(DownloadResult {
         file: data.src_location,
-        size: output_data.len() as i64,
+        size: download_result_size(cloud_byte_count, output_data.len() as i64, &data.flavor),
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
     })
+}
+
+/// Returns the `size` column value for a completed download, gated on the
+/// active wrapper flavor. Legacy ODBC reports the on-cloud
+/// (pre-decryption) byte count via `srcFileSize`; Python keeps reporting
+/// the post-decryption buffer length.
+fn download_result_size(
+    cloud_byte_count: i64,
+    output_byte_len: i64,
+    flavor: &PutGetResultsetFlavor,
+) -> i64 {
+    match flavor {
+        PutGetResultsetFlavor::Odbc => cloud_byte_count,
+        _ => output_byte_len,
+    }
 }
 
 // Error types for file manager operations
@@ -423,5 +444,56 @@ mod tests {
             ODBC_PUT_MESSAGE_SKIPPED,
             "File with same name already exists. SKIPPED",
         );
+    }
+
+    // BD#4 — `download_single_file` must report the on-cloud
+    // (pre-decryption) byte count under `Odbc` (matching legacy
+    // libsnowflakeclient `srcFileSize`) and the post-decryption buffer
+    // length under `Python` (current UD-Python contract).
+    #[test]
+    fn download_result_size_odbc_uses_cloud_byte_count() {
+        let cloud_byte_count = 32;
+        let output_byte_len = 26;
+        assert_eq!(
+            download_result_size(
+                cloud_byte_count,
+                output_byte_len,
+                &PutGetResultsetFlavor::Odbc
+            ),
+            cloud_byte_count,
+        );
+    }
+
+    #[test]
+    fn download_result_size_python_uses_output_length() {
+        let cloud_byte_count = 32;
+        let output_byte_len = 26;
+        assert_eq!(
+            download_result_size(
+                cloud_byte_count,
+                output_byte_len,
+                &PutGetResultsetFlavor::Python,
+            ),
+            output_byte_len,
+        );
+    }
+
+    #[test]
+    fn download_result_size_sse_branches_collapse_to_same_value() {
+        // For SSE stages (no client-side encryption) the cloud byte
+        // count and the post-decryption buffer length are identical, so
+        // both wrapper flavors must report exactly `n`.
+        for n in [0, 1, 1000] {
+            assert_eq!(
+                download_result_size(n, n, &PutGetResultsetFlavor::Odbc),
+                n,
+                "Odbc flavor must report n={n} when cloud == output",
+            );
+            assert_eq!(
+                download_result_size(n, n, &PutGetResultsetFlavor::Python),
+                n,
+                "Python flavor must report n={n} when cloud == output",
+            );
+        }
     }
 }

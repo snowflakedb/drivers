@@ -394,7 +394,17 @@ impl Data {
     }
 
     /// Encryption material is optional — SSE stages omit it from the response.
-    pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, QueryResponseError> {
+    ///
+    /// `flavor` selects the wrapper-specific shape of the resulting GET
+    /// result set; it is forwarded into `SingleDownloadData` so that
+    /// `file_manager::download_single_file` can populate the `size`
+    /// column per `BehaviorDifferences.yaml` BD#4. Taken by reference so
+    /// callers don't have to clone — the single `clone` happens at the
+    /// `DownloadData` storage point below.
+    pub fn to_file_download_data(
+        &self,
+        flavor: &PutGetResultsetFlavor,
+    ) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
             .as_ref()
@@ -451,6 +461,7 @@ impl Data {
             local_location,
             stage_info,
             encryption_materials,
+            flavor: flavor.clone(),
         })
     }
 
@@ -1289,6 +1300,38 @@ mod tests {
             .to_file_upload_data(PutGetResultsetFlavor::Odbc)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
+    }
+
+    fn make_download_json() -> String {
+        r#"{
+            "src_locations": ["path/to/file.csv.gz"],
+            "stageInfo": {
+                "locationType": "GCS",
+                "location": "bucket/prefix/",
+                "creds": {"GCS_ACCESS_TOKEN": "fake"},
+                "region": "us-central1"
+            },
+            "localLocation": "/tmp/dl"
+        }"#
+        .to_string()
+    }
+
+    #[test]
+    fn download_data_forwards_flavor_python() {
+        let data: Data = serde_json::from_str(&make_download_json()).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Python)
+            .unwrap();
+        assert_eq!(download.flavor, PutGetResultsetFlavor::Python);
+    }
+
+    #[test]
+    fn download_data_forwards_flavor_odbc() {
+        let data: Data = serde_json::from_str(&make_download_json()).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Odbc)
+            .unwrap();
+        assert_eq!(download.flavor, PutGetResultsetFlavor::Odbc);
     }
 
     #[test]
