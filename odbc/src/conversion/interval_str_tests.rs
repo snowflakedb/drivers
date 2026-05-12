@@ -330,7 +330,10 @@ fn negative_fractional_only_second_sets_sign_bit() {
     let (iv, r) = run("-0.5", CDataType::IntervalSecond);
     let warnings = r.expect("parse should succeed");
     assert!(warnings.is_empty(), "{warnings:?}");
-    assert_eq!(iv.interval_sign, 1, "sign must be set for non-zero magnitude");
+    assert_eq!(
+        iv.interval_sign, 1,
+        "sign must be set for non-zero magnitude"
+    );
     unsafe {
         assert_eq!(iv.interval_value.day_second.second, 0);
         assert_eq!(iv.interval_value.day_second.fraction, 500_000);
@@ -643,14 +646,55 @@ fn non_interval_target_returns_07006() {
     // target should map to 07006 (UnsupportedOdbcType), not 22003.
     let mut buf = make_buffer();
     let binding = make_binding(CDataType::SLong, &mut buf);
-    let r = crate::conversion::interval_str::varchar_to_interval(
-        "5",
-        CDataType::SLong,
-        &binding,
-    );
+    let r = crate::conversion::interval_str::varchar_to_interval("5", CDataType::SLong, &binding);
     let err = r.expect_err("non-interval target must fail");
     assert!(
         matches!(err, WriteOdbcError::UnsupportedOdbcType { .. }),
         "expected 07006 (UnsupportedOdbcType), got {err:?}"
     );
+}
+
+// ============================================================================
+// Whitespace handling (Piotr's comment #9 item #14)
+//
+// `split_sign` calls `s.trim()` before extracting the sign — these tests
+// pin that down at the unit level so any future regression that breaks the
+// outer trim is caught here, not only in the e2e suite.
+// ============================================================================
+
+#[test]
+fn outer_whitespace_is_trimmed_for_single_field() {
+    // Plain integer with leading + trailing ASCII whitespace.
+    let (iv, r) = run("  5  ", CDataType::IntervalYear);
+    let warnings = r.expect("parse should succeed after trim");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.year, 5);
+    }
+    assert_eq!(iv.interval_sign, 0);
+}
+
+#[test]
+fn outer_whitespace_is_trimmed_for_signed_value() {
+    // Whitespace must be stripped on both sides of the sign.
+    let (iv, r) = run("  -7\t", CDataType::IntervalDay);
+    let warnings = r.expect("parse should succeed after trim");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.day, 7);
+    }
+    assert_eq!(iv.interval_sign, 1);
+}
+
+#[test]
+fn outer_whitespace_is_trimmed_for_composite() {
+    // Outer trim works on composite literals too; inner spaces in
+    // `<years>-<months>` remain rejected (covered separately).
+    let (iv, r) = run("\n 3-6 \n", CDataType::IntervalYearToMonth);
+    let warnings = r.expect("parse should succeed after trim");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.year, 3);
+        assert_eq!(iv.interval_value.year_month.month, 6);
+    }
 }
