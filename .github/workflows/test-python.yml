@@ -381,15 +381,6 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
-      - name: Cleanup test PATs
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_env.py \
-            --parameter-path "${{ github.workspace }}/parameters.json"
-
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
@@ -444,6 +435,31 @@ jobs:
           shared-key: sdist-test
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  cleanup_python:
+    needs: [detect-changes, python_tests]
+    if: always() && needs.python_tests.result != 'skipped'
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    name: cleanup_python (${{ matrix.cloud_provider }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Cleanup test PATs
+        continue-on-error: true
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_env.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
@@ -574,7 +590,7 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [detect-changes, build_wheels, packaging_tests, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheels, packaging_tests, python_tests, cleanup_python, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
