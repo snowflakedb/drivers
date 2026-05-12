@@ -57,7 +57,7 @@
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1"
 			Condition="NOT VCREDIST2015INSTALLED" />
 		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x86.exe" After="CostFinalize" Sequence="ui" />
-		<CustomAction Id="Install_vc_redist" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_$(sys.BUILDARCH)" />
+		<CustomAction Id="Install_vc_redist" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
 		<UI>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
 				Value="Install_vc_redist" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1" />
