@@ -10,6 +10,7 @@ use super::Setting;
 use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
+use super::heartbeat::{HeartbeatHandle, compute_heartbeat_interval, spawn_heartbeat_task};
 use super::logout;
 use super::spcs_token::read_spcs_token;
 use super::validation::{
@@ -262,84 +263,115 @@ impl DatabaseDriverV1 {
                     role: login_result.role_name,
                 };
 
-                let logout_config =
-                    LogoutConfig::from_settings(&resolved_snapshot).context(ConfigurationSnafu)?;
+                let keep_alive = merged_params
+                    .get("CLIENT_SESSION_KEEP_ALIVE")
+                    .map(|v| v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
 
-                let session_id = login_result.tokens.session_id;
-                let mut conn = conn_ptr.lock().await;
-                conn.initialize(
-                    login_result.tokens,
-                    http_client,
-                    host,
-                    port,
-                    login_parameters.server_url.clone(),
-                    login_parameters.client_info.clone(),
-                    merged_params,
-                    login_final_names,
-                    resolved_snapshot,
-                    logout_config,
-                )
-                .await;
+                {
+                    let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
+                        .context(ConfigurationSnafu)?;
+                    let session_id = login_result.tokens.session_id;
+                    let mut conn = conn_ptr.lock().await;
 
-                // Telemetry setup: check if the server has opted this session
-                // into in-band telemetry and a session registry is configured,
-                // then register the session so spans tagged with this
-                // session_id are routed to /telemetry/send.
-                let telemetry_enabled = self.telemetry_sessions().is_some()
-                    && conn
-                        .session_parameters
-                        .read()
-                        .await
-                        .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
-                        .map(|v| v.eq_ignore_ascii_case("true"))
-                        .unwrap_or(true);
+                    conn.initialize(
+                        login_result.tokens,
+                        http_client,
+                        host,
+                        port,
+                        login_parameters.server_url.clone(),
+                        login_parameters.client_info.clone(),
+                        merged_params,
+                        login_final_names,
+                        resolved_snapshot,
+                        logout_config,
+                    )
+                    .await;
 
-                if telemetry_enabled {
-                    use crate::telemetry::snowflake_exporter::ExporterSession;
+                    // Telemetry setup: check if the server has opted this session
+                    // into in-band telemetry and a session registry is configured,
+                    // then register the session so spans tagged with this
+                    // session_id are routed to /telemetry/send.
+                    let telemetry_enabled = self.telemetry_sessions().is_some()
+                        && conn
+                            .session_parameters
+                            .read()
+                            .await
+                            .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
+                            .map(|v| v.eq_ignore_ascii_case("true"))
+                            .unwrap_or(true);
 
-                    let Some(http_client) = conn.http_client.clone() else {
-                        tracing::warn!(
-                            "Skipping telemetry: http_client not set after connection init"
-                        );
-                        drop(conn);
-                        return Ok(());
-                    };
+                    if telemetry_enabled {
+                        use crate::telemetry::snowflake_exporter::ExporterSession;
 
-                    let query_parameters = conn.query_transport_parameters()?;
-                    let exporter_session = Arc::new(ExporterSession {
-                        client: http_client,
-                        query_parameters,
-                        session_token: conn.tokens.clone(),
-                    });
+                        let Some(http_client) = conn.http_client.clone() else {
+                            tracing::warn!(
+                                "Skipping telemetry: http_client not set after connection init"
+                            );
+                            drop(conn);
+                            return Ok(());
+                        };
 
-                    // unwrap is safe: telemetry_enabled is only true when
-                    // telemetry_sessions() is Some.
-                    self.telemetry_sessions()
-                        .unwrap()
-                        .write()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .insert(session_id, exporter_session);
+                        let query_parameters = conn.query_transport_parameters()?;
+                        let exporter_session = Arc::new(ExporterSession {
+                            client: http_client,
+                            query_parameters,
+                            session_token: conn.tokens.clone(),
+                        });
 
-                    let env_info = conn
-                        .wrapper_identity
-                        .as_ref()
-                        .map(crate::telemetry::environment::EnvironmentInfo::with_wrapper)
-                        .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
-                    // Long-lived connection span carries all telemetry events
-                    // (session_init, api_usage, wrapper_error) for this session.
-                    // Events are exported when the span ends on connection release.
-                    let conn_span =
-                        tracing::info_span!("connection", "snowflake.session.id" = session_id,);
+                        // unwrap is safe: telemetry_enabled is only true when
+                        // telemetry_sessions() is Some.
+                        self.telemetry_sessions()
+                            .unwrap()
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(session_id, exporter_session);
 
-                    // Record session_init as an event on the connection span.
-                    // We enter the span so the OpenTelemetryLayer captures the
-                    // tracing event as an OTel span event.
-                    {
-                        let _guard = conn_span.enter();
-                        crate::telemetry::record_session_init(&env_info);
+                        let env_info = conn
+                            .wrapper_identity
+                            .as_ref()
+                            .map(crate::telemetry::environment::EnvironmentInfo::with_wrapper)
+                            .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
+                        // Long-lived connection span carries all telemetry events
+                        // (session_init, api_usage, wrapper_error) for this session.
+                        // Events are exported when the span ends on connection release.
+                        let conn_span =
+                            tracing::info_span!("connection", "snowflake.session.id" = session_id,);
+
+                        // Record session_init as an event on the connection span.
+                        // We enter the span so the OpenTelemetryLayer captures the
+                        // tracing event as an OTel span event.
+                        {
+                            let _guard = conn_span.enter();
+                            crate::telemetry::record_session_init(&env_info);
+                        }
+
+                        conn.telemetry_span = Some(conn_span);
                     }
 
-                    conn.telemetry_span = Some(conn_span);
+                    if keep_alive {
+                        let interval = compute_heartbeat_interval(
+                            conn.tokens
+                                .read()
+                                .await
+                                .as_ref()
+                                .and_then(|t| t.master_valid_for()),
+                        );
+                        let handle = spawn_heartbeat_task(
+                            conn.tokens.clone(),
+                            conn.http_client
+                                .clone()
+                                .context(ConnectionNotInitializedSnafu)?,
+                            conn.server_url
+                                .clone()
+                                .context(ConnectionNotInitializedSnafu)?,
+                            conn.client_info
+                                .clone()
+                                .context(ConnectionNotInitializedSnafu)?,
+                            interval,
+                        );
+                        conn.heartbeat_handle = Some(handle);
+                    }
                 }
                 Ok(())
             }
@@ -685,6 +717,8 @@ pub struct Connection {
     /// Telemetry events (session_init, api_usage, wrapper_error) are
     /// recorded as OTel events on this span; it is ended on release.
     pub(crate) telemetry_span: Option<tracing::Span>,
+    /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
+    pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
 }
 
 impl Default for Connection {
@@ -714,6 +748,7 @@ impl Connection {
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
             telemetry_span: None,
+            heartbeat_handle: None,
         }
     }
 
@@ -1797,11 +1832,13 @@ impl DatabaseDriverV1 {
 /// Clear tokens, HTTP client, and stop background tasks.
 async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
     let mut conn = conn_ptr.lock().await;
+    if let Some(mut hb) = conn.heartbeat_handle.take() {
+        hb.cancel_and_wait().await;
+    }
     *conn.tokens.write().await = None;
     conn.http_client = None;
     tracing::debug!("Cleared session tokens and HTTP client");
 
-    // TODO: SNOW-2881763 - Stop heartbeat thread
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
 
