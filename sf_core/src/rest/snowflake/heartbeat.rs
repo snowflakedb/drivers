@@ -169,14 +169,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_failure_response() {
+    async fn heartbeat_session_expired_on_390112_body() {
+        // HTTP 200 with a body-level 390112 must route to SessionExpired so
+        // RefreshContext can refresh and retry, matching the HTTP 401 case.
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
             .and(path("/session/heartbeat"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": false,
-                "message": "Session gone",
+                "message": "Session token expired",
                 "code": "390112"
             })))
             .mount(&server)
@@ -193,9 +195,51 @@ mod tests {
         .await;
 
         assert!(result.is_err());
+        let err = result.unwrap_err();
         assert!(
-            matches!(result.unwrap_err(), RestError::Heartbeat { .. }),
-            "Expected Heartbeat variant"
+            matches!(
+                &err,
+                RestError::InvalidSnowflakeResponse {
+                    source: crate::rest::snowflake::SnowflakeResponseError::SessionExpired { .. },
+                    ..
+                }
+            ),
+            "Expected SessionExpired, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_failure_on_other_code() {
+        // Non-390112 server-side failures pass through to RestError::Heartbeat.
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "message": "Some heartbeat failure",
+                "code": "390100"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let server_url = Url::parse(&server.uri()).unwrap();
+        let result = send_heartbeat(
+            &client,
+            &server_url,
+            &test_client_info(),
+            "test_session_token",
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                RestError::Heartbeat { code: 390100, .. }
+            ),
+            "Expected Heartbeat variant with code 390100"
         );
     }
 }

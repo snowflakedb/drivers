@@ -215,4 +215,44 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn send_telemetry_session_expired_on_390112_body() {
+        // HTTP 200 with a body-level 390112 must route to SessionExpired so
+        // RefreshContext can refresh and retry.
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/telemetry/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "message": "Session token expired",
+                "code": "390112"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let query_params = test_query_parameters(&server.uri());
+        let result = send_telemetry(
+            &client,
+            &query_params,
+            "test_session_token",
+            &json!({"logs": []}),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                RestError::InvalidSnowflakeResponse {
+                    source: crate::rest::snowflake::SnowflakeResponseError::SessionExpired { .. },
+                    ..
+                }
+            ),
+            "Expected SessionExpired, got: {err:?}"
+        );
+    }
 }

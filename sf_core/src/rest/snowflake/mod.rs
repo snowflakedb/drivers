@@ -1525,9 +1525,23 @@ where
     let response_text = response_text.context(ResponseTextSnafu)?;
 
     tracing::debug!(response_len = response_text.len(), "Received HTTP response");
-    let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
+    let value: serde_json::Value =
+        serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
-    Ok(response_data)
+    // 2xx with `success:false, code:"390112"` means the session token expired.
+    // Surface the same SessionExpired signal as the HTTP 401 branch so
+    // RefreshContext can refresh and retry.
+    if value.get("success") == Some(&serde_json::Value::Bool(false))
+        && value
+            .get("code")
+            .and_then(|c| c.as_str())
+            .and_then(|c| c.parse::<i32>().ok())
+            == Some(SESSION_TOKEN_EXPIRED)
+    {
+        return SessionExpiredSnafu.fail();
+    }
+
+    serde_json::from_value(value).context(ResponseFormatSnafu)
 }
 
 #[track_caller]
@@ -2527,6 +2541,77 @@ mod tests {
                 "requestId must be stable across HTTP-level retries: {:?}",
                 request_ids
             );
+        }
+    }
+
+    mod read_response_json_envelope {
+        use super::super::{SESSION_TOKEN_EXPIRED, SnowflakeResponseError, read_response_json};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        #[derive(Debug, serde::Deserialize)]
+        struct EnvelopeFixture {
+            success: bool,
+            code: Option<String>,
+            message: Option<String>,
+        }
+
+        async fn fetch(body: serde_json::Value) -> Result<EnvelopeFixture, SnowflakeResponseError> {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/x"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .mount(&server)
+                .await;
+            let client = reqwest::Client::new();
+            let response = client
+                .post(format!("{}/x", server.uri()))
+                .send()
+                .await
+                .expect("test: mock request must send");
+            read_response_json::<EnvelopeFixture>(response).await
+        }
+
+        #[tokio::test]
+        async fn body_390112_returns_session_expired() {
+            let result = fetch(serde_json::json!({
+                "success": false,
+                "message": "Session token expired",
+                "code": "390112",
+            }))
+            .await;
+
+            let err = result.expect_err("390112 body must yield SessionExpired");
+            assert!(
+                matches!(err, SnowflakeResponseError::SessionExpired { .. }),
+                "expected SessionExpired, got {err:?}"
+            );
+            // Sanity: the shared constant matches the body code under test.
+            assert_eq!(SESSION_TOKEN_EXPIRED, 390112);
+        }
+
+        #[tokio::test]
+        async fn body_other_failure_code_passes_through() {
+            // Non-390112 failures must NOT be intercepted; the caller is
+            // responsible for mapping them to endpoint-specific errors.
+            let result = fetch(serde_json::json!({
+                "success": false,
+                "message": "Some other failure",
+                "code": "1003",
+            }))
+            .await;
+
+            let parsed = result.expect("non-390112 body must deserialize normally");
+            assert!(!parsed.success);
+            assert_eq!(parsed.code.as_deref(), Some("1003"));
+            assert_eq!(parsed.message.as_deref(), Some("Some other failure"));
+        }
+
+        #[tokio::test]
+        async fn body_success_true_passes_through() {
+            let result = fetch(serde_json::json!({ "success": true })).await;
+            let parsed = result.expect("success body must deserialize");
+            assert!(parsed.success);
         }
     }
 }

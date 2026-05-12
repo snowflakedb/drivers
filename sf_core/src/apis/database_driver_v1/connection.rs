@@ -2423,11 +2423,14 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
+        // Non-session codes stay on the "explicit failure → false" path.
+        // 390112 is intercepted by the RefreshContext and covered by the
+        // heartbeat_refreshes_session_on_390112 test below.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/session/heartbeat"))
             .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({"success": false, "message": "Session gone", "code": "390112"}),
+                serde_json::json!({"success": false, "message": "Heartbeat failed", "code": "390100"}),
             ))
             .mount(&server)
             .await;
@@ -2437,6 +2440,76 @@ mod tests {
 
         let valid = ds.connection_heartbeat(handle).await.unwrap();
         assert!(!valid, "heartbeat should return false on failure response");
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn heartbeat_refreshes_session_on_390112() {
+        // First heartbeat returns 200 + 390112 (session expired in the body),
+        // RefreshContext calls /session/token-request to get a new session
+        // token, the retry hits a second heartbeat mock that succeeds.
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        // First heartbeat: session expired via body code.
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .and(header(
+                "Authorization",
+                "Snowflake Token=\"test-session-token\"",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": false,
+                "message": "Session token expired",
+                "code": "390112",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Token refresh: returns new session token.
+        Mock::given(method("POST"))
+            .and(path("/session/token-request"))
+            .and(body_json(serde_json::json!({
+                "oldSessionToken": "test-session-token",
+                "requestType": "RENEW",
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "data": {
+                    "sessionToken": "refreshed-session-token",
+                    "masterToken": "test-master-token",
+                    "sessionId": 1,
+                    "validityInSecondsST": 3600,
+                    "validityInSecondsMT": 14400,
+                },
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Retry heartbeat with the refreshed token: succeeds.
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .and(header(
+                "Authorization",
+                "Snowflake Token=\"refreshed-session-token\"",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"success": true})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
+
+        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        assert!(valid, "heartbeat should succeed after session refresh");
 
         ds.connection_release(handle).unwrap();
     }
