@@ -88,6 +88,21 @@ jobs:
         # no-op on cache hits.
         run: cargo build -p sf_core --bin param_defs_export
 
+      - name: Generate protobuf Python stubs
+        # The `protobuf_gen/*_pb2.py` files are gitignored and normally produced
+        # by `hatch_build.py:_generate_protobuf` during an editable install. The
+        # precommit hatch env has `skip-install = true`, so nothing else triggers
+        # the generation — mypy then fails to resolve the protobuf imports.
+        # Running the same cargo invocation `hatch_build.py` uses keeps the
+        # outputs byte-identical to a production build. `protoc-gen-mypy` must
+        # be on PATH for the .pyi stubs, so install it alongside protoc.
+        run: |
+          pip install mypy-protobuf
+          cargo run -p proto_generator --bin proto_generator -- \
+            --generator python \
+            --input protobuf/database_driver_v1.proto \
+            --output python/src/snowflake/connector/_internal/protobuf_gen
+
       - name: Run pre-commit on all files
         # Skip `generate-connection-config` in CI: it regenerates the file,
         # reformats via hatch, and `git add`s — all pointless on ephemeral
