@@ -84,11 +84,10 @@ TEST_CASE("should return SQL_CD_TRUE after disconnect", "[odbc-api][conn_attr][c
   } else {
     // Validate that the failure is for an expected reason: HY010 (function sequence error)
     // or 08003 (connection not open), depending on the DM.
-    char sqlstate[6] = {};
-    SQLRETURN diag_ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc.getHandle(), 1, reinterpret_cast<SQLCHAR*>(sqlstate),
-                                       nullptr, nullptr, 0, nullptr);
+    SQLCHAR sqlstate[6] = {};
+    SQLRETURN diag_ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc.getHandle(), 1, sqlstate, nullptr, nullptr, 0, nullptr);
     CHECK(SQL_SUCCEEDED(diag_ret));
-    std::string state(sqlstate);
+    std::string state(reinterpret_cast<const char*>(sqlstate));
     CHECK((state == "HY010" || state == "08003"));
   }
 }
@@ -271,6 +270,10 @@ TEST_CASE("should set SQL_ATTR_CURRENT_CATALOG to current value successfully",
 // where the DM passes the call through to our driver.
 TEST_CASE("should return 3D000 when setting SQL_ATTR_CURRENT_CATALOG to nonexistent database",
           "[odbc-api][conn_attr][current_catalog][error][connecting]") {
+  // Old driver executes USE "<db>" via Simba SDK but does not map the failure to 3D000.
+  SKIP_OLD_DRIVER("SNOW-3235552",
+                  "Old driver does not map invalid catalog to 3D000; Simba framework returns HY000/42000");
+
   // Given A connected DBC handle
   Connection conn;
 
@@ -279,16 +282,8 @@ TEST_CASE("should return 3D000 when setting SQL_ATTR_CURRENT_CATALOG to nonexist
   SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG,
                                     reinterpret_cast<SQLPOINTER>(bad_catalog), SQL_NTS);
 
-  // Then:
-  // - New driver: validates the catalog against the server and explicitly returns 3D000.
-  // - Old driver: executes USE "<db>" on the server via the Simba SDK; the resulting Snowflake
-  //   server error is propagated as SQL_ERROR, but with HY000/42000 rather than 3D000 (the
-  //   Simba framework does not map USE failures to the ODBC 3D000 state).
-  if (get_driver_type() == DRIVER_TYPE::NEW) {
-    REQUIRE_EXPECTED_ERROR(ret, "3D000", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
-  } else {
-    CHECK(ret == SQL_ERROR);
-  }
+  // Then the new driver validates the catalog against the server and returns 3D000.
+  REQUIRE_EXPECTED_ERROR(ret, "3D000", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
 }
 #endif  // !defined(_WIN32)
 

@@ -164,6 +164,7 @@ pub fn get_server_version(rt: &DriverRuntime, conn_handle: ConnectionHandle) -> 
         .statement_execute_query_blocking(StatementExecuteQueryRequest {
             stmt_handle: Some(version_stmt),
             bindings: None,
+            timeout_seconds: None,
         })
         .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
@@ -231,6 +232,7 @@ pub fn execute_setup_queries(
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
             .map_err(|e| format!("Setup query execution failed: {:?}", e))?;
 

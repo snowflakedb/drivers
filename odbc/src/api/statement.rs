@@ -1,18 +1,22 @@
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
-use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
+use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu,
-    DisconnectedSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu,
-    InvalidHandleSnafu, InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu,
-    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
-    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
+    DisconnectedSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu,
+    InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
+    NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required,
+    StatementNotExecutedSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::{
     ApdRecord, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord, OdbcResult,
-    ParamDirection, ParamValue, SqlType, StatementInner, StatementState, stmt_from_handle,
+    ParamDirection, ParamValue, SQL_CONCUR_LOCK, SQL_CONCUR_READ_ONLY, SQL_CONCUR_VALUES,
+    SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF, SQL_NOSCAN_ON, SQL_RD_OFF, SQL_RD_ON,
+    SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner, StatementState,
+    stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
@@ -110,6 +114,11 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
 
     let (bindings, _json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
     let stmt_handle = guard.stmt_handle;
+    let query_timeout = inner.query_timeout;
+    let max_rows = inner.max_rows;
+    let effective_query =
+        apply_limit(statement_text, max_rows).unwrap_or_else(|| statement_text.to_string());
+    let multi_statement_count = inner.multi_statement_count;
 
     let token = CancellationToken::new();
     *guard.active_cancel.lock() = Some(token.clone());
@@ -119,15 +128,37 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             biased;
             _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
             result = async {
+                if multi_statement_count >= 0 {
+                    let mut options = std::collections::HashMap::new();
+                    options.insert(
+                        "multi_statement_count".to_string(),
+                        ConfigSetting {
+                            value: Some(config_setting::Value::IntValue(
+                                multi_statement_count as i64,
+                            )),
+                        },
+                    );
+                    c.statement_set_options(StatementSetOptionsRequest {
+                        stmt_handle: Some(stmt_handle),
+                        options,
+                    })
+                    .await?;
+                }
+
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
-                    query: statement_text.to_string(),
+                    query: effective_query,
                 })
                 .await?;
 
                 c.statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings,
+                    timeout_seconds: if query_timeout > 0 {
+                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                    } else {
+                        None
+                    },
                 })
                 .await
             } => result.map_err(Into::into),
@@ -141,6 +172,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
 
     update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
     apply_execute_response(&mut inner, stmt_handle, response, ExecutionOrigin::Direct)?;
+    inner.rows_returned = 0;
+    // Clear any SQL text cached by a prior SQLPrepare so a subsequent
+    // SQLExecute cannot inject LIMIT into stale prepared SQL.
+    inner.sql_text = None;
     Ok(())
 }
 
@@ -438,6 +473,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     }
     tracing::info!("prepare: auto-IPD populated {param_count} parameter markers (from server)");
 
+    inner.sql_text = Some(query.to_string());
     inner.state.set(StatementState::Prepared { schema });
     tracing::info!("prepare: Successfully prepared statement");
     Ok(())
@@ -512,6 +548,24 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     )?;
 
     let stmt_handle = guard.stmt_handle;
+    let query_timeout = inner.query_timeout;
+    let max_rows = inner.max_rows;
+    let last_sent_max_rows = inner.last_sent_max_rows;
+    let sql_text = inner.sql_text.clone();
+    let multi_statement_count = inner.multi_statement_count;
+
+    // Determine the query to send. We must resend whenever max_rows changed
+    // since the last execution: to add/change a LIMIT, or to restore the
+    // original query when a previous LIMIT is cleared.
+    let query_to_send: Option<String> = sql_text.as_deref().and_then(|sql| {
+        let modified = apply_limit(sql, max_rows);
+        let max_rows_changed = last_sent_max_rows != Some(max_rows);
+        match (modified, max_rows_changed) {
+            (Some(q), _) => Some(q),
+            (None, true) => Some(sql.to_string()),
+            (None, false) => None,
+        }
+    });
 
     let token = CancellationToken::new();
     *guard.active_cancel.lock() = Some(token.clone());
@@ -521,9 +575,37 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             biased;
             _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
             result = async {
+                if multi_statement_count >= 0 {
+                    let mut options = std::collections::HashMap::new();
+                    options.insert(
+                        "multi_statement_count".to_string(),
+                        ConfigSetting {
+                            value: Some(config_setting::Value::IntValue(
+                                multi_statement_count as i64,
+                            )),
+                        },
+                    );
+                    c.statement_set_options(StatementSetOptionsRequest {
+                        stmt_handle: Some(stmt_handle),
+                        options,
+                    })
+                    .await?;
+                }
+                if let Some(query) = query_to_send {
+                    c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        query,
+                    })
+                    .await?;
+                }
                 c.statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings,
+                    timeout_seconds: if query_timeout > 0 {
+                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                    } else {
+                        None
+                    },
                 })
                 .await
             } => result.map_err(Into::into),
@@ -538,6 +620,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     update_numeric_settings(&conn_handle, &mut settings)?;
     dbc.connection.lock().numeric_settings = settings;
     apply_execute_response(&mut inner, stmt_handle, response, origin)?;
+    inner.rows_returned = 0;
+    inner.last_sent_max_rows = Some(max_rows);
     Ok(())
 }
 
@@ -754,6 +838,230 @@ fn apply_parameter_bindings(
     tracing::info!("apply_parameter_bindings: Successfully bound parameters");
 
     Ok((Some(bindings), Some(json_string)))
+}
+
+/// Skip leading SQL noise (whitespace, line comments `-- …`, block comments `/* … */`)
+/// and return the remaining slice.
+fn skip_sql_noise(sql: &str) -> &str {
+    let b = sql.as_bytes();
+    let mut i = 0;
+    loop {
+        // Skip whitespace.
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i + 1 < b.len() && b[i] == b'-' && b[i + 1] == b'-' {
+            // Line comment: skip until newline.
+            i += 2;
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+        } else if i + 1 < b.len() && b[i] == b'/' && b[i + 1] == b'*' {
+            // Block comment: skip until `*/`.
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < b.len() {
+                i += 2; // consume `*/`
+            } else {
+                i = b.len(); // unterminated block comment — treat rest as noise
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    &sql[i..]
+}
+
+/// Returns true if `sql` is a SELECT (or WITH…SELECT) query.
+/// Used to decide whether to inject LIMIT N for `SQL_ATTR_MAX_ROWS`.
+///
+/// For `WITH` queries, scans past CTE definitions (depth > 0) to find the
+/// terminal statement keyword at depth 0, so `WITH cte AS (...) INSERT ...`
+/// is correctly identified as non-SELECT and LIMIT is not injected.
+fn is_select_query(sql: &str) -> bool {
+    let t = skip_sql_noise(sql);
+    if t.get(..6).is_some_and(|s| s.eq_ignore_ascii_case("select")) {
+        return true;
+    }
+    if !t.get(..4).is_some_and(|s| s.eq_ignore_ascii_case("with")) {
+        return false;
+    }
+    // WITH query: scan past CTE bodies (enclosed in parentheses) to find the
+    // terminal statement keyword at depth 0.
+    let b = t.as_bytes();
+    let mut i = 4; // skip "WITH"
+    let mut depth: usize = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\'' => {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'\'' {
+                        i += 1;
+                        if i < b.len() && b[i] == b'\'' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'"' {
+                        i += 1;
+                        if i < b.len() && b[i] == b'"' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'-' if i + 1 < b.len() && b[i + 1] == b'-' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                if i + 1 < b.len() {
+                    i += 2; // consume `*/`
+                } else {
+                    break; // unterminated block comment — treat rest as noise
+                }
+            }
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            c if depth == 0 && c.is_ascii_alphabetic() => {
+                let start = i;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                    i += 1;
+                }
+                let word = &b[start..i];
+                if word.eq_ignore_ascii_case(b"SELECT") {
+                    return true;
+                }
+                if word.eq_ignore_ascii_case(b"INSERT")
+                    || word.eq_ignore_ascii_case(b"UPDATE")
+                    || word.eq_ignore_ascii_case(b"DELETE")
+                    || word.eq_ignore_ascii_case(b"MERGE")
+                {
+                    return false;
+                }
+                // Other identifiers (cte name, AS, RECURSIVE, etc.) — keep scanning
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    false
+}
+
+/// Returns true if `sql` already contains a LIMIT keyword as a standalone word,
+/// ignoring LIMIT inside string literals and comments.
+fn has_limit_clause(sql: &str) -> bool {
+    let b = sql.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            // Skip single-quoted strings: '...' ('' is an escaped quote)
+            b'\'' => {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'\'' {
+                        i += 1;
+                        if i < b.len() && b[i] == b'\'' {
+                            i += 1; // escaped ''
+                        } else {
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            // Skip double-quoted identifiers: "..."
+            b'"' => {
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'"' {
+                        i += 1;
+                        if i < b.len() && b[i] == b'"' {
+                            i += 1; // escaped ""
+                        } else {
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            // Skip line comments
+            b'-' if i + 1 < b.len() && b[i + 1] == b'-' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            // Skip block comments
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+            }
+            _ => {
+                // Check for standalone LIMIT keyword (case-insensitive)
+                if i + 5 <= b.len() {
+                    let word = &b[i..i + 5];
+                    let before_ok = i == 0 || !b[i - 1].is_ascii_alphanumeric() && b[i - 1] != b'_';
+                    let after_ok =
+                        i + 5 >= b.len() || !b[i + 5].is_ascii_alphanumeric() && b[i + 5] != b'_';
+                    if before_ok && after_ok && word.eq_ignore_ascii_case(b"LIMIT") {
+                        return true;
+                    }
+                }
+                i += 1;
+            }
+        }
+    }
+    false
+}
+
+/// Returns a SQL string with `LIMIT max_rows` appended if:
+/// - `max_rows > 0`
+/// - the query is a SELECT/WITH query
+/// - no LIMIT clause is already present
+///
+/// Returns `None` when no injection is needed.
+fn apply_limit(sql: &str, max_rows: sql::ULen) -> Option<String> {
+    if max_rows == 0 || !is_select_query(sql) || has_limit_clause(sql) {
+        return None;
+    }
+    // Strip trailing whitespace and semicolons to avoid `SELECT 1; LIMIT 5`.
+    // Use a newline before LIMIT so trailing line comments (`-- …`) don't
+    // swallow the clause: `SELECT 1 -- note LIMIT 5` would be ignored.
+    let trimmed = sql.trim_end().trim_end_matches(';').trim_end();
+    Some(format!("{}\nLIMIT {}", trimmed, max_rows))
 }
 
 /// Bind a parameter to a prepared statement
@@ -1211,24 +1519,186 @@ pub fn set_stmt_attr(
             tracing::warn!("set_stmt_attr: {:?} is read-only", attr);
             ReadOnlyAttributeSnafu { attribute }.fail()
         }
-        StmtAttr::MultiStatementCount => {
-            let count = value_ptr as i64;
-            tracing::debug!("set_stmt_attr: MultiStatementCount = {}", count);
-            let stmt_handle = guard.stmt_handle;
-            let mut options = std::collections::HashMap::new();
-            options.insert(
-                "multi_statement_count".to_string(),
-                ConfigSetting {
-                    value: Some(config_setting::Value::IntValue(count)),
-                },
-            );
-            global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.statement_set_options(StatementSetOptionsRequest {
-                    stmt_handle: Some(stmt_handle),
-                    options,
-                })
-                .await
-            })?;
+        StmtAttr::QueryTimeout => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: QueryTimeout = {}", val);
+            if val > u32::MAX as sql::ULen {
+                return InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail();
+            }
+            inner.query_timeout = val;
+            Ok(())
+        }
+        StmtAttr::MaxRows => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: MaxRows = {}", val);
+            inner.max_rows = val;
+            Ok(())
+        }
+        StmtAttr::Noscan => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                SQL_NOSCAN_OFF | SQL_NOSCAN_ON => {
+                    inner.noscan = val;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::Concurrency => {
+            // 24000 if a cursor is open (includes Done — all rows fetched but not yet closed)
+            if inner.state.as_ref().has_open_cursor() {
+                tracing::error!("set_stmt_attr: Concurrency cannot be set while cursor is open");
+                return InvalidCursorStateSnafu.fail();
+            }
+            let val = value_ptr as sql::ULen;
+            match val {
+                SQL_CONCUR_READ_ONLY => {
+                    inner.concurrency = val;
+                    Ok(())
+                }
+                SQL_CONCUR_LOCK..=SQL_CONCUR_VALUES => {
+                    // SQL_CONCUR_LOCK / SQL_CONCUR_ROWVER / SQL_CONCUR_VALUES
+                    // Snowflake cursors are always read-only; substitute and warn
+                    inner.concurrency = SQL_CONCUR_READ_ONLY;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::CursorScrollable => {
+            if inner.state.as_ref().has_open_cursor() {
+                return InvalidCursorStateSnafu.fail();
+            }
+            let val = value_ptr as sql::ULen;
+            match val {
+                SQL_NONSCROLLABLE => {
+                    inner.cursor_scrollable = val;
+                    Ok(())
+                }
+                SQL_SCROLLABLE => {
+                    // Substitute with SQL_NONSCROLLABLE + 01S02
+                    inner.cursor_scrollable = SQL_NONSCROLLABLE;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::CursorSensitivity => {
+            if inner.state.as_ref().has_open_cursor() {
+                return InvalidCursorStateSnafu.fail();
+            }
+            let val = value_ptr as sql::ULen;
+            match val {
+                SQL_UNSPECIFIED => {
+                    inner.cursor_sensitivity = val;
+                    Ok(())
+                }
+                SQL_INSENSITIVE | SQL_SENSITIVE => {
+                    // Substitute with SQL_UNSPECIFIED + 01S02
+                    inner.cursor_sensitivity = SQL_UNSPECIFIED;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::EnableAutoIpd => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    // SQL_FALSE — accepted (no-op)
+                    tracing::debug!("set_stmt_attr: EnableAutoIpd = SQL_FALSE (no-op)");
+                    Ok(())
+                }
+                1 => {
+                    // SQL_TRUE — valid value, but optional feature not implemented
+                    tracing::debug!("set_stmt_attr: EnableAutoIpd = SQL_TRUE is not supported");
+                    UnsupportedFeatureSnafu.fail()
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::KeysetSize => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: KeysetSize = {}", val);
+            inner.keyset_size = val;
+            Ok(())
+        }
+        StmtAttr::SimulateCursor => {
+            if inner.state.as_ref().has_open_cursor() {
+                return InvalidCursorStateSnafu.fail();
+            }
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    // SQL_SC_NON_UNIQUE — accepted
+                    inner.simulate_cursor = val;
+                    Ok(())
+                }
+                1 | 2 => {
+                    // SQL_SC_TRY_UNIQUE / SQL_SC_UNIQUE — substitute with SQL_SC_NON_UNIQUE + 01S02
+                    inner.simulate_cursor = 0;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::RetrieveData => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: RetrieveData = {}", val);
+            match val {
+                SQL_RD_OFF | SQL_RD_ON => {
+                    inner.retrieve_data = val;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::SnowflakeMultiStatementCount => {
+            let val = value_ptr as i64;
+            if val < -1 || val > i16::MAX as i64 {
+                return InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val,
+                }
+                .fail();
+            }
+            inner.multi_statement_count = val as i16;
             Ok(())
         }
         _ => {
@@ -1248,6 +1718,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
     warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
+    use crate::api::encoding::write_string_bytes_i32;
 
     tracing::debug!("get_stmt_attr: attribute={}", attribute);
 
@@ -1378,9 +1849,108 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             );
             Ok(())
         }
-        StmtAttr::MultiStatementCount => {
-            tracing::warn!("get_stmt_attr: MultiStatementCount is write-only");
-            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
+        StmtAttr::QueryTimeout => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.query_timeout };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::MaxRows => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.max_rows };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::Noscan => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.noscan };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::Concurrency => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.concurrency };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::CursorScrollable => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.cursor_scrollable };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::CursorSensitivity => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.cursor_sensitivity };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::EnableAutoIpd => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = 0 }; // Always SQL_FALSE
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::KeysetSize => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.keyset_size };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::SimulateCursor => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.simulate_cursor };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::RetrieveData => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = inner.retrieve_data };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::SnowflakeMultiStatementCount => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::Integer) = inner.multi_statement_count as sql::Integer;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = size_of::<sql::Integer>() as sql::Integer;
+                }
+            }
+            Ok(())
         }
         _ => {
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
@@ -1500,5 +2070,111 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.to_sql_state(), SqlState::CountFieldIncorrect);
+    }
+}
+
+#[cfg(test)]
+mod limit_injection_tests {
+    use super::*;
+
+    #[test]
+    fn select_is_detected() {
+        assert!(is_select_query("SELECT 1"));
+        assert!(is_select_query("  select * from t"));
+        assert!(is_select_query("WITH cte AS (SELECT 1) SELECT * FROM cte"));
+        assert!(!is_select_query("INSERT INTO t VALUES (1)"));
+        assert!(!is_select_query("UPDATE t SET x = 1"));
+        assert!(!is_select_query("DELETE FROM t"));
+    }
+
+    #[test]
+    fn with_dml_is_not_select() {
+        // CTE-prefixed DML must not be treated as SELECT; LIMIT injection would produce invalid SQL.
+        assert!(!is_select_query(
+            "WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte"
+        ));
+        assert!(!is_select_query(
+            "WITH cte AS (SELECT 1) UPDATE t SET x = 1"
+        ));
+        assert!(!is_select_query(
+            "WITH cte AS (SELECT 1) DELETE FROM t WHERE id IN (SELECT id FROM cte)"
+        ));
+        // CTE followed by SELECT is still SELECT
+        assert!(is_select_query("WITH cte AS (SELECT 1) SELECT * FROM cte"));
+    }
+
+    #[test]
+    fn select_is_detected_with_leading_comments() {
+        assert!(is_select_query("/* hint */ SELECT 1"));
+        assert!(is_select_query("-- comment\nSELECT * FROM t"));
+        assert!(is_select_query("/* a */ /* b */ SELECT 1"));
+        assert!(!is_select_query("/* hint */ INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
+    fn limit_detection() {
+        assert!(has_limit_clause("SELECT 1 LIMIT 10"));
+        assert!(has_limit_clause("select * from t limit 5"));
+        assert!(!has_limit_clause("SELECT 1"));
+        assert!(!has_limit_clause("SELECT col_limit FROM t"));
+        assert!(!has_limit_clause("SELECT NOLIMIT FROM t"));
+    }
+
+    #[test]
+    fn limit_detection_ignores_string_literals() {
+        // LIMIT inside a string literal must not be detected
+        assert!(!has_limit_clause("SELECT * FROM t WHERE x = 'LIMIT'"));
+        assert!(!has_limit_clause("SELECT * FROM t WHERE x = 'NO LIMIT'"));
+        // LIMIT inside a line comment
+        assert!(!has_limit_clause("SELECT 1 -- LIMIT workaround"));
+        // LIMIT inside a block comment
+        assert!(!has_limit_clause("SELECT 1 /* LIMIT 5 */"));
+        // Real LIMIT after a string that contains the word
+        assert!(has_limit_clause(
+            "SELECT * FROM t WHERE x = 'LIMIT' LIMIT 5"
+        ));
+    }
+
+    #[test]
+    fn apply_limit_injects_when_needed() {
+        assert_eq!(
+            apply_limit("SELECT 1", 10),
+            Some("SELECT 1\nLIMIT 10".to_string())
+        );
+        assert_eq!(
+            apply_limit("  SELECT * FROM t  ", 5),
+            Some("  SELECT * FROM t\nLIMIT 5".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_limit_strips_trailing_semicolons() {
+        assert_eq!(
+            apply_limit("SELECT 1;", 5),
+            Some("SELECT 1\nLIMIT 5".to_string())
+        );
+        assert_eq!(
+            apply_limit("SELECT 1 ;  ", 5),
+            Some("SELECT 1\nLIMIT 5".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_limit_trailing_line_comment() {
+        // LIMIT must appear on a new line so a trailing `-- comment` does not swallow it.
+        assert_eq!(
+            apply_limit("SELECT 1 -- trailing comment", 5),
+            Some("SELECT 1 -- trailing comment\nLIMIT 5".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_limit_skips_when_not_needed() {
+        // max_rows = 0 → no limit
+        assert_eq!(apply_limit("SELECT 1", 0), None);
+        // already has LIMIT
+        assert_eq!(apply_limit("SELECT 1 LIMIT 100", 10), None);
+        // non-SELECT
+        assert_eq!(apply_limit("INSERT INTO t VALUES (1)", 10), None);
     }
 }

@@ -286,7 +286,7 @@ pub struct PrepareResult {
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
         let result = self
-            .execute_query_internal(stmt_handle, None, Some(true))
+            .execute_query_internal(stmt_handle, None, Some(true), None)
             .await?;
         let descriptor = result.into_descriptor();
 
@@ -377,8 +377,9 @@ impl DatabaseDriverV1 {
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
+        timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        self.execute_query_internal(stmt_handle, bindings, None)
+        self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
             .await
     }
 
@@ -387,6 +388,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
+        timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
@@ -408,7 +410,7 @@ impl DatabaseDriverV1 {
             sql: query.clone(),
             bindings: query_bindings,
             describe_only,
-            query_parameters: build_query_parameters(&stmt.settings),
+            query_parameters: build_query_parameters_with_timeout(&stmt.settings, timeout_seconds),
         };
 
         let conn_arc = stmt.conn.clone();
@@ -1089,6 +1091,24 @@ fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde
         if let Some(setting) = settings.get(*key) {
             params.insert(server_name.to_string(), setting_to_json_value(setting));
         }
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(params)
+    }
+}
+
+fn build_query_parameters_with_timeout(
+    settings: &ParamStore,
+    timeout_seconds: Option<u32>,
+) -> Option<HashMap<String, serde_json::Value>> {
+    let mut params = build_query_parameters(settings).unwrap_or_default();
+    if let Some(t) = timeout_seconds.filter(|&t| t > 0) {
+        params.insert(
+            "STATEMENT_TIMEOUT_IN_SECONDS".to_string(),
+            serde_json::Value::Number(t.into()),
+        );
     }
     if params.is_empty() {
         None

@@ -167,6 +167,7 @@ fn execute_iteration(rt: &DriverRuntime, stmt_handle: StatementHandle) -> Result
         .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
         .map_err(|e| format!("Query execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();

@@ -806,9 +806,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 ..Default::default()
             })?;
 
+        let timeout_seconds = input.timeout_seconds;
+
         let result = self
             .driver
-            .statement_execute_query(stmt_handle.into(), bindings_opt)
+            .statement_execute_query(stmt_handle.into(), bindings_opt, timeout_seconds)
             .await
             .to_protobuf()?;
 
