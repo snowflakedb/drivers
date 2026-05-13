@@ -600,57 +600,10 @@ jobs:
 
       - name: Setup MSVC environment (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          # Locate Visual Studio via vswhere (pre-installed on windows-latest)
-          $installPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          if (-not $installPath) { throw "vswhere could not locate a Visual Studio installation" }
-          $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
-          if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found at $vcvars" }
-
-          # Source vcvarsall.bat and capture its output. Capture to a variable first so we can
-          # inspect $LASTEXITCODE before any pipeline resets it: piping `cmd /c ... | ForEach-Object`
-          # would succeed as a pipeline even if vcvarsall.bat failed, leaving later steps running
-          # without cl.exe / link.exe on PATH.
-          $msvcArch = "${{ matrix.msvc_arch || 'amd64' }}"
-          $vcvarsOutput = cmd /c "`"$vcvars`" $msvcArch && set" 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "vcvarsall.bat output:"
-            $vcvarsOutput | ForEach-Object { Write-Host $_ }
-            throw "vcvarsall.bat $msvcArch failed with exit code $LASTEXITCODE"
-          }
-          # Propagate env vars to BOTH:
-          #   - $env:GITHUB_ENV: visible to subsequent steps in the job (the point of this step)
-          #   - the current PowerShell process: so the post-condition check below actually sees
-          #     the updated PATH. Writes to GITHUB_ENV are buffered and only applied at step
-          #     boundary — without updating the current process env, `Get-Command cl.exe` would
-          #     always fail here even on a perfectly good vcvarsall.bat run.
-          $vcvarsOutput | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') {
-              $name = $Matches[1]
-              $value = $Matches[2]
-              echo "$name=$value" >> $env:GITHUB_ENV
-              [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
-            }
-          }
-
-          # Post-condition: verify the MSVC toolchain is actually on PATH. vcvarsall.bat can exit 0
-          # while setting a broken environment (e.g., missing components, wrong host arch), so treat
-          # "cl.exe not found" as a hard failure rather than letting the next build step blow up
-          # with a confusing linker error.
-          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-            throw "MSVC environment setup completed but cl.exe is not on PATH"
-          }
-          if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
-            throw "MSVC environment setup completed but link.exe is not on PATH"
-          }
-
-          # vcvarsall.bat prepends VS's cmake 3.x to PATH; re-prepend the runner's 4.x
-          if ($env:CMAKE_DIR) {
-            $env:PATH = "$env:CMAKE_DIR;$env:PATH"
-            echo "PATH=$env:PATH" >> $env:GITHUB_ENV
-          }
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: ${{ matrix.msvc_arch || 'amd64' }}
+          restore-cmake-dir: 'true'
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
