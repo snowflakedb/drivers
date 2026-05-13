@@ -13,13 +13,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
-# Workflow-level env vars (CCACHE_*, VCPKG_BINARY_SOURCES, CARGO_TERM_COLOR)
-# moved into .github/actions/setup-odbc-build-env so the reusable workflows
-# below don't have to redeclare them (workflow-level env doesn't cross the
-# workflow_call boundary). Jobs that need them call the composite as their
-# first step; the lone job that lives in this file (odbc_unit_tests) does
-# the same below.
-
 jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml

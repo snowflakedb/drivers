@@ -7,13 +7,6 @@ name: ODBC Driver Tests
 on:
   workflow_call:
 
-# CCACHE_* / VCPKG_BINARY_SOURCES / CARGO_TERM_COLOR are exported by
-# the setup-odbc-build-env composite — workflow-level env doesn't cross
-# the workflow_call boundary, so the composite is the single source of
-# truth (shared with _test-odbc-reference.yml and the parent's
-# odbc_unit_tests job). load-odbc-matrix and cleanup_odbc don't run any
-# cargo/ccache/vcpkg work, so they skip the composite.
-
 jobs:
   load-odbc-matrix:
     runs-on: ubuntu-latest

@@ -8,12 +8,6 @@ name: ODBC Reference-Driver Tests
 on:
   workflow_call:
 
-# CCACHE_* / VCPKG_BINARY_SOURCES / CARGO_TERM_COLOR are exported by
-# the setup-odbc-build-env composite below — workflow-level env doesn't
-# cross the workflow_call boundary, so the composite is the single
-# source of truth (shared with _test-odbc.yml and the parent's
-# odbc_unit_tests job).
-
 jobs:
   odbc_tests_reference:
     strategy:
