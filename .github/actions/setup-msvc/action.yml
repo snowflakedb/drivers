@@ -11,6 +11,15 @@ inputs:
       arm64, x86_arm64, amd64_arm64. The action verifies that
       VSCMD_ARG_TGT_ARCH ends up matching the target portion of this value.
     required: true
+  restore-cmake-dir:
+    description: >
+      When 'true', re-prepend the directory referenced by the CMAKE_DIR env var
+      to PATH after vcvarsall.bat runs. vcvarsall.bat prepends VS's bundled
+      cmake 3.x — callers that installed a newer cmake (via pip/Kitware) into
+      $CMAKE_DIR earlier in the job need this to keep their version resolving
+      first. Set to 'false' (the default) when CMAKE_DIR isn't used.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -73,6 +82,15 @@ runs:
         if ($expectedTgt -eq 'amd64') { $expectedTgt = 'x64' }
         if ($env:VSCMD_ARG_TGT_ARCH -ne $expectedTgt) {
           throw "VSCMD_ARG_TGT_ARCH is '$($env:VSCMD_ARG_TGT_ARCH)', expected '$expectedTgt' for arch '$arch'"
+        }
+
+        # vcvarsall.bat prepends VS's bundled cmake (3.x) to PATH. Callers that installed
+        # a newer cmake into $CMAKE_DIR (e.g. Kitware pip wheel for cmake 4.x) need the
+        # newer copy to keep resolving first. The env propagation loop above writes the
+        # post-vcvarsall PATH to GITHUB_ENV; we now overwrite it with $CMAKE_DIR prepended.
+        if ("${{ inputs.restore-cmake-dir }}" -eq "true" -and $env:CMAKE_DIR) {
+          $env:PATH = "$env:CMAKE_DIR;$env:PATH"
+          "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         }
 
         Write-Host "MSVC ready: VS at $installPath, target arch $env:VSCMD_ARG_TGT_ARCH"
