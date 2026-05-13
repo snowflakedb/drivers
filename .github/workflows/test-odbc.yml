@@ -26,6 +26,18 @@ jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
 
+  load-odbc-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          python ci/test_matrix/generate_matrix.py \
+            --driver odbc --event "$GITHUB_EVENT_NAME" --emit-active \
+            >> "$GITHUB_OUTPUT"
+
   odbc_unit_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
@@ -429,90 +441,12 @@ jobs:
           path: ${{ matrix.cargo_target && format('target/{0}/debug', matrix.cargo_target) || 'target/debug' }}/${{ matrix.driver_lib }}
 
   odbc_tests:
-    needs: [detect-changes, build_odbc_driver]
+    needs: [detect-changes, build_odbc_driver, load-odbc-matrix]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: aws
-          - os: ubuntu-latest
-            name: Linux x64 (JSON)
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: aws
-            result_format: json
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            driver_artifact: macOS ARM64
-            cloud_provider: aws
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_artifact: Windows x64
-            cloud_provider: aws
-            msvc_arch: amd64
-            vcpkg_triplet: x64-windows
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            driver_artifact: Windows x86
-            cloud_provider: aws
-            msvc_arch: x86
-            vcpkg_triplet: x86-windows
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: gcp
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            driver_artifact: macOS ARM64
-            cloud_provider: gcp
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_artifact: Windows x64
-            cloud_provider: gcp
-            msvc_arch: amd64
-            vcpkg_triplet: x64-windows
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            driver_artifact: Windows x86
-            cloud_provider: gcp
-            msvc_arch: x86
-            vcpkg_triplet: x86-windows
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: azure
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            driver_artifact: macOS ARM64
-            cloud_provider: azure
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_artifact: Windows x64
-            cloud_provider: azure
-            msvc_arch: amd64
-            vcpkg_triplet: x64-windows
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            driver_artifact: Windows x86
-            cloud_provider: azure
-            msvc_arch: x86
-            vcpkg_triplet: x86-windows
+        include: ${{ fromJSON(needs.load-odbc-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     steps:
@@ -569,10 +503,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-v3
+          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_VER }}-v3
           restore-keys: |
-            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-
-            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-
+            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_VER }}-
+            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-
 
       # Cache Homebrew bottle downloads to avoid re-fetching unixodbc/ccache on every run
       # (brew install on GHA macOS runners is ~2-3 min uncached, <15s with bottles cached).
@@ -810,7 +744,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-v3
+          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_VER }}-v3
 
       - name: Save Homebrew cache (macOS)
         if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
@@ -1158,7 +1092,7 @@ jobs:
           path: build/snowflake-odbc-ud-*.dmg
 
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, cleanup_odbc, build_msi, build_dmg]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, load-odbc-matrix, odbc_tests, cleanup_odbc, build_msi, build_dmg]
     if: always()
     runs-on: ubuntu-latest
     steps:
