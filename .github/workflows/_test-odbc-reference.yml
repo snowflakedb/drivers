@@ -1,0 +1,192 @@
+name: ODBC Reference-Driver Tests
+
+# Reusable workflow that runs odbc_tests with the released Snowflake ODBC
+# driver as the device under test (the "reference" driver), so regressions
+# in our test harness vs. the canonical reference implementation are caught
+# independently of UD-ODBC changes.
+#
+# Called from .github/workflows/test-odbc.yml. The parent applies the
+# detect-changes gate via `if:` on the `uses:` call — reusable workflows
+# can't reach the parent's `needs` context.
+
+on:
+  workflow_call:
+
+env:
+  # Re-declare workflow-level env that the parent test-odbc.yml provides.
+  # Reusable workflows do NOT inherit env from their caller — without this
+  # the install-build-prereqs step's $env:CCACHE_DIR / vcpkg binary-cache
+  # path point at nothing on the runner.
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_MAXSIZE: 1G
+  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite"
+
+jobs:
+  odbc_tests_reference:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            driver_lib: libsfodbc.so
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
+    runs-on: ${{ matrix.os }}
+    name: odbc_reference_tests (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore test dependencies cache
+        id: test-deps-cache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: test-deps
+
+      - name: Restore ccache
+        id: ccache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: ccache
+
+      # See odbc_tests below for rationale: VCPKG_VER must be in the cache key
+      # because vcpkg's package ABI hashes change with the runner's vcpkg version.
+      - name: Capture vcpkg version (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: ./.github/actions/vcpkg-version
+
+      - name: Restore vcpkg binary cache (Windows)
+        if: matrix.os == 'windows-latest'
+        id: vcpkg-cache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: vcpkg
+          key-suffix: x64-windows
+
+      - name: Install build prerequisites (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+
+          Invoke-Checked "python -m pip install cmake" { python -m pip install cmake>=4.0.3 }
+          cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
+          New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
+          # VCPKG_BINARY_SOURCES (workflow-level env) points at this directory;
+          # vcpkg refuses to use a missing path silently — create it before install.
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
+
+          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+
+      - name: Install build prerequisites (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev ccache
+
+          python3 -m pip install 'cmake>=4.0.3'
+          cmake --version
+
+      - name: Install reference ODBC driver
+        uses: ./.github/actions/install-reference-odbc
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Run Old ODBC tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        id: run_odbc_ref_tests_linux
+        run: |
+          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
+        env:
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Run flaky Old ODBC tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Run Old ODBC tests (Windows)
+        if: matrix.os == 'windows-latest'
+        id: run_odbc_ref_tests_windows
+        shell: pwsh
+        run: |
+          $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
+          $env:PARAMETER_PATH = "$(pwd)\parameters.json"
+          $env:DRIVER_TYPE = "OLD"
+          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
+          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
+
+      - name: Run flaky Old ODBC tests (Windows)
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        shell: pwsh
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Cleanup orphaned test schemas
+        if: always() && matrix.os == 'ubuntu-latest'
+        run: |
+          TOOL="odbc_tests/cmake-build/tools/schema_tool"
+          if [[ -x "$TOOL" ]]; then
+            "$TOOL" cleanup --age-days 2
+          else
+            echo "schema_tool not found (build may have failed), skipping cleanup"
+          fi
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+
+      - name: Save test dependencies cache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: test-deps
+          cache-hit: ${{ steps.test-deps-cache-ref.outputs.cache-hit }}
+
+      - name: Save ccache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: ccache
+          cache-hit: ${{ steps.ccache-ref.outputs.cache-hit }}
+
+      - name: Save vcpkg binary cache (Windows)
+        if: always() && matrix.os == 'windows-latest'
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: vcpkg
+          key-suffix: x64-windows
+          cache-hit: ${{ steps.vcpkg-cache-ref.outputs.cache-hit }}
