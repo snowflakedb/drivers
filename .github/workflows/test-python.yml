@@ -16,11 +16,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
-  # Python version to run reference tests and comparison
-  REFERENCE_PYTHON_VERSION: "3.13"
-  # OS version for consistent naming across jobs
-  REFERENCE_OS_VERSION: "ubuntu-latest"
-  REFERENCE_CLOUD_PROVIDER: "aws"
 
 jobs:
   detect-changes:
@@ -452,21 +447,35 @@ jobs:
           python scripts/cleanup_env.py \
             --parameter-path "${{ github.workspace }}/parameters.json"
 
-  # Integration tests only with reference connector (for comparison)
+  # Integration tests only with reference connector (for comparison).
+  #
+  # Each variant's (os, py, cloud_provider) must match a cell that
+  # python_tests emits at PR scope so python_compare_results can pair
+  # the reference and universal artifacts. See ci/test_matrix/models/python.py
+  # PR_CELLS. Reference hatch envs install snowflake-connector-python from
+  # PyPI (python/pyproject.toml reference / reference-pandas) and inherit
+  # skip-install=true, so no universal wheel download is needed.
   python_tests_reference:
     needs: [detect-changes, build_wheels]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python_reference == 'true'
     strategy:
       fail-fast: false
       matrix:
-        hatch_env: ["reference", "reference-pandas"]
-    runs-on: ubuntu-latest
+        include:
+          - hatch_env: reference
+            os: windows-latest
+            py: "3.14"
+            cloud_provider: azure
+          - hatch_env: reference-pandas
+            os: macos-latest
+            py: "3.12"
+            cloud_provider: gcp
+    runs-on: ${{ matrix.os }}
     name: python_tests_reference (${{ matrix.hatch_env }})
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
+    env:
+      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
     steps:
-      - name: Set matrix key
-        run: echo "MATRIX_KEY=${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.hatch_env }}" >> $GITHUB_ENV
-
       - uses: actions/checkout@v4
 
       - name: Install uv
@@ -474,41 +483,21 @@ jobs:
         with:
           version: "0.9.28"
 
-      - name: Restore uv cache
-        # Cache restore failures never fail the job — fall back to clean install.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: /tmp/.uv-cache
-          # Key uses REFERENCE_OS_VERSION (= "ubuntu-latest") to match the matrix.os-based
-          # key written by python_tests, enabling cross-job cache sharing.
-          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-          restore-keys: |
-            uv-${{ env.MATRIX_KEY }}-
-            uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-
-            uv-${{ env.REFERENCE_OS_VERSION }}-
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
-
-      - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
-        run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
-
-      - name: Download wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: manylinux_x86_64_py${{ env.REFERENCE_PYTHON_VERSION }}
-          path: python/dist
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install ${{ matrix.py }}
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh ${{ env.REFERENCE_CLOUD_PROVIDER }}
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
 
       - name: Install Hatch
         run: *setup_env
 
       - name: Run reference integration tests
         working-directory: python
+        shell: bash
         run: |
           mkdir -p reports
           hatch run ${{ matrix.hatch_env }}:test \
@@ -632,7 +621,13 @@ jobs:
           path: /tmp/.uv-cache
           key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
-  # Compare results between connectors
+  # Compare results between connectors.
+  #
+  # Each matrix row pairs a python_tests cell (os, py, cloud_provider, hatch_env)
+  # with a python_tests_reference cell (same os, py, cloud_provider, paired
+  # ref_hatch_env). Keep these in sync with python_tests_reference above and
+  # with PR_CELLS in ci/test_matrix/models/python.py — otherwise the
+  # artifact downloads below 404.
   python_compare_results:
     needs: [detect-changes, python_tests, python_tests_reference]
     if: |
@@ -643,18 +638,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - hatch_env: "test"
-            ref_hatch_env: "reference"
-          - hatch_env: "test-pandas"
-            ref_hatch_env: "reference-pandas"
+          - hatch_env: test
+            ref_hatch_env: reference
+            os: windows-latest
+            py: "3.14"
+            cloud_provider: azure
+          - hatch_env: test-pandas
+            ref_hatch_env: reference-pandas
+            os: macos-latest
+            py: "3.12"
+            cloud_provider: gcp
     runs-on: ubuntu-latest
     name: python_compare_results (${{ matrix.hatch_env }})
+    env:
+      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
+      REF_MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.ref_hatch_env }}
     steps:
-      - name: Set matrix keys
-        run: |
-          echo "MATRIX_KEY=${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.hatch_env }}" >> $GITHUB_ENV
-          echo "REF_MATRIX_KEY=${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.ref_hatch_env }}" >> $GITHUB_ENV
-
       - uses: actions/checkout@v4
 
       - name: Install uv
@@ -665,7 +664,7 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with:
-          name: results-universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}
+          name: results-universal-${{ env.MATRIX_KEY }}-${{ matrix.cloud_provider }}
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
@@ -682,9 +681,9 @@ jobs:
         shell: bash
         run: |
           hatch run reference:compare \
-            --py ${{ env.REFERENCE_PYTHON_VERSION }} \
-            --os ${{ env.REFERENCE_OS_VERSION }} \
-            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}.json \
+            --py ${{ matrix.py }} \
+            --os ${{ matrix.os }} \
+            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-${{ matrix.cloud_provider }}.json \
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
