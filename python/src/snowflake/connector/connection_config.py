@@ -159,6 +159,9 @@ class ConnectionConfig:
     """Whether to verify the server hostname in TLS. Default: True"""
 
     # -- Session parameters --------------------------------------------------
+    client_memory_limit: int | None = 1536
+    """Memory budget in MB for chunk prefetch buffer (0 = unlimited). Default: 1536"""
+
     client_prefetch_threads: int | None = 4
     """Number of concurrent chunk prefetch threads for result set downloading. Default: 4"""
 
@@ -239,6 +242,7 @@ class ConnectionConfig:
     """Lowercased alias -> Python field name."""
 
     _PYTHON_TO_RUST_NAME: ClassVar[dict[str, str]] = {
+        "client_memory_limit": "CLIENT_MEMORY_LIMIT",
         "client_prefetch_threads": "CLIENT_PREFETCH_THREADS",
         "passcode_in_password": "passcodeInPassword",
     }
@@ -279,6 +283,7 @@ class ConnectionConfig:
             "auto_cleanup",
             "autocommit",
             "client_app_id",
+            "client_memory_limit",
             "client_prefetch_threads",
             "client_store_temporary_credential",
             "connection_name",
