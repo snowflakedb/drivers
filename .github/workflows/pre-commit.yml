@@ -69,6 +69,14 @@ jobs:
         run: |
           pip install pre-commit hatch "virtualenv<21.0.0"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node.js dependencies
+        run: cd nodejs && npm install
+
       # NOTE: no pre-commit hook cache. Every hook in .pre-commit-config.yaml
       # uses `language: system` (cargo, clang-format, gradlew, etc.), so
       # pre-commit doesn't manage virtualenvs or clone hook repos — the only
