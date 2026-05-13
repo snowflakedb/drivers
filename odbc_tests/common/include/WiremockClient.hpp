@@ -67,11 +67,18 @@ class WiremockClient {
 
   int get_request_count(const std::string& method, const std::string& url_path) const {
     std::string body = R"({"method":")" + method + R"(","urlPath":")" + url_path + R"("})";
+
+    auto tmp = std::filesystem::temp_directory_path() / "wm_request_count.json";
+    {
+      std::ofstream f(tmp);
+      f << body;
+    }
     std::string cmd = "curl -s -X POST " + admin_url("/__admin/requests/count") +
                       " -H \"Content-Type: application/json\""
-                      " -d \"" +
-                      body + "\"";
+                      " --data-binary \"@" +
+                      tmp.string() + "\"";
     std::string response = exec_popen(cmd);
+    std::filesystem::remove(tmp);
 
     picojson::value json;
     std::string err = picojson::parse(json, response);
