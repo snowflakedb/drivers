@@ -55,7 +55,7 @@ TEST_CASE("should set last query ID after successful SQLExecDirect", "[query][la
 
   // When SQLExecDirect is called with a valid query
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the last query ID should be a valid UUID
   auto id = get_last_query_id(stmt);
@@ -69,9 +69,9 @@ TEST_CASE("should set last query ID after successful SQLPrepare + SQLExecute", "
 
   // When SQLPrepare and SQLExecute are called with a valid query
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the last query ID should be a valid UUID
   auto id = get_last_query_id(stmt);
@@ -85,14 +85,14 @@ TEST_CASE("should produce different last query IDs for successive queries", "[qu
 
   // When two different queries are executed sequentially
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
   auto id1 = get_last_query_id(stmt);
 
   ret = SQLCloseCursor(stmt.getHandle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 2"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
   auto id2 = get_last_query_id(stmt);
 
   // Then the last query IDs should differ
@@ -114,7 +114,7 @@ TEST_CASE("should set last query ID after failed query with syntax error", "[que
 
   // When SQLExecDirect is called with a syntax error
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query syntax"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_ODBC_ERROR(ret, stmt);
 
   // Then the last query ID should be a valid UUID
   auto id = get_last_query_id(stmt);
@@ -130,7 +130,7 @@ TEST_CASE("should set last query ID after failed query referencing nonexistent t
 
   // When SQLExecDirect is called referencing a nonexistent table
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM non_existent_table_xyz_12345"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_ODBC_ERROR(ret, stmt);
 
   // Then the last query ID should be a valid UUID
   auto id = get_last_query_id(stmt);
@@ -146,11 +146,11 @@ TEST_CASE("should produce different last query IDs for successive failed queries
 
   // When two different invalid queries are executed sequentially
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query 1"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_ODBC_ERROR(ret, stmt);
   auto id1 = get_last_query_id(stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query 2"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_ODBC_ERROR(ret, stmt);
   auto id2 = get_last_query_id(stmt);
 
   // Then the last query IDs should differ
@@ -168,14 +168,14 @@ TEST_CASE("should update last query ID from successful to failed query", "[query
 
   // When a successful query is followed by a failed query
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
   auto id_success = get_last_query_id(stmt);
 
   ret = SQLCloseCursor(stmt.getHandle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_ODBC_ERROR(ret, stmt);
   auto id_fail = get_last_query_id(stmt);
 
   // Then the last query IDs should differ
