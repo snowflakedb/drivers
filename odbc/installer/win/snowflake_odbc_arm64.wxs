@@ -3,19 +3,19 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 	<Package
-		Name="Snowflake ODBC UD $(var.FullVersion) PrPr (x86)"
+		Name="Snowflake ODBC UD $(var.FullVersion) PrPr (arm64)"
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
-		UpgradeCode="C22845FB-6D0B-45A8-B914-CED965D221B1"
+		UpgradeCode="7F1F121C-929A-4F09-BD1A-3B32E090FB46"
 		InstallerVersion="405"
 		Scope="perMachine">
 
 		<SummaryInformation
-			Description="Snowflake ODBC UD $(var.FullVersion) Private Preview (32-bit)"
+			Description="Snowflake ODBC UD $(var.FullVersion) Private Preview (ARM64)"
 			Comments="Installs the Snowflake ODBC Driver (Private Preview) built on Universal Driver." />
 
-		<Media Id="1" Cabinet="odbc32.cab" EmbedCab="yes" />
+		<Media Id="1" Cabinet="odbc_arm64.cab" EmbedCab="yes" />
 		<MajorUpgrade AllowDowngrades="yes" />
 		<Property Id="REBOOT" Value="ReallySuppress" />
 
@@ -44,7 +44,7 @@
 		<Property Id="VCREDIST2015INSTALLED">
 			<RegistrySearch Id="VCREDIST2015SEARCH"
 				Root="HKLM"
-				Key="Software\Microsoft\VisualStudio\14.0\VC\Runtimes\x86"
+				Key="Software\Microsoft\VisualStudio\14.0\VC\Runtimes\arm64"
 				Name="Installed"
 				Type="raw" />
 		</Property>
@@ -56,7 +56,7 @@
 			Condition="NOT VCREDIST2015INSTALLED" />
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1"
 			Condition="NOT VCREDIST2015INSTALLED" />
-		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x86.exe" After="CostFinalize" Sequence="ui" />
+		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.arm64.exe" After="CostFinalize" Sequence="ui" />
 		<CustomAction Id="Install_vc_redist" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
 		<UI>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
@@ -78,7 +78,7 @@
 		<StandardDirectory Id="PersonalFolder">
 			<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
 				<Directory Id="LogDir" Name="log">
-					<Component Id="LogDir" Guid="CD48DCFD-56C5-4BAC-AE02-0635C488499E">
+					<Component Id="LogDir" Guid="D44B3812-31D7-4CDF-920B-BD4E1BE4426B">
 						<CreateFolder />
 						<RemoveFolder Id="LogDir" On="uninstall" />
 						<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
@@ -93,9 +93,9 @@
 		<!-- Files: driver DLL                                                 -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="BinDir">
-			<Component Id="sfodbc32.dll" Guid="E487E93A-284A-43C8-A6E9-AB54599C0C3A">
-				<File Id="sfodbc32.dll" KeyPath="yes"
-					Source="$(var.DriverBinDir)\sfodbc32.dll" />
+			<Component Id="sfodbc.dll" Guid="A7615A19-016B-4518-B3CE-540B7016803D" Permanent="no">
+			<File Id="sfodbc.dll" KeyPath="yes"
+					Source="$(var.DriverBinDir)\sfodbc.dll" />
 			</Component>
 		</DirectoryRef>
 
@@ -103,8 +103,8 @@
 		<!-- Files: public header                                              -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="IncludeDir">
-			<Component Id="sf_odbc.h" Guid="18554A74-79EC-4401-BCFE-06F3DD7EE19F">
-				<File Id="sf_odbc.h" KeyPath="yes"
+			<Component Id="sf_odbc.h" Guid="B82E93EF-4D19-4C7E-AB4F-644DB1F17AE9" Permanent="no">
+			<File Id="sf_odbc.h" KeyPath="yes"
 					Source="$(var.SourceDir)\odbc\include\sf_odbc.h" />
 			</Component>
 		</DirectoryRef>
@@ -113,16 +113,16 @@
 		<!-- Files: VC++ Redistributable                                       -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="RedistDir">
-			<Component Id="vc_redist.x86.exe" Guid="A412FAFC-E3C8-4FE9-9DC4-257C303098F2">
-			<File Id="vc_redist.x86.exe" KeyPath="yes"
-					Source="$(var.VCRedistDir)\vc_redist.x86.exe" />
+			<Component Id="vc_redist.arm64.exe" Guid="C2A38FD7-8E41-4094-8B34-B6D7C7705FC6" Permanent="no">
+			<File Id="vc_redist.arm64.exe" KeyPath="yes"
+					Source="$(var.VCRedistDir)\vc_redist.arm64.exe" />
 			</Component>
 		</DirectoryRef>
 
 		<!-- ================================================================ -->
 		<!-- ODBC driver registration                                          -->
 		<!-- ================================================================ -->
-		<Component Id="RegistryEntries" Directory="TARGETDIR" Guid="EFCE448E-AA82-4829-BBFD-2EE34F00B487">
+		<Component Id="RegistryEntries" Directory="TARGETDIR" Guid="BC3B84E0-0AE0-47C5-ADC2-7B3D6BE62D7F">
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
 				ForceCreateOnInstall="yes">
@@ -131,8 +131,8 @@
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\Snowflake ODBC UD"
 				ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
-				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc32.dll" KeyPath="yes" />
-				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc32.dll" />
+				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc.dll" KeyPath="yes" />
+				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc.dll" />
 				<RegistryValue Type="string" Name="Description" Value="Snowflake ODBC UD" />
 				<RegistryValue Type="string" Name="DriverODBCVer" Value="$(var.OdbcApiVer)" />
 				<RegistryValue Type="string" Name="CompanyName" Value="Snowflake Computing" />
@@ -148,14 +148,14 @@
 		<!-- Feature tree                                                       -->
 		<!-- ================================================================ -->
 		<Feature Id="MainApplication" Title="Snowflake ODBC UD" Level="1">
-			<ComponentRef Id="sfodbc32.dll" />
+			<ComponentRef Id="sfodbc.dll" />
 			<ComponentRef Id="sf_odbc.h" />
 			<ComponentRef Id="RegistryEntries" />
 			<ComponentRef Id="LogDir" />
 		</Feature>
 
 		<Feature Id="VCRedist" Title="Visual C++ Runtime" AllowAdvertise="yes" Display="expand" Level="1">
-			<ComponentRef Id="vc_redist.x86.exe" />
+			<ComponentRef Id="vc_redist.arm64.exe" />
 		</Feature>
 
 	</Package>
