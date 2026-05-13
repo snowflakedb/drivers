@@ -452,7 +452,11 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
                     errno=ER_INVALID_VALUE,
                 )
             # Client-side binding: interpolate parameters into SQL string
-            query = ClientSideBindingConverter.interpolate_query(operation, parameters)
+            query = ClientSideBindingConverter.interpolate_query(
+                operation,
+                parameters,
+                interpolate_empty_sequences=self._connection._interpolate_empty_sequences,
+            )
             return query, None
         else:
             # Server-side binding: qmark or numeric
