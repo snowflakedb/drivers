@@ -20,6 +20,7 @@ use super::validation::{
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
+use crate::config::heartbeat::HeartbeatConfig;
 use crate::config::logout::LogoutConfig;
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
@@ -269,6 +270,12 @@ impl DatabaseDriverV1 {
                     .map(|v| v.eq_ignore_ascii_case("true"))
                     .unwrap_or(false);
 
+                // User hint for heartbeat cadence. Clamp (see
+                // `compute_heartbeat_interval`) happens at spawn-time.
+                let heartbeat_config = HeartbeatConfig::from_settings(&resolved_snapshot)
+                    .context(ConfigurationSnafu)?;
+                let heartbeat_frequency = heartbeat_config.frequency;
+
                 {
                     let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
                         .context(ConfigurationSnafu)?;
@@ -357,6 +364,7 @@ impl DatabaseDriverV1 {
                                 .await
                                 .as_ref()
                                 .and_then(|t| t.master_valid_for()),
+                            heartbeat_frequency,
                         );
                         let handle = spawn_heartbeat_task(
                             conn.tokens.clone(),

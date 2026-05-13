@@ -1,5 +1,6 @@
 pub mod config_manager;
 pub mod connection_config;
+pub mod heartbeat;
 pub mod logout;
 pub mod param_registry;
 pub mod param_store;

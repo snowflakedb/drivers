@@ -13,7 +13,18 @@ use super::error::ApiError;
 use crate::config::rest_parameters::ClientInfo;
 use crate::rest::snowflake::{RestError, SessionTokens, heartbeat::send_heartbeat};
 
+/// Absolute ceiling on the heartbeat interval, regardless of master validity.
 const MAX_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// Absolute floor on the heartbeat interval. Guards against sub-second busy
+/// loops when `master_validity` is tiny (the window `[master/16, master/4]`
+/// can collapse to zero for validities below 16 s).
+const MIN_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Divisors that, together with `master_validity`, define the safe clamp
+/// window `[master/16, master/4]` — the window Python's connector uses.
+const MIN_INTERVAL_DIVISOR: u32 = 16;
+const MAX_INTERVAL_DIVISOR: u32 = 4;
 
 /// Handle to a per-connection heartbeat background task.
 ///
@@ -47,14 +58,27 @@ impl Drop for HeartbeatHandle {
     }
 }
 
-/// Compute the heartbeat interval from master token validity.
+/// Compute the heartbeat interval, honoring an optional user override and
+/// Python's `[master_validity / 16, master_validity / 4]` clamp.
 ///
-/// Returns `master_validity / 4`, capped at 3600s.
-/// Falls back to 3600s if `master_validity` is `None`.
-pub fn compute_heartbeat_interval(master_validity: Option<Duration>) -> Duration {
-    master_validity
-        .map(|v| (v / 4).min(MAX_HEARTBEAT_INTERVAL))
-        .unwrap_or(MAX_HEARTBEAT_INTERVAL)
+/// When `user_frequency` is set, it is clamped into the window so values the
+/// server would consider too aggressive or too slack become the nearest safe
+/// cadence. When it is not set, the default is `master_validity / 4`.
+/// The result is always in `[MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL]`.
+/// Falls back to `MAX_HEARTBEAT_INTERVAL` when master validity is unknown.
+pub(crate) fn compute_heartbeat_interval(
+    master_validity: Option<Duration>,
+    user_frequency: Option<Duration>,
+) -> Duration {
+    let interval = match master_validity {
+        None => user_frequency.unwrap_or(MAX_HEARTBEAT_INTERVAL),
+        Some(master) => {
+            let floor = master / MIN_INTERVAL_DIVISOR;
+            let ceiling = master / MAX_INTERVAL_DIVISOR;
+            user_frequency.unwrap_or(ceiling).clamp(floor, ceiling)
+        }
+    };
+    interval.clamp(MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL)
 }
 
 /// Spawn a per-connection heartbeat background task.
@@ -185,25 +209,72 @@ mod tests {
 
     #[test]
     fn compute_interval_default() {
-        let interval = compute_heartbeat_interval(None);
+        // No master validity, no user override → absolute ceiling.
+        let interval = compute_heartbeat_interval(None, None);
         assert_eq!(interval, Duration::from_secs(3600));
     }
 
     #[test]
     fn compute_interval_from_validity() {
-        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)));
+        // 4h master → master/4 = 3600s, exactly the ceiling.
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)), None);
         assert_eq!(interval, Duration::from_secs(3600));
     }
 
     #[test]
-    fn compute_interval_no_bottom_clamp() {
-        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100)));
+    fn compute_interval_no_bottom_clamp_without_master_override() {
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100)), None);
+        // master/4 with master=100s → 25s, below the absolute ceiling.
         assert_eq!(interval, Duration::from_secs(25));
     }
 
     #[test]
     fn compute_interval_clamp_max() {
-        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100_000)));
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100_000)), None);
+        assert_eq!(interval, MAX_HEARTBEAT_INTERVAL);
+    }
+
+    #[test]
+    fn user_frequency_within_window_passes_through() {
+        // Master=14400s → window [900, 3600]. 1800s is within.
+        let interval = compute_heartbeat_interval(
+            Some(Duration::from_secs(14400)),
+            Some(Duration::from_secs(1800)),
+        );
+        assert_eq!(interval, Duration::from_secs(1800));
+    }
+
+    #[test]
+    fn user_frequency_below_floor_is_clamped_up() {
+        // Master=14400s → floor=900s. 60s user hint clamps up.
+        let interval = compute_heartbeat_interval(
+            Some(Duration::from_secs(14400)),
+            Some(Duration::from_secs(60)),
+        );
+        assert_eq!(interval, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn user_frequency_above_ceiling_is_clamped_down() {
+        // Master=14400s → ceiling=3600s. 7200s user hint clamps down.
+        let interval = compute_heartbeat_interval(
+            Some(Duration::from_secs(14400)),
+            Some(Duration::from_secs(7200)),
+        );
+        assert_eq!(interval, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn tiny_master_validity_is_pinned_to_absolute_floor() {
+        // With master=4s, master/16 and master/4 both round down to sub-second
+        // Durations — the absolute floor prevents a busy loop.
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(4)), None);
+        assert_eq!(interval, MIN_HEARTBEAT_INTERVAL);
+    }
+
+    #[test]
+    fn user_frequency_without_master_still_capped_by_absolute_ceiling() {
+        let interval = compute_heartbeat_interval(None, Some(Duration::from_secs(10_000)));
         assert_eq!(interval, MAX_HEARTBEAT_INTERVAL);
     }
 

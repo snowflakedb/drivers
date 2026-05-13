@@ -47,6 +47,9 @@ class ConnectionConfig:
     client_app_id: str | None = None
     """Application identifier sent by the client wrapper (e.g. PythonConnector)"""
 
+    client_session_keep_alive_heartbeat_frequency: int | None = None
+    """Heartbeat interval in seconds; clamped to [master_validity/16, master_validity/4]"""
+
     client_store_temporary_credential: bool | None = False
     """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""
 
@@ -285,6 +288,7 @@ class ConnectionConfig:
             "client_app_id",
             "client_memory_limit",
             "client_prefetch_threads",
+            "client_session_keep_alive_heartbeat_frequency",
             "client_store_temporary_credential",
             "connection_name",
             "connections_file_path",

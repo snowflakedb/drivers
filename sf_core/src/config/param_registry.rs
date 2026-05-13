@@ -93,6 +93,9 @@ pub mod param_names {
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
     pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
         ParamKey("enable_server_session_keep_alive_auto_detection");
+    // Client-driven heartbeat interval hint; clamped to [master/16, master/4].
+    pub const CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY: ParamKey =
+        ParamKey("client_session_keep_alive_heartbeat_frequency");
     pub const LOGOUT_ERROR_STRATEGY: ParamKey = ParamKey("logout_error_strategy");
     pub const LOGOUT_TOTAL_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_total_timeout_seconds");
     pub const LOGOUT_MAX_ATTEMPTS: ParamKey = ParamKey("logout_max_attempts");
@@ -740,6 +743,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: None,
         sensitive: false,
         description: "Enable auto-detection of async queries before logout (SNOW-2314152)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Heartbeat interval in seconds; clamped to [master_validity/16, master_validity/4]",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,
