@@ -110,17 +110,7 @@ runs:
             Write-Host "Staged $($nupkg.Name) -> $destDir"
         }
 
-        # Diagnostic only. Intentionally NOT using `wix extension list --global`
-        # here: when this composite is invoked from another composite/reusable-
-        # workflow context, a non-zero exit from that wix subcommand becomes a
-        # terminating error under pwsh 7.4+'s default
-        # $PSNativeCommandUseErrorActionPreference=$true combined with the
-        # $ErrorActionPreference='Stop' we set above — so a transient or
-        # context-specific glitch in the wix CLI would fail the whole step even
-        # though we only want to log what's staged. Listing the filesystem cache
-        # directly is pure PowerShell, can't fail the step, and produces output
-        # identical in shape ("<package> <version>") to what wix prints.
-        Write-Host "`nStaged WiX extensions under $extensionsRoot:"
+        Write-Host "`nStaged WiX extensions under ${extensionsRoot}:"
         Get-ChildItem -Path $extensionsRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
             $pkgId = $_.Name
             Get-ChildItem -Path $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
