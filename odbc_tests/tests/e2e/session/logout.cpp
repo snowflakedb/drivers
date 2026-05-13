@@ -25,11 +25,9 @@ static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env
 }
 
 TEST_CASE("should be idempotent when close called multiple times", "[session][logout]") {
-  SKIP_OLD_DRIVER("BD#000", "Old driver does not support WireMock-based logout testing");
-
   // Given Snowflake client is logged in
   WiremockClient wm;
-  wm.add_mapping_file("auth/login_success_jwt.json");
+  wm.add_mapping_file("auth/login_success_any.json");
   wm.add_mapping_file("session/logout_success.json");
 
   auto env = Connection::initEnv();
@@ -56,11 +54,11 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
 }
 
 TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
-  SKIP_OLD_DRIVER("BD#000", "Old driver does not support WireMock-based logout testing");
+  SKIP_OLD_DRIVER("BD#000", "Old driver segfaults on concurrent SQLDisconnect (no thread-safety guard)");
 
   // Given Snowflake client is logged in
   WiremockClient wm;
-  wm.add_mapping_file("auth/login_success_jwt.json");
+  wm.add_mapping_file("auth/login_success_any.json");
   wm.add_mapping_file("session/logout_success.json");
 
   auto env = Connection::initEnv();

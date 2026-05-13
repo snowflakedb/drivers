@@ -65,6 +65,28 @@ class WiremockClient {
     }
   }
 
+  void add_catch_all() {
+    auto tmp = std::filesystem::temp_directory_path() / "wm_catch_all.json";
+    {
+      std::ofstream f(tmp);
+      f << R"({
+        "request": {"method": "ANY", "urlPattern": ".*"},
+        "response": {
+          "status": 200,
+          "headers": {"Content-Type": "application/json"},
+          "jsonBody": {"success": true, "data": {}}
+        },
+        "priority": 999
+      })";
+    }
+    std::string cmd = "curl -s -X POST " + admin_url("/__admin/mappings") +
+                      " -H \"Content-Type: application/json\""
+                      " --data-binary \"@" +
+                      tmp.string() + "\"" + null_redirect();
+    std::system(cmd.c_str());
+    std::filesystem::remove(tmp);
+  }
+
   int get_request_count(const std::string& method, const std::string& url_path) const {
     std::string body = R"({"method":")" + method + R"(","urlPath":")" + url_path + R"("})";
 
@@ -181,7 +203,6 @@ class WiremockClient {
       throw std::runtime_error("WireMock JAR not found at: " + jar.string());
     }
 
-    auto root_dir = wiremock_root_dir();
     std::string port_str = std::to_string(port_);
 
 #ifdef _WIN32
@@ -193,8 +214,12 @@ class WiremockClient {
       SetInformationJobObject(job_handle_, JobObjectExtendedLimitInformation, &job_info, sizeof(job_info));
     }
 
-    std::string cmd_line = "java -jar \"" + jar.string() + "\" --root-dir \"" + root_dir.string() + "\" --port " +
-                           port_str + " --proxy-pass-through false";
+    auto empty_root = std::filesystem::temp_directory_path() / ("wm_root_" + port_str);
+    std::filesystem::create_directories(empty_root / "mappings");
+    std::filesystem::create_directories(empty_root / "__files");
+
+    std::string cmd_line = "java -jar \"" + jar.string() + "\" --root-dir \"" + empty_root.string() + "\" --port " +
+                           port_str + " --proxy-pass-through false --disable-gzip";
 
     STARTUPINFOA si{};
     si.cb = sizeof(si);
@@ -230,8 +255,11 @@ class WiremockClient {
         dup2(dev_null, STDERR_FILENO);
         close(dev_null);
       }
-      execlp("java", "java", "-jar", jar.string().c_str(), "--root-dir", root_dir.string().c_str(), "--port",
-             port_str.c_str(), "--proxy-pass-through", "false", static_cast<char*>(nullptr));
+      auto empty_root = std::filesystem::temp_directory_path() / ("wm_root_" + port_str);
+      std::filesystem::create_directories(empty_root / "mappings");
+      std::filesystem::create_directories(empty_root / "__files");
+      execlp("java", "java", "-jar", jar.string().c_str(), "--root-dir", empty_root.string().c_str(), "--port",
+             port_str.c_str(), "--proxy-pass-through", "false", "--disable-gzip", static_cast<char*>(nullptr));
       _exit(1);
     }
 #endif
@@ -299,15 +327,6 @@ class WiremockClient {
 
 /// Build an ODBC connection string pointing to a running WireMock instance.
 inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
-  auto key_path = test_utils::repo_root() / "tests" / "test_data" / "invalid_rsa_key.p8";
-  std::ifstream key_file(key_path);
-  if (!key_file) {
-    throw std::runtime_error("Test private key not found at: " + key_path.string());
-  }
-  std::ostringstream key_ss;
-  key_ss << key_file.rdbuf();
-  std::string key_pem = key_ss.str();
-
   const char* driver_path_env = std::getenv("DRIVER_PATH");
   if (driver_path_env == nullptr || driver_path_env[0] == '\0') {
     throw std::runtime_error("DRIVER_PATH not set — cannot locate ODBC driver library");
@@ -318,9 +337,9 @@ inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
   ss << "PORT=" << wm.port() << ";";
   ss << "ACCOUNT=testaccount;";
   ss << "UID=testuser;";
-  ss << "PROTOCOL=http;";
-  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
-  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(key_pem) << ";";
+  ss << "PWD=testpass;";
+  ss << "SSL=off;";
+  ss << "DisableOCSPCheck=true;";
   return ss.str();
 }
 
