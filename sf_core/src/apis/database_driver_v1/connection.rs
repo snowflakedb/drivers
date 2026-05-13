@@ -562,25 +562,24 @@ impl DatabaseDriverV1 {
 
     pub fn connection_new(&self) -> Handle {
         let mut conn = Connection::new();
-        // Seed process-wide defaults parsed from `sf.odbc.ini` / `[log]` TOML
-        // so they apply when no DSN / connection-string value is provided.
-        // Explicit per-connection settings still win because they are
-        // inserted unconditionally on top of the seed.
+        self.seed_log_defaults_into(&mut conn.connection_seed);
+        self.connections.add_handle(Mutex::new(conn))
+    }
+
+    /// Seed process-wide defaults sourced from the `LogManager`
+    /// (parsed from `sf.odbc.ini` / `[log]` TOML). Explicit per-connection
+    /// settings still win because they are inserted unconditionally on top.
+    fn seed_log_defaults_into(&self, seed: &mut ParamStore) {
         if let Some(v) = self.log_query_text() {
-            inject_bool_if_absent(
-                &mut conn.connection_seed,
-                crate::config::param_registry::param_names::LOG_QUERY_TEXT.as_str(),
-                v,
-            );
+            inject_if_absent(seed, param_names::LOG_QUERY_TEXT.as_str(), Setting::Bool(v));
         }
         if let Some(v) = self.log_query_parameters() {
-            inject_bool_if_absent(
-                &mut conn.connection_seed,
-                crate::config::param_registry::param_names::LOG_QUERY_PARAMETERS.as_str(),
-                v,
+            inject_if_absent(
+                seed,
+                param_names::LOG_QUERY_PARAMETERS.as_str(),
+                Setting::Bool(v),
             );
         }
-        self.connections.add_handle(Mutex::new(conn))
     }
 
     pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
@@ -621,25 +620,29 @@ impl DatabaseDriverV1 {
                 inject_if_absent(
                     &mut conn.connection_seed,
                     "client_app_id",
-                    &identity.driver_name,
+                    Setting::String(identity.driver_name.clone()),
                 );
                 inject_if_absent(
                     &mut conn.connection_seed,
                     "client_app_version",
-                    &identity.driver_version,
+                    Setting::String(identity.driver_version.clone()),
                 );
                 inject_if_absent(
                     &mut conn.connection_seed,
                     "client_runtime_name",
-                    &identity.language_runtime,
+                    Setting::String(identity.language_runtime.clone()),
                 );
                 inject_if_absent(
                     &mut conn.connection_seed,
                     "client_runtime_version",
-                    &identity.language_version,
+                    Setting::String(identity.language_version.clone()),
                 );
-                if let Some(ref compiler) = identity.language_compiler {
-                    inject_if_absent(&mut conn.connection_seed, "client_compiler", compiler);
+                if let Some(compiler) = identity.language_compiler.clone() {
+                    inject_if_absent(
+                        &mut conn.connection_seed,
+                        "client_compiler",
+                        Setting::String(compiler),
+                    );
                 }
 
                 conn.wrapper_identity = Some(identity);
@@ -670,21 +673,27 @@ impl DatabaseDriverV1 {
     }
 }
 
-/// Insert a trimmed string value into the seed only when the key is absent
-/// and the value is non-empty after trimming.
-fn inject_if_absent(seed: &mut ParamStore, key: &str, value: &str) {
-    let trimmed = value.trim();
-    if seed.get_any(key).is_none() && !trimmed.is_empty() {
-        seed.insert(key.to_owned(), Setting::String(trimmed.to_owned()));
-    }
-}
-
-/// `Setting::Bool` variant of [`inject_if_absent`]. Used to seed process-wide
-/// boolean defaults (e.g. `log_query_text` from `sf.odbc.ini`) without
-/// overriding an explicit DSN / connection-string value.
-fn inject_bool_if_absent(seed: &mut ParamStore, key: &str, value: bool) {
+/// Insert a value into the seed only when the key is absent. For
+/// `Setting::String`, the value is trimmed first and skipped when empty;
+/// other variants are inserted as-is. Used both for wrapper-identity seeding
+/// and for process-wide defaults parsed from `sf.odbc.ini` / `[log]` TOML.
+fn inject_if_absent(seed: &mut ParamStore, key: &str, value: Setting) {
+    let value = match value {
+        Setting::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return;
+            }
+            if trimmed.len() == s.len() {
+                Setting::String(s)
+            } else {
+                Setting::String(trimmed.to_owned())
+            }
+        }
+        other => other,
+    };
     if seed.get_any(key).is_none() {
-        seed.insert(key.to_owned(), Setting::Bool(value));
+        seed.insert(key.to_owned(), value);
     }
 }
 

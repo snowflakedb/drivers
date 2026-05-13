@@ -86,7 +86,7 @@ impl LogManager {
     /// without re-installing a tracing subscriber. Test-only ergonomics: lets
     /// integration tests build a `LogManager` via [`Self::with_none_subscriber`]
     /// and still simulate values parsed from `sf.odbc.ini`.
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn with_query_log_defaults(
         mut self,
         log_query_text: Option<bool>,
