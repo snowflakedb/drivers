@@ -30,6 +30,7 @@ export function getTestParameter(key: string): string | undefined {
 }
 
 export function getSnowflakeSDK() {
+  // SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER
   if (process.env.SNOWFLAKE_NODEJS_USE_OLD_DRIVER) {
     return oldSnowflakeSDK;
   } else {
