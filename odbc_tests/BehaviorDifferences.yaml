@@ -236,7 +236,7 @@ behavior_differences:
 
   17:
     name: "On Windows, PUT source column returns filename only instead of full absolute path"
-    status: unknown
+    status: fixed
     type: bug
     reviewed: false
     old_driver_behavior: |

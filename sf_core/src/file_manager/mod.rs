@@ -161,6 +161,27 @@ fn upload_result_message(status: UploadStatus, flavor: &PutGetResultsetFlavor) -
     }
 }
 
+/// Returns the `source` column value for a completed upload, gated on the
+/// active wrapper flavor and host platform. Legacy driver provides full path
+/// verbatim on Windows, the `Odbc` flavor restores that behaviour; every other
+/// combination keeps the `Path::file_name()` basename that UD-Python has always
+/// reported.
+///
+/// `is_windows` is parameterized rather than read from `cfg!(windows)`
+/// inside the helper so the unit tests can exercise both branches on
+/// any host.
+fn upload_result_source<'a>(
+    file_path: &'a str,
+    filename: &'a str,
+    flavor: &PutGetResultsetFlavor,
+    is_windows: bool,
+) -> &'a str {
+    match (is_windows, flavor) {
+        (true, PutGetResultsetFlavor::Odbc) => file_path,
+        _ => filename,
+    }
+}
+
 /// Sets file metadata, compresses the file if needed, and optionally encrypts the data.
 /// For SSE stages (no encryption material), the data is uploaded without client-side encryption.
 fn preprocess_file_before_upload(
@@ -177,7 +198,13 @@ fn preprocess_file_before_upload(
     )
     .context(CompressionTypeSnafu)?;
 
-    let source = data.filename.clone();
+    let source = upload_result_source(
+        data.file_path.as_str(),
+        data.filename.as_str(),
+        &data.flavor,
+        cfg!(windows),
+    )
+    .to_string();
     let mut target = data.filename.clone();
 
     let target_compression = if data.auto_compress && source_compression == CompressionType::None {
@@ -506,6 +533,65 @@ mod tests {
             ODBC_PUT_MESSAGE_SKIPPED,
             "File with same name already exists. SKIPPED",
         );
+    }
+
+    // BD#17 — `upload_result_source` must return the full source path
+    // verbatim under `Odbc` on Windows (replicating the legacy
+    // libsnowflakeclient `PATH_SEP=='/'` bug) and the basename
+    // everywhere else (matching the historical UD-Python behaviour).
+    const WINDOWS_FULL_PATH: &str = r"C:\Users\test\test_data.csv";
+    const WINDOWS_FULL_PATH_FORWARD_SLASH: &str = "C:/Users/test/test_data.csv";
+    const UNIX_FULL_PATH: &str = "/home/test/test_data.csv";
+    const BASENAME: &str = "test_data.csv";
+
+    #[test]
+    fn upload_result_source_windows_odbc_returns_full_path_verbatim() {
+        for full_path in [WINDOWS_FULL_PATH, WINDOWS_FULL_PATH_FORWARD_SLASH] {
+            assert_eq!(
+                upload_result_source(full_path, BASENAME, &PutGetResultsetFlavor::Odbc, true),
+                full_path,
+                "Odbc on Windows must emit `{full_path}` as-is",
+            );
+        }
+    }
+
+    #[test]
+    fn upload_result_source_windows_python_returns_basename() {
+        for full_path in [WINDOWS_FULL_PATH, WINDOWS_FULL_PATH_FORWARD_SLASH] {
+            assert_eq!(
+                upload_result_source(full_path, BASENAME, &PutGetResultsetFlavor::Python, true),
+                BASENAME,
+                "Python on Windows must continue stripping directories from `{full_path}`",
+            );
+        }
+    }
+
+    #[test]
+    fn upload_result_source_non_windows_returns_basename_for_both_flavors() {
+        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+            assert_eq!(
+                upload_result_source(UNIX_FULL_PATH, BASENAME, &flavor, false),
+                BASENAME,
+                "{flavor:?} on non-Windows must always return the basename — \
+                 legacy ODBC's `find_last_of('/')` worked correctly on Unix paths",
+            );
+        }
+    }
+
+    #[test]
+    fn upload_result_source_basename_only_input_unchanged_for_all_combinations() {
+        // When `file_path` already equals the basename (e.g. the user
+        // passed a relative single-segment path) the two branches must
+        // collapse to the same value regardless of host or flavor.
+        for is_windows in [false, true] {
+            for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+                assert_eq!(
+                    upload_result_source(BASENAME, BASENAME, &flavor, is_windows),
+                    BASENAME,
+                    "is_windows={is_windows}, flavor={flavor:?} must return {BASENAME}",
+                );
+            }
+        }
     }
 
     // BD#4 — `download_single_file` must report the on-cloud
