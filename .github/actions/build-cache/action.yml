@@ -43,11 +43,6 @@ outputs:
 runs:
   using: composite
   steps:
-    # ── Restore ───────────────────────────────────────────────────────
-    # continue-on-error on every restore: cache restore is a CI optimisation,
-    # not a correctness requirement. Network blips, cache-service errors, or
-    # extract failures should not fail the job — the build still runs from
-    # scratch. Matches the policy already established in cargo-cache.
     - name: Restore test-deps cache
       id: r-test-deps
       if: inputs.mode == 'restore' && inputs.kind == 'test-deps'
@@ -105,12 +100,9 @@ runs:
         restore-keys: |
           macos-brew-odbc-tests-
 
-    # ── Save ──────────────────────────────────────────────────────────
-    # continue-on-error on saves: cache save is best-effort (transient cache-
-    # service errors, ENOSPC, reservation races). ZSTD_NBTHREADS=2 defends
-    # against tar+zstdmt hangs (see cargo-cache action for full rationale).
-    # timeout-minutes is intentionally NOT set here — GHA disallows it on
-    # composite steps; callers wrap the `uses:` step with `timeout-minutes`.
+    # ZSTD_NBTHREADS=2 defends against tar+zstdmt hangs.
+    # timeout-minutes is intentionally NOT set here.
+    # GHA disallows it on composite steps; callers wrap the `uses:` step with `timeout-minutes`.
     - name: Save test-deps cache
       if: inputs.mode == 'save' && inputs.kind == 'test-deps' && inputs.cache-hit != 'true'
       continue-on-error: true
