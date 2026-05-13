@@ -19,8 +19,6 @@ def is_valid(c):
         if c["Arch"] == "x64": return False
         if c["Arch"] == "x86": return False
 
-    # Windows ARM64 is built on the windows-11-arm runner; no exclusion needed.
-
     return True
 
 
