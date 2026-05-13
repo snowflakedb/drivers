@@ -25,6 +25,9 @@ static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env
 }
 
 TEST_CASE("should be idempotent when close called multiple times", "[session][logout]") {
+#ifdef _WIN32
+  SKIP("WireMock tests not yet validated on Windows");
+#endif
   // Given Snowflake client is logged in
   WiremockClient wm;
   wm.add_mapping_file("auth/login_success_any.json");
@@ -54,6 +57,9 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
 }
 
 TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
+#ifdef _WIN32
+  SKIP("WireMock tests not yet validated on Windows");
+#endif
   SKIP_OLD_DRIVER("BD#000", "Old driver segfaults on concurrent SQLDisconnect (no thread-safety guard)");
 
   // Given Snowflake client is logged in
