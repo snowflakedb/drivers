@@ -14,9 +14,12 @@ Subcommands
     Pick a random reviewer from the candidates listed in
     ``.github/CODEOWNERS`` (or another path via ``CODEOWNERS_PATH``),
     excluding the PR author and any user already requested for review.
-    Calls ``gh pr edit --add-reviewer X --add-assignee X``. Then writes a
-    Slack payload describing the assignment to ``$SLACK_PAYLOAD_FILE`` so
-    the next workflow step can post it via
+    Requests review and adds the user as an assignee via the REST
+    endpoints ``POST /pulls/:n/requested_reviewers`` and
+    ``POST /issues/:n/assignees`` (we avoid ``gh pr edit`` because its
+    GraphQL mutation fails on the deprecated ``projectCards`` field).
+    Then writes a Slack payload describing the assignment to
+    ``$SLACK_PAYLOAD_FILE`` so the next workflow step can post it via
     ``slackapi/slack-github-action``.
 
     Designed to be run from a ``pull_request_target`` workflow on the
@@ -55,6 +58,20 @@ Required environment variables
     script decides there is nothing to post, the file is not created and
     the step output ``skip=true`` is set.
 
+``SLACK_BOT_TOKEN`` (optional but recommended)
+    Slack bot token (``xoxb-...``) with the ``users:read.email`` scope.
+    When set, the bot calls ``users.lookupByEmail`` once per *distinct*
+    reviewer per run to translate their git commit email into a Slack
+    user ID, emitting ``<@U…>`` so Slack renders a real DM-notifying
+    mention. The bot deliberately does *not* call ``users.list`` — a
+    per-reviewer lookup fetches one user's profile at a time instead
+    of leaking the whole workspace onto a public runner.
+
+    If the token is not provided or the lookup fails for a given
+    reviewer (e.g. they commit with a noreply email or aren't in the
+    workspace), the message falls back to plain ``@handle`` text
+    derived from their commit author name.
+
 Assign-only environment variables
 ---------------------------------
 ``PR_NUMBER``
@@ -66,17 +83,26 @@ Assign-only environment variables
 
 Reviewer display names
 ----------------------
-The Slack message tags each reviewer as ``@<handle>`` where ``<handle>``
-is the git ``commit.author.name`` of their most recent commit in this
-repo, lowercased and dot-separated to match the typical corporate Slack
-handle convention (e.g. ``Maxymilian Kowalski`` from
-``Author: Maxymilian Kowalski <…@snowflake.com>`` becomes
-``@maxymilian.kowalski``). Unicode characters are folded to ASCII so
-diacritics don't break the handle. When the user has no commits in the
-repo, the message falls back to ``@<github-login>``. The
-``chat.postMessage`` payload sets ``link_names: true`` so Slack
-auto-converts any ``@handle`` that matches a workspace member to a real
-mention; otherwise the prefixed handle renders as plain text.
+For each reviewer the bot:
+
+1. Fetches their most recent commit in this repo to get both the git
+   ``commit.author.name`` (e.g. ``Maxymilian Kowalski``) and the
+   ``commit.author.email`` (e.g. ``maxymilian.kowalski@snowflake.com``).
+2. If ``SLACK_BOT_TOKEN`` is configured, calls ``users.lookupByEmail``
+   with the email and emits ``<@U…>`` on a successful match — this is
+   what triggers the DM notification.
+3. Otherwise, derives a dot-separated lowercase handle from the commit
+   author name (``Maxymilian Kowalski`` -> ``@maxymilian.kowalski``),
+   with Unicode characters folded to ASCII so diacritics don't break
+   the handle. Plain ``@handle`` text does *not* auto-resolve in Slack
+   (``link_names`` only handles user groups), so this is purely
+   informational — the reviewer is still notified by GitHub via the
+   ``review_requested`` API call.
+4. As a last resort, falls back to ``@<github-login>`` when the user
+   has no commits in the repo.
+
+Email is used only as a lookup key for the Slack ID. It is never
+written into any user-visible message.
 """
 
 from __future__ import annotations
@@ -142,17 +168,34 @@ def gh_api_json(path: str, *, paginate: bool = False) -> Any:
 
 
 def gh_pr_assign(repo: str, pr_number: int, login: str) -> None:
-    """``gh pr edit`` to add *login* as both reviewer and assignee."""
+    """Request review and add assignee on a PR via REST endpoints.
+
+    We deliberately avoid ``gh pr edit`` here: its underlying GraphQL
+    mutation reads the now-deprecated ``projectCards`` field, which
+    causes the call to fail with::
+
+        GraphQL: Projects (classic) is being deprecated ...
+        (repository.pullRequest.projectCards)
+
+    on any repo that has migrated to the new Projects experience — even
+    when the edit has nothing to do with projects. The REST endpoints
+    used below don't go through that mutation and are unaffected.
+    """
     _gh(
-        "pr",
-        "edit",
-        str(pr_number),
-        "--repo",
-        repo,
-        "--add-reviewer",
-        login,
-        "--add-assignee",
-        login,
+        "api",
+        "--method",
+        "POST",
+        f"/repos/{repo}/pulls/{pr_number}/requested_reviewers",
+        "-f",
+        f"reviewers[]={login}",
+    )
+    _gh(
+        "api",
+        "--method",
+        "POST",
+        f"/repos/{repo}/issues/{pr_number}/assignees",
+        "-f",
+        f"assignees[]={login}",
     )
 
 
@@ -218,25 +261,31 @@ def first_review_request_time(repo: str, pr_number: int) -> datetime | None:
     return earliest
 
 
-def github_commit_author_name(repo: str, login: str) -> str | None:
-    """Return the git ``commit.author.name`` of the user's most recent
-    commit in *repo*, or ``None`` if they have no commits there.
+def github_commit_author(repo: str, login: str) -> tuple[str | None, str | None]:
+    """Return ``(name, email)`` from the user's most recent commit in *repo*.
 
-    This is the "Name" portion of ``Author: Maxymilian Kowalski
-    <…@snowflake.com>``; the email is deliberately not used.
+    Both fields come from the git ``Author: Name <email>`` line of the
+    user's most recent commit in this repo. ``(None, None)`` is returned
+    when the user has no commits here or the API request fails.
+
+    The email is used internally to resolve the user to a Slack ID via
+    ``users.lookupByEmail`` (see :func:`slack_lookup_by_email`); it is
+    never rendered into messages — the display name comes from the
+    ``name`` field.
     """
     try:
         data = gh_api_json(
             f"/repos/{repo}/commits?author={login}&per_page=1"
         )
     except RuntimeError:
-        return None
+        return (None, None)
     if not isinstance(data, list) or not data:
-        return None
+        return (None, None)
     commit = (data[0] or {}).get("commit") or {}
     author = commit.get("author") or {}
-    name = (author.get("name") or "").strip()
-    return name or None
+    name = (author.get("name") or "").strip() or None
+    email = (author.get("email") or "").strip() or None
+    return (name, email)
 
 
 # ---------------------------------------------------------------------------
@@ -336,22 +385,129 @@ def name_to_handle(display: str) -> str:
     return ".".join(parts)
 
 
+# Emails that will never resolve in Slack — skip the network call.
+_NORESOLVE_EMAIL_SUFFIXES = (
+    "@users.noreply.github.com",
+    "@noreply.github.com",
+)
+
+
+def slack_lookup_by_email(email: str, token: str) -> str | None:
+    """Return the Slack user ID for *email* via ``users.lookupByEmail``.
+
+    Used to translate a reviewer's git commit email to their Slack ID
+    so we can emit a real ``<@U…>`` mention. We deliberately do *not*
+    call ``users.list`` — fetching every workspace member onto a public
+    runner just to identify 1–3 reviewers would be both wasteful and a
+    PII exposure issue.
+
+    Returns ``None`` on any failure (missing token, network error,
+    ``users_not_found``, etc.) so the caller can fall back to plain
+    ``@handle`` text. ``users_not_found`` is logged at INFO since it is
+    the expected outcome for noreply / external committers; other Slack
+    errors are logged at WARNING so misconfiguration (e.g. missing
+    ``users:read.email`` scope) is visible.
+
+    The Slack endpoint is invoked via ``curl`` (always present on the
+    GitHub Actions runner) to stay consistent with our subprocess-based
+    ``gh`` usage; no extra Python HTTP client is introduced.
+    """
+    if not email or not token:
+        return None
+    lowered = email.lower()
+    if any(lowered.endswith(suffix) for suffix in _NORESOLVE_EMAIL_SUFFIXES):
+        log.info("Skipping Slack lookup for noreply email %s.", email)
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--max-time",
+                "10",
+                "-G",
+                "https://slack.com/api/users.lookupByEmail",
+                "--data-urlencode",
+                f"email={email}",
+                "-H",
+                f"Authorization: Bearer {token}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        log.warning("curl not available, cannot resolve %s: %s", email, e)
+        return None
+
+    if result.returncode != 0:
+        log.warning(
+            "users.lookupByEmail curl failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return None
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        log.warning(
+            "users.lookupByEmail returned non-JSON for %s: %r",
+            email,
+            result.stdout[:200],
+        )
+        return None
+
+    if not data.get("ok"):
+        err = data.get("error", "unknown")
+        if err == "users_not_found":
+            log.info(
+                "No Slack workspace member with email %s; will render as "
+                "plain @handle text.",
+                email,
+            )
+        else:
+            log.warning(
+                "users.lookupByEmail error for %s: %s (check the "
+                "users:read.email scope on SLACK_BOT_TOKEN).",
+                email,
+                err,
+            )
+        return None
+
+    return ((data.get("user") or {}).get("id")) or None
+
+
 class ReviewerDisplay:
-    """Cache GitHub login -> ``@<handle>`` Slack mention string.
+    """Cache GitHub login -> Slack mention string.
 
-    Display name is taken from ``commit.author.name`` of the user's most
-    recent commit in the repo (the ``Name`` portion of
-    ``Author: Maxymilian Kowalski <…@snowflake.com>``), normalised to a
-    dot-separated lowercase handle (``maxymilian.kowalski``), and
-    prefixed with ``@`` so Slack's ``link_names`` feature can auto-convert
-    it to a real mention when the handle matches a workspace member.
+    Resolution order, per reviewer:
 
-    If the user has no commits in the repo (or the name normalises to an
-    empty handle), falls back to ``@<github-login>``.
+    1. Fetch the user's most recent commit in this repo to get their
+       ``commit.author.name`` and ``commit.author.email``.
+    2. If a Slack bot token is configured, call ``users.lookupByEmail``
+       with that email. On a match, return ``<@U…>`` so Slack renders a
+       real mention and DM-notifies the reviewer.
+    3. Otherwise (no token, no email, lookup failed, or
+       ``users_not_found``), fall back to ``@<handle>`` derived from the
+       commit author name (``Maxymilian Kowalski`` ->
+       ``@maxymilian.kowalski``).
+    4. If we have no commit author name either, fall back to
+       ``@<github-login>``.
+
+    Steps (2) is best-effort and only touches Slack once per *distinct*
+    reviewer per run (results are cached). The bot does not call
+    ``users.list``.
     """
 
-    def __init__(self, repo: str | None) -> None:
+    def __init__(
+        self,
+        repo: str | None,
+        slack_token: str | None = None,
+    ) -> None:
         self._repo = repo
+        self._slack_token = slack_token
         self._cache: dict[str, str] = {}
 
     def name(self, login: str) -> str:
@@ -360,27 +516,37 @@ class ReviewerDisplay:
         if login in self._cache:
             return self._cache[login]
 
-        display: str | None = None
+        commit_name: str | None = None
+        commit_email: str | None = None
         if self._repo:
-            display = github_commit_author_name(self._repo, login)
+            commit_name, commit_email = github_commit_author(self._repo, login)
 
-        handle: str | None = None
-        if display:
-            handle = name_to_handle(display)
+        if commit_email and self._slack_token:
+            slack_uid = slack_lookup_by_email(commit_email, self._slack_token)
+            if slack_uid:
+                mention = f"<@{slack_uid}>"
+                log.info(
+                    "Resolved %s -> <@%s> via users.lookupByEmail (%s).",
+                    login,
+                    slack_uid,
+                    commit_email,
+                )
+                self._cache[login] = mention
+                return mention
 
+        handle = name_to_handle(commit_name) if commit_name else None
         if handle:
             mention = f"@{handle}"
             log.info(
-                "Display handle for %s -> %r (from commit author %r)",
+                "No Slack lookup match for %s; using @%s (from commit author %r).",
                 login,
-                mention,
-                display,
+                handle,
+                commit_name,
             )
         else:
             mention = f"@{login}"
             log.info(
-                "No usable commit author name for %s in %s; falling back to "
-                "GitHub login.",
+                "No commit author name for %s in %s; falling back to GitHub login.",
                 login,
                 self._repo,
             )
@@ -407,16 +573,35 @@ def set_gh_output(name: str, value: str) -> None:
         f.write(f"{name}<<{delim}\n{value}\n{delim}\n")
 
 
-def write_slack_payload(path: Path, channel: str, text: str) -> None:
-    payload = {
+def write_slack_payload(
+    path: Path,
+    channel: str,
+    text: str,
+    blocks: list[dict] | None = None,
+) -> None:
+    """Write a ``chat.postMessage`` payload to *path*.
+
+    *text* is always set — Slack uses it as the fallback in notifications
+    and screen readers. *blocks*, when given, drives the in-channel
+    layout via Block Kit and is the preferred way to format multi-line
+    messages with sections, dividers and context elements.
+
+    ``link_names`` is kept on so that ``@channel`` / ``@here`` and any
+    workspace user groups (e.g. ``@drivers-warsaw``) are auto-resolved
+    in the fallback text. Individual users cannot be mentioned by
+    ``@first.last`` — Slack requires ``<@U…>`` for that — so the
+    handles we emit (e.g. ``@maxymilian.kowalski``) render as plain
+    text. GitHub already notifies the reviewer via the API call.
+    """
+    payload: dict[str, Any] = {
         "channel": channel,
         "text": text,
-        # Have Slack auto-resolve any "@handle" in the text into a real
-        # <@U…> mention when the handle matches a workspace member.
         "link_names": True,
         "unfurl_links": False,
         "unfurl_media": False,
     }
+    if blocks:
+        payload["blocks"] = blocks
     path.write_text(json.dumps(payload))
 
 
@@ -517,13 +702,44 @@ def cmd_assign(args: argparse.Namespace) -> int:
         set_gh_output("skip", "true")
         return 0
 
-    names = ReviewerDisplay(repo=repo)
-    text = (
-        f":eyes: New PR ready for review: "
-        f"<{html_url}|#{pr_number} — {title}> by `@{author}` "
-        f"— assigned to {names.name(reviewer)}"
+    names = ReviewerDisplay(
+        repo=repo,
+        slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
     )
-    write_slack_payload(payload_file, channel, text)
+    reviewer_display = names.name(reviewer)
+    fallback = (
+        f"New PR ready for review: #{pr_number} — {title} "
+        f"(by @{author}, reviewer {reviewer_display})"
+    )
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": ":eyes: *New PR ready for review*",
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"<{html_url}|#{pr_number} — {title}>",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"Author: `@{author}`   ·   "
+                        f"Reviewer: {reviewer_display}"
+                    ),
+                }
+            ],
+        },
+    ]
+    write_slack_payload(payload_file, channel, fallback, blocks=blocks)
     log.info("Wrote Slack payload to %s", payload_file)
     set_gh_output("skip", "false")
     return 0
@@ -628,12 +844,35 @@ def _format_waiting(entry: dict) -> str:
     return f"waiting {human} since review requested"
 
 
-def _format_reminder_message(
+def _reminder_fallback_text(awaiting: list[dict]) -> str:
+    """Plain-text summary used as the Slack notification fallback."""
+    return f"{len(awaiting)} PR(s) waiting on a reviewer"
+
+
+def _build_reminder_blocks(
     awaiting: list[dict], names: ReviewerDisplay
-) -> str:
-    lines = [
-        f":alarm_clock: *{len(awaiting)} PR(s) waiting on a reviewer:*",
+) -> list[dict]:
+    """Return a Block Kit payload listing every PR awaiting a reviewer.
+
+    The layout is one ``section`` (with the linked PR title) plus one
+    ``context`` element (with author, reviewer(s) and waiting time) per
+    PR, separated by ``divider`` blocks. A heading section announces
+    the count.
+    """
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":alarm_clock: *{len(awaiting)} PR(s) waiting on a "
+                    f"reviewer*"
+                ),
+            },
+        },
+        {"type": "divider"},
     ]
+
     for pr in awaiting:
         people = pr["requested"] + [
             u for u in pr["commented_only"] if u not in pr["requested"]
@@ -643,23 +882,41 @@ def _format_reminder_message(
             if people
             else "_no reviewer assigned_"
         )
+        meta_parts = [
+            f"Author: `@{pr['author']}`",
+            f"Reviewer{'s' if len(people) > 1 else ''}: {people_str}",
+        ]
         waiting_suffix = _format_waiting(pr)
-        head = (
-            f"• <{pr['url']}|#{pr['number']} — {pr['title']}> "
-            f"by `@{pr['author']}` — {people_str}"
-        )
         if waiting_suffix:
-            head += f" — _{waiting_suffix}_"
-        lines.append(head)
+            meta_parts.append(f"_{waiting_suffix}_")
+        meta_text = "   ·   ".join(meta_parts)
+
         if pr["commented_only"]:
             commented_names = ", ".join(
                 names.name(u) for u in pr["commented_only"]
             )
-            lines.append(
-                f"    _Note: {commented_names} left comment(s) — "
+            meta_text += (
+                f"\n_Note: {commented_names} left comment(s) — "
                 f"comments do not count as a review._"
             )
-    return "\n".join(lines)
+
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"<{pr['url']}|#{pr['number']} — {pr['title']}>",
+                },
+            }
+        )
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": meta_text}],
+            }
+        )
+
+    return blocks
 
 
 def cmd_remind(args: argparse.Namespace) -> int:
@@ -694,9 +951,13 @@ def cmd_remind(args: argparse.Namespace) -> int:
     awaiting.sort(
         key=lambda p: (p.get("waiting_hours") is None, -(p.get("waiting_hours") or 0.0))
     )
-    names = ReviewerDisplay(repo=repo)
-    text = _format_reminder_message(awaiting, names)
-    write_slack_payload(payload_file, channel, text)
+    names = ReviewerDisplay(
+        repo=repo,
+        slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
+    )
+    fallback = _reminder_fallback_text(awaiting)
+    blocks = _build_reminder_blocks(awaiting, names)
+    write_slack_payload(payload_file, channel, fallback, blocks=blocks)
     log.info(
         "Wrote reminder digest for %d PR(s) to %s",
         len(awaiting),
