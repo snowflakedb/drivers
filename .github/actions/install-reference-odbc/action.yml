@@ -110,6 +110,7 @@ runs:
           exit 1
         fi
         echo "ODBCInstLib=${ODBC_INST_LIB}" | sudo tee -a "$SIMBA_INI" >/dev/null
+        echo "DriverManagerEncoding=UTF-16" | sudo tee -a "$SIMBA_INI" >/dev/null
 
     - name: Install reference ODBC driver (Windows)
       if: runner.os == 'Windows'
