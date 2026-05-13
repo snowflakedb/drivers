@@ -1,0 +1,114 @@
+name: Install self-built WiX from artifact
+description: >
+  Install the `wix` dotnet tool from a self-built WiX nupkg directory, accept
+  the OSMF EULA non-interactively, and pre-stage WiX extensions into the user
+  global cache so `wix build` resolves them entirely offline. The caller is
+  responsible for populating the artifact directory beforehand (typically via
+  actions/download-artifact). nuget.org is hard-disabled by this action to
+  prevent any fallback to externally published packages.
+
+inputs:
+  artifact-dir:
+    description: >
+      Path (workspace-relative) to the directory containing the self-built
+      WiX nupkgs. Used as both the NuGet source and the extension-staging
+      source.
+    required: false
+    default: wix-artifacts
+  wix-version:
+    description: >
+      WiX version to install. Accepts either a bare semver ('7.0.0') or a
+      ref-style string with a leading 'v' ('v7.0.0'); the leading 'v' is
+      stripped before passing to `dotnet tool install`.
+    required: true
+  extensions:
+    description: >
+      Space-separated list of WiX extension package IDs to pre-stage into
+      ~/.wix/extensions/. Default covers what the ODBC packaging job uses
+      (UI + Util). Pass an empty string to skip extension staging.
+    required: false
+    default: 'WixToolset.UI.wixext WixToolset.Util.wixext'
+
+runs:
+  using: composite
+  steps:
+    - name: Install WiX from local source
+      shell: pwsh
+      env:
+        DOTNET_NOLOGO: 'true'
+        DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+        DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+        WIX_ARTIFACT_DIR: ${{ inputs.artifact-dir }}
+        WIX_VERSION_INPUT: ${{ inputs.wix-version }}
+        WIX_EXTENSIONS: ${{ inputs.extensions }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $wixSource = Join-Path $PWD $env:WIX_ARTIFACT_DIR
+        if (-not (Test-Path $wixSource)) {
+            throw "Self-built WiX artifact directory not found: $wixSource"
+        }
+        $wixVersion = $env:WIX_VERSION_INPUT.TrimStart('v')
+
+        # --- Hard-block nuget.org so a misconfigured step cannot silently pull a published WiX.
+        # `dotnet nuget disable source nuget.org` is idempotent: if the source isn't configured,
+        # it returns non-zero, which we tolerate.
+        & dotnet nuget disable source nuget.org 2>&1 | Write-Host
+
+        # Register the self-built nupkg directory as the only NuGet source for this job.
+        $existing = (& dotnet nuget list source) -join "`n"
+        if ($existing -match 'local-wix') {
+            & dotnet nuget update source local-wix --source $wixSource | Write-Host
+        } else {
+            & dotnet nuget add source $wixSource --name local-wix | Write-Host
+        }
+        if ($LASTEXITCODE -ne 0) { throw "Failed to register local-wix NuGet source" }
+        Write-Host "`nConfigured NuGet sources:"
+        & dotnet nuget list source
+
+        # --- Install the wix CLI from our local source only.
+        $toolPath = Join-Path $PWD '.wix-tool'
+        New-Item -ItemType Directory -Force -Path $toolPath | Out-Null
+        Write-Host "`nInstalling wix $wixVersion from $wixSource..."
+        & dotnet tool install wix `
+            --tool-path $toolPath `
+            --add-source $wixSource `
+            --version $wixVersion `
+            --ignore-failed-sources
+        if ($LASTEXITCODE -ne 0) { throw "dotnet tool install wix failed with exit code $LASTEXITCODE" }
+
+        "$toolPath" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+        $env:PATH = "$toolPath;$env:PATH"
+        Write-Host "`nwix --version:"
+        & wix --version
+        & wix eula accept wix7
+        if ($LASTEXITCODE -ne 0) { throw "wix eula accept wix7 failed with exit code $LASTEXITCODE" }
+
+        # --- Pre-stage WiX extensions directly into the global cache so `wix build` resolves
+        # them locally without ever calling NuGet. `wix extension add` is intentionally not used
+        # because it always calls NuGet for resolution (see wixtoolset/issues#6184, #8044).
+        $extensionList = ($env:WIX_EXTENSIONS -split '\s+') | Where-Object { $_ -ne '' }
+        if ($extensionList.Count -eq 0) {
+            Write-Host "`nNo WiX extensions requested for pre-staging."
+            return
+        }
+        $extensionsRoot = Join-Path $env:USERPROFILE '.wix\extensions'
+        New-Item -ItemType Directory -Force -Path $extensionsRoot | Out-Null
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        foreach ($pkgId in $extensionList) {
+            $nupkg = Get-ChildItem -Path $wixSource -File `
+                | Where-Object { $_.Extension -eq '.nupkg' -and $_.BaseName -like "$pkgId.*" } `
+                | Sort-Object Name -Descending `
+                | Select-Object -First 1
+            if (-not $nupkg) {
+                throw "Extension nupkg not found for $pkgId in $wixSource"
+            }
+            $extVersion = $nupkg.BaseName.Substring($pkgId.Length + 1)
+            $destDir = Join-Path $extensionsRoot "$pkgId\$extVersion"
+            if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($nupkg.FullName, $destDir)
+            Write-Host "Staged $($nupkg.Name) -> $destDir"
+        }
+
+        Write-Host "`nRegistered WiX extensions:"
+        & wix extension list --global
