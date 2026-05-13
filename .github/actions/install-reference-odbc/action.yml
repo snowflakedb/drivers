@@ -103,6 +103,14 @@ runs:
         fi
         sudo installer -pkg "$PKG" -target /
 
+        SIMBA_INI="/opt/snowflake/snowflakeodbc/lib/universal/simba.snowflake.ini"
+        ODBC_INST_LIB="$(brew --prefix unixodbc)/lib/libodbcinst.dylib"
+        if [[ ! -f "$ODBC_INST_LIB" ]]; then
+          echo "Expected unixODBC libodbcinst.dylib not found at $ODBC_INST_LIB"
+          exit 1
+        fi
+        echo "ODBCInstLib=${ODBC_INST_LIB}" | sudo tee -a "$SIMBA_INI" >/dev/null
+
     - name: Install reference ODBC driver (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
