@@ -74,8 +74,8 @@ impl ParamStore {
         match self.get(key)? {
             Setting::Bool(b) => Some(*b),
             Setting::String(s) => match s.to_lowercase().as_str() {
-                "true" | "1" => Some(true),
-                "false" | "0" => Some(false),
+                "true" | "1" | "on" => Some(true),
+                "false" | "0" | "off" => Some(false),
                 _ => None,
             },
             Setting::Int(i) => Some(*i != 0),

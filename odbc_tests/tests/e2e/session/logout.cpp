@@ -12,13 +12,13 @@
 #include "HandleWrapper.hpp"
 #include "WiremockClient.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
 static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env, const WiremockClient& wm) {
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
   auto conn_str = get_wiremock_connection_string(wm);
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, (SQLCHAR*)conn_str.c_str(), SQL_NTS, nullptr, 0, nullptr,
+  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
   REQUIRE_ODBC(ret, dbc);
   return dbc;
@@ -38,17 +38,15 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
 
   // When Connection is closed
   SQLRETURN first_ret = SQLDisconnect(dbc.getHandle());
-  REQUIRE_ODBC(first_ret, dbc);
+  CHECK(first_ret == SQL_SUCCESS);
 
   // And Connection is closed again
   SQLRETURN second_ret = SQLDisconnect(dbc.getHandle());
-  CHECK(second_ret == SQL_ERROR);
-  CHECK(get_sqlstate(dbc) == "08003");
+  CHECK_THAT(OdbcResult(second_ret, dbc), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("08003"));
 
   // And Connection is closed a third time
   SQLRETURN third_ret = SQLDisconnect(dbc.getHandle());
-  CHECK(third_ret == SQL_ERROR);
-  CHECK(get_sqlstate(dbc) == "08003");
+  CHECK_THAT(OdbcResult(third_ret, dbc), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("08003"));
 
   // Then Only one logout request is sent
   CHECK(wm.get_request_count("POST", "/session") == 1);
@@ -60,7 +58,7 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
-  SKIP_OLD_DRIVER("BD#000", "Old driver segfaults on concurrent SQLDisconnect (no thread-safety guard)");
+  SKIP_OLD_DRIVER("BD#54", "Old driver segfaults on concurrent SQLDisconnect (no thread-safety guard)");
 
   // Given Snowflake client is logged in
   WiremockClient wm;
@@ -104,4 +102,26 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
   }
   CHECK(success_count + expected_error_count == num_threads);
   CHECK(success_count == 1);
+}
+
+TEST_CASE("should succeed even when server returns error during logout", "[session][logout]") {
+#ifdef _WIN32
+  SKIP("WireMock tests not yet validated on Windows");
+#endif
+  // Given Snowflake client is logged in
+  WiremockClient wm;
+  wm.add_mapping_file("auth/login_success_any.json");
+  // And Server will return 500 on logout
+  wm.add_mapping_file("session/logout_500_always.json");
+
+  auto env = Connection::initEnv();
+  auto dbc = connect_to_wiremock(env, wm);
+
+  // When Connection is closed
+  SQLRETURN ret = SQLDisconnect(dbc.getHandle());
+
+  // Then Disconnect succeeds
+  CHECK(ret == SQL_SUCCESS);
+  // And Logout was attempted
+  CHECK(wm.get_request_count("POST", "/session") >= 1);
 }

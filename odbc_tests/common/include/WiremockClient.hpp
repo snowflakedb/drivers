@@ -56,17 +56,28 @@ class WiremockClient {
     if (!std::filesystem::exists(file_path)) {
       throw std::runtime_error("WireMock mapping file not found: " + file_path.string());
     }
-    std::string cmd = "curl -s -X POST " + admin_url("/__admin/mappings") +
-                      " -H \"Content-Type: application/json\""
-                      " --data-binary \"@" +
-                      file_path.string() + "\"" + null_redirect();
-    if (std::system(cmd.c_str()) != 0) {
-      throw std::runtime_error("Failed to add WireMock mapping: " + relative_path);
+
+    std::ifstream ifs(file_path);
+    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+
+    picojson::value json;
+    std::string err = picojson::parse(json, content);
+    if (!err.empty()) {
+      throw std::runtime_error("Failed to parse mapping file " + relative_path + ": " + err);
+    }
+
+    if (json.is<picojson::object>() && json.get<picojson::object>().count("mappings")) {
+      auto& arr = json.get<picojson::object>().at("mappings").get<picojson::array>();
+      for (auto& mapping : arr) {
+        post_mapping(mapping.serialize(), relative_path);
+      }
+    } else {
+      post_mapping(content, relative_path);
     }
   }
 
   void add_catch_all() {
-    auto tmp = std::filesystem::temp_directory_path() / "wm_catch_all.json";
+    auto tmp = std::filesystem::temp_directory_path() / ("wm_catch_all_" + std::to_string(port_) + ".json");
     {
       std::ofstream f(tmp);
       f << R"({
@@ -83,14 +94,17 @@ class WiremockClient {
                       " -H \"Content-Type: application/json\""
                       " --data-binary \"@" +
                       tmp.string() + "\"" + null_redirect();
-    std::system(cmd.c_str());
+    if (std::system(cmd.c_str()) != 0) {
+      std::filesystem::remove(tmp);
+      throw std::runtime_error("Failed to add WireMock catch-all mapping");
+    }
     std::filesystem::remove(tmp);
   }
 
   int get_request_count(const std::string& method, const std::string& url_path) const {
     std::string body = R"({"method":")" + method + R"(","urlPath":")" + url_path + R"("})";
 
-    auto tmp = std::filesystem::temp_directory_path() / "wm_request_count.json";
+    auto tmp = std::filesystem::temp_directory_path() / ("wm_request_count_" + std::to_string(port_) + ".json");
     {
       std::ofstream f(tmp);
       f << body;
@@ -127,6 +141,23 @@ class WiremockClient {
 
   std::string admin_url(const std::string& path) const { return "http://localhost:" + std::to_string(port_) + path; }
 
+  void post_mapping(const std::string& body, const std::string& source_name) {
+    auto tmp = std::filesystem::temp_directory_path() / ("wm_mapping_" + std::to_string(port_) + ".json");
+    {
+      std::ofstream f(tmp);
+      f << body;
+    }
+    std::string cmd = "curl -s -X POST " + admin_url("/__admin/mappings") +
+                      " -H \"Content-Type: application/json\""
+                      " --data-binary \"@" +
+                      tmp.string() + "\"" + null_redirect();
+    int rc = std::system(cmd.c_str());
+    std::filesystem::remove(tmp);
+    if (rc != 0) {
+      throw std::runtime_error("Failed to add WireMock mapping: " + source_name);
+    }
+  }
+
   static std::string null_redirect() {
 #ifdef _WIN32
     return " > NUL 2>&1";
@@ -142,8 +173,6 @@ class WiremockClient {
   static std::filesystem::path wiremock_jar_path() {
     return test_utils::repo_root() / "tests" / "wiremock" / "wiremock_standalone" / "wiremock-standalone-3.13.2.jar";
   }
-
-  static std::filesystem::path wiremock_root_dir() { return test_utils::repo_root() / "tests" / "wiremock"; }
 
   static int find_free_port() {
 #ifdef _WIN32
@@ -242,6 +271,10 @@ class WiremockClient {
       AssignProcessToJobObject(job_handle_, process_handle_);
     }
 #else
+    auto empty_root = std::filesystem::temp_directory_path() / ("wm_root_" + port_str);
+    std::filesystem::create_directories(empty_root / "mappings");
+    std::filesystem::create_directories(empty_root / "__files");
+
     pid_ = fork();
     if (pid_ < 0) {
       throw std::runtime_error("fork() failed for WireMock process");
@@ -255,9 +288,6 @@ class WiremockClient {
         dup2(dev_null, STDERR_FILENO);
         close(dev_null);
       }
-      auto empty_root = std::filesystem::temp_directory_path() / ("wm_root_" + port_str);
-      std::filesystem::create_directories(empty_root / "mappings");
-      std::filesystem::create_directories(empty_root / "__files");
       execlp("java", "java", "-jar", jar.string().c_str(), "--root-dir", empty_root.string().c_str(), "--port",
              port_str.c_str(), "--proxy-pass-through", "false", "--disable-gzip", static_cast<char*>(nullptr));
       _exit(1);
@@ -266,6 +296,8 @@ class WiremockClient {
   }
 
   void stop_process() {
+    std::string port_str = std::to_string(port_);
+    auto empty_root = std::filesystem::temp_directory_path() / ("wm_root_" + port_str);
 #ifdef _WIN32
     if (process_handle_ != INVALID_HANDLE_VALUE) {
       TerminateProcess(process_handle_, 0);
@@ -284,6 +316,7 @@ class WiremockClient {
       pid_ = -1;
     }
 #endif
+    std::filesystem::remove_all(empty_root);
   }
 
   void wait_for_health(int timeout_secs = 15) const {

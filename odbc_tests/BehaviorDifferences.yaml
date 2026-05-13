@@ -589,3 +589,15 @@ behavior_differences:
       Returns SQL_ERROR with SQLSTATE HY090 (Invalid string or buffer length) per the ODBC specification.
     impact: |
       Applications checking for SQLSTATE HY090 specifically on Windows will now receive it consistently.
+
+  54:
+    name: "Concurrent SQLDisconnect causes segfault without thread-safety guard"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      Calling SQLDisconnect concurrently from multiple threads on the same connection handle causes a segfault in the old driver due to lack of synchronisation in the disconnect path.
+    new_driver_behavior: |
+      Concurrent SQLDisconnect calls are serialized; exactly one returns SQL_SUCCESS and the rest return SQL_ERROR with SQLSTATE 08003 (Connection not open).
+    impact: |
+      Multi-threaded applications that disconnect from multiple threads no longer risk a crash.

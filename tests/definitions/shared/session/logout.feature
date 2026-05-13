@@ -71,3 +71,15 @@ Feature: Session Logout
     When Connection is closed from multiple threads concurrently
     Then Only one logout request is sent
     And All close calls return successfully
+
+  # ===========================================================================
+  #                        Best-Effort Error Handling
+  # ===========================================================================
+
+  @odbc_e2e
+  Scenario: should succeed even when server returns error during logout
+    Given Snowflake client is logged in
+    And Server will return 500 on logout
+    When Connection is closed
+    Then Disconnect succeeds
+    And Logout was attempted

@@ -231,7 +231,7 @@ fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Opti
 ///
 /// `ssl` takes precedence when present because it has no registry default
 /// and therefore is always an explicit user choice.  `protocol` serves as
-/// the fallback (its registry default is `"https"`).
+/// the fallback (the fallback `"https"` is hardcoded here).
 fn resolve_protocol(settings: &ParamStore) -> String {
     if let Some(ssl_on) = settings.get_bool(SSL) {
         return if ssl_on { "https" } else { "http" }.to_string();
