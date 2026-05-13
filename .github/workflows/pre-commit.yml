@@ -33,7 +33,9 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "precommit"
+          # v2 bump: one-time flush so the new `Pre-build param_defs_export`
+          # step's artefacts land in a fresh cache shape.
+          shared-key: "precommit-v2"
 
       - name: Restore tests-format-validator Rust cache
         id: validator-cache
@@ -76,8 +78,59 @@ jobs:
       # language: python / language: node / etc., where pre-commit would
       # actually install something cacheable.
 
+      - name: Pre-build param_defs_export
+        # Compile the generator binary here so its artefacts land in the saved
+        # target/ cache. The earlier `cargo check --all-targets --all-features`
+        # steps don't cover this binary (different feature set, check vs. link),
+        # leaving `cargo run -p sf_core --bin param_defs_export` to pay a cold
+        # ~12-minute sf_core link on every pre-commit run. Warming it here
+        # turns the subsequent `Verify ConnectionConfig` step into a near
+        # no-op on cache hits.
+        run: cargo build -p sf_core --bin param_defs_export
+
+      - name: Generate protobuf Python stubs
+        # The `protobuf_gen/*_pb2.py` files are gitignored and normally produced
+        # by `hatch_build.py:_generate_protobuf` during an editable install. The
+        # precommit hatch env has `skip-install = true`, so nothing else triggers
+        # the generation — mypy then fails to resolve the protobuf imports.
+        # Running the same cargo invocation `hatch_build.py` uses keeps the
+        # outputs byte-identical to a production build. `protoc-gen-mypy` must
+        # be on PATH for the .pyi stubs, so install it alongside protoc.
+        run: |
+          pip install mypy-protobuf
+          cargo run -p proto_generator --bin proto_generator -- \
+            --generator python \
+            --input protobuf/database_driver_v1.proto \
+            --output python/src/snowflake/connector/_internal/protobuf_gen
+
       - name: Run pre-commit on all files
+        # Skip `generate-connection-config` in CI: it regenerates the file,
+        # reformats via hatch, and `git add`s — all pointless on ephemeral
+        # runners where the commit never happens. The `Verify ConnectionConfig`
+        # step below replaces it with a drift check that fails if a PR forgot
+        # to run the local hook.
+        env:
+          SKIP: generate-connection-config
         run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Verify ConnectionConfig is up to date
+        # Drift check mirroring the local `generate-connection-config` hook
+        # exactly: regenerate in-place, run the same `hatch run precommit:fix`
+        # pipeline (ruff format / ruff check --fix / ruff format / mypy), then
+        # assert the file on disk is byte-identical to the committed one.
+        # `precommit:fix` hardcodes its scope to `src/snowflake tests` and
+        # ignores positional args, so we can't format a tempfile through it —
+        # writing to the real path and using `git diff` is simpler and avoids
+        # divergence from local behaviour.
+        run: |
+          set -euo pipefail
+          target=python/src/snowflake/connector/connection_config.py
+          cargo run -p sf_core --bin param_defs_export > "$target"
+          (cd python && hatch run precommit:fix) >/dev/null
+          if ! git diff --exit-code -- "$target"; then
+            echo "::error::connection_config.py is out of date. Run the 'generate-connection-config' pre-commit hook locally and commit the result."
+            exit 1
+          fi
 
       - name: Save Rust cache
         if: always()
@@ -89,7 +142,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "precommit"
+          shared-key: "precommit-v2"
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 

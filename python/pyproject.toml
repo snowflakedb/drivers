@@ -211,19 +211,50 @@ ignore_missing_imports = true
 features = ["test", "dev"]
 installer = "uv"
 
-# Precommit environment
+# Precommit environment.
+#
+# `skip-install = true` is load-bearing: without it, this env inherits the
+# default editable install, which triggers `hatch_build.py:_build_core()` and
+# spends ~11 min compiling `sf_core` in release mode into a TemporaryDirectory
+# (no cache) on every pre-commit run. ruff + mypy only need the source tree
+# and the runtime deps that appear in user-facing imports, so we list those
+# explicitly and bypass the install entirely.
+#
+# MYPYPATH=src lets `mypy -p snowflake.connector` resolve the package from the
+# src/ layout without the editable install providing it on sys.path.
+[tool.hatch.envs.precommit]
+skip-install = true
+dependencies = [
+    "ruff",
+    "mypy",
+    "mypy-protobuf",
+    "types-pytz",
+    "types-protobuf",
+    # Runtime deps mypy needs to resolve imports in snowflake.connector.
+    # Keep in sync with `[project].dependencies` plus numpy (referenced by
+    # arrow_context.py type hints).
+    "cryptography>=44.0.1",
+    "protobuf>=6.32.1",
+    "pytz",
+    "tomlkit>=0.13",
+    "numpy>=2.1.0",
+]
+
+[tool.hatch.envs.precommit.env-vars]
+MYPYPATH = "src"
+
 [tool.hatch.envs.precommit.scripts]
 check = [
     'ruff format --check {args:src/snowflake tests}',
     'ruff check {args:src/snowflake tests}',
-    'mypy -p snowflake.connector',
+    'mypy --explicit-package-bases -p snowflake.connector',
 ]
 fix = [
     'ruff format src/snowflake tests',
     'ruff check --fix src/snowflake tests',
     # Run format once again as linting may have changed files.
     'ruff format src/snowflake tests',
-    'mypy -p snowflake.connector',
+    'mypy --explicit-package-bases -p snowflake.connector',
 ]
 
 # This basic development environment. By default, it installs the driver
