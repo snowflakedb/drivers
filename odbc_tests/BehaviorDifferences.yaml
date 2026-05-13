@@ -577,3 +577,15 @@ behavior_differences:
       The driver reads TIMESTAMP_TZ_OUTPUT_FORMAT once per execute (matching the rest of the per-execute sequential RPC) and formats the rendered string accordingly. With `TZH:TZM` the offset suffix is appended as `+HH:MM`; with `TZHTZM` as `+HHMM`; with `TZH` as `+HH`. The format is re-read on every execute, so `ALTER SESSION SET / UNSET TIMESTAMP_TZ_OUTPUT_FORMAT` mid-connection takes effect on the next statement. Unrecognised TZ-shaped tokens (`TZHM`, `TZM`, etc.) are tolerated -- the driver emits a `tracing::warn!` and falls back to the bare-UTC default rather than rejecting the format string.
     impact: |
       Migration is forward-compatible. Applications relying on the legacy bare-UTC rendering must either (a) leave TIMESTAMP_TZ_OUTPUT_FORMAT unset, (b) set it to a value containing none of `TZH:TZM`, `TZHTZM`, `TZH`, in which case the driver still emits bare UTC, or (c) parse the new offset-suffixed strings on the application side. The new behaviour matches what Snowsight, snowsql, and the Python connector already render for the same column with the same session format, removing a long-standing surprise where ODBC was the only client silently dropping the offset.
+
+  53:
+    name: "SQLGetStmtAttr/SQLGetConnectAttr with negative buffer length returns HY090 instead of HY000"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      Returns SQL_ERROR with SQLSTATE HY000 (General error) on Windows when BufferLength is negative for a string attribute.
+    new_driver_behavior: |
+      Returns SQL_ERROR with SQLSTATE HY090 (Invalid string or buffer length) per the ODBC specification.
+    impact: |
+      Applications checking for SQLSTATE HY090 specifically on Windows will now receive it consistently.
