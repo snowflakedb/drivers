@@ -247,36 +247,72 @@ jobs:
       # ── sf_core build: Linux (Docker + manylinux for glibc compat) ──
       # Cannot use job-level container: because cibuildwheel needs Docker.
       # Instead, build sf_core via docker run with the manylinux image.
-      - name: Restore Cargo registry cache (Linux)
+      #
+      # Caching strategy: cargo-cache (registry + target/) runs on the HOST,
+      # and its dirs are volume-mounted into the manylinux container so the
+      # in-container `cargo build` reads/writes them directly. The rustup
+      # toolchain (~/.rustup + ~/.cargo/bin) is cached separately — keyed
+      # only on a version marker so Cargo.lock churn doesn't invalidate it.
+      - name: Restore Rust cache (Linux)
         if: runner.os == 'Linux'
+        id: rust-cache-linux
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sf-core-release-${{ matrix.artifact_id }}
+
+      - name: Restore rustup toolchain cache (Linux)
+        if: runner.os == 'Linux'
+        id: rustup-cache-linux
+        continue-on-error: true
+        uses: actions/cache/restore@v5
         with:
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-v2-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-registry-v2-
+            ~/.rustup
+            ~/.cargo/bin
+          key: ${{ runner.os }}-${{ matrix.artifact_id }}-rustup-stable-minimal-v1
+          restore-keys: ${{ runner.os }}-${{ matrix.artifact_id }}-rustup-stable-minimal-
 
       - name: Build sf_core in manylinux container
         if: runner.os == 'Linux'
         run: |
-          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
+          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git" \
+                   "$HOME/.cargo/bin" "$HOME/.rustup"
           docker run --rm \
             -v "$HOME/.cargo/registry:/root/.cargo/registry" \
             -v "$HOME/.cargo/git:/root/.cargo/git" \
+            -v "$HOME/.cargo/bin:/root/.cargo/bin" \
+            -v "$HOME/.rustup:/root/.rustup" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             -e CARGO_TERM_COLOR=always \
+            -e RUSTUP_HOME=/root/.rustup \
+            -e CARGO_HOME=/root/.cargo \
             ${{ matrix.container }} \
             bash -c '
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-              source "$HOME/.cargo/env"
+              set -e
+              export PATH="/root/.cargo/bin:$PATH"
+              if [ ! -x /root/.cargo/bin/cargo ]; then
+                echo "No cached rustup; installing..."
+                curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                  | sh -s -- -y --default-toolchain stable --profile minimal
+              else
+                echo "Using cached rustup toolchain"
+              fi
               yum install -y perl-IPC-Cmd perl-Time-Piece
               cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
             '
-          sudo chown -R "$(id -u):$(id -g)" target/ "$HOME/.cargo/registry" "$HOME/.cargo/git"
+
+      # Chown runs in its own always() step so cache save is possible even
+      # when the build failed (and target/ may be partial or missing).
+      - name: Fix ownership of cached dirs (Linux)
+        if: always() && runner.os == 'Linux'
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            target/ \
+            "$HOME/.cargo/registry" "$HOME/.cargo/git" \
+            "$HOME/.cargo/bin" "$HOME/.rustup" 2>/dev/null || true
 
       # ── sf_core build: macOS / Windows (direct, no container) ──
       - name: Restore Rust cache
@@ -319,6 +355,32 @@ jobs:
           shared-key: sf-core-release
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save Rust cache (Linux)
+        if: always() && runner.os == 'Linux'
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sf-core-release-${{ matrix.artifact_id }}
+          registry-cache-hit: ${{ steps.rust-cache-linux.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache-linux.outputs.target-cache-hit }}
+
+      # Gated on cache-hit != 'true' to avoid "Unable to reserve cache" races
+      # when the exact key already exists in the cache service.
+      - name: Save rustup toolchain cache (Linux)
+        if: always() && runner.os == 'Linux' && steps.rustup-cache-linux.outputs.cache-hit != 'true'
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          key: ${{ runner.os }}-${{ matrix.artifact_id }}-rustup-stable-minimal-v1
 
       # ── Download protobuf ──
       - name: Download pre-built protobuf code
