@@ -96,13 +96,12 @@ For each reviewer the bot:
    what makes Slack render a real channel mention and notify the
    reviewer. The message itself is always posted in the channel; the
    bot never DMs anyone.
-3. Otherwise, derives a dot-separated lowercase handle from the commit
-   author name (``Maxymilian Kowalski`` -> ``@maxymilian.kowalski``),
-   with Unicode characters folded to ASCII so diacritics don't break
-   the handle. Plain ``@handle`` text does *not* auto-resolve in Slack
-   (``link_names`` only handles user groups), so this is purely
-   informational — the reviewer is still notified by GitHub via the
-   ``review_requested`` API call.
+3. Otherwise, shows the commit author name as plain text
+   (e.g. ``Maxymilian Kowalski``). This is *not* a clickable mention —
+   Slack won't auto-link individual users — but the reviewer is still
+   notified by GitHub via the ``review_requested`` API call we make
+   immediately before posting, so the Slack text is purely
+   informational.
 4. As a last resort, falls back to ``@<github-login>`` when the user
    has no commits in the repo.
 
@@ -117,10 +116,8 @@ import json
 import logging
 import os
 import random
-import re
 import subprocess
 import sys
-import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -344,52 +341,6 @@ def parse_codeowners(path: Path = DEFAULT_CODEOWNERS_PATH) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-# Characters that don't decompose under NFKD but still need an ASCII
-# equivalent for handle generation (Polish ł, Nordic ø, German ß, etc.).
-_HANDLE_ASCII_FOLD = str.maketrans(
-    {
-        "Ł": "L",
-        "ł": "l",
-        "Đ": "D",
-        "đ": "d",
-        "Ø": "O",
-        "ø": "o",
-        "Æ": "Ae",
-        "æ": "ae",
-        "Œ": "Oe",
-        "œ": "oe",
-        "Þ": "Th",
-        "þ": "th",
-        "ß": "ss",
-    }
-)
-
-
-def name_to_handle(display: str) -> str:
-    """Turn a real name like ``"Maxymilian Kowalski"`` into a Slack-style
-    handle like ``"maxymilian.kowalski"``.
-
-    Steps: fold a small set of Unicode letters that don't decompose
-    cleanly (e.g. Polish ``ł``), NFKD-decompose the rest and drop
-    non-ASCII, lowercase, drop characters Slack handles don't allow, and
-    join the resulting tokens with a dot.
-    """
-    folded = display.translate(_HANDLE_ASCII_FOLD)
-    ascii_form = (
-        unicodedata.normalize("NFKD", folded)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
-    parts: list[str] = []
-    for raw in ascii_form.lower().split():
-        # Slack handles allow lowercase letters, digits, dot, hyphen, and
-        # underscore. Strip everything else (apostrophes, punctuation, etc.).
-        cleaned = re.sub(r"[^a-z0-9_-]", "", raw)
-        if cleaned:
-            parts.append(cleaned)
-    return ".".join(parts)
-
-
 # Emails that will never resolve in Slack — skip the network call.
 _NORESOLVE_EMAIL_SUFFIXES = (
     "@users.noreply.github.com",
@@ -496,13 +447,14 @@ class ReviewerDisplay:
        real channel mention that notifies the reviewer (the message is
        posted in the channel — the bot never sends DMs).
     3. Otherwise (no token, no email, lookup failed, or
-       ``users_not_found``), fall back to ``@<handle>`` derived from the
-       commit author name (``Maxymilian Kowalski`` ->
-       ``@maxymilian.kowalski``).
+       ``users_not_found``), fall back to the plain commit author name
+       (e.g. ``Maxymilian Kowalski``). This is *not* a clickable mention
+       — it's purely informational — but reads better than a synthetic
+       ``@first.last`` handle that Slack would not auto-resolve anyway.
     4. If we have no commit author name either, fall back to
        ``@<github-login>``.
 
-    Steps (2) is best-effort and only touches Slack once per *distinct*
+    Step (2) is best-effort and only touches Slack once per *distinct*
     reviewer per run (results are cached). The bot does not call
     ``users.list``.
     """
@@ -540,23 +492,21 @@ class ReviewerDisplay:
                 self._cache[login] = mention
                 return mention
 
-        handle = name_to_handle(commit_name) if commit_name else None
-        if handle:
-            mention = f"@{handle}"
+        if commit_name:
             log.info(
-                "No Slack lookup match for %s; using @%s (from commit author %r).",
+                "No Slack lookup match for %s; using commit author name %r.",
                 login,
-                handle,
                 commit_name,
             )
-        else:
-            mention = f"@{login}"
-            log.info(
-                "No commit author name for %s in %s; falling back to GitHub login.",
-                login,
-                self._repo,
-            )
+            self._cache[login] = commit_name
+            return commit_name
 
+        mention = f"@{login}"
+        log.info(
+            "No commit author name for %s in %s; falling back to GitHub login.",
+            login,
+            self._repo,
+        )
         self._cache[login] = mention
         return mention
 
