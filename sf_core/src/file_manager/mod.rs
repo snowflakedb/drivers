@@ -47,6 +47,7 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
             auto_compress: data.auto_compress,
             source_compression: data.source_compression.clone(),
             overwrite: data.overwrite,
+            skip_upload_on_content_match: data.skip_upload_on_content_match,
         };
 
         let result = upload_single_file(single_upload_data).await?;
@@ -70,6 +71,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            data.skip_upload_on_content_match,
         )
         .await
         .context(S3UploadSnafu)?,

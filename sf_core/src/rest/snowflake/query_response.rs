@@ -305,7 +305,14 @@ pub struct EncryptionMaterial {
 impl Data {
     /// Copies the fields necessary for file transfer.
     /// Encryption material is optional — SSE stages omit it from the response.
-    pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
+    ///
+    /// `skip_upload_on_content_match` reflects the wrapper preset — Python
+    /// and JDBC opt in, ODBC opts out to preserve legacy libsnowflakeclient
+    /// semantics (unconditional re-upload on `OVERWRITE=TRUE`).
+    pub fn to_file_upload_data(
+        &self,
+        skip_upload_on_content_match: bool,
+    ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
         })?;
@@ -385,6 +392,7 @@ impl Data {
             auto_compress,
             source_compression,
             overwrite,
+            skip_upload_on_content_match,
         })
     }
 
@@ -1146,7 +1154,7 @@ mod tests {
     fn upload_encryption_material_null_returns_none() {
         let json = make_upload_json(r#""encryptionMaterial": null,"#);
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data.to_file_upload_data(true).unwrap();
         assert!(upload.encryption_material.is_none());
     }
 
@@ -1154,7 +1162,7 @@ mod tests {
     fn upload_encryption_material_absent_returns_none() {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data.to_file_upload_data(true).unwrap();
         assert!(upload.encryption_material.is_none());
     }
 
@@ -1162,7 +1170,7 @@ mod tests {
     fn upload_encryption_material_empty_array_returns_none() {
         let json = make_upload_json(r#""encryptionMaterial": [],"#);
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data.to_file_upload_data(true).unwrap();
         assert!(upload.encryption_material.is_none());
     }
 
@@ -1172,7 +1180,7 @@ mod tests {
             r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"},"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data.to_file_upload_data(true).unwrap();
         assert!(upload.encryption_material.is_some());
     }
 
@@ -1182,7 +1190,7 @@ mod tests {
             r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"}],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data.to_file_upload_data(true).unwrap();
         assert!(upload.encryption_material.is_some());
     }
 
@@ -1195,7 +1203,7 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result = data.to_file_upload_data();
+        let result = data.to_file_upload_data(true);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(

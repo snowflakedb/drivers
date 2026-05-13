@@ -65,7 +65,7 @@ async fn perform_put_get(
     match command.as_str() {
         "UPLOAD" => {
             let file_upload_data = data
-                .to_file_upload_data()
+                .to_file_upload_data(wrapper_presets.skip_upload_on_content_match)
                 .context(FileTransferPreparationSnafu)?;
             let upload_results = upload_files(&file_upload_data)
                 .await

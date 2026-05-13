@@ -30,6 +30,36 @@ fn should_overwrite_file_when_overwrite_is_set_to_true() {
 }
 
 #[test]
+fn should_skip_upload_when_overwrite_is_true_and_remote_digest_matches() {
+    // Given File is uploaded to stage with OVERWRITE set to true
+    let client = SnowflakeTestClient::connect_with_default_auth();
+    let stage_name = "TEST_PUT_GET_SKIP_ON_CONTENT_MATCH";
+    let (filename, original_file_path) = original_test_file();
+
+    let first_put_result = upload_to_stage_with_options(
+        &client,
+        stage_name,
+        original_file_path.to_str().unwrap(),
+        "OVERWRITE=TRUE",
+    );
+    assert_put_result_status(first_put_result, &filename, "UPLOADED");
+
+    // When Same file is uploaded again with OVERWRITE set to true
+    let second_put_result = upload_to_stage_with_options(
+        &client,
+        stage_name,
+        original_file_path.to_str().unwrap(),
+        "OVERWRITE=TRUE",
+    );
+
+    // Then SKIPPED status is returned
+    assert_put_result_status(second_put_result, &filename, "SKIPPED");
+
+    // And File on stage is unchanged
+    assert_stage_content(&client, stage_name, "original");
+}
+
+#[test]
 fn should_not_overwrite_file_when_overwrite_is_set_to_false() {
     // Given File is uploaded to stage
     let client = SnowflakeTestClient::connect_with_default_auth();

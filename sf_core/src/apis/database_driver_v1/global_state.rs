@@ -25,9 +25,26 @@ pub enum PutGetResultsetFlavor {
 /// at startup. These are **not** exposed to end users — they capture
 /// compile-time / init-time differences between wrappers so that shared Rust
 /// code can branch on them without hard-coding wrapper knowledge everywhere.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
+    /// On PUT with `OVERWRITE=TRUE`, skip re-upload when the remote stage
+    /// object's SHA-256 digest (written as `x-amz-meta-sfc-digest` on S3)
+    /// already equals the local file's digest. Enabled for Python/JDBC,
+    /// which mirrors `_skip_upload_on_content_match` in the Python
+    /// connector. Disabled for ODBC — legacy libsnowflakeclient never had
+    /// this optimization, so leaving it off preserves the prior
+    /// observable behavior (unconditional re-upload on OVERWRITE=TRUE).
+    pub skip_upload_on_content_match: bool,
+}
+
+impl Default for WrapperPresets {
+    fn default() -> Self {
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::default(),
+            skip_upload_on_content_match: true,
+        }
+    }
 }
 
 impl WrapperPresets {
@@ -44,6 +61,7 @@ impl WrapperPresets {
     pub fn odbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
+            skip_upload_on_content_match: false,
             ..Self::default()
         }
     }
@@ -160,5 +178,22 @@ mod tests {
     fn driver_state_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<DatabaseDriverV1>();
+    }
+
+    #[test]
+    fn python_preset_enables_skip_upload_on_content_match() {
+        assert!(WrapperPresets::python().skip_upload_on_content_match);
+    }
+
+    #[test]
+    fn jdbc_preset_enables_skip_upload_on_content_match() {
+        assert!(WrapperPresets::jdbc().skip_upload_on_content_match);
+    }
+
+    #[test]
+    fn odbc_preset_disables_skip_upload_on_content_match() {
+        // Legacy libsnowflakeclient never had this optimization; the
+        // ODBC preset must preserve the old unconditional re-upload.
+        assert!(!WrapperPresets::odbc().skip_upload_on_content_match);
     }
 }

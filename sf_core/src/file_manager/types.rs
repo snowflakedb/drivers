@@ -28,6 +28,12 @@ pub struct UploadData {
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
+    /// When `true` and `overwrite` is `true`, compare the local SHA-256
+    /// digest against the remote object's `sfc-digest` metadata and skip
+    /// the upload when they match. When `false`, `OVERWRITE=TRUE` always
+    /// re-uploads (the legacy ODBC behavior). Disregarded when
+    /// `overwrite` is `false`.
+    pub skip_upload_on_content_match: bool,
 }
 
 pub struct SingleUploadData {
@@ -38,6 +44,7 @@ pub struct SingleUploadData {
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
+    pub skip_upload_on_content_match: bool,
 }
 
 #[derive(Debug)]

@@ -26,36 +26,103 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 
 // TODO: streaming instead of loading the whole file into memory
 
-/// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
+/// Uploads a file to S3, with two ways to skip the actual transfer:
+///
+/// 1. When `overwrite` is `false` and an object already exists at the
+///    destination key, the upload is skipped (classic existence check).
+/// 2. When `overwrite` is `true` and `skip_upload_on_content_match` is
+///    `true`, the remote object's `sfc-digest` user metadata is compared
+///    against `prepared.digest`; a match short-circuits the upload so
+///    concurrent writers don't resend identical bytes. Mirrors the
+///    Python connector's `_skip_upload_on_content_match` behavior.
 pub async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    skip_upload_on_content_match: bool,
 ) -> Result<UploadStatus, UploadFileError> {
-    // Check if the file already exists in S3
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
-    if !overwrite && check_if_file_exists(&s3_client, stage_info, &s3_key).await? {
-        tracing::info!("File already exists in S3: {}", s3_key);
-        return Ok(UploadStatus::Skipped);
+    // The HEAD is only needed when either skip path is reachable: the
+    // classic `!overwrite` existence check, or the digest comparison.
+    //
+    // `remote_object`:
+    //  - `None`          → HEAD was not issued, or the object does not exist.
+    //  - `Some(None)`    → object exists but has no `sfc-digest` header.
+    //  - `Some(Some(d))` → object exists with `sfc-digest = d`.
+    let remote_object: Option<Option<String>> = if !overwrite || skip_upload_on_content_match {
+        head_object(&s3_client, stage_info, &s3_key)
+            .await?
+            .map(|h| {
+                h.metadata()
+                    .and_then(|m| m.get(SFC_DIGEST_META_KEY))
+                    .cloned()
+            })
+    } else {
+        None
+    };
+
+    if let Some(status) = decide_skip(
+        overwrite,
+        skip_upload_on_content_match,
+        &prepared.digest,
+        remote_object.as_ref(),
+    ) {
+        tracing::info!("Skipping S3 upload for {s3_key} ({status})");
+        return Ok(status);
     }
 
-    // Proceed with upload if the file does not exist or overwrite is true
     upload_to_s3(prepared, &s3_client, stage_info, &s3_key).await?;
     Ok(UploadStatus::Uploaded)
 }
 
-/// Returns true if the file exists in S3, false if it does not.
-/// When the check cannot be performed due to 403 Forbidden (limited
-/// temporary credentials that allow PUT but not HEAD), returns false
-/// so the caller proceeds with upload.
-async fn check_if_file_exists(
+/// S3 user-metadata key storing the base64 SHA-256 of the uploaded
+/// object. The AWS SDK strips the `x-amz-meta-` prefix, so the raw
+/// `x-amz-meta-sfc-digest` header surfaces here as `sfc-digest`.
+const SFC_DIGEST_META_KEY: &str = "sfc-digest";
+
+/// Pure skip-decision helper extracted for unit testing.
+///
+/// `remote_object`:
+/// - `None` — HEAD was not issued, or the object does not exist. Upload.
+/// - `Some(None)` — object exists but has no `sfc-digest` header.
+/// - `Some(Some(d))` — object exists with `sfc-digest = d`.
+///
+/// Returns `Some(status)` when the caller should skip the upload, `None`
+/// otherwise. Mirrors Python's `preprocess()` at
+/// `storage_client.py:190-222`: the existence-skip applies only on
+/// `!overwrite`, the digest-skip only on `overwrite && skip_on_match`.
+fn decide_skip(
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    local_digest: &str,
+    remote_object: Option<&Option<String>>,
+) -> Option<UploadStatus> {
+    let remote_digest = remote_object?;
+
+    if !overwrite {
+        return Some(UploadStatus::Skipped);
+    }
+
+    if skip_upload_on_content_match && remote_digest.as_deref() == Some(local_digest) {
+        return Some(UploadStatus::Skipped);
+    }
+
+    None
+}
+
+/// HEADs the remote object. Returns `Some(output)` when the object
+/// exists and `None` for a 404. 403 is treated as "unknown, proceed as
+/// if absent" — limited temporary credentials may allow PUT but not
+/// HEAD; short-circuiting the upload based on an uncertain result would
+/// lose data correctness.
+async fn head_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-) -> Result<bool, UploadFileError> {
+) -> Result<Option<aws_sdk_s3::operation::head_object::HeadObjectOutput>, UploadFileError> {
     match s3_client
         .head_object()
         .bucket(stage_info.bucket.clone())
@@ -63,13 +130,13 @@ async fn check_if_file_exists(
         .send()
         .await
     {
-        Ok(_) => Ok(true),
-        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
+        Ok(output) => Ok(Some(output)),
+        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(None),
         Err(SdkError::ServiceError(ref err)) if err.raw().status().as_u16() == 403 => {
             tracing::warn!(
-                "Access denied when checking if file exists in S3 ({s3_key}), proceeding with upload"
+                "Access denied when checking remote object in S3 ({s3_key}), proceeding with upload"
             );
-            Ok(false)
+            Ok(None)
         }
         Err(e) => Err(aws_sdk_s3::Error::from(e)).context(upload_file_error::S3HeadSnafu),
     }
@@ -87,7 +154,7 @@ async fn upload_to_s3(
         .key(s3_key)
         .body(ByteStream::from(prepared.data))
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata("sfc-digest", &prepared.digest);
+        .metadata(SFC_DIGEST_META_KEY, &prepared.digest);
 
     if let Some(ref enc_meta) = prepared.encryption_metadata {
         let mat_desc = serde_json::to_string(&enc_meta.material_desc)
@@ -361,6 +428,65 @@ pub enum DownloadFileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LOCAL_DIGEST: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const OTHER_DIGEST: &str = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
+
+    #[test]
+    fn decide_skip_no_head_returns_none() {
+        // HEAD was never issued — caller must upload.
+        assert_eq!(decide_skip(true, true, LOCAL_DIGEST, None), None);
+        assert_eq!(decide_skip(false, false, LOCAL_DIGEST, None), None);
+    }
+
+    #[test]
+    fn decide_skip_overwrite_false_and_remote_exists_skips() {
+        // Classic existence skip — digest isn't consulted.
+        let remote = Some(OTHER_DIGEST.to_string());
+        assert_eq!(
+            decide_skip(false, false, LOCAL_DIGEST, Some(&remote)),
+            Some(UploadStatus::Skipped)
+        );
+        let remote_no_digest: Option<String> = None;
+        assert_eq!(
+            decide_skip(false, false, LOCAL_DIGEST, Some(&remote_no_digest)),
+            Some(UploadStatus::Skipped)
+        );
+    }
+
+    #[test]
+    fn decide_skip_overwrite_true_with_matching_digest_skips_when_enabled() {
+        let remote = Some(LOCAL_DIGEST.to_string());
+        assert_eq!(
+            decide_skip(true, true, LOCAL_DIGEST, Some(&remote)),
+            Some(UploadStatus::Skipped)
+        );
+    }
+
+    #[test]
+    fn decide_skip_overwrite_true_with_matching_digest_uploads_when_disabled() {
+        // ODBC preset: even when remote matches, always re-upload.
+        let remote = Some(LOCAL_DIGEST.to_string());
+        assert_eq!(decide_skip(true, false, LOCAL_DIGEST, Some(&remote)), None);
+    }
+
+    #[test]
+    fn decide_skip_overwrite_true_with_different_digest_uploads() {
+        let remote = Some(OTHER_DIGEST.to_string());
+        assert_eq!(decide_skip(true, true, LOCAL_DIGEST, Some(&remote)), None);
+    }
+
+    #[test]
+    fn decide_skip_overwrite_true_with_missing_digest_header_uploads() {
+        // Remote object exists but was written without an sfc-digest
+        // header (e.g. by a legacy path) — we cannot assert equality so
+        // we must upload.
+        let remote_no_digest: Option<String> = None;
+        assert_eq!(
+            decide_skip(true, true, LOCAL_DIGEST, Some(&remote_no_digest)),
+            None
+        );
+    }
 
     #[test]
     fn s3_retry_policy_max_attempts_matches_gcs_and_azure() {
