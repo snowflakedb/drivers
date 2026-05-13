@@ -8,14 +8,16 @@
 
 #include "Connection.hpp"
 #include "compatibility.hpp"
+#include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "sf_odbc.h"
 
 static std::string get_last_query_id(StatementHandleWrapper& stmt) {
   char buf[40] = {};
   SQLINTEGER len = 0;
   SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, buf, sizeof(buf), &len);
-  REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
-  return std::string(buf, len);
+  REQUIRE_ODBC(ret, stmt);
+  return std::string(buf);
 }
 
 static bool is_valid_query_id(const std::string& id) {
@@ -34,7 +36,7 @@ static bool is_valid_query_id(const std::string& id) {
 // SUCCESSFUL QUERIES
 // =============================================================================
 
-TEST_CASE("Last query ID is empty before any query is executed.", "[query][last_query_id]") {
+TEST_CASE("should return empty last query ID before any query is executed", "[query][last_query_id]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -46,13 +48,13 @@ TEST_CASE("Last query ID is empty before any query is executed.", "[query][last_
   CHECK(id.empty());
 }
 
-TEST_CASE("Last query ID is set after successful SQLExecDirect.", "[query][last_query_id]") {
+TEST_CASE("should set last query ID after successful SQLExecDirect", "[query][last_query_id]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
 
   // When SQLExecDirect is called with a valid query
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Then the last query ID should be a valid UUID
@@ -60,13 +62,13 @@ TEST_CASE("Last query ID is set after successful SQLExecDirect.", "[query][last_
   CHECK(is_valid_query_id(id));
 }
 
-TEST_CASE("Last query ID is set after successful SQLPrepare + SQLExecute.", "[query][last_query_id]") {
+TEST_CASE("should set last query ID after successful SQLPrepare + SQLExecute", "[query][last_query_id]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
 
   // When SQLPrepare and SQLExecute are called with a valid query
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE(ret == SQL_SUCCESS);
@@ -76,20 +78,20 @@ TEST_CASE("Last query ID is set after successful SQLPrepare + SQLExecute.", "[qu
   CHECK(is_valid_query_id(id));
 }
 
-TEST_CASE("Successive queries produce different last query IDs.", "[query][last_query_id]") {
+TEST_CASE("should produce different last query IDs for successive queries", "[query][last_query_id]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
 
   // When two different queries are executed sequentially
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   auto id1 = get_last_query_id(stmt);
 
   ret = SQLCloseCursor(stmt.getHandle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 2", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 2"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   auto id2 = get_last_query_id(stmt);
 
@@ -103,7 +105,7 @@ TEST_CASE("Successive queries produce different last query IDs.", "[query][last_
 // FAILED QUERIES
 // =============================================================================
 
-TEST_CASE("Last query ID is set after failed query with syntax error.", "[query][last_query_id]") {
+TEST_CASE("should set last query ID after failed query with syntax error", "[query][last_query_id]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
@@ -111,7 +113,7 @@ TEST_CASE("Last query ID is set after failed query with syntax error.", "[query]
   auto stmt = conn.createStatement();
 
   // When SQLExecDirect is called with a syntax error
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT failed query syntax", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query syntax"), SQL_NTS);
   REQUIRE(ret == SQL_ERROR);
 
   // Then the last query ID should be a valid UUID
@@ -119,7 +121,7 @@ TEST_CASE("Last query ID is set after failed query with syntax error.", "[query]
   CHECK(is_valid_query_id(id));
 }
 
-TEST_CASE("Last query ID is set after failed query referencing nonexistent table.", "[query][last_query_id]") {
+TEST_CASE("should set last query ID after failed query referencing nonexistent table", "[query][last_query_id]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
@@ -127,7 +129,7 @@ TEST_CASE("Last query ID is set after failed query referencing nonexistent table
   auto stmt = conn.createStatement();
 
   // When SQLExecDirect is called referencing a nonexistent table
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT col FROM non_existent_table_xyz_12345", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM non_existent_table_xyz_12345"), SQL_NTS);
   REQUIRE(ret == SQL_ERROR);
 
   // Then the last query ID should be a valid UUID
@@ -135,7 +137,7 @@ TEST_CASE("Last query ID is set after failed query referencing nonexistent table
   CHECK(is_valid_query_id(id));
 }
 
-TEST_CASE("Last query ID changes between successive failed queries.", "[query][last_query_id]") {
+TEST_CASE("should produce different last query IDs for successive failed queries", "[query][last_query_id]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
@@ -143,10 +145,12 @@ TEST_CASE("Last query ID changes between successive failed queries.", "[query][l
   auto stmt = conn.createStatement();
 
   // When two different invalid queries are executed sequentially
-  SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT failed query 1", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query 1"), SQL_NTS);
+  REQUIRE(ret == SQL_ERROR);
   auto id1 = get_last_query_id(stmt);
 
-  SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT failed query 2", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query 2"), SQL_NTS);
+  REQUIRE(ret == SQL_ERROR);
   auto id2 = get_last_query_id(stmt);
 
   // Then the last query IDs should differ
@@ -155,7 +159,7 @@ TEST_CASE("Last query ID changes between successive failed queries.", "[query][l
   CHECK(id1 != id2);
 }
 
-TEST_CASE("Last query ID updates from successful to failed query.", "[query][last_query_id]") {
+TEST_CASE("should update last query ID from successful to failed query", "[query][last_query_id]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
@@ -163,14 +167,14 @@ TEST_CASE("Last query ID updates from successful to failed query.", "[query][las
   auto stmt = conn.createStatement();
 
   // When a successful query is followed by a failed query
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   auto id_success = get_last_query_id(stmt);
 
   ret = SQLCloseCursor(stmt.getHandle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT failed query", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT failed query"), SQL_NTS);
   REQUIRE(ret == SQL_ERROR);
   auto id_fail = get_last_query_id(stmt);
 
