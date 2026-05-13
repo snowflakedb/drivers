@@ -833,13 +833,13 @@ jobs:
 
       - name: Restore Rust target cache (MSI build)
         # Cache restore failures never fail the job — fall back to clean build.
+        # No restore-keys: a stale target dir (from a different Cargo.lock) causes
+        # rust-lld linker failures on i686 debug due to cross-CGU symbol mismatches.
         continue-on-error: true
         uses: actions/cache/restore@v5
         with:
           path: .cargo-target-msi
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-
 
       - name: Prepare cache directories
         shell: pwsh
