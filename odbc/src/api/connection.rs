@@ -49,11 +49,6 @@ fn normalize_crl_enabled_value(value: &str) -> String {
     }
 }
 
-fn is_truthy(value: &str) -> bool {
-    let v = value.trim();
-    v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on") || v == "1"
-}
-
 fn normalize_connection_string_options(
     connection_string_map: HashMap<String, String>,
 ) -> HashMap<String, ConfigSetting> {
@@ -89,11 +84,7 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
-        "SSL" => {
-            let protocol = if is_truthy(&value) { "https" } else { "http" };
-            Some(("protocol".to_owned(), protocol.to_owned().into()))
-        }
-        // Forward other keys (e.g. SERVER, UID) for `sf_core` alias resolution; do not
+        // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
     }

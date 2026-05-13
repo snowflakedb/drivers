@@ -48,6 +48,7 @@ pub mod param_names {
     pub const HOST: ParamKey = ParamKey("host");
     pub const PORT: ParamKey = ParamKey("port");
     pub const PROTOCOL: ParamKey = ParamKey("protocol");
+    pub const SSL: ParamKey = ParamKey("ssl");
     pub const SERVER_URL: ParamKey = ParamKey("server_url");
     pub const PRESERVE_UNDERSCORES_IN_HOSTNAME: ParamKey =
         ParamKey("preserve_underscores_in_hostname");
@@ -227,10 +228,24 @@ static PARAM_DEFS: &[ParamDef] = &[
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::String("https".to_string())),
+        default: None,
         sensitive: false,
         description: "Connection protocol (http or https)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::SSL.as_str(),
+        aliases: &["SSL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Enable or disable SSL/TLS (sets protocol to https or http)",
+        deprecated_by: Some("protocol"),
         scope: ParamScope::Connection,
         used_at_connect: true,
         mutable_after_connect: false,

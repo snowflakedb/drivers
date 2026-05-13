@@ -58,8 +58,8 @@ fn try_coerce_to_value_type(setting: &Setting, expected: ValueType) -> Option<Se
         ValueType::Int => s.parse::<i64>().ok().map(Setting::Int),
         ValueType::Double => s.parse::<f64>().ok().map(Setting::Double),
         ValueType::Bool => match s.to_lowercase().as_str() {
-            "true" => Some(Setting::Bool(true)),
-            "false" => Some(Setting::Bool(false)),
+            "true" | "1" | "on" => Some(Setting::Bool(true)),
+            "false" | "0" | "off" => Some(Setting::Bool(false)),
             _ => None,
         },
         ValueType::String | ValueType::Bytes => None,
