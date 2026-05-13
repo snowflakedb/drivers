@@ -2,9 +2,10 @@ name: Install reference Snowflake ODBC driver
 description: >
   Download, verify, and install the released Snowflake ODBC driver used as a
   reference target in odbc_tests_reference. The installer is cached across
-  runs keyed on the version file so the ~20MB download is only paid once per
+  runs keyed on the version file so the download is only paid once per
   driver version. Linux uses SHA-256 + dpkg; Windows uses Authenticode
-  signature verification + msiexec.
+  signature verification + msiexec; macOS uses SHA-256 + hdiutil + the
+  `installer` CLI on the universal .pkg inside the .dmg.
 
 inputs:
   cache-dir:
@@ -19,8 +20,9 @@ inputs:
     default: ci/reference-odbc-version
   checksums-file:
     description: >
-      Path to the shell-sourceable file exporting DEB_X86_64_SHA256 used to
-      verify the Linux .deb. Ignored on Windows.
+      Path to the shell-sourceable file exporting DEB_X86_64_SHA256 (Linux)
+      and DMG_UNIVERSAL_SHA256 (macOS) used to verify the downloaded
+      installer. Ignored on Windows (signature check is used there instead).
     required: false
     default: ci/reference-odbc-checksums
 
@@ -28,11 +30,6 @@ runs:
   using: composite
   steps:
     - name: Cache reference ODBC installer
-      # The install steps below only cover Linux + Windows. macOS callers
-      # would restore the cache with no install step to consume it (and
-      # the save side would have nothing to save), so skip the cache step
-      # entirely on macOS.
-      if: runner.os == 'Linux' || runner.os == 'Windows'
       continue-on-error: true
       uses: actions/cache@v5
       with:
@@ -62,6 +59,49 @@ runs:
         echo "${DEB_X86_64_SHA256}  ${REF_CACHE_DIR}/${DEB}" | sha256sum -c -
         sudo dpkg -i "${REF_CACHE_DIR}/${DEB}"
         sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+    - name: Install reference ODBC driver (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        REF_CACHE_DIR: ${{ inputs.cache-dir }}
+        REF_VERSION_FILE: ${{ inputs.version-file }}
+        REF_CHECKSUMS_FILE: ${{ inputs.checksums-file }}
+      run: |
+        set -euxo pipefail
+        REFERENCE_ODBC_VERSION=$(tr -d '[:space:]' < "$REF_VERSION_FILE")
+        # shellcheck disable=SC1090
+        . "$REF_CHECKSUMS_FILE"
+        echo "Installing reference ODBC driver version: $REFERENCE_ODBC_VERSION"
+        # Snowflake ships a single universal (arm64 + x86_64) .dmg under
+        # /odbc/macuniversal/<v>/. The dmg contains a single .pkg installer
+        # which writes the driver to /opt/snowflake/snowflakeodbc/.
+        DMG="snowflake_odbc_mac_64universal-${REFERENCE_ODBC_VERSION}.dmg"
+        mkdir -p "${REF_CACHE_DIR}"
+        if [[ -f "${REF_CACHE_DIR}/${DMG}" ]]; then
+          echo "Using cached installer: ${REF_CACHE_DIR}/${DMG}"
+        else
+          curl -fSL -o "${REF_CACHE_DIR}/${DMG}" \
+            "https://sfc-repo.snowflakecomputing.com/odbc/macuniversal/${REFERENCE_ODBC_VERSION}/${DMG}"
+        fi
+        echo "${DMG_UNIVERSAL_SHA256}  ${REF_CACHE_DIR}/${DMG}" | shasum -a 256 -c -
+
+        # Mount with an explicit, ephemeral mount point so we never have to
+        # guess where hdiutil put it. `-nobrowse` keeps Finder out of the way.
+        # `-noverify` skips the integrity recheck (we just verified SHA-256
+        # ourselves) and shaves a few seconds. Detach unconditionally on exit
+        # so a failed installer doesn't leak a mounted DMG.
+        MOUNT_POINT="$(mktemp -d -t sf-ref-odbc-dmg)"
+        hdiutil attach -nobrowse -noverify -quiet -mountpoint "$MOUNT_POINT" "${REF_CACHE_DIR}/${DMG}"
+        trap 'hdiutil detach "$MOUNT_POINT" -quiet || true' EXIT
+
+        PKG="$(find "$MOUNT_POINT" -maxdepth 2 -name '*.pkg' -print -quit)"
+        if [[ -z "${PKG:-}" ]]; then
+          echo "No .pkg found inside $MOUNT_POINT:"
+          ls -la "$MOUNT_POINT"
+          exit 1
+        fi
+        sudo installer -pkg "$PKG" -target /
 
     - name: Install reference ODBC driver (Windows)
       if: runner.os == 'Windows'
