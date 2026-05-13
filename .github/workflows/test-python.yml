@@ -459,7 +459,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        include: &reference_matrix
           - hatch_env: reference
             os: ubuntu-latest
             py: "3.10"
@@ -635,17 +635,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - hatch_env: test
-            ref_hatch_env: reference
-            os: windows-latest
-            py: "3.14"
-            cloud_provider: azure
-          - hatch_env: test-pandas
-            ref_hatch_env: reference-pandas
-            os: macos-latest
-            py: "3.12"
-            cloud_provider: gcp
+        include: *reference_matrix
     runs-on: ubuntu-latest
     name: python_compare_results (${{ matrix.hatch_env }})
     env:

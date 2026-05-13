@@ -163,6 +163,9 @@ jobs:
               - 'python/tests/integ/**'
               - 'python/tests/*.py'
               - 'python/tests/helpers/**'
+              - '.github/workflows/test-python.yml'
+              - 'ci/test_matrix/mappings/python.py'
+              - 'ci/test_matrix/models/python.py'
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'

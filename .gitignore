@@ -50,6 +50,3 @@ jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDr
 
 .DS_Store
 tests/test_data/generated_test_data/chunks/
-
-# CI test matrix generated files -- produced at runtime by ci/test_matrix/generate_matrix.py
-ci/test_matrix/generated/
