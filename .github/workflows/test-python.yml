@@ -524,6 +524,114 @@ jobs:
           name: results-reference-${{ env.MATRIX_KEY }}
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
+  # Flaky tests — non-blocking, informational. Runs only tests marked
+  # @pytest.mark.flaky (excluded from every other job by the default
+  # `-m "not flaky"` in python/pyproject.toml addopts). Failures here do
+  # not gate merges and the job is intentionally omitted from python-status.
+  python_flaky_tests:
+    needs: [detect-changes, build_wheels]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    name: python_flaky_tests (ubuntu-latest, py3.13, aws)
+    continue-on-error: true
+    env:
+      MATRIX_KEY: flaky-ubuntu-latest-3.13-aws
+    steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Restore uv cache
+        id: uv-cache-flaky
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-ubuntu-latest-3.13-test-
+            uv-ubuntu-latest-3.13-
+            uv-ubuntu-latest-
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: manylinux_x86_64_py3.13
+          path: python/dist
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Install snowflake ud driver from wheel
+        working-directory: python
+        run: |
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
+          echo "Installing wheel: $WHEEL_PATH"
+          hatch run test.py3.13:install-wheel
+
+      - name: Run flaky tests
+        working-directory: python
+        # Exit code 5 means "no tests collected" — expected when no tests are
+        # currently marked @pytest.mark.flaky. Treat it as success.
+        run: |
+          mkdir -p reports
+          set +e
+          hatch run test.py3.13:flaky \
+            --json-report --json-report-file=reports/flaky-${{ env.MATRIX_KEY }}.json \
+            --junitxml=reports/flaky-${{ env.MATRIX_KEY }}.xml
+          status=$?
+          if [[ $status -eq 5 ]]; then
+            echo "::notice::No tests marked @pytest.mark.flaky — skipping."
+            exit 0
+          fi
+          exit $status
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
+      - name: Upload test results as GitHub artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-flaky-${{ env.MATRIX_KEY }}
+          path: python/reports/flaky-${{ env.MATRIX_KEY }}.*
+
+      - name: Prune uv cache
+        if: always()
+        shell: bash
+        run: uv cache prune --ci
+
+      - name: Save uv cache
+        if: always() && steps.uv-cache-flaky.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+
   # Compare results between connectors
   python_compare_results:
     needs: [detect-changes, python_tests, python_tests_reference]
