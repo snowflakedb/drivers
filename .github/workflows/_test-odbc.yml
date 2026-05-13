@@ -3,19 +3,11 @@ name: ODBC Driver Tests
 # Reusable workflow that builds the UD ODBC driver per-platform and runs
 # the full test matrix (generated from ci/test_matrix/) plus per-cloud
 # parameter cleanup.
-#
-# Called from .github/workflows/test-odbc.yml. The parent gates the entire
-# call with `if:` on the `uses:` line, so the inner jobs no longer carry
-# the `if: ... run_odbc == 'true'` guards their inlined predecessors did.
 
 on:
   workflow_call:
 
 env:
-  # Re-declare workflow-level env that the parent test-odbc.yml provides.
-  # Reusable workflows do NOT inherit env from their caller — without this
-  # the install-deps step's $env:CCACHE_DIR / vcpkg binary-cache path
-  # point at nothing on the runner.
   CARGO_TERM_COLOR: always
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_BASEDIR: ${{ github.workspace }}
@@ -36,7 +28,6 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
   # Build ODBC driver once per platform and share via artifact.
-  # Avoids rebuilding in each of the 9 test matrix cells (3 OSes × 3 cloud providers).
   build_odbc_driver:
     strategy:
       fail-fast: false
@@ -74,7 +65,6 @@ jobs:
 
       - name: Cache Rust dependencies
         id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
@@ -124,7 +114,6 @@ jobs:
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
