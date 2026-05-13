@@ -62,10 +62,13 @@ Required environment variables
     Slack bot token (``xoxb-...``) with the ``users:read.email`` scope.
     When set, the bot calls ``users.lookupByEmail`` once per *distinct*
     reviewer per run to translate their git commit email into a Slack
-    user ID, emitting ``<@U…>`` so Slack renders a real DM-notifying
-    mention. The bot deliberately does *not* call ``users.list`` — a
-    per-reviewer lookup fetches one user's profile at a time instead
-    of leaking the whole workspace onto a public runner.
+    user ID, emitting ``<@U…>`` so Slack renders a real channel mention
+    that triggers a notification for the reviewer — same UX as typing
+    ``@first.last`` manually in ``#drivers-review``. The bot only writes
+    via ``chat.postMessage`` to a channel; it never sends DMs.
+    ``users.list`` is intentionally *not* called — per-reviewer lookup
+    fetches one user's profile at a time instead of leaking the whole
+    workspace onto a public runner.
 
     If the token is not provided or the lookup fails for a given
     reviewer (e.g. they commit with a noreply email or aren't in the
@@ -90,7 +93,9 @@ For each reviewer the bot:
    ``commit.author.email`` (e.g. ``maxymilian.kowalski@snowflake.com``).
 2. If ``SLACK_BOT_TOKEN`` is configured, calls ``users.lookupByEmail``
    with the email and emits ``<@U…>`` on a successful match — this is
-   what triggers the DM notification.
+   what makes Slack render a real channel mention and notify the
+   reviewer. The message itself is always posted in the channel; the
+   bot never DMs anyone.
 3. Otherwise, derives a dot-separated lowercase handle from the commit
    author name (``Maxymilian Kowalski`` -> ``@maxymilian.kowalski``),
    with Unicode characters folded to ASCII so diacritics don't break
@@ -488,7 +493,8 @@ class ReviewerDisplay:
        ``commit.author.name`` and ``commit.author.email``.
     2. If a Slack bot token is configured, call ``users.lookupByEmail``
        with that email. On a match, return ``<@U…>`` so Slack renders a
-       real mention and DM-notifies the reviewer.
+       real channel mention that notifies the reviewer (the message is
+       posted in the channel — the bot never sends DMs).
     3. Otherwise (no token, no email, lookup failed, or
        ``users_not_found``), fall back to ``@<handle>`` derived from the
        commit author name (``Maxymilian Kowalski`` ->

@@ -17,8 +17,11 @@
 #         - chat:write         post messages in #drivers-review.
 #         - users:read.email   look up each reviewer's Slack user ID
 #                              by their git commit email, so the bot
-#                              can emit a real <@U...> mention that
-#                              DM-notifies them.
+#                              can emit a real <@U...> channel mention
+#                              that triggers a notification (same as
+#                              typing @first.last manually in the
+#                              channel). The bot never sends DMs — all
+#                              writes are chat.postMessage to a channel.
 #       The bot deliberately does NOT request users:read and never calls
 #       users.list. Per-reviewer users.lookupByEmail fetches one user's
 #       profile at a time, instead of pulling the whole workspace's
