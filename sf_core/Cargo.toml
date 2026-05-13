@@ -152,6 +152,10 @@ name = "logging_custom_file_tests"
 path = "tests/logging_custom_file_tests.rs"
 
 [[test]]
+name = "logging_query_tests"
+path = "tests/logging_query_tests.rs"
+
+[[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 
