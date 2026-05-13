@@ -388,7 +388,7 @@ class TestLogoutRetryBehavior:
     retries a failed logout request.
     """
 
-    @pytest.mark.skip_reference(reason="Old connector (v4.3.0) does not retry logout on 503")
+    @pytest.mark.skip_reference(reason="Old connector (v4.5.0) does not retry logout on 503")
     def test_should_retry_logout_on_transient_failure_when_close_called_with_default_retry(
         self, int_test_connection_factory, wiremock
     ):
