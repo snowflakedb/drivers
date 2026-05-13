@@ -12,6 +12,8 @@ fn test_query_parameters(server_url: &str) -> QueryParameters {
         server_url: server_url.to_string(),
         client_info: test_client_info(),
         log_max_query_length: 80,
+        log_query_text: false,
+        log_query_parameters: false,
     }
 }
 

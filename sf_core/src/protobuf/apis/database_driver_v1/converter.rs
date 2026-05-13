@@ -924,6 +924,8 @@ mod tests {
             location: loc(),
             source: Box::new(RestError::AsyncQuery {
                 location: loc(),
+                request_id: Some(uuid::Uuid::new_v4()), // test only code
+                query_id: None,
                 source: SfError::SnowflakeBody {
                     code,
                     message: "test".to_owned(),

@@ -546,6 +546,8 @@ impl DatabaseDriverV1 {
                     Err(e) => {
                         last_error = Some(RestError::AsyncQuery {
                             source: e,
+                            request_id: Some(request_id),
+                            query_id: None,
                             location: snafu::Location::new(file!(), line!(), 0),
                         });
                     }
