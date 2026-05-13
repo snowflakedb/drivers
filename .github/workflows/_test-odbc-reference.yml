@@ -8,15 +8,11 @@ name: ODBC Reference-Driver Tests
 on:
   workflow_call:
 
-env:
-  # Re-declare workflow-level env that the parent test-odbc.yml provides.
-  # Reusable workflows do NOT inherit env from their caller — without this
-  # the install-build-prereqs step's $env:CCACHE_DIR / vcpkg binary-cache
-  # path point at nothing on the runner.
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_MAXSIZE: 1G
-  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite"
+# CCACHE_* / VCPKG_BINARY_SOURCES / CARGO_TERM_COLOR are exported by
+# the setup-odbc-build-env composite below — workflow-level env doesn't
+# cross the workflow_call boundary, so the composite is the single
+# source of truth (shared with _test-odbc.yml and the parent's
+# odbc_unit_tests job).
 
 jobs:
   odbc_tests_reference:
@@ -35,6 +31,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
 
       - name: Restore test dependencies cache
         id: test-deps-cache-ref
