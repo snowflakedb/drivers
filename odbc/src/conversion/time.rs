@@ -1,7 +1,7 @@
 use std::io::{Cursor, Write as _};
 
 use arrow::array::{Array, PrimitiveArray};
-use arrow::datatypes::Int64Type;
+use arrow::datatypes::ArrowPrimitiveType;
 use chrono::{Datelike, NaiveDate, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
@@ -58,10 +58,13 @@ impl SnowflakeType for SnowflakeTime {
     type Representation<'a> = NaiveTime;
 }
 
-impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
+impl<T: ArrowPrimitiveType> ReadArrowType<PrimitiveArray<T>> for SnowflakeTime
+where
+    T::Native: Into<i64>,
+{
     fn read_arrow_type<'a>(
         &self,
-        array: &'a PrimitiveArray<Int64Type>,
+        array: &'a PrimitiveArray<T>,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
         if array.is_null(row_idx) {
@@ -75,7 +78,7 @@ impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
             }
             .fail();
         }
-        let raw = array.value(row_idx);
+        let raw: i64 = array.value(row_idx).into();
         if raw < 0 {
             return InvalidArrowValueSnafu {
                 reason: format!("negative TIME value: {raw}"),

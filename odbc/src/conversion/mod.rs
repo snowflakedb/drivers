@@ -516,9 +516,18 @@ pub fn make_converter(
         SnowflakeFieldType::Date(snowflake_type) => {
             make_primitive_data_converter!(Date32Type, snowflake_type, nullable)
         }
-        SnowflakeFieldType::Time(snowflake_type) => {
-            make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
-        }
+        SnowflakeFieldType::Time(snowflake_type) => match field.data_type() {
+            DataType::Int32 => {
+                make_primitive_data_converter!(Int32Type, snowflake_type, nullable)
+            }
+            DataType::Int64 => {
+                make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
+            }
+            dt => UnsupportedArrowDataTypeSnafu {
+                data_type: dt.clone(),
+            }
+            .fail(),
+        },
         SnowflakeFieldType::TimestampNtz(snowflake_type) => {
             make_timestamp_converter!(snowflake_type, field, nullable)
         }
