@@ -831,7 +831,7 @@ async fn resolve_prefetch_config(conn: &Arc<Mutex<Connection>>) -> PrefetchConfi
         .unwrap_or(crate::chunks::DEFAULT_PREFETCH_THREADS);
     let memory_limit_mb = session_params
         .get(param_names::CLIENT_MEMORY_LIMIT.as_str())
-        .and_then(|v| v.parse::<u64>().ok())
+        .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(crate::chunks::DEFAULT_MEMORY_LIMIT_MB);
     PrefetchConfig {
         prefetch_threads: threads,

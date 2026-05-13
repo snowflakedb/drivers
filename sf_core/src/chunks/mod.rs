@@ -27,7 +27,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{OptionExt, ResultExt};
 
 pub const DEFAULT_PREFETCH_THREADS: usize = 4;
-pub const DEFAULT_MEMORY_LIMIT_MB: u64 = 1536;
+pub const DEFAULT_MEMORY_LIMIT_MB: u32 = 1536;
 
 /// Configuration for the chunk prefetch pipeline.
 #[derive(Debug, Clone)]
@@ -35,7 +35,7 @@ pub struct PrefetchConfig {
     /// Number of concurrent chunk download+parse tasks.
     pub prefetch_threads: usize,
     /// Memory budget in MB for buffered chunks. 0 means unlimited.
-    pub memory_limit_mb: u64,
+    pub memory_limit_mb: u32,
 }
 
 impl Default for PrefetchConfig {
@@ -145,13 +145,12 @@ impl ChunkDownloadData {
         }
     }
 
-    pub fn estimated_memory_mb(&self) -> u64 {
-        const MEMORY_ESTIMATE_NUMERATOR: u64 = 3;
-        const MEMORY_ESTIMATE_DENOMINATOR: u64 = 2;
+    /// Estimates in-memory size after decompression and Arrow conversion.
+    /// Uses 1.5x uncompressed size as a heuristic for Arrow overhead.
+    pub fn estimated_memory_mb(&self) -> u32 {
         const BYTES_PER_MB: u64 = 1024 * 1024;
-        let bytes = (self.uncompressed_size.max(0) as u64) * MEMORY_ESTIMATE_NUMERATOR
-            / MEMORY_ESTIMATE_DENOMINATOR;
-        (bytes / BYTES_PER_MB).max(1)
+        let bytes = (self.uncompressed_size.max(0) as u64) * 3 / 2;
+        ((bytes / BYTES_PER_MB).max(1)) as u32
     }
 }
 

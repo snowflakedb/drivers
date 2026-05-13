@@ -92,6 +92,12 @@ class ConnectionConfig:
     log_max_query_length: int | None = 80
     """Maximum number of characters of a query string to include in log messages. Default: 80"""
 
+    log_query_parameters: bool | str | None = False
+    """Include the (truncated) JSON bindings in INFO query logs (requires log_query_text). Default: False"""
+
+    log_query_text: bool | str | None = False
+    """Include the (truncated) SQL text in INFO query logs. Default: False"""
+
     logout_error_strategy: str | None = None
     """Error handling strategy for logout: 'best_effort' or 'strict'"""
 
@@ -153,6 +159,9 @@ class ConnectionConfig:
     """Whether to verify the server hostname in TLS. Default: True"""
 
     # -- Session parameters --------------------------------------------------
+    client_memory_limit: int | None = 1536
+    """Memory budget in MB for chunk prefetch buffer (0 = unlimited). Default: 1536"""
+
     client_prefetch_threads: int | None = 4
     """Number of concurrent chunk prefetch threads for result set downloading. Default: 4"""
 
@@ -233,6 +242,7 @@ class ConnectionConfig:
     """Lowercased alias -> Python field name."""
 
     _PYTHON_TO_RUST_NAME: ClassVar[dict[str, str]] = {
+        "client_memory_limit": "CLIENT_MEMORY_LIMIT",
         "client_prefetch_threads": "CLIENT_PREFETCH_THREADS",
         "passcode_in_password": "passcodeInPassword",
     }
@@ -273,6 +283,7 @@ class ConnectionConfig:
             "auto_cleanup",
             "autocommit",
             "client_app_id",
+            "client_memory_limit",
             "client_prefetch_threads",
             "client_store_temporary_credential",
             "connection_name",
@@ -291,6 +302,8 @@ class ConnectionConfig:
             "enable_server_session_keep_alive_auto_detection",
             "host",
             "log_max_query_length",
+            "log_query_parameters",
+            "log_query_text",
             "logout_error_strategy",
             "logout_max_attempts",
             "logout_request_timeout_seconds",

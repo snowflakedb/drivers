@@ -33,8 +33,7 @@ impl MemoryTicket {
 }
 
 impl MemoryBudget {
-    pub(crate) fn new(limit_mb: u64) -> Self {
-        let limit_mb = u32::try_from(limit_mb).unwrap_or(u32::MAX);
+    pub(crate) fn new(limit_mb: u32) -> Self {
         Self {
             semaphore: Arc::new(Semaphore::new(limit_mb as usize)),
             limit_mb,
@@ -45,12 +44,12 @@ impl MemoryBudget {
     ///
     /// If `mb` exceeds the total budget, all permits are acquired instead,
     /// which waits for exclusive access (no other tickets outstanding).
-    pub(crate) async fn acquire(&self, mb: u64) -> MemoryTicket {
+    pub(crate) async fn acquire(&self, mb: u32) -> MemoryTicket {
         if self.limit_mb == 0 {
             return MemoryTicket(None);
         }
 
-        let permits = u32::try_from(mb).unwrap_or(u32::MAX).min(self.limit_mb);
+        let permits = mb.min(self.limit_mb);
 
         let permit = self
             .semaphore
