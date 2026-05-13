@@ -1,0 +1,102 @@
+name: Install reference Snowflake ODBC driver
+description: >
+  Download, verify, and install the released Snowflake ODBC driver used as a
+  reference target in odbc_tests_reference. The installer is cached across
+  runs keyed on the version file so the ~20MB download is only paid once per
+  driver version. Linux uses SHA-256 + dpkg; Windows uses Authenticode
+  signature verification + msiexec.
+
+inputs:
+  cache-dir:
+    description: >
+      Directory (relative to GITHUB_WORKSPACE) where the installer is cached.
+    required: false
+    default: .cache/reference-odbc
+  version-file:
+    description: >
+      Path to the file containing the reference ODBC driver version.
+    required: false
+    default: ci/reference-odbc-version
+  checksums-file:
+    description: >
+      Path to the shell-sourceable file exporting DEB_X86_64_SHA256 used to
+      verify the Linux .deb. Ignored on Windows.
+    required: false
+    default: ci/reference-odbc-checksums
+
+runs:
+  using: composite
+  steps:
+    - name: Cache reference ODBC installer
+      # The install steps below only cover Linux + Windows. macOS callers
+      # would restore the cache with no install step to consume it (and
+      # the save side would have nothing to save), so skip the cache step
+      # entirely on macOS.
+      if: runner.os == 'Linux' || runner.os == 'Windows'
+      continue-on-error: true
+      uses: actions/cache@v5
+      with:
+        path: ${{ inputs.cache-dir }}
+        key: ${{ runner.os }}-ref-odbc-${{ hashFiles(inputs.version-file) }}
+
+    - name: Install reference ODBC driver (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        REF_CACHE_DIR: ${{ inputs.cache-dir }}
+        REF_VERSION_FILE: ${{ inputs.version-file }}
+        REF_CHECKSUMS_FILE: ${{ inputs.checksums-file }}
+      run: |
+        set -euxo pipefail
+        REFERENCE_ODBC_VERSION=$(cat "$REF_VERSION_FILE" | tr -d '[:space:]')
+        # shellcheck disable=SC1090
+        . "$REF_CHECKSUMS_FILE"
+        echo "Installing reference ODBC driver version: $REFERENCE_ODBC_VERSION"
+        DEB="snowflake-odbc-${REFERENCE_ODBC_VERSION}.x86_64.deb"
+        mkdir -p "${REF_CACHE_DIR}"
+        if [[ -f "${REF_CACHE_DIR}/${DEB}" ]]; then
+          echo "Using cached installer: ${REF_CACHE_DIR}/${DEB}"
+        else
+          curl -o "${REF_CACHE_DIR}/${DEB}" "https://sfc-repo.snowflakecomputing.com/odbc/linux/${REFERENCE_ODBC_VERSION}/${DEB}"
+        fi
+        echo "${DEB_X86_64_SHA256}  ${REF_CACHE_DIR}/${DEB}" | sha256sum -c -
+        sudo dpkg -i "${REF_CACHE_DIR}/${DEB}"
+        sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+    - name: Install reference ODBC driver (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        REF_CACHE_DIR: ${{ inputs.cache-dir }}
+        REF_VERSION_FILE: ${{ inputs.version-file }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $referenceOdbcVersion = (Get-Content $env:REF_VERSION_FILE -Raw).Trim()
+        $snowflakeOdbcMsi = "snowflake64_odbc-$referenceOdbcVersion.msi"
+        $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/win64/$referenceOdbcVersion/$snowflakeOdbcMsi"
+        $cacheDir = Join-Path $env:GITHUB_WORKSPACE $env:REF_CACHE_DIR
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+        $cachedMsi = Join-Path $cacheDir $snowflakeOdbcMsi
+        if (Test-Path $cachedMsi) {
+          Write-Host "Using cached Snowflake ODBC MSI: $cachedMsi"
+        } else {
+          Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
+          Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $cachedMsi
+        }
+
+        # Verify Authenticode signature BEFORE handing the MSI to msiexec. GHA's cache is a
+        # mutable bucket tied to the repo; an attacker with write access could swap the cached
+        # bytes. Authenticode is the canonical Windows integrity check: it validates the
+        # cryptographic signature + trust chain, and the SignerCertificate.Subject match
+        # confirms the publisher is Snowflake.
+        $sig = Get-AuthenticodeSignature $cachedMsi
+        if ($sig.Status -ne 'Valid') {
+          throw "MSI Authenticode signature is not Valid (status: $($sig.Status), message: $($sig.StatusMessage)). Refusing to install possibly tampered MSI at $cachedMsi."
+        }
+        if ($sig.SignerCertificate.Subject -notlike "*Snowflake*") {
+          throw "MSI signer is not Snowflake (subject: $($sig.SignerCertificate.Subject)). Refusing to install MSI from unexpected publisher."
+        }
+        Write-Host "MSI Authenticode signature valid; signer: $($sig.SignerCertificate.Subject)"
+
+        $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i `"$cachedMsi`" /quiet" -Wait -PassThru
+        if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
