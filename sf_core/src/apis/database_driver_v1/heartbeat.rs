@@ -18,7 +18,7 @@ const MAX_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3600);
 /// Handle to a per-connection heartbeat background task.
 ///
 /// Cancels the task on drop to ensure cleanup when the connection is released.
-pub(crate) struct HeartbeatHandle {
+pub struct HeartbeatHandle {
     cancel_token: CancellationToken,
     task_handle: Option<JoinHandle<()>>,
 }
@@ -51,7 +51,7 @@ impl Drop for HeartbeatHandle {
 ///
 /// Returns `master_validity / 4`, capped at 3600s.
 /// Falls back to 3600s if `master_validity` is `None`.
-pub(crate) fn compute_heartbeat_interval(master_validity: Option<Duration>) -> Duration {
+pub fn compute_heartbeat_interval(master_validity: Option<Duration>) -> Duration {
     master_validity
         .map(|v| (v / 4).min(MAX_HEARTBEAT_INTERVAL))
         .unwrap_or(MAX_HEARTBEAT_INTERVAL)
@@ -62,7 +62,7 @@ pub(crate) fn compute_heartbeat_interval(master_validity: Option<Duration>) -> D
 /// The task sends periodic `POST /session/heartbeat` requests to keep the
 /// session alive. It automatically refreshes the session token on 401
 /// responses, and exits when cancelled or when the session tokens are cleared.
-pub(crate) fn spawn_heartbeat_task(
+pub fn spawn_heartbeat_task(
     tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     http_client: reqwest::Client,
     server_url: String,
