@@ -1,7 +1,10 @@
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
+use snafu::{Location, Snafu};
 use std::fmt;
+use std::sync::Arc;
 
 /// Result of an upload-or-skip operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,8 +22,12 @@ impl fmt::Display for UploadStatus {
     }
 }
 
-// Dedicated file transfer types
-#[derive(Debug)]
+// Dedicated file transfer types.
+//
+// `UploadData`/`DownloadData` carry an optional `Arc<dyn CredentialRefresher>`,
+// which has no `Debug` impl; we follow the codebase pattern (see
+// `DriverProviders` in `apis/database_driver_v1/global_state.rs`) and omit
+// `Debug` on these structs rather than hand-writing a redacting impl.
 pub struct UploadData {
     pub src_location_pattern: String,
     pub stage_info: StageInfo,
@@ -28,6 +35,9 @@ pub struct UploadData {
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
+    /// Re-fetches storage credentials when the cloud provider reports an
+    /// expired token. `None` makes expired tokens terminal.
+    pub credential_refresher: Option<Arc<dyn CredentialRefresher>>,
 }
 
 pub struct SingleUploadData {
@@ -40,15 +50,14 @@ pub struct SingleUploadData {
     pub overwrite: bool,
 }
 
-#[derive(Debug)]
 pub struct DownloadData {
     pub src_locations: Vec<String>,
     pub local_location: String,
     pub stage_info: StageInfo,
     pub encryption_materials: Vec<Option<EncryptionMaterial>>,
+    pub credential_refresher: Option<Arc<dyn CredentialRefresher>>,
 }
 
-#[derive(Debug)]
 pub struct SingleDownloadData {
     pub src_location: String,
     pub local_location: String,
@@ -127,6 +136,31 @@ pub struct StageInfo {
     pub storage_account: Option<String>,
 }
 
+/// Error returned by a `CredentialRefresher` when re-fetching storage
+/// credentials fails. The underlying error chain is preserved so
+/// `error_trace::ErrorTrace` can render it.
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
+#[snafu(visibility(pub))]
+pub enum CredentialRefreshError {
+    #[snafu(display("Failed to refresh storage credentials"))]
+    RefreshFailed {
+        source: Box<dyn std::error::Error + Send + Sync>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+/// Re-fetches cloud storage credentials when the cloud provider reports an
+/// expired token mid-transfer. Implementations typically re-execute the
+/// originating PUT/GET SQL command and parse fresh `stageInfo.creds`.
+///
+/// The trait is dyn-compat (`Arc<dyn CredentialRefresher>`), so `refresh`
+/// returns a `BoxFuture` — matching `CallerIdentityProvider` in
+/// `telemetry::platform_detection::aws`.
+pub trait CredentialRefresher: Send + Sync + 'static {
+    fn refresh(&self) -> BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>>;
+}
+
 /// Cloud storage credentials.
 #[derive(Debug, Clone)]
 pub enum CloudCredentials {
@@ -156,7 +190,10 @@ pub struct EncryptionMaterial {
 /// Prepared file data ready for cloud upload.
 /// For client-side encryption: contains encrypted data + encryption metadata.
 /// For server-side encryption (SSE): contains raw data with no encryption metadata.
-#[derive(Debug)]
+///
+/// `Clone` is used by the S3 credential-refresh retry loop, which re-submits
+/// the payload under fresh credentials on `ExpiredToken`.
+#[derive(Debug, Clone)]
 pub struct PreparedUpload {
     pub data: Vec<u8>,
     /// SHA-256 digest of the data (always present for integrity verification).
@@ -166,7 +203,7 @@ pub struct PreparedUpload {
 }
 
 /// Client-side encryption metadata that gets bundled with the uploaded data.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EncryptedFileMetadata {
     pub encrypted_key: String, // Base64 encoded
     pub iv: String,            // Base64 encoded
@@ -174,7 +211,7 @@ pub struct EncryptedFileMetadata {
 }
 
 // Material description structure for JSON serialization
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialDescription {
     #[serde(rename = "queryId")]
     pub query_id: String,

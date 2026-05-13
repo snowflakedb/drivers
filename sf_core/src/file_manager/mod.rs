@@ -22,6 +22,7 @@ use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
@@ -49,14 +50,18 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
             overwrite: data.overwrite,
         };
 
-        let result = upload_single_file(single_upload_data).await?;
+        let result =
+            upload_single_file(single_upload_data, data.credential_refresher.clone()).await?;
         results.push(result);
     }
 
     Ok(results)
 }
 
-pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, FileManagerError> {
+pub async fn upload_single_file(
+    data: SingleUploadData,
+    credential_refresher: Option<Arc<dyn CredentialRefresher>>,
+) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
 
     let mut file_buffer = Vec::new();
@@ -70,6 +75,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            credential_refresher,
         )
         .await
         .context(S3UploadSnafu)?,
@@ -202,7 +208,8 @@ pub async fn download_files(
             encryption_material,
         };
 
-        let result = download_single_file(single_download_data).await?;
+        let result =
+            download_single_file(single_download_data, data.credential_refresher.clone()).await?;
         results.push(result);
     }
 
@@ -211,11 +218,16 @@ pub async fn download_files(
 
 pub async fn download_single_file(
     data: SingleDownloadData,
+    credential_refresher: Option<Arc<dyn CredentialRefresher>>,
 ) -> Result<DownloadResult, FileManagerError> {
     let (raw_data, digest, file_metadata) = match data.stage_info.location_type {
-        LocationType::S3 => download_from_s3(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(S3DownloadSnafu)?,
+        LocationType::S3 => download_from_s3(
+            &data.stage_info,
+            data.src_location.as_str(),
+            credential_refresher,
+        )
+        .await
+        .context(S3DownloadSnafu)?,
         LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
             .await
             .context(GcsDownloadSnafu)?,

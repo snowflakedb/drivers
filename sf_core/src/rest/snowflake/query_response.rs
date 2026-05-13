@@ -385,6 +385,7 @@ impl Data {
             auto_compress,
             source_compression,
             overwrite,
+            credential_refresher: None,
         })
     }
 
@@ -446,7 +447,15 @@ impl Data {
             local_location,
             stage_info,
             encryption_materials,
+            credential_refresher: None,
         })
+    }
+
+    /// Borrow the raw `stageInfo` from this response, if present. Used by the
+    /// credential-refresh path to convert a re-executed PUT/GET response's
+    /// fresh stage credentials without re-building the full `UploadData`.
+    pub fn stage_info_ref(&self) -> Option<&StageInfo> {
+        self.stage_info.as_ref()
     }
 
     pub fn to_rowset_data<'a>(&'a self) -> RowsetData<'a> {
@@ -1195,9 +1204,10 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result = data.to_file_upload_data();
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
+        let err_msg = match data.to_file_upload_data() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected to_file_upload_data to fail"),
+        };
         assert!(
             err_msg.contains("Expected exactly one encryption material"),
             "Error should mention the constraint: {err_msg}"

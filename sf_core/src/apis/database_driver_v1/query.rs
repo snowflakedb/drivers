@@ -1,4 +1,6 @@
 use super::ColumnMetadata;
+use super::connection::RefreshContext;
+use super::error::ApiError;
 use super::global_state::{PutGetResultsetFlavor, WrapperPresets};
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
@@ -6,17 +8,26 @@ use crate::chunks::{
     ChunkError, PrefetchConfig, arrow_prefetch_reader, empty_reader, json_prefetch_reader,
     schema_only_reader, single_chunk_reader,
 };
+use crate::config::rest_parameters::QueryParameters;
+use crate::config::retry::RetryPolicy;
 use crate::file_manager;
-use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
+use crate::file_manager::{
+    CloudCredentials, CredentialRefreshError, CredentialRefresher, DownloadResult,
+    RefreshFailedSnafu, UploadResult, download_files, upload_files,
+};
 use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
-use snafu::{IntoError, Location, ResultExt, Snafu};
+use rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
@@ -45,9 +56,12 @@ pub async fn process_query_response(
     http_client: &Client,
     prefetch_config: &PrefetchConfig,
     wrapper_presets: &WrapperPresets,
+    credential_refresher: Option<Arc<dyn CredentialRefresher>>,
 ) -> Result<QueryResult, QueryResponseProcessingError> {
     match data.command {
-        Some(ref command) => perform_put_get(command.clone(), data, wrapper_presets).await,
+        Some(ref command) => {
+            perform_put_get(command.clone(), data, wrapper_presets, credential_refresher).await
+        }
         None => {
             let reader = read_batches(data.to_rowset_data(), http_client.clone(), prefetch_config)
                 .await
@@ -61,12 +75,14 @@ async fn perform_put_get(
     command: String,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
+    refresher: Option<Arc<dyn CredentialRefresher>>,
 ) -> Result<QueryResult, QueryResponseProcessingError> {
     match command.as_str() {
         "UPLOAD" => {
-            let file_upload_data = data
+            let mut file_upload_data = data
                 .to_file_upload_data()
                 .context(FileTransferPreparationSnafu)?;
+            file_upload_data.credential_refresher = refresher;
             let upload_results = upload_files(&file_upload_data)
                 .await
                 .context(FileUploadSnafu)?;
@@ -75,13 +91,14 @@ async fn perform_put_get(
             Ok(QueryResult { reader })
         }
         "DOWNLOAD" => {
-            let file_download_data = data.to_file_download_data().map_err(|e| {
+            let mut file_download_data = data.to_file_download_data().map_err(|e| {
                 if e.to_string().contains("source locations") {
                     RemoteFileNotFoundSnafu.build()
                 } else {
                     FileTransferPreparationSnafu.into_error(e)
                 }
             })?;
+            file_download_data.credential_refresher = refresher;
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
@@ -94,6 +111,159 @@ async fn perform_put_get(
         }
         .fail(),
     }
+}
+
+/// Re-executes the original PUT/GET SQL command to obtain fresh stage
+/// credentials when S3 reports `ExpiredToken`. Re-execution is serialized
+/// against other queries on the same connection by the `Mutex` inside
+/// `RefreshContext`.
+pub(super) struct PutGetCredentialRefresher {
+    conn: Arc<Mutex<super::connection::Connection>>,
+    command: String,
+    query_parameters: QueryParameters,
+    http_client: Client,
+    retry_policy: RetryPolicy,
+}
+
+impl PutGetCredentialRefresher {
+    pub(super) fn new(
+        conn: Arc<Mutex<super::connection::Connection>>,
+        command: String,
+        query_parameters: QueryParameters,
+        http_client: Client,
+        retry_policy: RetryPolicy,
+    ) -> Self {
+        Self {
+            conn,
+            command,
+            query_parameters,
+            http_client,
+            retry_policy,
+        }
+    }
+
+    async fn execute_refresh(&self) -> Result<CloudCredentials, PutGetRefreshError> {
+        let mut ctx = RefreshContext::from_arc(&self.conn)
+            .await
+            .context(RefreshContextSnafu)?;
+
+        let query_input = QueryInput {
+            sql: self.command.clone(),
+            bindings: None,
+            describe_only: None,
+            query_parameters: None,
+        };
+
+        // `execute_with_refresh` is the crate's canonical "retry once on
+        // SessionExpired" helper. Post-#1137, body-level 390112 and HTTP 401
+        // both surface as `SessionExpired`, so one retry covers both paths.
+        let response = ctx
+            .execute_with_refresh(|token| {
+                let http_client = self.http_client.clone();
+                let query_parameters = self.query_parameters.clone();
+                let query_input = query_input.clone();
+                let retry_policy = self.retry_policy.clone();
+                async move {
+                    snowflake_query_with_client(
+                        &http_client,
+                        query_parameters,
+                        token.reveal(),
+                        query_input,
+                        &retry_policy,
+                        QueryExecutionMode::Blocking,
+                    )
+                    .await
+                }
+            })
+            .await
+            .context(SessionRefreshSnafu)?;
+
+        // `success=false` with a non-390112 code (SQL compile error, permission
+        // error, suspended warehouse) still reaches us as Ok(..) — only 390112
+        // is intercepted upstream. Preserve the server message but bound its
+        // length so a misconfigured server can't smuggle arbitrary content
+        // into our logs.
+        if !response.success {
+            return ServerRefusedSnafu {
+                message: truncate_server_message(response.message.as_deref()),
+            }
+            .fail();
+        }
+
+        let stage_info: file_manager::StageInfo = response
+            .data
+            .stage_info_ref()
+            .context(MissingStageInfoSnafu)?
+            .try_into()
+            .context(StageInfoParseSnafu)?;
+        Ok(stage_info.creds)
+    }
+}
+
+/// Bounds server-supplied strings before they land in a displayable error.
+/// Guards against a misbehaving Snowflake endpoint dumping arbitrary content
+/// (presigned URLs, header fragments) into local log aggregation. Matches
+/// the char-boundary-safe truncation in `rest::snowflake::read_response_json`.
+fn truncate_server_message(msg: Option<&str>) -> String {
+    const MAX_LEN: usize = 256;
+    match msg {
+        Some(s) if s.len() <= MAX_LEN => s.to_string(),
+        Some(s) => {
+            let mut end = MAX_LEN;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…(truncated)", &s[..end])
+        }
+        None => "success=false".to_string(),
+    }
+}
+
+impl CredentialRefresher for PutGetCredentialRefresher {
+    fn refresh(&self) -> BoxFuture<'_, Result<CloudCredentials, CredentialRefreshError>> {
+        async move {
+            self.execute_refresh()
+                .await
+                .map_err(|e| RefreshFailedSnafu.into_error(Box::new(e)))
+        }
+        .boxed()
+    }
+}
+
+/// Inner error surface of `PutGetCredentialRefresher::execute_refresh`. Lifted
+/// into `CredentialRefreshError` by the trait impl so the `error_trace::ErrorTrace`
+/// chain reaches the original cause.
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
+pub(super) enum PutGetRefreshError {
+    #[snafu(display("Failed to open refresh context"))]
+    RefreshContext {
+        source: ApiError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Re-execution of PUT/GET command failed"))]
+    SessionRefresh {
+        source: ApiError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("PUT/GET re-execution returned success=false: {message}"))]
+    ServerRefused {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Refreshed PUT/GET response missing stageInfo"))]
+    MissingStageInfo {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse refreshed stageInfo"))]
+    StageInfoParse {
+        source: QueryResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 async fn read_batches<'a>(

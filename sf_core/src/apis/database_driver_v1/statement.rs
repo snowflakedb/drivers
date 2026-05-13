@@ -460,11 +460,27 @@ impl DatabaseDriverV1 {
         let prebuilt_stream = if super::multistatement::is_multistatement(&response.data) {
             None
         } else {
+            // For PUT/GET the storage client may need to re-fetch credentials
+            // if the cloud provider reports an expired STS token mid-transfer.
+            // The refresher re-runs the PUT/GET SQL to get fresh stageInfo.
+            let credential_refresher: Option<Arc<dyn crate::file_manager::CredentialRefresher>> =
+                if response.data.command.is_some() {
+                    Some(Arc::new(super::query::PutGetCredentialRefresher::new(
+                        conn_arc.clone(),
+                        query.clone(),
+                        query_parameters.clone(),
+                        http_client.clone(),
+                        retry_policy.clone(),
+                    )))
+                } else {
+                    None
+                };
             let query_result = process_query_response(
                 &response.data,
                 &http_client,
                 &prefetch_config,
                 &self.wrapper_presets,
+                credential_refresher,
             )
             .await
             .context(QueryResponseProcessingSnafu)?;
@@ -901,8 +917,10 @@ async fn fetch_and_resolve_result_set(
     let prefetch_config = resolve_prefetch_config(conn_ptr).await;
 
     let descriptor = response_to_descriptor(&data, wrapper_presets);
+    // Result fetch by query_id goes through the server's cached rowset, not
+    // a cloud stage, so no credential refresh path is needed here.
     let query_result =
-        process_query_response(&data, &http_client, &prefetch_config, wrapper_presets)
+        process_query_response(&data, &http_client, &prefetch_config, wrapper_presets, None)
             .await
             .context(QueryResponseProcessingSnafu)?;
     let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
