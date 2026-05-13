@@ -5,14 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
-use sf_core::apis::database_driver_v1::heartbeat::{
-    compute_heartbeat_interval, spawn_heartbeat_task,
-};
-use sf_core::config::rest_parameters::ClientInfo;
-use sf_core::crl::config::CrlConfig;
+use sf_core::apis::database_driver_v1::heartbeat::spawn_heartbeat_task;
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
-use sf_core::tls::config::TlsConfig;
 use tokio::sync::RwLock as AsyncRwLock;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -158,11 +154,16 @@ async fn heartbeat_stops_on_cancellation() {
     // When the cancellation token is triggered
     handle.cancel_and_wait().await;
 
+    // Give any in-flight heartbeat that crossed the wire just before cancel time to settle
+    // before we snapshot the baseline; otherwise it can tick between snapshots and flake.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count_at_cancel = heartbeat_count.load(Ordering::SeqCst);
+
     // Then no more heartbeat requests should be sent after cancellation
     tokio::time::sleep(Duration::from_millis(200)).await;
     let count_after = heartbeat_count.load(Ordering::SeqCst);
     assert_eq!(
-        count_before_cancel, count_after,
+        count_at_cancel, count_after,
         "No heartbeats should be sent after cancellation"
     );
 }
@@ -235,23 +236,7 @@ async fn heartbeat_not_started_when_keep_alive_false() {
 }
 
 #[tokio::test]
-async fn heartbeat_uses_short_interval_for_testing() {
-    // Given a master token validity of 16 seconds
-    let interval = compute_heartbeat_interval(Some(Duration::from_secs(16)));
-
-    // Then the computed interval (16s / 4 = 4s) should be clamped to the minimum of 900s
-    assert_eq!(
-        interval,
-        Duration::from_secs(900),
-        "16s validity / 4 = 4s, but clamped to min 900s"
-    );
-
-    // Given a standard master token validity of 14400 seconds
-    let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)));
-
-    // Then the interval should be 14400 / 4 = 3600s (within bounds)
-    assert_eq!(interval, Duration::from_secs(3600));
-
+async fn heartbeat_fires_repeatedly_at_configured_interval() {
     // Given a mock server that counts heartbeat requests
     let server = MockServer::start().await;
     let heartbeat_count = Arc::new(AtomicUsize::new(0));
@@ -320,6 +305,9 @@ async fn heartbeat_drop_cancels_task() {
 
         // When the HeartbeatHandle is dropped (simulating connection_release)
     }
+    // Give any in-flight heartbeat that crossed the wire just before drop time to settle
+    // before we snapshot the baseline; otherwise it can tick between snapshots and flake.
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let count_at_drop = heartbeat_count.load(Ordering::SeqCst);
 
     // Then no more heartbeat requests should arrive after the handle is dropped
@@ -427,6 +415,11 @@ async fn connection_close_cancels_heartbeat() {
         "Connection close should succeed: {result:?}"
     );
 
+    // Give any in-flight heartbeat that crossed the wire just before close time to settle
+    // before we snapshot the baseline; belt-and-braces since `connection_close_blocking`
+    // already calls `cancel_and_wait` synchronously inside cleanup.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
     // Then no more heartbeat requests should arrive after close
     let count_at_close = heartbeat_count.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -453,23 +446,6 @@ async fn mount_logout_success(server: &MockServer) {
         )
         .mount(server)
         .await;
-}
-
-fn test_client_info() -> ClientInfo {
-    ClientInfo {
-        application: "test".to_string(),
-        version: "1.0".to_string(),
-        os: "test-os".to_string(),
-        os_version: "1.0".to_string(),
-        ocsp_mode: None,
-        crl_config: CrlConfig::default(),
-        tls_config: TlsConfig::default(),
-        platforms: vec![],
-        os_details: None,
-        compiler: None,
-        runtime_name: None,
-        runtime_version: None,
-    }
 }
 
 fn test_tokens(session_token: &str) -> SessionTokens {

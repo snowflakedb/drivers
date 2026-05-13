@@ -5,7 +5,13 @@ pub mod connection;
 mod database;
 pub(crate) mod error;
 mod global_state;
+// Gated public visibility so integration tests (via the `test-utils` feature) can reach
+// `spawn_heartbeat_task` / `HeartbeatHandle` without widening the production surface of `sf_core`.
+// Runtime callers in `connection.rs` only need crate-level visibility.
+#[cfg(any(test, feature = "test-utils"))]
 pub mod heartbeat;
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) mod heartbeat;
 mod logout;
 pub(crate) mod multistatement;
 mod query;
