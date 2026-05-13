@@ -149,7 +149,7 @@ markers = [
     "require_vpn: test requires VPN access (skipped outside Jenkins CI)",
     "flaky: marks tests as flaky; skipped by default, run explicitly via the flaky CI job or `-m flaky` locally",
 ]
-log_cli = true
+log_cli = false
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(pathname)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
