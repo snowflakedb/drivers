@@ -2,9 +2,11 @@
 //!
 //! Houses the Authorization Code (with PKCE), Client Credentials, and
 //! pre-acquired access-token paths plus the supporting primitives (PKCE,
-//! state, loopback HTTP server, browser launcher, DPoP, token cache I/O,
-//! and the OAuth-specific error type). Cross-driver behavior, parameter
-//! names, redaction expectations, and gotchas are catalogued in
+//! loopback HTTP server, DPoP, token cache I/O, and the OAuth-specific
+//! error type). CSRF state, browser launch, and the token-endpoint HTTP
+//! exchange are handled by the `oauth2`, `webbrowser`, and `axum`
+//! crates respectively. Cross-driver behavior, parameter names,
+//! redaction expectations, and gotchas are catalogued in
 //! `analysis_feature_oauth.md` (especially §2–§9 and §14).
 //!
 //! Re-exports below pin the surface that step 2.3 (`auth_request_data`
@@ -22,19 +24,17 @@
 #[allow(dead_code)]
 mod authorization_code;
 #[allow(dead_code)]
-mod browser;
-#[allow(dead_code)]
 mod client_credentials;
 #[allow(dead_code)]
 mod dpop;
 #[allow(dead_code)]
 mod error;
 #[allow(dead_code)]
+mod http_client;
+#[allow(dead_code)]
 mod loopback_server;
 #[allow(dead_code)]
 mod pkce;
-#[allow(dead_code)]
-mod state;
 #[allow(dead_code)]
 mod token;
 

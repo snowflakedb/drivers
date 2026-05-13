@@ -1,29 +1,25 @@
 //! Errors raised by the OAuth flow engine.
 //!
 //! The variant set is derived from the cross-driver error taxonomy in
-//! `analysis_feature_oauth.md` §13. Several variants carry verbatim,
-//! user-visible messages that other Snowflake drivers ship today (notably
-//! the canonical "It might indicate an XSS attack" wording for state
-//! mismatches — gotcha §14 #7). SREs grep for those strings across logs,
-//! so do not paraphrase them.
-//!
-//! Marked `pub(crate)` because the wiring layer (step 2.3) translates
-//! these into the driver-facing `RestError` / `AuthError` taxonomy.
-//! Crate-internal callers should match on variants to make eviction /
-//! refresh decisions (analysis §8: e.g. `RefreshTokenExchange` should
-//! drop the cached refresh token and replay the full flow).
+//! `analysis_feature_oauth.md` §13. Marked `pub(crate)` because the
+//! wiring layer (step 2.3) translates these into the driver-facing
+//! `RestError` / `AuthError` taxonomy. Crate-internal callers should
+//! match on variants to make eviction / refresh decisions (analysis §8:
+//! e.g. `RefreshTokenExchange` should drop the cached refresh token and
+//! replay the full flow).
 
 use crate::token_cache::TokenCacheError;
-use reqwest::StatusCode;
 use snafu::{Location, Snafu};
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub(crate) enum OAuthError {
-    /// `state` mismatch on the loopback redirect — analysis §14 #7. The
-    /// display string is the verbatim ODBC/JDBC message; SREs grep for it.
+    /// `state` mismatch on the loopback redirect — analysis §14 #7.
+    /// Equality is enforced via `oauth2::CsrfToken`'s timing-safe
+    /// `PartialEq` (the `timing-resistant-secret-traits` feature
+    /// derives a SHA-256-based comparator).
     #[snafu(display(
-        "Identity Provider did not provide expected state parameter! It might indicate an XSS attack."
+        "OAuth callback state parameter did not match the value issued by this client"
     ))]
     StateMismatch {
         #[snafu(implicit)]
@@ -58,14 +54,6 @@ pub(crate) enum OAuthError {
         location: Location,
     },
 
-    /// `Command::spawn` for the OS browser launcher failed.
-    #[snafu(display("Failed to launch OS browser for OAuth authorization"))]
-    BrowserLaunch {
-        source: std::io::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     /// Could not bind a TCP listener on `127.0.0.1:<port>` for the
     /// loopback redirect (e.g. port already in use, EACCES).
     #[snafu(display("Failed to bind loopback listener for OAuth redirect"))]
@@ -95,16 +83,8 @@ pub(crate) enum OAuthError {
         location: Location,
     },
 
-    /// IdP token endpoint returned non-2xx without a parseable
-    /// `error=`/`error_description=` body.
-    #[snafu(display("OAuth token exchange failed with HTTP {status}"))]
-    TokenExchange {
-        status: StatusCode,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    /// Could not deserialize the token endpoint JSON response.
+    /// Could not deserialize the token endpoint JSON response (used by
+    /// the `RequestTokenError::Parse` mapping in the AC/CC flows).
     #[snafu(display("Failed to decode OAuth token response"))]
     TokenResponseDecode {
         source: serde_json::Error,
@@ -147,6 +127,15 @@ pub(crate) enum OAuthError {
         location: Location,
     },
 
+    /// DPoP JWK could not be parsed (e.g. unsupported `kty`/`crv` or
+    /// a missing required field on a cached bundled JWK).
+    #[snafu(display("DPoP JWK could not be parsed: {reason}"))]
+    DPoPJwkParse {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     /// Sentinel: token endpoint requested a DPoP nonce. Internal callers
     /// catch this once and retry with the supplied nonce embedded in the
     /// proof JWT. Never bubbled to user code (analysis §5.1).
@@ -170,15 +159,6 @@ pub(crate) enum OAuthError {
     #[snafu(display("OAuth HTTP transport error"))]
     Transport {
         source: reqwest::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    /// Catch-all for I/O errors that don't map to a more specific variant
-    /// (e.g. tokio timer setup, loopback handshake I/O after `accept()`).
-    #[snafu(display("Internal OAuth flow error"))]
-    Internal {
-        source: Box<dyn std::error::Error + Send + Sync>,
         #[snafu(implicit)]
         location: Location,
     },

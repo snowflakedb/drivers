@@ -33,7 +33,7 @@ use snafu::ResultExt;
 use url::Url;
 use uuid::Uuid;
 
-use super::error::{DPoPProofGenerationSnafu, OAuthError, TokenResponseDecodeSnafu};
+use super::error::{DPoPJwkParseSnafu, DPoPProofGenerationSnafu, OAuthError};
 use crate::sensitive::SensitiveString;
 
 const DPOP_NONCE_HEADER: &str = "DPoP-Nonce";
@@ -55,37 +55,38 @@ impl DPoPKey {
 
     /// Recover a key previously serialized by [`DPoPKey::to_jwk_json`].
     pub(crate) fn from_jwk_json(json: &str) -> Result<Self, OAuthError> {
-        let jwk: serde_json::Value =
-            serde_json::from_str(json).context(TokenResponseDecodeSnafu)?;
+        let jwk: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            DPoPJwkParseSnafu {
+                reason: format!("invalid DPoP JWK JSON: {e}"),
+            }
+            .build()
+        })?;
         let kty = jwk.get("kty").and_then(|v| v.as_str()).unwrap_or("");
         let crv = jwk.get("crv").and_then(|v| v.as_str()).unwrap_or("");
         if kty != "EC" || crv != "P-256" {
-            return Err(OAuthError::Internal {
-                source: format!("unsupported DPoP JWK: kty={kty} crv={crv}").into(),
-                location: snafu::Location::new(file!(), line!(), column!()),
-            });
+            return DPoPJwkParseSnafu {
+                reason: format!("unsupported DPoP JWK: kty={kty} crv={crv}"),
+            }
+            .fail();
         }
-        let d_b64 = jwk
-            .get("d")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| OAuthError::Internal {
-                source: "DPoP JWK is missing the private component (`d`)".into(),
-                location: snafu::Location::new(file!(), line!(), column!()),
-            })?;
-        let x_b64 = jwk
-            .get("x")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| OAuthError::Internal {
-                source: "DPoP JWK is missing `x`".into(),
-                location: snafu::Location::new(file!(), line!(), column!()),
-            })?;
-        let y_b64 = jwk
-            .get("y")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| OAuthError::Internal {
-                source: "DPoP JWK is missing `y`".into(),
-                location: snafu::Location::new(file!(), line!(), column!()),
-            })?;
+        let d_b64 = jwk.get("d").and_then(|v| v.as_str()).ok_or_else(|| {
+            DPoPJwkParseSnafu {
+                reason: "DPoP JWK is missing the private component (`d`)".to_string(),
+            }
+            .build()
+        })?;
+        let x_b64 = jwk.get("x").and_then(|v| v.as_str()).ok_or_else(|| {
+            DPoPJwkParseSnafu {
+                reason: "DPoP JWK is missing `x`".to_string(),
+            }
+            .build()
+        })?;
+        let y_b64 = jwk.get("y").and_then(|v| v.as_str()).ok_or_else(|| {
+            DPoPJwkParseSnafu {
+                reason: "DPoP JWK is missing `y`".to_string(),
+            }
+            .build()
+        })?;
         let d = decode_b64url_bn(d_b64)?;
         let x = decode_b64url_bn(x_b64)?;
         let y = decode_b64url_bn(y_b64)?;
@@ -132,12 +133,12 @@ fn bn_to_b64url(bn: &openssl::bn::BigNumRef) -> Result<String, OAuthError> {
 }
 
 fn decode_b64url_bn(s: &str) -> Result<BigNum, OAuthError> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(s.as_bytes())
-        .map_err(|e| OAuthError::Internal {
-            source: Box::new(e),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        })?;
+    let bytes = URL_SAFE_NO_PAD.decode(s.as_bytes()).map_err(|e| {
+        DPoPJwkParseSnafu {
+            reason: format!("invalid base64url in DPoP JWK component: {e}"),
+        }
+        .build()
+    })?;
     BigNum::from_slice(&bytes).context(DPoPProofGenerationSnafu)
 }
 
@@ -164,10 +165,7 @@ pub(crate) fn proof_jwt(
 ) -> Result<SensitiveString, OAuthError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| OAuthError::Internal {
-            source: Box::new(e),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        })?
+        .unwrap_or_default()
         .as_secs();
 
     let (x_b64, y_b64) = key.public_xy_b64()?;

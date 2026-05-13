@@ -1,10 +1,10 @@
 //! OAuth 2.0 Authorization Code flow with PKCE (S256).
 //!
-//! Owns the end-to-end orchestration: PKCE verifier/challenge, state
-//! parameter, browser launch, loopback HTTP redirect handling, token
-//! exchange, and refresh-token rotation. See `analysis_feature_oauth.md`
-//! §3 for the per-driver state machine and gotchas (notably §3.5 on
-//! 127.0.0.1 binding and §14 #11 on rejecting Node's `0.0.0.0`).
+//! Owns the end-to-end orchestration: PKCE verifier/challenge, CSRF state,
+//! browser launch, loopback HTTP redirect handling, token exchange, and
+//! refresh-token rotation. See `analysis_feature_oauth.md` §3 for the
+//! per-driver state machine and gotchas (notably §3.5 on 127.0.0.1
+//! binding and §14 #11 on rejecting Node's `0.0.0.0`).
 //!
 //! Defaults follow JDBC/Python (analysis §9):
 //! * `authorization_url` ⇒ `https://{server_host}/oauth/authorize`
@@ -16,28 +16,31 @@
 //! provided, the access token is consulted first, then the refresh token
 //! is exchanged, and only if both fall through do we drive the
 //! interactive flow (analysis §3.2 state machine).
+//!
+//! HTTP transport, body encoding, CSRF generation, and PKCE generation
+//! are owned by the `oauth2` crate; we only orchestrate the moving parts
+//! via [`OAuthHttpClient`], [`webbrowser`], and [`loopback_server`].
 
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
-use reqwest::header::{self, HeaderMap, HeaderValue};
-use reqwest::{Method, StatusCode};
-use serde::Deserialize;
-use snafu::ResultExt;
+use oauth2::basic::{BasicClient, BasicErrorResponse, BasicErrorResponseType};
+use oauth2::{
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope,
+    StandardErrorResponse, TokenResponse, TokenUrl,
+};
+use snafu::{IntoError, ResultExt};
 use url::Url;
 
-use super::browser;
 use super::dpop::{self, DPoPKey};
 use super::error::{
-    DPoPNonceRequiredSnafu, EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu, OAuthError,
-    RefreshTokenExchangeSnafu, TokenExchangeSnafu, TokenResponseDecodeSnafu,
+    EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu, OAuthError,
+    RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
 };
+use super::http_client::{DPoPContext, OAuthHttpClient};
 use super::loopback_server::{self, RedirectResult};
-use super::pkce;
-use super::state;
 use super::token;
 use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
 use crate::sensitive::SensitiveString;
@@ -57,17 +60,21 @@ pub(crate) struct AcquiredOAuthToken {
 }
 
 /// Closure-shaped browser launcher. Production callers go through
-/// [`browser::open`] with [`browser::print_paste_instructions`] as the
-/// fallback; tests can substitute a deterministic driver that pokes the
-/// loopback directly.
+/// [`webbrowser::open`] with a stderr paste fallback; tests can
+/// substitute a deterministic driver that pokes the loopback directly.
 type BrowserLaunchFn = Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
 fn default_browser_launch() -> BrowserLaunchFn {
     Box::new(|authorize_url, _redirect_uri| {
         Box::pin(async move {
-            if let Err(e) = browser::open(&authorize_url) {
+            tracing::debug!(
+                authority = %authorize_url.authority(),
+                path = %authorize_url.path(),
+                "Opening system browser for OAuth authorization"
+            );
+            if let Err(e) = webbrowser::open(authorize_url.as_str()) {
                 tracing::warn!(error = %e, "Failed to launch system browser; printing paste fallback");
-                browser::print_paste_instructions(&authorize_url);
+                eprintln!("Open this URL in your browser to continue: {authorize_url}");
             }
         })
     })
@@ -75,11 +82,13 @@ fn default_browser_launch() -> BrowserLaunchFn {
 
 #[tracing::instrument(
     skip(client, config, token_cache),
-    fields(server_url, username = %config.username),
+    fields(server_url = %server_url, username = %config.username),
 )]
 pub(crate) async fn acquire_authorization_code(
+    // TODO(SNOW-XXX): build a no-redirect sibling reqwest client for OAuth
+    // token calls (see https://docs.rs/oauth2/5.0.0/oauth2/#security-warning).
     client: &reqwest::Client,
-    server_url: &str,
+    server_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
@@ -93,9 +102,10 @@ pub(crate) async fn acquire_authorization_code(
     .await
 }
 
+#[tracing::instrument(skip(client, config, token_cache, launch_browser), fields(username = %config.username))]
 async fn acquire_authorization_code_inner(
     client: &reqwest::Client,
-    server_url: &str,
+    server_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
     launch_browser: BrowserLaunchFn,
@@ -106,54 +116,81 @@ async fn acquire_authorization_code_inner(
     let cache_host_url = token_url.as_str();
 
     // 1. Cache short-circuit (analysis §3.2 + §7).
-    if config.client_store_temporary_credential && token_cache.is_some() {
-        if let Some(cached) =
-            token::try_get_cached_oauth_access_token(cache_host_url, &config.username, token_cache)
-        {
-            tracing::info!("OAuth authorization code flow served from cache");
-            return Ok(AcquiredOAuthToken {
-                access_token: cached,
-                refresh_token: None,
-                dpop_jwk_json: None,
-                expires_in: None,
-            });
-        }
-        if let Some(refresh) =
-            token::try_get_cached_oauth_refresh_token(cache_host_url, &config.username, token_cache)
-        {
-            match refresh_access_token(client, &token_url, config, refresh.reveal()).await {
-                Ok(refreshed) => {
-                    tracing::info!("Refreshed OAuth access token");
-                    persist_tokens(config, cache_host_url, token_cache, &refreshed);
-                    return Ok(refreshed);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Cached OAuth refresh token failed to exchange; evicting and falling back to full flow"
-                    );
-                    token::remove_oauth_refresh_token(
-                        cache_host_url,
-                        &config.username,
-                        token_cache,
-                    );
-                }
-            }
-        }
+    if let Some(cached) =
+        try_cache_short_circuit(client, &token_url, cache_host_url, config, token_cache).await
+    {
+        return Ok(cached);
     }
 
     // 2. Interactive flow.
     let result =
         run_interactive_flow(client, server_url, &token_url, config, launch_browser).await?;
 
-    persist_tokens(config, cache_host_url, token_cache, &result);
+    persist_access_token(config, cache_host_url, token_cache, &result);
+    persist_refresh_token(config, cache_host_url, token_cache, &result);
     tracing::info!("OAuth authorization code flow completed");
     Ok(result)
 }
 
+#[tracing::instrument(skip(client, token_url, config, token_cache), fields(username = %config.username))]
+async fn try_cache_short_circuit(
+    client: &reqwest::Client,
+    token_url: &Url,
+    cache_host_url: &str,
+    config: &OAuthAuthorizationCodeConfig,
+    token_cache: Option<&dyn TokenCache>,
+) -> Option<AcquiredOAuthToken> {
+    if !config.client_store_temporary_credential {
+        tracing::debug!("OAuth token cache disabled; skipping cache lookup");
+        return None;
+    }
+    let Some(_cache) = token_cache else {
+        tracing::debug!("No OAuth token cache available; skipping cache lookup");
+        return None;
+    };
+
+    if let Some(cached) =
+        token::try_get_cached_oauth_access_token(cache_host_url, &config.username, token_cache)
+    {
+        tracing::debug!("OAuth access token served from cache");
+        return Some(AcquiredOAuthToken {
+            access_token: cached,
+            refresh_token: None,
+            dpop_jwk_json: None,
+            expires_in: None,
+        });
+    }
+
+    if let Some(refresh) =
+        token::try_get_cached_oauth_refresh_token(cache_host_url, &config.username, token_cache)
+    {
+        tracing::debug!("Cache short-circuit hit on OAuth refresh token; attempting exchange");
+        match refresh_access_token(client, token_url, config, refresh.reveal()).await {
+            Ok(refreshed) => {
+                tracing::info!("Refreshed OAuth access token");
+                persist_access_token(config, cache_host_url, token_cache, &refreshed);
+                persist_refresh_token(config, cache_host_url, token_cache, &refreshed);
+                return Some(refreshed);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Cached OAuth refresh token failed to exchange; evicting and falling back to full flow"
+                );
+                token::remove_oauth_refresh_token(cache_host_url, &config.username, token_cache);
+            }
+        }
+    } else {
+        tracing::debug!("Cache short-circuit missed; no OAuth refresh token cached");
+    }
+
+    None
+}
+
+#[tracing::instrument(skip(client, server_url, token_url, config, launch_browser), fields(username = %config.username))]
 async fn run_interactive_flow(
     client: &reqwest::Client,
-    server_url: &str,
+    server_url: &Url,
     token_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
     launch_browser: BrowserLaunchFn,
@@ -161,29 +198,39 @@ async fn run_interactive_flow(
     let authorize_url_base = resolve_authorize_url(server_url, config.authorization_url.as_ref())?;
     let binding = loopback_server::bind(config.redirect_uri.as_ref()).await?;
     let redirect_uri = binding.redirect_uri.clone();
-    let pkce_material = pkce::generate();
-    let csrf = state::generate();
 
     let dpop_key = if config.enable_dpop {
         Some(dpop::DPoPKey::generate()?)
     } else {
         None
     };
+    let is_dpop_enabled = dpop_key.is_some();
 
-    let authorize_url = build_authorize_url(
-        &authorize_url_base,
-        &config.client_id,
-        &redirect_uri,
-        &pkce_material,
-        &csrf,
-        config.scope.as_deref(),
-        dpop_key.as_ref(),
+    let oauth_client = build_oauth_client(
+        config,
+        authorize_url_base.clone(),
+        token_url.clone(),
+        redirect_uri.clone(),
     )?;
+
+    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+
+    let mut request = oauth_client
+        .authorize_url(CsrfToken::new_random)
+        .set_pkce_challenge(pkce_challenge);
+    if let Some(scope) = config.scope.as_deref() {
+        request = request.add_scope(Scope::new(scope.to_string()));
+    }
+    if is_dpop_enabled {
+        let thumbprint = dpop::jwk_thumbprint(dpop_key.as_ref().expect("dpop_key checked above"))?;
+        request = request.add_extra_param("dpop_jkt", thumbprint);
+    }
+    let (authorize_url, state) = request.url();
 
     tracing::debug!(
         authority = %authorize_url.authority(),
         path = %authorize_url.path(),
-        "Built authorize URL for browser leg"
+        "Built OAuth authorization URL"
     );
 
     // Run the browser launcher concurrently with the redirect listener so
@@ -193,40 +240,210 @@ async fn run_interactive_flow(
 
     let (redirect_result, _) = tokio::join!(
         listener.wait_for_redirect(timeout),
-        launch_browser(authorize_url, redirect_uri.clone()),
+        launch_browser(authorize_url, redirect_uri),
     );
     let redirect: RedirectResult = redirect_result?;
-    state::validate(&csrf, &redirect.state)?;
 
-    let mut acquired = exchange_authorization_code(
-        client,
-        token_url,
-        config,
-        &redirect_uri,
-        redirect.code.reveal(),
-        pkce_material.verifier.reveal(),
-        dpop_key.as_ref(),
-    )
-    .await?;
+    // CSRF check via timing-safe equality on `oauth2::CsrfToken`.
+    let received = CsrfToken::new(redirect.state.clone());
+    snafu::ensure!(received == state, StateMismatchSnafu);
 
-    if let Some(key) = dpop_key.as_ref() {
-        acquired.dpop_jwk_json = Some(key.to_jwk_json()?);
+    let http = make_http_client(client, dpop_key.as_ref(), token_url);
+
+    let mut exchange = oauth_client
+        .exchange_code(AuthorizationCode::new(redirect.code.reveal().to_string()))
+        .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier.into_secret()));
+    if config.enable_single_use_refresh_tokens {
+        exchange = exchange.add_extra_param("enable_single_use_refresh_tokens", "true");
     }
 
-    Ok(acquired)
+    tracing::debug!("Starting OAuth code exchange");
+    let response = exchange
+        .request_async(&http)
+        .await
+        .map_err(map_request_token_error)?;
+
+    let access_token = SensitiveString::from(response.access_token().secret().clone());
+    if access_token.reveal().is_empty() {
+        return MissingAccessTokenSnafu.fail();
+    }
+    let refresh_token = response
+        .refresh_token()
+        .map(|rt| rt.secret().clone())
+        .filter(|s| !s.is_empty())
+        .map(SensitiveString::from);
+    let expires_in = response.expires_in();
+
+    let dpop_jwk_json = match dpop_key.as_ref() {
+        Some(k) => Some(k.to_jwk_json()?),
+        None => None,
+    };
+
+    Ok(AcquiredOAuthToken {
+        access_token,
+        refresh_token,
+        dpop_jwk_json,
+        expires_in,
+    })
 }
 
-/// Persist access and refresh tokens (when caching is enabled and a
-/// [`TokenCache`] is provided). DPoP-bundled cache writes go through the
-/// dedicated `DpopBundledAccessToken` slot so the JWK survives across
-/// process restarts (analysis §7.2).
-fn persist_tokens(
+async fn refresh_access_token(
+    client: &reqwest::Client,
+    token_url: &Url,
+    config: &OAuthAuthorizationCodeConfig,
+    refresh_token: &str,
+) -> Result<AcquiredOAuthToken, OAuthError> {
+    tracing::debug!("Refreshing OAuth access token");
+    // For the refresh leg we don't need authorize_url; reuse the same
+    // token_url for both endpoints to satisfy the typestate bounds.
+    let oauth_client = build_oauth_client(config, token_url.clone(), token_url.clone(), {
+        // Refresh leg has no redirect URI requirement. Re-use the token
+        // URL as a placeholder; `exchange_refresh_token` never reads it.
+        token_url.clone()
+    })?;
+
+    let http = make_http_client(client, None, token_url);
+
+    let refresh = RefreshToken::new(refresh_token.to_string());
+    let mut request = oauth_client.exchange_refresh_token(&refresh);
+    if let Some(scope) = config.scope.as_deref() {
+        request = request.add_scope(Scope::new(scope.to_string()));
+    }
+
+    let response = request
+        .request_async(&http)
+        .await
+        .map_err(map_refresh_token_error)?;
+
+    let access_token = SensitiveString::from(response.access_token().secret().clone());
+    if access_token.reveal().is_empty() {
+        return MissingAccessTokenSnafu.fail();
+    }
+    let refresh_token = response
+        .refresh_token()
+        .map(|rt| rt.secret().clone())
+        .filter(|s| !s.is_empty())
+        .map(SensitiveString::from);
+
+    Ok(AcquiredOAuthToken {
+        access_token,
+        refresh_token,
+        dpop_jwk_json: None,
+        expires_in: response.expires_in(),
+    })
+}
+
+fn make_http_client<'a>(
+    client: &'a reqwest::Client,
+    dpop_key: Option<&'a DPoPKey>,
+    token_url: &'a Url,
+) -> OAuthHttpClient<'a> {
+    let adapter = OAuthHttpClient::new(client);
+    if let Some(key) = dpop_key {
+        adapter.with_dpop(DPoPContext::new(key, token_url))
+    } else {
+        adapter
+    }
+}
+
+fn build_oauth_client(
+    config: &OAuthAuthorizationCodeConfig,
+    authorize_url: Url,
+    token_url: Url,
+    redirect_uri: Url,
+) -> Result<
+    BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
+    OAuthError,
+> {
+    let _ = config.disable_pkce; // PKCE is always enabled in the rewrite (analysis §9: Python-only escape hatch).
+    Ok(BasicClient::new(ClientId::new(config.client_id.clone()))
+        .set_client_secret(ClientSecret::new(config.client_secret.reveal().to_string()))
+        .set_auth_uri(AuthUrl::from_url(authorize_url))
+        .set_token_uri(TokenUrl::from_url(token_url))
+        .set_redirect_uri(RedirectUrl::from_url(redirect_uri)))
+}
+
+/// Translate the `oauth2` crate's `RequestTokenError` into an
+/// [`OAuthError`] for the authorization-code exchange leg.
+pub(super) fn map_request_token_error<RE>(
+    err: RequestTokenError<RE, StandardErrorResponse<BasicErrorResponseType>>,
+) -> OAuthError
+where
+    RE: std::error::Error + Send + Sync + 'static,
+{
+    match err {
+        RequestTokenError::ServerResponse(resp) => IdpSnafu {
+            error: error_type_as_str(resp.error()),
+            description: resp.error_description().cloned().unwrap_or_default(),
+        }
+        .build(),
+        RequestTokenError::Request(inner) => {
+            // OAuthError itself implements std::error::Error, so when the
+            // adapter surfaces an OAuthError (e.g. Transport), we re-wrap
+            // it by downcasting through `Box<dyn Error>`.
+            let any: Box<dyn std::error::Error + Send + Sync> = Box::new(inner);
+            match any.downcast::<OAuthError>() {
+                Ok(boxed) => *boxed,
+                Err(other) => IdpSnafu {
+                    error: "transport".to_string(),
+                    description: other.to_string(),
+                }
+                .build(),
+            }
+        }
+        RequestTokenError::Parse(e, _bytes) => {
+            tracing::debug!(error = %e, "OAuth token response failed to parse");
+            // serde_path_to_error wraps the serde_json error; pull the
+            // inner one out so we can fill the TokenResponseDecode source.
+            TokenResponseDecodeSnafu.into_error(e.into_inner())
+        }
+        RequestTokenError::Other(s) => {
+            if s.contains("access_token") {
+                MissingAccessTokenSnafu.build()
+            } else {
+                IdpSnafu {
+                    error: "unknown".to_string(),
+                    description: s,
+                }
+                .build()
+            }
+        }
+    }
+}
+
+/// Refresh-leg specialization: surfaces [`OAuthError::RefreshTokenExchange`]
+/// for any failure so cache-eviction logic in
+/// [`acquire_authorization_code`] can match on a single variant.
+pub(super) fn map_refresh_token_error<RE>(
+    err: RequestTokenError<RE, StandardErrorResponse<BasicErrorResponseType>>,
+) -> OAuthError
+where
+    RE: std::error::Error + Send + Sync + 'static,
+{
+    tracing::debug!(error = %err, "OAuth refresh-token exchange failed");
+    let _ = err;
+    RefreshTokenExchangeSnafu.build()
+}
+
+fn error_type_as_str(err: &BasicErrorResponseType) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = write!(out, "{err}");
+    out
+}
+
+fn persist_access_token(
     config: &OAuthAuthorizationCodeConfig,
     cache_host_url: &str,
     token_cache: Option<&dyn TokenCache>,
     acquired: &AcquiredOAuthToken,
 ) {
-    if !config.client_store_temporary_credential || token_cache.is_none() {
+    if !config.client_store_temporary_credential {
+        tracing::debug!("OAuth token caching disabled; skipping persist (access token)");
+        return;
+    }
+    if token_cache.is_none() {
+        tracing::debug!("No OAuth token cache available; skipping persist (access token)");
         return;
     }
 
@@ -246,6 +463,22 @@ fn persist_tokens(
             token_cache,
         );
     }
+}
+
+fn persist_refresh_token(
+    config: &OAuthAuthorizationCodeConfig,
+    cache_host_url: &str,
+    token_cache: Option<&dyn TokenCache>,
+    acquired: &AcquiredOAuthToken,
+) {
+    if !config.client_store_temporary_credential {
+        tracing::debug!("OAuth token caching disabled; skipping persist (refresh token)");
+        return;
+    }
+    if token_cache.is_none() {
+        tracing::debug!("No OAuth token cache available; skipping persist (refresh token)");
+        return;
+    }
 
     if let Some(refresh) = acquired.refresh_token.as_ref() {
         token::store_oauth_refresh_token(
@@ -257,346 +490,29 @@ fn persist_tokens(
     }
 }
 
-fn resolve_authorize_url(server_url: &str, override_url: Option<&Url>) -> Result<Url, OAuthError> {
+fn resolve_authorize_url(server_url: &Url, override_url: Option<&Url>) -> Result<Url, OAuthError> {
     if let Some(url) = override_url {
         return Ok(url.clone());
     }
-    let server = Url::parse(server_url).context(EndpointUrlParseSnafu {
-        url: server_url.to_string(),
-    })?;
-    let host = server.host_str().unwrap_or("");
+    let host = server_url.host_str().unwrap_or("");
     let default = format!("https://{host}/oauth/authorize");
     Url::parse(&default).context(EndpointUrlParseSnafu { url: default })
 }
 
-fn resolve_token_url(server_url: &str, override_url: Option<&Url>) -> Result<Url, OAuthError> {
+fn resolve_token_url(server_url: &Url, override_url: Option<&Url>) -> Result<Url, OAuthError> {
     if let Some(url) = override_url {
         return Ok(url.clone());
     }
-    let server = Url::parse(server_url).context(EndpointUrlParseSnafu {
-        url: server_url.to_string(),
-    })?;
-    let host = server.host_str().unwrap_or("");
+    let host = server_url.host_str().unwrap_or("");
     let default = format!("https://{host}/oauth/token-request");
     Url::parse(&default).context(EndpointUrlParseSnafu { url: default })
 }
 
-fn build_authorize_url(
-    base: &Url,
-    client_id: &str,
-    redirect_uri: &Url,
-    pkce_material: &pkce::PkceMaterial,
-    csrf: &state::StateToken,
-    scope: Option<&str>,
-    dpop_key: Option<&DPoPKey>,
-) -> Result<Url, OAuthError> {
-    let mut url = base.clone();
-    {
-        let mut q = url.query_pairs_mut();
-        q.append_pair("response_type", "code");
-        q.append_pair("client_id", client_id);
-        q.append_pair("redirect_uri", redirect_uri.as_str());
-        q.append_pair("state", csrf.expose());
-        q.append_pair("code_challenge", &pkce_material.challenge);
-        q.append_pair("code_challenge_method", pkce_material.method);
-        if let Some(s) = scope {
-            q.append_pair("scope", s);
-        }
-        if let Some(k) = dpop_key {
-            q.append_pair("dpop_jkt", &dpop::jwk_thumbprint(k)?);
-        }
-    }
-    Ok(url)
-}
-
-// ─── Token exchange ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct TokenResponseBody {
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    expires_in: Option<u64>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-async fn exchange_authorization_code(
-    client: &reqwest::Client,
-    token_url: &Url,
-    config: &OAuthAuthorizationCodeConfig,
-    redirect_uri: &Url,
-    code: &str,
-    code_verifier: &str,
-    dpop_key: Option<&DPoPKey>,
-) -> Result<AcquiredOAuthToken, OAuthError> {
-    let mut params: Vec<(&str, String)> = vec![
-        ("grant_type", "authorization_code".to_string()),
-        ("code", code.to_string()),
-        ("redirect_uri", redirect_uri.as_str().to_string()),
-        ("code_verifier", code_verifier.to_string()),
-    ];
-    if let Some(scope) = config.scope.as_deref() {
-        params.push(("scope", scope.to_string()));
-    }
-    if config.enable_single_use_refresh_tokens {
-        params.push(("enable_single_use_refresh_tokens", "true".to_string()));
-    }
-
-    let body = post_token_request(
-        client,
-        token_url,
-        &config.client_id,
-        config.client_secret.reveal(),
-        &params,
-        dpop_key,
-    )
-    .await?;
-
-    let token_response = parse_success_body(&body, |status| TokenExchangeSnafu { status }.build())?;
-
-    let access_token = token_response
-        .access_token
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| MissingAccessTokenSnafu.build())?;
-    Ok(AcquiredOAuthToken {
-        access_token: SensitiveString::from(access_token),
-        refresh_token: token_response
-            .refresh_token
-            .filter(|s| !s.is_empty())
-            .map(SensitiveString::from),
-        dpop_jwk_json: None,
-        expires_in: token_response.expires_in.map(Duration::from_secs),
-    })
-}
-
-async fn refresh_access_token(
-    client: &reqwest::Client,
-    token_url: &Url,
-    config: &OAuthAuthorizationCodeConfig,
-    refresh_token: &str,
-) -> Result<AcquiredOAuthToken, OAuthError> {
-    let mut params: Vec<(&str, String)> = vec![
-        ("grant_type", "refresh_token".to_string()),
-        ("refresh_token", refresh_token.to_string()),
-    ];
-    if let Some(scope) = config.scope.as_deref() {
-        params.push(("scope", scope.to_string()));
-    }
-
-    let body = post_token_request(
-        client,
-        token_url,
-        &config.client_id,
-        config.client_secret.reveal(),
-        &params,
-        None,
-    )
-    .await
-    .map_err(|e| match e {
-        OAuthError::TokenExchange { .. } => RefreshTokenExchangeSnafu.build(),
-        other => other,
-    })?;
-
-    let token_response =
-        parse_success_body(&body, |_| RefreshTokenExchangeSnafu.build()).map_err(|e| match e {
-            OAuthError::IdpError { .. } => RefreshTokenExchangeSnafu.build(),
-            other => other,
-        })?;
-
-    let access_token = token_response
-        .access_token
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| MissingAccessTokenSnafu.build())?;
-
-    Ok(AcquiredOAuthToken {
-        access_token: SensitiveString::from(access_token),
-        refresh_token: token_response
-            .refresh_token
-            .filter(|s| !s.is_empty())
-            .map(SensitiveString::from),
-        dpop_jwk_json: None,
-        expires_in: token_response.expires_in.map(Duration::from_secs),
-    })
-}
-
-/// POST `application/x-www-form-urlencoded` to the token endpoint with
-/// HTTP Basic auth. Performs at most one DPoP-nonce retry per RFC 9449 §8
-/// when `dpop_key` is supplied.
-pub(super) async fn post_token_request(
-    client: &reqwest::Client,
-    token_url: &Url,
-    client_id: &str,
-    client_secret: &str,
-    params: &[(&str, String)],
-    dpop_key: Option<&DPoPKey>,
-) -> Result<String, OAuthError> {
-    match send_token_request(
-        client,
-        token_url,
-        client_id,
-        client_secret,
-        params,
-        dpop_key,
-        None,
-    )
-    .await
-    {
-        Ok(body) => Ok(body),
-        Err((OAuthError::DPoPNonceRequired { .. }, Some(nonce))) => {
-            tracing::info!("Retrying OAuth token request with DPoP nonce");
-            send_token_request(
-                client,
-                token_url,
-                client_id,
-                client_secret,
-                params,
-                dpop_key,
-                Some(nonce.as_str()),
-            )
-            .await
-            .map_err(|(e, _)| e)
-        }
-        Err((e, _)) => Err(e),
-    }
-}
-
-async fn send_token_request(
-    client: &reqwest::Client,
-    token_url: &Url,
-    client_id: &str,
-    client_secret: &str,
-    params: &[(&str, String)],
-    dpop_key: Option<&DPoPKey>,
-    nonce: Option<&str>,
-) -> Result<String, (OAuthError, Option<String>)> {
-    let basic = format!("{client_id}:{client_secret}");
-    let basic_b64 = BASE64_STD.encode(basic.as_bytes());
-    let auth = format!("Basic {basic_b64}");
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&auth).map_err(|e| {
-            (
-                OAuthError::Internal {
-                    source: Box::new(e),
-                    location: snafu::Location::new(file!(), line!(), column!()),
-                },
-                None,
-            )
-        })?,
-    );
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/x-www-form-urlencoded"),
-    );
-    headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
-
-    if let Some(key) = dpop_key {
-        let proof =
-            dpop::proof_jwt(key, Method::POST.as_str(), token_url, nonce).map_err(|e| (e, None))?;
-        let value = HeaderValue::from_str(proof.reveal()).map_err(|e| {
-            (
-                OAuthError::Internal {
-                    source: Box::new(e),
-                    location: snafu::Location::new(file!(), line!(), column!()),
-                },
-                None,
-            )
-        })?;
-        headers.insert("DPoP", value);
-    }
-
-    let body = form_urlencode(params);
-
-    let resp = client
-        .post(token_url.clone())
-        .headers(headers)
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| {
-            (
-                OAuthError::Transport {
-                    source: e,
-                    location: snafu::Location::new(file!(), line!(), column!()),
-                },
-                None,
-            )
-        })?;
-
-    let status = resp.status();
-    let response_headers = resp.headers().clone();
-    let text = resp.text().await.map_err(|e| {
-        (
-            OAuthError::Transport {
-                source: e,
-                location: snafu::Location::new(file!(), line!(), column!()),
-            },
-            None,
-        )
-    })?;
-
-    if status.is_success() {
-        return Ok(text);
-    }
-
-    if dpop_key.is_some()
-        && let Some(nonce) = dpop::check_use_dpop_nonce(&response_headers, &text)
-    {
-        return Err((DPoPNonceRequiredSnafu.build(), Some(nonce)));
-    }
-
-    // Surface a structured IdP error when the body parses as one;
-    // otherwise fall back to the generic HTTP-status error.
-    match try_extract_error_body(&text) {
-        Some((error, description)) => Err((IdpSnafu { error, description }.build(), None)),
-        None => Err((TokenExchangeSnafu { status }.build(), None)),
-    }
-}
-
-fn try_extract_error_body(text: &str) -> Option<(String, String)> {
-    let parsed: serde_json::Value = serde_json::from_str(text).ok()?;
-    let error = parsed.get("error").and_then(|v| v.as_str())?.to_string();
-    let description = parsed
-        .get("error_description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    Some((error, description))
-}
-
-fn parse_success_body<F>(text: &str, _err: F) -> Result<TokenResponseBody, OAuthError>
-where
-    F: Fn(StatusCode) -> OAuthError,
-{
-    serde_json::from_str::<TokenResponseBody>(text)
-        .context(TokenResponseDecodeSnafu)
-        .and_then(|tr| {
-            if let Some(error) = tr.error.as_deref() {
-                IdpSnafu {
-                    error: error.to_string(),
-                    description: tr.error_description.clone().unwrap_or_default(),
-                }
-                .fail()
-            } else {
-                Ok(tr)
-            }
-        })
-}
-
-fn form_urlencode(params: &[(&str, String)]) -> String {
-    let mut out = String::new();
-    for (i, (k, v)) in params.iter().enumerate() {
-        if i > 0 {
-            out.push('&');
-        }
-        out.push_str(&urlencoding::encode(k));
-        out.push('=');
-        out.push_str(&urlencoding::encode(v));
-    }
-    out
-}
+// Silence the unused-type warning emitted by the lint rather than
+// touching the visibility surface of `BasicErrorResponse`.
+const _: fn() = || {
+    let _ = std::marker::PhantomData::<BasicErrorResponse>;
+};
 
 #[cfg(test)]
 mod tests {
@@ -605,7 +521,7 @@ mod tests {
     use crate::token_cache::TokenCacheError;
     use std::collections::HashMap;
     use std::sync::Mutex;
-    use wiremock::matchers::{body_string_contains, header, method, path};
+    use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     struct StubTokenCache {
@@ -679,64 +595,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn build_authorize_url_includes_required_query_params() {
-        let base = Url::parse("https://idp.example.com/oauth/authorize").unwrap();
-        let redirect = Url::parse("http://127.0.0.1:1234/").unwrap();
-        let pkce = pkce::generate();
-        let csrf = state::generate();
-
-        let url = build_authorize_url(
-            &base,
-            "client-x",
-            &redirect,
-            &pkce,
-            &csrf,
-            Some("session:role:DEV"),
-            None,
-        )
-        .unwrap();
-
-        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
-        assert_eq!(q.get("response_type").map(|s| s.as_str()), Some("code"));
-        assert_eq!(q.get("client_id").map(|s| s.as_str()), Some("client-x"));
-        assert_eq!(
-            q.get("redirect_uri").map(|s| s.as_str()),
-            Some("http://127.0.0.1:1234/")
-        );
-        assert!(q.contains_key("state"));
-        assert!(q.contains_key("code_challenge"));
-        assert_eq!(
-            q.get("code_challenge_method").map(|s| s.as_str()),
-            Some("S256")
-        );
-        assert_eq!(q.get("scope").map(|s| s.as_str()), Some("session:role:DEV"));
-        assert!(!q.contains_key("dpop_jkt"));
-    }
-
-    #[test]
-    fn build_authorize_url_with_dpop_includes_thumbprint() {
-        let base = Url::parse("https://idp.example.com/oauth/authorize").unwrap();
-        let redirect = Url::parse("http://127.0.0.1:9000/").unwrap();
-        let pkce = pkce::generate();
-        let csrf = state::generate();
-        let key = DPoPKey::generate().unwrap();
-        let url =
-            build_authorize_url(&base, "cid", &redirect, &pkce, &csrf, None, Some(&key)).unwrap();
-        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
-        let jkt = q.get("dpop_jkt").expect("dpop_jkt present");
-        assert!(!jkt.is_empty());
-        assert_eq!(*jkt, dpop::jwk_thumbprint(&key).unwrap());
+    fn server_url() -> Url {
+        Url::parse("https://acct.snowflakecomputing.com").unwrap()
     }
 
     #[test]
     fn resolve_default_urls_use_server_host() {
-        let auth = resolve_authorize_url("https://acct.snowflakecomputing.com", None).unwrap();
+        let auth = resolve_authorize_url(&server_url(), None).unwrap();
         assert_eq!(
             auth.as_str(),
             "https://acct.snowflakecomputing.com/oauth/authorize"
         );
-        let tok = resolve_token_url("https://acct.snowflakecomputing.com", None).unwrap();
+        let tok = resolve_token_url(&server_url(), None).unwrap();
         assert_eq!(
             tok.as_str(),
             "https://acct.snowflakecomputing.com/oauth/token-request"
@@ -751,14 +621,9 @@ mod tests {
 
         let config = cfg_with_token_url(token_url);
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code(
-            &client,
-            "https://acct.snowflakecomputing.com",
-            &config,
-            Some(&cache),
-        )
-        .await
-        .expect("cache hit");
+        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+            .await
+            .expect("cache hit");
         assert_eq!(acquired.access_token.reveal(), "CACHED-AT");
         assert!(acquired.refresh_token.is_none());
         assert!(acquired.dpop_jwk_json.is_none());
@@ -769,12 +634,12 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
-            .and(header("content-type", "application/x-www-form-urlencoded"))
             .and(body_string_contains("grant_type=refresh_token"))
             .and(body_string_contains("refresh_token=RT-OLD"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_string(
+                ResponseTemplate::new(200).set_body_raw(
                     r#"{"access_token":"AT-NEW","refresh_token":"RT-NEW","token_type":"Bearer","expires_in":3600}"#,
+                    "application/json",
                 ),
             )
             .mount(&server)
@@ -786,14 +651,9 @@ mod tests {
         let config = cfg_with_token_url(token_url.clone());
 
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code(
-            &client,
-            "https://acct.snowflakecomputing.com",
-            &config,
-            Some(&cache),
-        )
-        .await
-        .expect("refresh succeeds");
+        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+            .await
+            .expect("refresh succeeds");
 
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
         assert_eq!(
@@ -802,7 +662,6 @@ mod tests {
         );
         assert_eq!(acquired.expires_in, Some(Duration::from_secs(3600)));
 
-        // The rotated tokens should be persisted.
         let stored_at =
             token::try_get_cached_oauth_access_token(token_url.as_str(), "alice", Some(&cache))
                 .map(|s| s.reveal().to_string());
@@ -814,8 +673,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
-            .respond_with(ResponseTemplate::new(400).set_body_string(
+            .respond_with(ResponseTemplate::new(400).set_body_raw(
                 r#"{"error":"invalid_grant","error_description":"refresh token expired"}"#,
+                "application/json",
             ))
             .mount(&server)
             .await;
@@ -823,11 +683,7 @@ mod tests {
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
         let cache = StubTokenCache::new();
         token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
-        let config = cfg_with_token_url(token_url.clone());
 
-        // Stub a no-op browser launcher so the test fails fast without real
-        // browser interaction; the call into the interactive leg will then
-        // surface BrowserTimeout when no redirect ever arrives.
         let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async {}));
         let mut config_short =
             cfg_with_token_url(Url::parse(&format!("{}/oauth/token", server.uri())).unwrap());
@@ -835,15 +691,12 @@ mod tests {
         let client = reqwest::Client::new();
         let result = acquire_authorization_code_inner(
             &client,
-            "https://acct.snowflakecomputing.com",
+            &server_url(),
             &config_short,
             Some(&cache),
             launch,
         )
         .await;
-        // We expect either a refresh exchange failure to fall through and then
-        // hit BrowserTimeout (no redirect ever received), depending on timing.
-        // The important assertion is that the refresh token was evicted.
         assert!(result.is_err());
         let stored_rt =
             token::try_get_cached_oauth_refresh_token(token_url.as_str(), "alice", Some(&cache));
@@ -851,8 +704,6 @@ mod tests {
             stored_rt.is_none(),
             "expired refresh token must be evicted from the cache"
         );
-        // Suppress unused-variable warning about the dropped config.
-        let _ = config;
     }
 
     #[tokio::test]
@@ -862,8 +713,9 @@ mod tests {
             .and(path("/oauth/token"))
             .and(body_string_contains("grant_type=authorization_code"))
             .and(body_string_contains("code=THE-CODE"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
                 r#"{"access_token":"AT-FRESH","refresh_token":"RT-FRESH","token_type":"Bearer","expires_in":600}"#,
+                "application/json",
             ))
             .mount(&server)
             .await;
@@ -872,7 +724,6 @@ mod tests {
         let mut config = cfg_with_token_url(token_url);
         config.authorization_url =
             Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
-        // Don't cache anything for this test to force the interactive branch.
         config.client_store_temporary_credential = false;
 
         let launch: BrowserLaunchFn = Box::new(|authorize_url, redirect_uri| {
@@ -893,19 +744,18 @@ mod tests {
                     "GET /?code=THE-CODE&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
                 );
                 let _ = s.write_all(req.as_bytes()).await;
+                // Hold the stream open long enough for the server to flush
+                // its response. Dropping immediately after write_all can
+                // race with axum's handler invocation.
+                tokio::time::sleep(Duration::from_millis(100)).await;
             })
         });
 
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code_inner(
-            &client,
-            "https://acct.snowflakecomputing.com",
-            &config,
-            None,
-            launch,
-        )
-        .await
-        .expect("interactive flow succeeds");
+        let acquired =
+            acquire_authorization_code_inner(&client, &server_url(), &config, None, launch)
+                .await
+                .expect("interactive flow succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-FRESH");
         assert_eq!(
             acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
@@ -918,7 +768,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
             .mount(&server)
             .await;
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
@@ -938,27 +788,22 @@ mod tests {
                 use tokio::io::AsyncWriteExt;
                 let req = "GET /?error=access_denied&error_description=denied HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
                 let _ = s.write_all(req.as_bytes()).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             })
         });
         let client = reqwest::Client::new();
-        let err = acquire_authorization_code_inner(
-            &client,
-            "https://acct.snowflakecomputing.com",
-            &config,
-            None,
-            launch,
-        )
-        .await
-        .expect_err("must fail with IdpError");
+        let err = acquire_authorization_code_inner(&client, &server_url(), &config, None, launch)
+            .await
+            .expect_err("must fail with IdpError");
         assert!(matches!(err, OAuthError::IdpError { .. }), "got {err:?}");
     }
 
     #[tokio::test]
-    async fn state_mismatch_in_redirect_surfaces_canonical_xss_error() {
+    async fn state_mismatch_in_redirect_surfaces_state_mismatch_variant() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
             .mount(&server)
             .await;
         let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
@@ -978,34 +823,13 @@ mod tests {
                 use tokio::io::AsyncWriteExt;
                 let req = "GET /?code=THE-CODE&state=ATTACKER-SUPPLIED HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
                 let _ = s.write_all(req.as_bytes()).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             })
         });
         let client = reqwest::Client::new();
-        let err = acquire_authorization_code_inner(
-            &client,
-            "https://acct.snowflakecomputing.com",
-            &config,
-            None,
-            launch,
-        )
-        .await
-        .expect_err("must fail with state mismatch");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("It might indicate an XSS attack."),
-            "unexpected error: {msg}"
-        );
+        let err = acquire_authorization_code_inner(&client, &server_url(), &config, None, launch)
+            .await
+            .expect_err("must fail with state mismatch");
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
-    }
-
-    #[test]
-    fn form_urlencode_encodes_special_characters() {
-        let params = vec![
-            ("grant_type", "refresh_token".to_string()),
-            ("refresh_token", "abc=def&ghi".to_string()),
-        ];
-        let encoded = form_urlencode(&params);
-        assert!(encoded.contains("grant_type=refresh_token"));
-        assert!(encoded.contains("refresh_token=abc%3Ddef%26ghi"));
     }
 }

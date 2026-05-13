@@ -4,16 +4,22 @@
 //! supplies a literal IPv6 redirect URI). Do **not** replicate Node's
 //! `0.0.0.0` bind — see `analysis_feature_oauth.md` §3.5 and §14 #11.
 //!
-//! The server accepts a single connection, parses the request line for
-//! `code` + `state` (or `error` + `error_description`), responds with a
-//! small HTML success/error page, and returns control to the caller.
+//! HTTP parsing and response writing are delegated to `axum`; we keep
+//! ownership of the bind decision and the single-shot semantics
+//! (oneshot channel + graceful shutdown).
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
+use axum::extract::{Query, State};
+use axum::response::Html;
+use axum::routing::get;
+use serde::Deserialize;
 use snafu::ResultExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::{Mutex, oneshot};
 use url::Url;
 
 use super::error::{
@@ -29,7 +35,12 @@ const SUCCESS_HTML: &str = concat!(
     "<p>You may close this window.</p></body></html>"
 );
 
-const READ_BUFFER_BYTES: usize = 8 * 1024;
+const ERROR_HTML: &str = concat!(
+    "<!doctype html><html><body>",
+    "<h1>Authorization failed.</h1>",
+    "<p>You may close this window and check the driver logs.</p>",
+    "</body></html>"
+);
 
 /// Bound loopback listener + canonical redirect URI to advertise to the IdP.
 pub(crate) struct LoopbackBinding {
@@ -42,6 +53,16 @@ pub(crate) struct LoopbackBinding {
 pub(crate) struct RedirectResult {
     pub(crate) code: SensitiveString,
     pub(crate) state: String,
+}
+
+/// Query string shape we expect on the OAuth callback. Axum's `Query`
+/// extractor does the percent-decoding.
+#[derive(Debug, Deserialize)]
+struct RedirectQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
 /// Bind a loopback HTTP listener for the OAuth callback.
@@ -100,10 +121,11 @@ pub(crate) async fn bind(redirect_uri_hint: Option<&Url>) -> Result<LoopbackBind
 
 impl LoopbackBinding {
     /// Wait for the browser's redirect, parse `code`+`state` (or `error`)
-    /// out of the request line, send a tiny HTML success page, and return.
+    /// from the request's query string, respond with a small HTML page,
+    /// then return.
     ///
-    /// `timeout` is the *total* deadline for accepting **and** reading the
-    /// request, mirroring the browser-response-timeout knob in JDBC and ODBC.
+    /// `timeout` is the total deadline for receiving the redirect,
+    /// mirroring the browser-response-timeout knob in JDBC and ODBC.
     pub(crate) async fn wait_for_redirect(
         self,
         timeout: Duration,
@@ -113,118 +135,95 @@ impl LoopbackBinding {
             redirect_uri,
         } = self;
 
-        let outcome = tokio::time::timeout(timeout, async move {
-            let (mut socket, peer) = listener.accept().await.context(PortBindSnafu)?;
-            tracing::debug!(peer = %peer, "OAuth loopback accepted browser redirect");
+        let (result_tx, result_rx) = oneshot::channel::<Result<RedirectResult, OAuthError>>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-            let request_line = read_request_line(&mut socket).await?;
-            let result = parse_request_line(&request_line, &redirect_uri);
+        let state = RedirectState {
+            tx: Arc::new(Mutex::new(Some(result_tx))),
+            shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
+        };
 
-            let body = match &result {
-                Ok(_) => SUCCESS_HTML.to_string(),
-                Err(_) => error_html(),
-            };
-            let _ = write_http_response(&mut socket, &body).await;
-            let _ = socket.shutdown().await;
-            result
-        })
-        .await;
+        let app: Router<()> = Router::new()
+            .route(redirect_uri.path(), get(handle_redirect))
+            .with_state(state);
 
-        match outcome {
-            Ok(res) => res,
-            Err(_) => BrowserTimeoutSnafu.fail(),
+        let server_task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
+        });
+
+        let (outcome, handler_fired) = tokio::select! {
+            received = result_rx => {
+                (received.unwrap_or_else(|_| BrowserTimeoutSnafu.fail()), true)
+            }
+            _ = tokio::time::sleep(timeout) => {
+                (BrowserTimeoutSnafu.fail(), false)
+            }
+        };
+
+        if handler_fired {
+            // Handler triggered the graceful shutdown; give axum a brief
+            // window to drain the response back to the browser.
+            let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+        } else {
+            // Timeout path — abort the spawn so the listener is released.
+            server_task.abort();
+            let _ = server_task.await;
         }
+
+        outcome
     }
 }
 
-/// Read up to the end of the HTTP request line (CRLF-terminated). We do
-/// not need the headers or body — the OAuth redirect is a GET with all
-/// parameters in the query string.
-async fn read_request_line(socket: &mut tokio::net::TcpStream) -> Result<String, OAuthError> {
-    let mut buf = Vec::with_capacity(READ_BUFFER_BYTES);
-    let mut chunk = [0u8; 1024];
-    loop {
-        let n = socket.read(&mut chunk).await.context(PortBindSnafu)?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if let Some(pos) = find_crlf(&buf) {
-            return Ok(String::from_utf8_lossy(&buf[..pos]).into_owned());
-        }
-        if buf.len() >= READ_BUFFER_BYTES {
-            break;
-        }
-    }
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+type RedirectSender = oneshot::Sender<Result<RedirectResult, OAuthError>>;
+
+#[derive(Clone)]
+struct RedirectState {
+    tx: Arc<Mutex<Option<RedirectSender>>>,
+    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
-fn find_crlf(buf: &[u8]) -> Option<usize> {
-    buf.windows(2).position(|w| w == b"\r\n")
-}
+#[tracing::instrument(skip(state, query))]
+async fn handle_redirect(
+    State(state): State<RedirectState>,
+    Query(query): Query<RedirectQuery>,
+) -> Html<&'static str> {
+    tracing::debug!("OAuth loopback handler received redirect");
+    let result = parse_redirect_query(query);
+    let body = if result.is_ok() {
+        SUCCESS_HTML
+    } else {
+        ERROR_HTML
+    };
 
-fn parse_request_line(line: &str, redirect_uri: &Url) -> Result<RedirectResult, OAuthError> {
-    // request line: "GET /path?query HTTP/1.1"
-    let mut parts = line.split_whitespace();
-    let _method = parts.next().unwrap_or("");
-    let target = parts.next().unwrap_or("");
-    let target_url = Url::parse(redirect_uri.as_str())
-        .and_then(|base| base.join(target))
-        .or_else(|_| Url::parse(&format!("http://127.0.0.1{target}")))
-        .map_err(|e| OAuthError::RedirectUriParse {
-            source: e,
-            location: snafu::Location::new(file!(), line!(), column!()),
-        })?;
-
-    let mut code: Option<String> = None;
-    let mut state: Option<String> = None;
-    let mut error: Option<String> = None;
-    let mut error_description: Option<String> = None;
-    for (k, v) in target_url.query_pairs() {
-        match k.as_ref() {
-            "code" => code = Some(v.into_owned()),
-            "state" => state = Some(v.into_owned()),
-            "error" => error = Some(v.into_owned()),
-            "error_description" => error_description = Some(v.into_owned()),
-            _ => {}
-        }
+    if let Some(tx) = state.tx.lock().await.take() {
+        let _ = tx.send(result);
+    }
+    if let Some(stop) = state.shutdown.lock().await.take() {
+        let _ = stop.send(());
     }
 
-    if let Some(err) = error {
+    Html(body)
+}
+
+fn parse_redirect_query(query: RedirectQuery) -> Result<RedirectResult, OAuthError> {
+    if let Some(error) = query.error {
         return IdpSnafu {
-            error: err,
-            description: error_description.unwrap_or_default(),
+            error,
+            description: query.error_description.unwrap_or_default(),
         }
         .fail();
     }
-    let Some(code) = code else {
+    let Some(code) = query.code.filter(|s| !s.is_empty()) else {
         return MissingAuthorizationCodeSnafu.fail();
     };
-    let state = state.unwrap_or_default();
     Ok(RedirectResult {
         code: SensitiveString::from(code),
-        state,
+        state: query.state.unwrap_or_default(),
     })
-}
-
-async fn write_http_response(
-    socket: &mut tokio::net::TcpStream,
-    body: &str,
-) -> Result<(), OAuthError> {
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    socket
-        .write_all(response.as_bytes())
-        .await
-        .context(PortBindSnafu)?;
-    Ok(())
-}
-
-fn error_html() -> String {
-    "<!doctype html><html><body><h1>Authorization failed.</h1><p>You may close this window and check the driver logs.</p></body></html>".to_string()
 }
 
 #[cfg(test)]
@@ -264,7 +263,6 @@ mod tests {
         let addr = b.listener.local_addr().unwrap();
 
         let join = tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5)).await });
-        // Poke the loopback like a browser would.
         let mut s = TcpStream::connect(addr).await.expect("connect loopback");
         s.write_all(
             b"GET /?code=AUTH-CODE-123&state=STATE-XYZ HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -303,7 +301,6 @@ mod tests {
     #[tokio::test]
     async fn timeout_surfaces_browser_timeout() {
         let b = bind(None).await.expect("bind");
-        // Don't connect. Wait for the timeout to fire.
         let err = b
             .wait_for_redirect(Duration::from_millis(50))
             .await
