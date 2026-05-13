@@ -32,7 +32,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: { label: 'e2e-old-driver', color: 'yellow' },
-          env: { SNOWFLAKE_NODEJS_USE_OLD_DRIVER: '1' },
+          env: { SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER: '1' },
           environment: 'node',
           include: ['tests/e2e/**/*.test.ts'],
           testTimeout: 30_000,

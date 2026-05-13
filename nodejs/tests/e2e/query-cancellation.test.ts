@@ -1,8 +1,8 @@
+import type { Connection } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll } from 'vitest';
-import { createConnection, connectAsync, destroyAsync, sleepAsync } from './utils.js';
-import type { Connection } from './utils.js';
+import { createConnection, connectAsync, destroyAsync, sleepAsync } from './utils';
 
-describe('Query Cancelation', () => {
+describe('Query Cancellation', () => {
   let connection: Connection;
 
   beforeAll(async () => {
