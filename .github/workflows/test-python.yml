@@ -461,9 +461,9 @@ jobs:
       matrix:
         include:
           - hatch_env: reference
-            os: windows-latest
-            py: "3.14"
-            cloud_provider: azure
+            os: ubuntu-latest
+            py: "3.10"
+            cloud_provider: aws
           - hatch_env: reference-pandas
             os: macos-latest
             py: "3.12"
