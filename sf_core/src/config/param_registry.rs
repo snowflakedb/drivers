@@ -88,6 +88,7 @@ pub mod param_names {
     pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
     pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
+    pub const CLIENT_SESSION_KEEP_ALIVE: ParamKey = ParamKey("CLIENT_SESSION_KEEP_ALIVE");
     // Logout configuration
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
     pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
