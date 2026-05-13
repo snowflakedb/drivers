@@ -265,7 +265,7 @@ impl DatabaseDriverV1 {
                 };
 
                 let keep_alive = merged_params
-                    .get("CLIENT_SESSION_KEEP_ALIVE")
+                    .get(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str())
                     .map(|v| v.eq_ignore_ascii_case("true"))
                     .unwrap_or(false);
 
