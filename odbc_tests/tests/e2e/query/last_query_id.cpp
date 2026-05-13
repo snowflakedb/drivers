@@ -2,7 +2,6 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -12,9 +11,9 @@
 #include "sf_odbc.h"
 
 static std::string get_last_query_id(StatementHandleWrapper& stmt) {
-  char buf[64] = {};
+  char buf[40] = {};
   SQLINTEGER len = 0;
-  SQLRETURN ret = SQLGetStmtAttrW(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, buf, sizeof(buf), &len);
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, buf, sizeof(buf), &len);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   return std::string(buf, len);
 }
