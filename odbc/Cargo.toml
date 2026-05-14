@@ -36,7 +36,7 @@ strum_macros = "0.26"
 
 proto_utils = { path = "../proto_utils" }
 error_trace = { path = "../error_trace" }
-odbc_derive = { path = "../odbc_derive" }
+odbc_derive = { path = "src/odbc_derive" }
 tokio = { version = "1.50.0", features = ["rt", "macros"] }
 tokio-util = "0.7"
 rust-ini = "0.21.3"
