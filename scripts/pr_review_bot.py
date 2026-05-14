@@ -203,6 +203,25 @@ def gh_pr_assign(repo: str, pr_number: int, login: str) -> None:
     )
 
 
+def gh_pr_remove_reviewer(repo: str, pr_number: int, login: str) -> None:
+    """Remove *login* from the requested-reviewers list of *pr_number*.
+
+    Used when the PR author themselves ends up requested as a reviewer
+    (e.g. via GitHub's team-based code-owner round-robin or a manual
+    request), so the bot can guarantee an author is never one of their
+    own reviewers. The REST endpoint is idempotent — a 422 for a user
+    who isn't currently requested is silently ignored by ``gh``.
+    """
+    _gh(
+        "api",
+        "--method",
+        "DELETE",
+        f"/repos/{repo}/pulls/{pr_number}/requested_reviewers",
+        "-f",
+        f"reviewers[]={login}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # GitHub data lookups (all via gh CLI)
 # ---------------------------------------------------------------------------
@@ -609,6 +628,26 @@ def cmd_assign(args: argparse.Namespace) -> int:
     html_url = pr["html_url"]
 
     already_requested = [u["login"] for u in pr.get("requested_reviewers", []) or []]
+    # If anyone landed in requested_reviewers, the author themselves must
+    # NOT be one of them. GitHub's team-based code-owner round-robin (we
+    # ship CODEOWNERS pointing at @snowflakedb/snow-drivers-warsaw) can in
+    # principle pick the PR author themselves, and a human can also request
+    # them manually — both leave the author on the reviewer list. Always
+    # strip the author here and explicitly remove them via the REST API so
+    # the GitHub UI/notifications match: an author can never be one of
+    # their own reviewers.
+    if any(u.lower() == author.lower() for u in already_requested):
+        log.warning(
+            "PR #%d had its own author (%s) listed as a requested reviewer; "
+            "removing.",
+            pr_number,
+            author,
+        )
+        try:
+            gh_pr_remove_reviewer(repo, pr_number, author)
+        except RuntimeError as e:
+            log.warning("Failed to remove author from reviewers: %s", e)
+    already_requested = [u for u in already_requested if u.lower() != author.lower()]
     if already_requested:
         return _skip_assign(
             f"PR #{pr_number} already has reviewers requested "
@@ -635,10 +674,10 @@ def cmd_assign(args: argparse.Namespace) -> int:
     reviewer = _pick_reviewer(candidates, excluded=[author, *already_requested])
     if not reviewer:
         return _skip_assign(
-            f"No eligible reviewer found in {codeowners_path} (author={author})."
+            f"No eligible reviewer found in {reviewers_path} (author={author})."
         )
 
-    log.info("Selected reviewer: %s", reviewer)
+    log.info("Selected reviewer: %s (author %s excluded)", reviewer, author)
     gh_pr_assign(repo, pr_number, reviewer)
     log.info(
         "Requested review and added assignee %s on #%d (via gh pr edit).",
@@ -736,8 +775,21 @@ def _classify_pr_for_reminder(
     if any(s in ACTIONED_STATES for s in states.values()):
         return None
 
-    requested_users = sorted({u["login"] for u in pr.get("requested_reviewers", []) or []})
-    commented_only = sorted({u for u, s in states.items() if s == "COMMENTED"})
+    # The PR author is never their own reviewer — strip them from both
+    # buckets so a self "Comment review" (or an unusual `requested_reviewers`
+    # entry from GitHub's team round-robin) doesn't surface them in the
+    # Slack reminder digest as a person we're waiting on.
+    author_login = ((pr.get("user") or {}).get("login") or "").lower()
+    requested_users = sorted(
+        {
+            u["login"]
+            for u in pr.get("requested_reviewers", []) or []
+            if u.get("login") and u["login"].lower() != author_login
+        }
+    )
+    commented_only = sorted(
+        {u for u, s in states.items() if s == "COMMENTED" and u.lower() != author_login}
+    )
 
     if not requested_users and not commented_only:
         return None
@@ -795,6 +847,25 @@ def _format_waiting(entry: dict) -> str:
     return f"waiting {human} since review requested"
 
 
+def _format_waiting_compact(entry: dict) -> str:
+    """Single-token waiting time for the bullet-list reminder digest.
+
+    Examples: ``"2d"``, ``"5h"``, ``"<1h"``. Returns ``""`` when the
+    entry has no usable waiting timestamp.
+    """
+    hours = entry.get("waiting_hours")
+    if hours is None:
+        return ""
+    total_minutes = int(round(hours * 60))
+    days = total_minutes // (24 * 60)
+    if days >= 1:
+        return f"{days}d"
+    rem_hours = total_minutes // 60
+    if rem_hours >= 1:
+        return f"{rem_hours}h"
+    return "<1h"
+
+
 def _reminder_fallback_text(awaiting: list[dict]) -> str:
     """Plain-text summary used as the Slack notification fallback."""
     return f"{len(awaiting)} PR(s) waiting on a reviewer"
@@ -805,25 +876,13 @@ def _build_reminder_blocks(
 ) -> list[dict]:
     """Return a Block Kit payload listing every PR awaiting a reviewer.
 
-    The layout is one ``section`` (with the linked PR title) plus one
-    ``context`` element (with author, reviewer(s) and waiting time) per
-    PR, separated by ``divider`` blocks. A heading section announces
-    the count.
+    Compact layout: one heading section plus one bulleted section
+    where each line is ``• <url|title> — reviewer(s) — waiting``. Keeps
+    the digest short even when many PRs are stale; per-PR author and
+    "comments don't count" footnotes are dropped on purpose — the linked
+    PR carries the rest of the context for anyone who clicks through.
     """
-    blocks: list[dict] = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f":alarm_clock: *{len(awaiting)} PR(s) waiting on a "
-                    f"reviewer*"
-                ),
-            },
-        },
-        {"type": "divider"},
-    ]
-
+    lines: list[str] = []
     for pr in awaiting:
         people = pr["requested"] + [
             u for u in pr["commented_only"] if u not in pr["requested"]
@@ -831,43 +890,29 @@ def _build_reminder_blocks(
         people_str = (
             ", ".join(names.name(u) for u in people)
             if people
-            else "_no reviewer assigned_"
+            else "_no reviewer_"
         )
-        meta_parts = [
-            f"Author: `@{pr['author']}`",
-            f"Reviewer{'s' if len(people) > 1 else ''}: {people_str}",
-        ]
-        waiting_suffix = _format_waiting(pr)
-        if waiting_suffix:
-            meta_parts.append(f"_{waiting_suffix}_")
-        meta_text = "   ·   ".join(meta_parts)
+        waiting = _format_waiting_compact(pr)
+        parts = [f"<{pr['url']}|#{pr['number']} — {pr['title']}>", people_str]
+        if waiting:
+            parts.append(waiting)
+        lines.append("• " + " — ".join(parts))
 
-        if pr["commented_only"]:
-            commented_names = ", ".join(
-                names.name(u) for u in pr["commented_only"]
-            )
-            meta_text += (
-                f"\n_Note: {commented_names} left comment(s) — "
-                f"comments do not count as a review._"
-            )
-
-        blocks.append(
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"<{pr['url']}|#{pr['number']} — {pr['title']}>",
-                },
-            }
-        )
-        blocks.append(
-            {
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": meta_text}],
-            }
-        )
-
-    return blocks
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":alarm_clock: *{len(awaiting)} PR(s) waiting on a reviewer*"
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+        },
+    ]
 
 
 def cmd_remind(args: argparse.Namespace) -> int:
