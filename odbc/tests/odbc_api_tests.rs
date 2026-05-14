@@ -197,6 +197,11 @@ fn telemetry_rpcs_accept_unknown_handles_silently() {
             .telemetry_send_wrapper_error(TelemetrySendWrapperErrorRequest {
                 conn_handle: Some(conn),
                 exception_type: "ConversionError".to_string(),
+                // Wire format must match what `ErrorSource::DataConversion`
+                // serialises to via `Display` (snake_case). Hardcoded here
+                // because the `api` module isn't publicly re-exported;
+                // the round-trip is enforced by the
+                // `error_source_wire_format_round_trips` unit test.
                 error_source: "data_conversion".to_string(),
             })
             .await

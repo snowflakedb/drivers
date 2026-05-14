@@ -3482,6 +3482,7 @@ dependencies = [
  "error_trace",
  "libc",
  "odbc-sys",
+ "odbc_derive",
  "parking_lot",
  "proto_utils",
  "rust-ini",
@@ -3503,6 +3504,15 @@ name = "odbc-sys"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ecdb20f7c165083ad1bc9f55122f677725e257716a5bc83e5413d5654b7d6f1"
+
+[[package]]
+name = "odbc_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
 
 [[package]]
 name = "odbc_trace_tool"

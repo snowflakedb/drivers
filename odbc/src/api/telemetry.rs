@@ -8,9 +8,10 @@
 //!   entry-point name as `api_method`.
 //! - **`exception`** (only when an entry point returned `Err`) — sent via
 //!   [`DatabaseDriverClient::telemetry_send_wrapper_error`] with the
-//!   `OdbcError` variant name as `exception_type` and a high-level category
-//!   (`data_conversion`, `connection_pool`, `config_parsing`,
-//!   `result_processing`, or `unknown`) as `error_source`.
+//!   `OdbcError` variant name as `exception_type` and a high-level
+//!   category as `error_source`. The category is a strongly-typed
+//!   [`ErrorSource`] enum (see its docs for the full bucket list); on the
+//!   wire it serialises to its snake_case form via [`Display`].
 //!
 //! Recording is **fire-and-forget**: each helper resolves the connection
 //! handle on the caller's thread and then spawns a tiny task on the shared
@@ -19,6 +20,8 @@
 //! handles that don't resolve to a connected session (env/desc/null
 //! handles, freshly allocated Dbc still in `Disconnected`) are silently
 //! dropped before the spawn.
+//!
+//! [`ErrorSource`]: crate::api::error::ErrorSource
 //!
 //! [`DatabaseDriverClient`]: sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient
 //! [`DatabaseDriverClient::telemetry_send_api_usage`]: sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient::telemetry_send_api_usage
