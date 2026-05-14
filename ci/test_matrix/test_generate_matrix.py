@@ -975,6 +975,212 @@ class JsonVariantRegressionTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Build targets — wheel-build alignment
+# ---------------------------------------------------------------------------
+
+# Helper: reverse-lookup cibw_key -> (OS, Arch) for build-target tests.
+PYTHON_PLATFORM_BY_CIBW = {p["cibw_key"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+
+
+class BuildTargetsTests(unittest.TestCase):
+    """
+    Coverage for the --emit-build-targets generator mode that drives
+    _build-python-wheels.yml's `targets:` input.
+
+    Locks in three invariants:
+      * Coverage equivalence — every active test row with a wheel_artifact
+        has a corresponding (cibw_key, py) entry in build_targets.
+      * No over-build — every (cibw_key, py) in build_targets traces back
+        to at least one active test row at the same trigger level.
+      * Per-trigger contraction — PR build targets are a subset of merge,
+        which is a subset of nightly. PR builds at most as many wheels as
+        tests need.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(PYTHON_PATH, "python")
+        cls.targets_pr      = gm.build_targets("python", "pull_request")
+        cls.targets_merge   = gm.build_targets("python", "merge_group")
+        cls.targets_nightly = gm.build_targets("python", "schedule")
+
+    def _active_wheel_rows(self, level: str) -> list:
+        return [
+            r for r in gm.filter_active(self.gha, level)
+            if r.get("wheel_artifact")
+        ]
+
+    def _expected_targets(self, level: str) -> dict[str, set[str]]:
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        out: dict[str, set[str]] = {}
+        for r in self._active_wheel_rows(level):
+            pair = artifact_to_pair[r["wheel_artifact"]]
+            out.setdefault(gm.PYTHON_PLATFORM[pair]["cibw_key"], set()).add(r["py"])
+        return out
+
+    def test_only_python_driver_supported(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            gm.build_targets("odbc", "pull_request")
+        self.assertIn("python", str(ctx.exception))
+
+    def test_pr_targets_match_active_wheel_rows(self) -> None:
+        expected = self._expected_targets("pr")
+        actual = {k: set(v) for k, v in self.targets_pr.items()}
+        self.assertEqual(actual, expected)
+
+    def test_merge_targets_match_active_wheel_rows(self) -> None:
+        expected = self._expected_targets("merge")
+        actual = {k: set(v) for k, v in self.targets_merge.items()}
+        self.assertEqual(actual, expected)
+
+    def test_nightly_targets_match_active_wheel_rows(self) -> None:
+        expected = self._expected_targets("nightly")
+        actual = {k: set(v) for k, v in self.targets_nightly.items()}
+        self.assertEqual(actual, expected)
+
+    def test_pr_subset_of_merge_subset_of_nightly(self) -> None:
+        # Per-trigger contraction: PR ⊆ merge ⊆ nightly.
+        for cibw_key, versions in self.targets_pr.items():
+            self.assertIn(
+                cibw_key, self.targets_merge,
+                f"PR builds {cibw_key} but merge does not — every PR cell "
+                f"must also be active at merge level (cumulative trigger filter).",
+            )
+            self.assertTrue(
+                set(versions).issubset(self.targets_merge[cibw_key]),
+                f"PR-level {cibw_key} versions {versions} not a subset of merge {self.targets_merge[cibw_key]}",
+            )
+        for cibw_key, versions in self.targets_merge.items():
+            self.assertIn(
+                cibw_key, self.targets_nightly,
+                f"merge builds {cibw_key} but nightly does not — full cartesian "
+                f"product should always cover merge cells.",
+            )
+            self.assertTrue(
+                set(versions).issubset(self.targets_nightly[cibw_key]),
+                f"merge-level {cibw_key} versions {versions} not a subset of nightly {self.targets_nightly[cibw_key]}",
+            )
+
+    def test_no_overbuild(self) -> None:
+        # Every (cibw_key, py) in build_targets must correspond to >=1 active
+        # test row at the same level. Catches "we build wheels nothing tests".
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        for level, targets in [
+            ("pr", self.targets_pr),
+            ("merge", self.targets_merge),
+            ("nightly", self.targets_nightly),
+        ]:
+            active = self._active_wheel_rows(level)
+            for cibw_key, versions in targets.items():
+                target_pair = PYTHON_PLATFORM_BY_CIBW[cibw_key]
+                for v in versions:
+                    matches = [
+                        r for r in active
+                        if artifact_to_pair[r["wheel_artifact"]] == target_pair
+                        and r["py"] == v
+                    ]
+                    self.assertTrue(
+                        matches,
+                        f"[{level}] {cibw_key}/py{v} in build_targets but no test row consumes it",
+                    )
+
+    def test_no_underbuild(self) -> None:
+        # Every active test row with a wheel_artifact has a (cibw_key, py)
+        # entry in build_targets. Catches "test row references a wheel that
+        # won't be built", which would 404 actions/download-artifact at runtime.
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        for level, targets in [
+            ("pr", self.targets_pr),
+            ("merge", self.targets_merge),
+            ("nightly", self.targets_nightly),
+        ]:
+            for r in self._active_wheel_rows(level):
+                pair = artifact_to_pair[r["wheel_artifact"]]
+                cibw_key = gm.PYTHON_PLATFORM[pair]["cibw_key"]
+                self.assertIn(
+                    cibw_key, targets,
+                    f"[{level}] test row {r['name']} needs wheel for {cibw_key} "
+                    f"but build_targets has no entry for that platform",
+                )
+                self.assertIn(
+                    r["py"], targets[cibw_key],
+                    f"[{level}] test row {r['name']} needs py{r['py']} on {cibw_key} "
+                    f"but build_targets[{cibw_key}] = {targets[cibw_key]}",
+                )
+
+    def test_sdist_py_excluded_from_targets(self) -> None:
+        # py3.10 always installs from sdist; rows have no wheel_artifact and
+        # must NOT appear in build_targets at any level.
+        for level, targets in [
+            ("pr", self.targets_pr),
+            ("merge", self.targets_merge),
+            ("nightly", self.targets_nightly),
+        ]:
+            for cibw_key, versions in targets.items():
+                self.assertNotIn(
+                    "3.10", versions,
+                    f"[{level}] py3.10 listed under {cibw_key} in build_targets, "
+                    f"but py3.10 is sdist-only (SDIST_PY) and shouldn't be wheel-built",
+                )
+
+    def test_nightly_targets_match_legacy_hardcoded_json(self) -> None:
+        # Regression guard: at nightly scope the generator output must match
+        # the JSON literal previously hardcoded in test-python.yml. Pins the
+        # migration so a future PR can't silently shrink wheel coverage at
+        # nightly without a corresponding model edit.
+        legacy = {
+            "linux_x86":   {"3.13"},
+            "linux_aarch": {"3.11", "3.14"},
+            "macos_arm":   {"3.12", "3.14"},
+            "macos_x86":   {"3.11", "3.12", "3.13", "3.14"},
+            "windows_x86": {"3.11", "3.12", "3.14"},
+            "windows_arm": {"3.11", "3.12"},
+        }
+        actual = {k: set(v) for k, v in self.targets_nightly.items()}
+        self.assertEqual(
+            actual, legacy,
+            "nightly build_targets diverged from the legacy test-python.yml "
+            "hardcoded targets JSON. If this is intentional (e.g. a PARAMS edit), "
+            "update the `legacy` dict in this test to match.",
+        )
+
+    def test_emit_build_targets_cli_format(self) -> None:
+        # CLI emits exactly one line of the form `targets=<json>`.
+        import contextlib
+        import io
+        import json as _json
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gm.emit_build_targets("python", "pull_request")
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.startswith("targets="))
+        payload = _json.loads(line[len("targets="):])
+        self.assertEqual(payload, self.targets_pr)
+
+    def test_python_platform_has_cibw_key(self) -> None:
+        # Every PYTHON_PLATFORM row must declare cibw_key. validate_mappings
+        # enforces this at generate() time; this test pins it independently.
+        for pair, meta in gm.PYTHON_PLATFORM.items():
+            self.assertIn(
+                "cibw_key", meta,
+                f"PYTHON_PLATFORM[{pair}] missing 'cibw_key' — "
+                f"--emit-build-targets cannot translate this platform.",
+            )
+
+    def test_validate_mappings_raises_on_missing_cibw_key(self) -> None:
+        # Drift simulation: pop cibw_key from one row, validate_mappings
+        # must fail loud rather than silently degrade.
+        original = gm.PYTHON_PLATFORM[("ubuntu", "x64")].copy()
+        gm.PYTHON_PLATFORM[("ubuntu", "x64")].pop("cibw_key")
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.generate(PYTHON_PATH, "python")
+            self.assertIn("cibw_key", str(ctx.exception))
+        finally:
+            gm.PYTHON_PLATFORM[("ubuntu", "x64")] = original
+
+
+# ---------------------------------------------------------------------------
 # Trigger-level filtering
 # ---------------------------------------------------------------------------
 

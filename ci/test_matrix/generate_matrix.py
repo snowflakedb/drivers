@@ -272,7 +272,16 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
             raise RuntimeError(
                 f"({pair[0]}, {pair[1]}) is allowed by the Python model but missing "
                 f"from PYTHON_PLATFORM in mappings/python.py — add a row there with "
-                f"'wheel_artifact' + 'wheels', or constrain the model."
+                f"'cibw_key' + 'wheel_artifact' + 'wheels', or constrain the model."
+            )
+        if driver == "python" and "cibw_key" not in PYTHON_PLATFORM[pair]:
+            raise RuntimeError(
+                f"({pair[0]}, {pair[1]}) is in PYTHON_PLATFORM but missing 'cibw_key'. "
+                f"This field is required for --emit-build-targets to translate "
+                f"(OS, Arch) to the platform key consumed by "
+                f"_build-python-wheels.yml. Set it to one of "
+                f"linux_x86, linux_aarch, macos_x86, macos_arm, windows_x86, "
+                f"or windows_arm — see that workflow's inline PLATFORMS dict."
             )
         if driver == "core" and pair not in CORE_PLATFORM:
             raise RuntimeError(
@@ -622,6 +631,62 @@ def emit_active(driver: str, event: str | None, labels: list[str] | None = None)
     print(f"matrix={json.dumps(active)}")
 
 
+def build_targets(driver: str, event: str | None, labels: list[str] | None = None) -> dict[str, list[str]]:
+    """
+    Return the wheel-build targets for `driver` at the trigger level implied
+    by `event`, in the JSON shape consumed by _build-python-wheels.yml's
+    `targets:` input. Currently only supported for the python driver.
+
+    Output shape:
+        {
+            "linux_x86":  ["3.13"],
+            "macos_arm":  ["3.12"],
+            ...
+        }
+
+    A platform key appears only if at least one active test row references
+    a wheel from it; py versions within a platform are deduplicated and
+    sorted. Sdist-only py versions (SDIST_PY) are naturally excluded
+    because their rows carry no `wheel_artifact`.
+    """
+    if driver != "python":
+        raise ValueError(
+            f"--emit-build-targets is only supported for the python driver; got {driver!r}"
+        )
+    model_path = MODELS_DIR / f"{driver}.py"
+    gha_rows = generate(model_path, driver)
+    level = level_for_event_and_labels(event, labels)
+    active = filter_active(gha_rows, level)
+
+    # Reverse-lookup wheel_artifact -> (os, arch) so we can fetch cibw_key.
+    artifact_to_pair: dict[str, tuple[str, str]] = {
+        meta["wheel_artifact"]: pair for pair, meta in PYTHON_PLATFORM.items()
+    }
+
+    targets: dict[str, set[str]] = {}
+    for row in active:
+        artifact = row.get("wheel_artifact")
+        if not artifact:
+            # py3.10 sdist rows and any other no-wheel rows are skipped: the
+            # build workflow doesn't need to produce a wheel for them.
+            continue
+        pair = artifact_to_pair[artifact]
+        cibw_key = PYTHON_PLATFORM[pair]["cibw_key"]
+        targets.setdefault(cibw_key, set()).add(row["py"])
+
+    return {key: sorted(versions) for key, versions in sorted(targets.items())}
+
+
+def emit_build_targets(driver: str, event: str | None, labels: list[str] | None = None) -> None:
+    """
+    Print `targets=<json>` for the wheel-build targets active at the level
+    implied by `event`, optionally upgraded by scope-up PR labels (see
+    LABEL_TO_LEVEL). Suitable for appending to $GITHUB_OUTPUT inside a
+    workflow step. Currently only supported for the python driver.
+    """
+    print(f"targets={json.dumps(build_targets(driver, event, labels))}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pairwise CI matrix generator")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -645,13 +710,30 @@ def main() -> None:
         help="Print 'matrix=<json>' for the active level (requires --driver and --event). "
              "Used inside CI workflow steps to feed strategy.matrix.include.",
     )
+    parser.add_argument(
+        "--emit-build-targets",
+        action="store_true",
+        help="Print 'targets=<json>' for the wheel-build targets active at the trigger "
+             "level implied by --event (requires --driver and --event). Currently only "
+             "supported for the python driver — feeds _build-python-wheels.yml's "
+             "`targets:` input.",
+    )
     args = parser.parse_args()
 
     if args.emit_active:
         if args.all or not args.driver:
             parser.error("--emit-active requires --driver and is incompatible with --all")
+        if args.emit_build_targets:
+            parser.error("--emit-active and --emit-build-targets are mutually exclusive")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
         emit_active(args.driver, args.event, labels)
+        return
+
+    if args.emit_build_targets:
+        if args.all or not args.driver:
+            parser.error("--emit-build-targets requires --driver and is incompatible with --all")
+        labels = [l.strip() for l in args.labels.split(",") if l.strip()]
+        emit_build_targets(args.driver, args.event, labels)
         return
 
     drivers = ["odbc", "python", "core"] if args.all else [args.driver]
