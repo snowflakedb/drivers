@@ -60,10 +60,9 @@ export function executeAsync(
     connection.execute({
       sqlText,
       ...additionalParameters,
-      complete: (err, statement, rows) => {
-        if (err) {
-          (err as Error & { statement?: typeof statement }).statement = statement;
-          reject(err);
+      complete: (error, statement, rows) => {
+        if (error) {
+          reject({ error, statement, rows });
         } else {
           resolve({ statement, rows });
         }
