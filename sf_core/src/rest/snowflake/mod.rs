@@ -262,7 +262,7 @@ pub(crate) fn query_log_fields(
 pub fn user_agent(client_info: &ClientInfo) -> String {
     let base = format!(
         "{}/{} ({}-{})",
-        client_info.application,
+        client_info.client_app_id,
         client_info.version,
         client_info.os,
         std::env::consts::ARCH
@@ -304,7 +304,7 @@ fn strip_version_suffix(version: &str) -> String {
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
     AuthRequestData {
         account_name: login_parameters.account_name.clone(),
-        client_app_id: login_parameters.client_info.application.clone(),
+        client_app_id: login_parameters.client_info.client_app_id.clone(),
         client_app_version: strip_version_suffix(&login_parameters.client_info.version),
         client_app_version_full: login_parameters.client_info.version.clone(),
         client_capabilities: AuthRequestClientCapabilities {
@@ -2448,6 +2448,29 @@ mod tests {
     }
 
     #[test]
+    fn auth_request_uses_application_for_client_environment_application() {
+        // CLIENT_APP_ID → driver identity (``client_app_id``).
+        // CLIENT_ENVIRONMENT.APPLICATION → user-facing app name
+        // (``application``). They must remain independent.
+        let login_params = LoginParameters {
+            client_info: ClientInfo {
+                client_app_id: "PythonConnector".to_string(),
+                application: "SNOWCLI.STAGE.COPY".to_string(),
+                ..test_client_info()
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None))
+            .unwrap();
+
+        assert_eq!(data.client_app_id, "PythonConnector");
+        assert_eq!(data.client_environment.application, "SNOWCLI.STAGE.COPY");
+    }
+
+    #[test]
     fn pat_auth_payload_includes_authenticator() {
         let login_params = LoginParameters {
             login_method: LoginMethod::Pat {
@@ -2538,7 +2561,7 @@ mod tests {
         #[test]
         fn user_agent_without_runtime_info() {
             let info = ClientInfo {
-                application: "MyApp".to_string(),
+                client_app_id: "MyApp".to_string(),
                 version: "1.0.0".to_string(),
                 os: "Linux".to_string(),
                 ..test_client_info()
@@ -2549,7 +2572,7 @@ mod tests {
         #[test]
         fn user_agent_with_runtime_info() {
             let info = ClientInfo {
-                application: "PythonConnector".to_string(),
+                client_app_id: "PythonConnector".to_string(),
                 version: "3.15.0".to_string(),
                 os: "Darwin".to_string(),
                 runtime_name: Some("CPython".to_string()),
@@ -2576,7 +2599,7 @@ mod tests {
         #[test]
         fn user_agent_sanitizes_spaces_in_runtime_name() {
             let info = ClientInfo {
-                application: "JDBC".to_string(),
+                client_app_id: "JDBC".to_string(),
                 version: "4.0.2".to_string(),
                 os: "Linux".to_string(),
                 runtime_name: Some("OpenJDK 64-Bit Server VM".to_string()),

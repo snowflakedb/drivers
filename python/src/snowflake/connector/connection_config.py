@@ -39,6 +39,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     account: str | None = None
     """Snowflake account identifier. Required"""
 
+    application: str | None = None
+    """User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)"""
+
     authentication_timeout: int | None = 120
     """Timeout in seconds for native Okta SSO authentication. Default: 120"""
 
@@ -46,7 +49,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Authenticator type for the connection"""
 
     client_app_id: str | None = None
-    """Application identifier sent by the client wrapper (e.g. PythonConnector)"""
+    """Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)"""
 
     client_store_temporary_credential: bool | None = False
     """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""

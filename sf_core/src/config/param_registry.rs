@@ -114,6 +114,7 @@ pub mod param_names {
     pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
+    pub const APPLICATION: ParamKey = ParamKey("application");
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
     pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
@@ -982,7 +983,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: None,
         sensitive: false,
-        description: "Application identifier sent by the client wrapper (e.g. PythonConnector)",
+        description: "Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::APPLICATION.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,

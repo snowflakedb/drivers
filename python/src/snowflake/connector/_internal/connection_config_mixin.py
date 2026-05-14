@@ -57,9 +57,6 @@ class ConnectionConfigMixin:
     session_parameters: dict[str, Any] | None = None
     """Session parameters to set at connection time."""
 
-    application: str | None = None
-    """Application name override."""
-
     numpy: bool | None = None
     """Use numpy for result set processing."""
 
@@ -102,7 +99,6 @@ class ConnectionConfigMixin:
     _PYTHON_ONLY: ClassVar[frozenset[str]] = frozenset(
         {
             "session_parameters",
-            "application",
             "numpy",
             "arrow_number_to_decimal",
             "paramstyle",
@@ -112,6 +108,21 @@ class ConnectionConfigMixin:
         }
     )
     """Fields handled only in Python, not forwarded to Rust."""
+
+    _INTERNAL_PARAMS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "client_app_id",
+            "client_app_version",
+        }
+    )
+    """Driver-identity parameters that end users must not override.
+
+    Mirrors the old connector's treatment of ``internal_application_name`` /
+    ``internal_application_version``: these identify the driver family on the
+    wire (CLIENT_APP_ID / CLIENT_APP_VERSION) and are owned by the wrapper, not
+    the caller. Setting them via user-facing kwargs raises ``ProgrammingError``;
+    the wrapper itself assigns them through ``ConnectionConfig`` attribute
+    access in ``from_connection_args``."""
 
     _LEGACY_REWRITES: ClassVar[dict[str, str]] = {}
     """Legacy parameter names -> canonical replacements (silent)."""
@@ -169,6 +180,11 @@ class ConnectionConfigMixin:
 
         Resolves case-insensitive aliases, applies legacy parameter name
         rewrites, and collects unknown keys into ``_extra``.
+
+        Raises ``ProgrammingError`` if a caller passes any of
+        ``cls._INTERNAL_PARAMS`` (``client_app_id`` / ``client_app_version``).
+        These identify the driver family on the wire and are wrapper-owned;
+        end users must use ``application`` to label their app instead.
         """
         # Apply legacy rewrites first (silent — canonical replacements).
         for old_name, new_name in cls._LEGACY_REWRITES.items():
@@ -203,6 +219,13 @@ class ConnectionConfigMixin:
                     stacklevel=3,
                 )
                 kwargs.pop(key)
+
+        for key in kwargs:
+            if key.lower() in cls._INTERNAL_PARAMS:
+                raise ProgrammingError(
+                    f"{key!r} is a wrapper-internal parameter and cannot be set "
+                    f"by the caller. Use ``application`` to label your application."
+                )
 
         known_fields = cls._all_field_names()
         resolved: dict[str, Any] = {}
@@ -242,9 +265,11 @@ class ConnectionConfigMixin:
 
         * ``private_key`` - normalises RSAPrivateKey / bytes / str via
           :func:`normalize_private_key`.
-        * ``application`` - validates against ``_APPLICATION_RE``, defaults to
-          ``_APPLICATION_NAME``, and injects ``client_app_id`` into
-          ``_extra`` for the Rust core.
+        * ``application`` - validates against ``_APPLICATION_RE`` and defaults
+          to ``_APPLICATION_NAME``. The value is forwarded to the Rust core as
+          ``application`` and lands in CLIENT_ENVIRONMENT.APPLICATION on the
+          wire. ``client_app_id`` (CLIENT_APP_ID) is always the driver name so
+          server-side feature gating tied to the client type keeps working.
         * ``autocommit`` - type-checked (must be ``bool``), then merged into
           ``session_parameters["AUTOCOMMIT"]``.
         """
@@ -270,15 +295,19 @@ class ConnectionConfigMixin:
         if config.private_key is not None:  # type: ignore[attr-defined]
             config.private_key = normalize_private_key(config.private_key)  # type: ignore[attr-defined]
 
-        application = config.application
+        application = config.application  # type: ignore[attr-defined]
         if application is None or (isinstance(application, str) and not application):
-            config.application = cls._APPLICATION_NAME
+            config.application = cls._APPLICATION_NAME  # type: ignore[attr-defined]
         elif isinstance(application, str):
             if not cls._APPLICATION_RE.match(application):
                 raise ProgrammingError(f"Invalid application name: {application!r}")
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
-        config._extra["client_app_id"] = config.application
+        # CLIENT_APP_ID is the driver identity — always the driver name.
+        # CLIENT_ENVIRONMENT.APPLICATION (server-side ``application``) carries
+        # the user-facing application name. This mirrors the old connector
+        # where the two values are independent.
+        config.client_app_id = cls._APPLICATION_NAME  # type: ignore[attr-defined]
 
         if config.autocommit is not None:
             if not isinstance(config.autocommit, bool):

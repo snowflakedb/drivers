@@ -1830,6 +1830,7 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
 
 fn test_client_info() -> ClientInfo {
     ClientInfo {
+        client_app_id: "TestApp".to_string(),
         application: "TestApp".to_string(),
         version: "1.0.0".to_string(),
         os: "TestOS".to_string(),

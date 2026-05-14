@@ -9,6 +9,12 @@ from tests.compatibility import is_old_driver
 pytestmark = pytest.mark.skipif(is_old_driver(), reason="Universal driver only")
 
 
+def _login_request_data(wiremock) -> dict:
+    login_requests = wiremock.get_requests("/session/v1/login-request.*")
+    assert login_requests, "Expected at least one login request"
+    return json.loads(login_requests[0]["body"])["data"]
+
+
 def test_login_request_contains_correct_client_identity(int_test_connection_factory, wiremock):
     """Verify the Python wrapper sends correct client identity in the login request.
 
@@ -56,3 +62,21 @@ def test_login_request_contains_correct_client_identity(int_test_connection_fact
     assert user_agent.startswith(f"PythonConnector/{__version__}")
     assert platform.python_implementation() in user_agent
     assert platform.python_version() in user_agent
+
+
+def test_custom_application_only_affects_client_environment_application(int_test_connection_factory, wiremock):
+    """User-supplied ``application`` goes into CLIENT_ENVIRONMENT.APPLICATION.
+    CLIENT_APP_ID must stay as the driver name so server-side feature gating
+    tied to the client type keeps working (mirrors the old connector)."""
+    wiremock.add_mapping("auth/login_success_jwt.json")
+
+    connection = int_test_connection_factory(
+        server_url=wiremock.http_url(),
+        application="SNOWCLI.STAGE.COPY",
+    )
+    try:
+        data = _login_request_data(wiremock)
+        assert data["CLIENT_APP_ID"] == "PythonConnector"
+        assert data["CLIENT_ENVIRONMENT"]["APPLICATION"] == "SNOWCLI.STAGE.COPY"
+    finally:
+        connection.close()
