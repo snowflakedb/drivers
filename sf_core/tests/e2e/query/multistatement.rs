@@ -20,7 +20,10 @@ fn should_execute_multiple_select_statements() {
     // And each result set contains correct data
     for (i, query_id) in multi.query_ids.iter().enumerate() {
         let rs = client.connection_get_result_set(query_id);
-        let mut helper = ArrowResultHelper::from_result(rs);
+        let rs_handle = rs.result_set_handle.unwrap();
+        let stream = client.result_set_get_stream(&rs_handle);
+        client.result_set_release(&rs_handle);
+        let mut helper = ArrowResultHelper::from_result(stream);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows.len(), 1, "Result set {i} should have 1 row");
         assert_eq!(
@@ -75,7 +78,10 @@ fn should_execute_mixed_statement_types() {
 
     // And the SELECT result contains expected data
     let select_rs = client.connection_get_result_set(&multi.query_ids[3]);
-    let mut helper = ArrowResultHelper::from_result(select_rs);
+    let rs_handle = select_rs.result_set_handle.unwrap();
+    let stream = client.result_set_get_stream(&rs_handle);
+    client.result_set_release(&rs_handle);
+    let mut helper = ArrowResultHelper::from_result(stream);
     let rows = helper.transform_into_array::<String>().unwrap();
     assert_eq!(rows.len(), 1, "SELECT should return 1 row");
     assert_eq!(rows[0][0], "hello");

@@ -47,6 +47,25 @@ impl Default for PrefetchConfig {
     }
 }
 
+impl PrefetchConfig {
+    /// Resolve from a session parameters map, falling back to defaults for
+    /// missing or unparseable values.
+    pub fn from_session_params(params: &HashMap<String, String>) -> Self {
+        let prefetch_threads = params
+            .get("CLIENT_PREFETCH_THREADS")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_PREFETCH_THREADS);
+        let memory_limit_mb = params
+            .get("CLIENT_MEMORY_LIMIT")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(DEFAULT_MEMORY_LIMIT_MB);
+        Self {
+            prefetch_threads,
+            memory_limit_mb,
+        }
+    }
+}
+
 pub async fn json_prefetch_reader(
     initial_rowset: &[Vec<Option<String>>],
     row_types: Vec<RowType>,

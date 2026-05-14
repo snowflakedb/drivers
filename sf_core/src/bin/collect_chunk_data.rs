@@ -416,22 +416,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Format: {format_label}");
 
-    let rowset_data = response.data.to_rowset_data();
-    match rowset_data {
-        sf_core::rest::snowflake::query_response::RowsetData::ArrowMultiChunk { .. }
-        | sf_core::rest::snowflake::query_response::RowsetData::ArrowSingleChunk { .. } => {
-            save_arrow_data(&response.data, &cli.output_dir, &tls_client).await?;
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::JsonMultiChunk { .. }
-        | sf_core::rest::snowflake::query_response::RowsetData::JsonRowset { .. } => {
-            save_json_data(&response.data, &cli.output_dir, &tls_client).await?;
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::SchemaOnly { .. } => {
-            return Err("Query returned schema-only (no data)".into());
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::NoData => {
-            return Err("Query returned no data".into());
-        }
+    match format_label {
+        "arrow" => save_arrow_data(&response.data, &cli.output_dir, &tls_client).await?,
+        "json" => save_json_data(&response.data, &cli.output_dir, &tls_client).await?,
+        other => return Err(format!("Unsupported query result format: {other}").into()),
     }
 
     println!("Done! Chunk data saved to {:?}", cli.output_dir);

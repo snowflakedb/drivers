@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 
 use super::connection::Connection;
 use super::database::Database;
+use super::result_set::ResultSet;
 use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
@@ -73,6 +74,7 @@ pub struct DatabaseDriverV1 {
     pub(super) databases: HandleManager<Mutex<Database>>,
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
+    pub(super) results: HandleManager<Mutex<ResultSet>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -96,6 +98,7 @@ impl DatabaseDriverV1 {
             databases: HandleManager::new(),
             connections: HandleManager::new(),
             statements: HandleManager::new(),
+            results: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),

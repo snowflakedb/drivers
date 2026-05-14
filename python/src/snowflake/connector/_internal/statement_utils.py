@@ -8,7 +8,7 @@ from .protobuf_gen.database_driver_v1_pb2 import (
     DatabaseFetchChunkResponse,
     PrepareResult,
     ResultSetDescriptor,
-    ResultSetResponse,
+    ResultSetGetStreamResponse,
     StatementHandle,
     StatementNewRequest,
     StatementReleaseRequest,
@@ -19,24 +19,6 @@ from .sqlstate import SQLSTATE_SUCCESS
 
 if TYPE_CHECKING:
     from ..connection import Connection
-
-
-def new_stmt(connection: Connection) -> StatementHandle:
-    statement_request = StatementNewRequest(conn_handle=connection.conn_handle)
-    stmt = connection.db_api.statement_new(request=statement_request)
-    return stmt.stmt_handle
-
-
-def set_query(connection: Connection, stmt_handle: StatementHandle, query: str) -> None:
-    sql_query_request = StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
-    connection.db_api.statement_set_sql_query(sql_query_request)
-
-
-def release_stmt(connection: Connection, stmt_handle: StatementHandle | None) -> StatementHandle | None:
-    if stmt_handle:
-        release_request = StatementReleaseRequest(stmt_handle=stmt_handle)
-        connection.db_api.statement_release(release_request)
-    return None
 
 
 @contextmanager
@@ -56,15 +38,32 @@ def statement(connection: Connection, query: str) -> Generator[StatementHandle]:
         StatementHandle: A handle that can be passed to ``statement_execute``
         or other statement-level APIs.
     """
-    stmt_handle = new_stmt(connection)
+    stmt_handle = _new_stmt(connection)
     try:
-        set_query(connection, stmt_handle, query)
+        _set_query(connection, stmt_handle, query)
         yield stmt_handle
     finally:
-        release_stmt(connection, stmt_handle)
+        _release_stmt(connection, stmt_handle)
 
 
-def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetResponse | None) -> int:
+def _new_stmt(connection: Connection) -> StatementHandle:
+    statement_request = StatementNewRequest(conn_handle=connection.conn_handle)
+    stmt = connection.db_api.statement_new(request=statement_request)
+    return stmt.stmt_handle
+
+
+def _set_query(connection: Connection, stmt_handle: StatementHandle, query: str) -> None:
+    sql_query_request = StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+    connection.db_api.statement_set_sql_query(sql_query_request)
+
+
+def _release_stmt(connection: Connection, stmt_handle: StatementHandle | None) -> None:
+    if stmt_handle:
+        release_request = StatementReleaseRequest(stmt_handle=stmt_handle)
+        connection.db_api.statement_release(release_request)
+
+
+def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetGetStreamResponse | None) -> int:
     """Extract a C ArrowArrayStream pointer from an execute result.
 
     The pointer is stored as an 8-byte little-endian value inside

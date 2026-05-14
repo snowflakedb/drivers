@@ -15,6 +15,7 @@ pub(crate) mod heartbeat;
 mod logout;
 pub(crate) mod multistatement;
 mod query;
+pub(crate) mod result_set;
 pub mod spcs_token;
 pub(crate) mod statement;
 pub(crate) mod validation;
@@ -26,8 +27,9 @@ pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_sess
 pub use database::FetchChunkInput;
 pub use error::ApiError;
 pub use global_state::{DatabaseDriverV1, DriverProviders, WrapperPresets};
-pub use statement::{
-    BindingType, ColumnMetadata, DataPtr, ExecuteQueryResult, InlineData, ResolvedResultSet,
-    ResultSetDescriptor, StoredChunkInfo,
+pub use result_set::{
+    ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult, InlineData,
+    ResultSetDescriptor, ResultSetInfo,
 };
+pub use statement::{BindingType, DataPtr};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};
