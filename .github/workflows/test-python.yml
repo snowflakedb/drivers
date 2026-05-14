@@ -21,7 +21,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
 
 jobs:
   # Filter out PR runs triggered solely by adding an unrelated label
@@ -353,7 +352,7 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Rerun failed Python tests (Linux/macOS)
@@ -362,7 +361,7 @@ jobs:
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run tests with coverage (Windows)
@@ -380,7 +379,7 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Rerun failed Python tests (Windows)
         if: steps.run_python_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
@@ -389,7 +388,7 @@ jobs:
         run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
@@ -626,7 +625,7 @@ jobs:
           exit $status
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Upload test results as GitHub artifact
         if: always()
