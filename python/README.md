@@ -111,8 +111,10 @@ hatch run test.py3.12:all
 hatch run precommit:check        # Run all checks (format, lint, type)
 hatch run precommit:fix          # Auto-fix formatting and linting issues
 
-# Reference connector tests (for compatibility testing)
-PYTHON_REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:test
+# Reference connector tests (for compatibility testing, installs latest v4.x)
+hatch run reference:test
+# Pin a specific version if needed:
+PYTHON_REFERENCE_DRIVER_VERSION='==4.3.0' hatch run reference:test
 ```
 
 ## References

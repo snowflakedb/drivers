@@ -98,7 +98,7 @@ class TestLogoutWithWiremock:
 
         assert len(logout_requests) >= 1, "Should send logout when keep_alive=False"
 
-    @pytest.mark.skip_reference  # Old connector (v4.5.0) doesn't retry logout on 503
+    @pytest.mark.skip_reference  # Old connector doesn't retry logout on 503
     def test_should_retry_logout_on_503_error(self, int_test_connection_factory, wiremock):
         """Verify logout retries on 503 Service Unavailable."""
         wiremock.add_mapping("auth/login_success_jwt.json")

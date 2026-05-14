@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_REFERENCE_DRIVER_VERSION: "4.5.0"
 
 jobs:
   # ── Build wheels (shared reusable workflow) ────────────────────────
@@ -251,7 +250,7 @@ jobs:
             --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
@@ -262,7 +261,7 @@ jobs:
             --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Save Rust cache (sdist)
         if: always() && matrix.py == '3.10'

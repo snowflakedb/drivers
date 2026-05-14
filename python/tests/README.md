@@ -71,8 +71,8 @@ hatch run test.py3.12:all
 # Run universal tests
 hatch run test:all --json-report --json-report-file=reports/universal.json
 
-# Run reference tests
-REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:run --json-report --json-report-file=reports/reference.json
+# Run reference tests (installs latest v4.x by default)
+hatch run reference:run --json-report --json-report-file=reports/reference.json
 
 # Compare results
 hatch run reference:compare --py 3.13 --os ubuntu-latest --universal reports/universal.json --reference reports/reference.json --fail-on-regressions 0
@@ -163,7 +163,7 @@ def test_custom_db(connection_factory):
 - `PARAMETER_PATH`: Auto-detects `../parameters.json`
 
 ### Configurable
-- `REFERENCE_DRIVER_VERSION`: Reference driver version (default: `3.17.2`)
+- `PYTHON_REFERENCE_DRIVER_VERSION`: Reference driver version constraint (default: `>=4,<5`; e.g. `==4.3.0` to pin)
 - `CORE_PATH`: Override core library path
 - `PARAMETER_PATH`: Override parameters file path
 
