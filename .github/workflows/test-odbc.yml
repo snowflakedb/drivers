@@ -137,25 +137,17 @@ jobs:
 
       - name: Restore test dependencies cache
         id: test-deps-cache-ref
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-test-deps-
+          mode: restore
+          kind: test-deps
 
       - name: Restore ccache
         id: ccache-ref
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-odbc-
+          mode: restore
+          kind: ccache
 
       # See odbc_tests below for rationale: VCPKG_VER must be in the cache key
       # because vcpkg's package ABI hashes change with the runner's vcpkg version.
@@ -166,15 +158,11 @@ jobs:
       - name: Restore vcpkg binary cache (Windows)
         if: matrix.os == 'windows-latest'
         id: vcpkg-cache-ref
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-v3
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-
-            ${{ runner.os }}-vcpkg-x64-windows-
+          mode: restore
+          kind: vcpkg
+          key-suffix: x64-windows
 
       - name: Install build prerequisites (Windows)
         if: matrix.os == 'windows-latest'
@@ -271,45 +259,32 @@ jobs:
           DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
 
       - name: Save test dependencies cache
-        # Skip when the exact key was already restored.
-        if: always() && steps.test-deps-cache-ref.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always()
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          mode: save
+          kind: test-deps
+          cache-hit: ${{ steps.test-deps-cache-ref.outputs.cache-hit }}
 
       - name: Save ccache
-        # Skip when the exact key was already restored.
-        if: always() && steps.ccache-ref.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always()
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          mode: save
+          kind: ccache
+          cache-hit: ${{ steps.ccache-ref.outputs.cache-hit }}
 
       - name: Save vcpkg binary cache (Windows)
-        if: always() && matrix.os == 'windows-latest' && steps.vcpkg-cache-ref.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always() && matrix.os == 'windows-latest'
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-v3
+          mode: save
+          kind: vcpkg
+          key-suffix: x64-windows
+          cache-hit: ${{ steps.vcpkg-cache-ref.outputs.cache-hit }}
 
   # Build ODBC driver once per platform and share via artifact.
   # Avoids rebuilding in each of the 9 test matrix cells (3 OSes × 3 cloud providers).
@@ -442,32 +417,20 @@ jobs:
 
       - name: Restore test dependencies cache
         id: test-deps-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-
+          mode: restore
+          kind: test-deps
+          key-suffix: ${{ matrix.msvc_arch || 'default' }}
 
       - name: Restore ccache
         id: ccache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .ccache
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-
+          mode: restore
+          kind: ccache
+          key-suffix: ${{ matrix.msvc_arch || 'default' }}
 
-      # vcpkg's binary cache stores prebuilt packages keyed by an ABI hash that
-      # depends on the vcpkg version. When the runner image bumps vcpkg the
-      # ABI hashes change, the cached binaries become unusable, and vcpkg
-      # rebuilds zlib/openssl from source (~7-8 min). Including VCPKG_VER in
-      # the key invalidates stale entries on vcpkg version changes so we
-      # always either get a usable cache or build fresh, never both.
       - name: Capture vcpkg version (Windows)
         if: runner.os == 'Windows'
         uses: ./.github/actions/vcpkg-version
@@ -475,30 +438,19 @@ jobs:
       - name: Restore vcpkg binary cache (Windows)
         if: runner.os == 'Windows'
         id: vcpkg-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_VER }}-v3
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_VER }}-
-            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-
+          mode: restore
+          kind: vcpkg
+          key-suffix: ${{ matrix.vcpkg_triplet }}
 
-      # Cache Homebrew bottle downloads to avoid re-fetching unixodbc/ccache on every run
-      # (brew install on GHA macOS runners is ~2-3 min uncached, <15s with bottles cached).
-      # Fixed key is fine — bottles are versioned inside, and Homebrew auto-resolves updates.
       - name: Restore Homebrew cache (macOS)
         if: runner.os == 'macOS'
         id: brew-cache
-        # Cache restore failures never fail the job — fall back to clean install.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: ~/Library/Caches/Homebrew
-          key: macos-brew-odbc-tests-v1
-          restore-keys: |
-            macos-brew-odbc-tests-
+          mode: restore
+          kind: brew
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -644,56 +596,43 @@ jobs:
       # warning for the late writers. That's acceptable; it's better than losing save-on-failure,
       # which the combined actions/cache@v5 does NOT support (save-always was removed in v5).
       - name: Save test dependencies cache
-        if: always() && steps.test-deps-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always()
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          mode: save
+          kind: test-deps
+          key-suffix: ${{ matrix.msvc_arch || 'default' }}
+          cache-hit: ${{ steps.test-deps-cache.outputs.cache-hit }}
 
       - name: Save ccache
-        if: always() && steps.ccache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always()
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .ccache
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          mode: save
+          kind: ccache
+          key-suffix: ${{ matrix.msvc_arch || 'default' }}
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
 
       - name: Save vcpkg binary cache (Windows)
-        if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always() && runner.os == 'Windows'
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_VER }}-v3
+          mode: save
+          kind: vcpkg
+          key-suffix: ${{ matrix.vcpkg_triplet }}
+          cache-hit: ${{ steps.vcpkg-cache.outputs.cache-hit }}
 
       - name: Save Homebrew cache (macOS)
-        if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
+        if: always() && runner.os == 'macOS'
         timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
+        uses: ./.github/actions/build-cache
         with:
-          path: ~/Library/Caches/Homebrew
-          key: macos-brew-odbc-tests-v1
+          mode: save
+          kind: brew
+          cache-hit: ${{ steps.brew-cache.outputs.cache-hit }}
 
   cleanup_odbc:
     needs: [detect-changes, odbc_tests]
