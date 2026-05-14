@@ -69,3 +69,16 @@ impl Default for RetryPolicy {
         }
     }
 }
+
+impl RetryPolicy {
+    /// Policy used for query execution (initial request + async polling).
+    ///
+    /// Mirrors the old connector's `network_timeout = None` default by using a
+    /// generous budget.  Login/logout keep the tighter `Default` budget.
+    pub fn for_query_execution() -> Self {
+        Self {
+            max_elapsed: Duration::from_secs(3600),
+            ..Self::default()
+        }
+    }
+}

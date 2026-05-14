@@ -887,7 +887,7 @@ pub async fn snowflake_query<'a>(
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info)?;
-    let policy = RetryPolicy::default();
+    let policy = RetryPolicy::for_query_execution();
     snowflake_query_with_client(
         &client,
         query_parameters,

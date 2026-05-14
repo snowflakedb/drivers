@@ -701,7 +701,7 @@ impl Connection {
             session_overrides: ParamStore::new(),
             tokens: Arc::new(AsyncRwLock::new(None)),
             http_client: None,
-            retry_policy: RetryPolicy::default(),
+            retry_policy: RetryPolicy::for_query_execution(),
             host: None,
             port: None,
             server_url: None,
