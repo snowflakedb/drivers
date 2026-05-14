@@ -145,7 +145,6 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                     .await?;
                 }
 
-
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     query: effective_query,
