@@ -187,3 +187,19 @@ behavior_differences:
       `Connection` does not have a public `connect()` method.
       The connection to Snowflake is established internally during `__init__` via a private `_connect()` call.
       All connection parameters must be provided at construction time.
+
+  24:
+    name: "region connection parameter and Connection.region property removed"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      `region` is accepted as a `connect()` kwarg and used internally to
+      construct the Snowflake hostname. `Connection.region` returns the value, emitting a
+      `PendingDeprecationWarning`. No known consumer (Airflow, Snow CLI, Snowpark,
+      SQLAlchemy) reads the property — they all store `region` independently.
+    new_driver_behavior: |
+      The `region` connection parameter is not accepted and `Connection` does
+      not have a `region` property. Callers that previously relied on `region` to derive
+      the hostname must supply the fully-qualified `account` identifier (e.g.
+      `"myaccount.us-east-1"`) or set `host` explicitly instead.
