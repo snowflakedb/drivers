@@ -36,6 +36,35 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
         assert result[2] == "data"
 
 
+def test_should_skip_upload_when_overwrite_is_true_and_remote_digest_matches(connection):
+    original_file_path = shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
+
+    with connection.cursor() as cursor:
+        # Given File is uploaded to stage with OVERWRITE set to true
+        stage_name, _ = create_temporary_stage_and_upload_file(
+            cursor,
+            "TEST_PUT_GET_SKIP_ON_CONTENT_MATCH",
+            original_file_path,
+            auto_compress=False,
+            overwrite=True,
+        )
+
+        # When Same file is uploaded again with OVERWRITE set to true
+        second_upload_result = upload_file_to_stage(
+            cursor, stage_name, original_file_path, auto_compress=False, overwrite=True
+        )
+
+        # Then SKIPPED status is returned
+        assert second_upload_result[6] == "SKIPPED"
+
+        # And File on stage is unchanged
+        cursor.execute(f"SELECT $1, $2, $3 FROM @{stage_name}")
+        result = cursor.fetchone()
+        assert result[0] == "original"
+        assert result[1] == "test"
+        assert result[2] == "data"
+
+
 def test_should_not_overwrite_file_when_overwrite_is_set_to_false(connection):
     original_file_path = shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
     updated_file_path = shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"

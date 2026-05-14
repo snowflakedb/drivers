@@ -26,15 +26,17 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 
 // TODO: streaming instead of loading the whole file into memory
 
-/// Uploads a file to S3, with two ways to skip the actual transfer:
-///
-/// 1. When `overwrite` is `false` and an object already exists at the
-///    destination key, the upload is skipped (classic existence check).
-/// 2. When `overwrite` is `true` and `skip_upload_on_content_match` is
-///    `true`, the remote object's `sfc-digest` user metadata is compared
-///    against `prepared.digest`; a match short-circuits the upload so
-///    concurrent writers don't resend identical bytes. Mirrors the
-///    Python connector's `_skip_upload_on_content_match` behavior.
+/// S3 user-metadata key storing the base64 SHA-256 of the uploaded
+/// object. The AWS SDK strips the `x-amz-meta-` prefix, so the raw
+/// `x-amz-meta-sfc-digest` header surfaces here as `sfc-digest`.
+const SFC_DIGEST_META_KEY: &str = "sfc-digest";
+
+/// Uploads a file to S3 unless a skip condition holds:
+/// - `overwrite=false` and an object exists at the destination key
+///   (classic existence check).
+/// - `overwrite=true && skip_upload_on_content_match=true` and the
+///   remote object's `sfc-digest` already equals the local digest
+///   (mirrors Python's `_skip_upload_on_content_match`).
 pub async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
@@ -45,72 +47,24 @@ pub async fn upload_to_s3_or_skip(
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
-    // The HEAD is only needed when either skip path is reachable: the
-    // classic `!overwrite` existence check, or the digest comparison.
-    //
-    // `remote_object`:
-    //  - `None`          → HEAD was not issued, or the object does not exist.
-    //  - `Some(None)`    → object exists but has no `sfc-digest` header.
-    //  - `Some(Some(d))` → object exists with `sfc-digest = d`.
-    let remote_object: Option<Option<String>> = if !overwrite || skip_upload_on_content_match {
-        head_object(&s3_client, stage_info, &s3_key)
-            .await?
-            .map(|h| {
-                h.metadata()
-                    .and_then(|m| m.get(SFC_DIGEST_META_KEY))
-                    .cloned()
-            })
-    } else {
-        None
-    };
-
-    if let Some(status) = decide_skip(
-        overwrite,
-        skip_upload_on_content_match,
-        &prepared.digest,
-        remote_object.as_ref(),
-    ) {
-        tracing::info!("Skipping S3 upload for {s3_key} ({status})");
-        return Ok(status);
+    let need_head = !overwrite || skip_upload_on_content_match;
+    if need_head {
+        let remote = head_object(&s3_client, stage_info, &s3_key).await?;
+        if let Some(head) = remote {
+            if !overwrite {
+                tracing::info!("File already exists in S3: {s3_key}");
+                return Ok(UploadStatus::Skipped);
+            }
+            let remote_digest = head.metadata().and_then(|m| m.get(SFC_DIGEST_META_KEY));
+            if skip_upload_on_content_match && remote_digest == Some(&prepared.digest) {
+                tracing::info!("Remote object {s3_key} already matches local digest, skipping");
+                return Ok(UploadStatus::Skipped);
+            }
+        }
     }
 
     upload_to_s3(prepared, &s3_client, stage_info, &s3_key).await?;
     Ok(UploadStatus::Uploaded)
-}
-
-/// S3 user-metadata key storing the base64 SHA-256 of the uploaded
-/// object. The AWS SDK strips the `x-amz-meta-` prefix, so the raw
-/// `x-amz-meta-sfc-digest` header surfaces here as `sfc-digest`.
-const SFC_DIGEST_META_KEY: &str = "sfc-digest";
-
-/// Pure skip-decision helper extracted for unit testing.
-///
-/// `remote_object`:
-/// - `None` — HEAD was not issued, or the object does not exist. Upload.
-/// - `Some(None)` — object exists but has no `sfc-digest` header.
-/// - `Some(Some(d))` — object exists with `sfc-digest = d`.
-///
-/// Returns `Some(status)` when the caller should skip the upload, `None`
-/// otherwise. Mirrors Python's `preprocess()` at
-/// `storage_client.py:190-222`: the existence-skip applies only on
-/// `!overwrite`, the digest-skip only on `overwrite && skip_on_match`.
-fn decide_skip(
-    overwrite: bool,
-    skip_upload_on_content_match: bool,
-    local_digest: &str,
-    remote_object: Option<&Option<String>>,
-) -> Option<UploadStatus> {
-    let remote_digest = remote_object?;
-
-    if !overwrite {
-        return Some(UploadStatus::Skipped);
-    }
-
-    if skip_upload_on_content_match && remote_digest.as_deref() == Some(local_digest) {
-        return Some(UploadStatus::Skipped);
-    }
-
-    None
 }
 
 /// HEADs the remote object. Returns `Some(output)` when the object
@@ -428,64 +382,200 @@ pub enum DownloadFileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file_manager::types::CloudCredentials;
+    use crate::sensitive::SensitiveString;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
     const LOCAL_DIGEST: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     const OTHER_DIGEST: &str = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
 
-    #[test]
-    fn decide_skip_no_head_returns_none() {
-        // HEAD was never issued — caller must upload.
-        assert_eq!(decide_skip(true, true, LOCAL_DIGEST, None), None);
-        assert_eq!(decide_skip(false, false, LOCAL_DIGEST, None), None);
+    fn make_s3_stage(end_point: &str) -> StageInfo {
+        StageInfo {
+            location_type: super::super::types::LocationType::S3,
+            bucket: "my-bucket".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "us-west-2".to_string(),
+            creds: CloudCredentials::S3 {
+                aws_key_id: "AKIAFAKE".to_string(),
+                aws_secret_key: SensitiveString::from("secret"),
+                aws_token: SensitiveString::from("token"),
+            },
+            end_point: Some(end_point.to_string()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            storage_account: None,
+        }
     }
 
-    #[test]
-    fn decide_skip_overwrite_false_and_remote_exists_skips() {
-        // Classic existence skip — digest isn't consulted.
-        let remote = Some(OTHER_DIGEST.to_string());
-        assert_eq!(
-            decide_skip(false, false, LOCAL_DIGEST, Some(&remote)),
-            Some(UploadStatus::Skipped)
-        );
-        let remote_no_digest: Option<String> = None;
-        assert_eq!(
-            decide_skip(false, false, LOCAL_DIGEST, Some(&remote_no_digest)),
-            Some(UploadStatus::Skipped)
-        );
+    fn prepared(digest: &str) -> PreparedUpload {
+        PreparedUpload {
+            data: b"hello".to_vec(),
+            digest: digest.to_string(),
+            encryption_metadata: None,
+        }
     }
 
-    #[test]
-    fn decide_skip_overwrite_true_with_matching_digest_skips_when_enabled() {
-        let remote = Some(LOCAL_DIGEST.to_string());
-        assert_eq!(
-            decide_skip(true, true, LOCAL_DIGEST, Some(&remote)),
-            Some(UploadStatus::Skipped)
-        );
+    /// Counts how many times each HTTP method hit the mock, so we can
+    /// assert "HEAD only, no PUT" or "HEAD + PUT" outcomes.
+    #[derive(Clone, Default)]
+    struct MethodCounter {
+        head: Arc<AtomicUsize>,
+        put: Arc<AtomicUsize>,
     }
 
-    #[test]
-    fn decide_skip_overwrite_true_with_matching_digest_uploads_when_disabled() {
-        // ODBC preset: even when remote matches, always re-upload.
-        let remote = Some(LOCAL_DIGEST.to_string());
-        assert_eq!(decide_skip(true, false, LOCAL_DIGEST, Some(&remote)), None);
+    impl Respond for MethodCounter {
+        fn respond(&self, req: &Request) -> ResponseTemplate {
+            match req.method.as_str() {
+                "HEAD" => {
+                    self.head.fetch_add(1, Ordering::SeqCst);
+                }
+                "PUT" => {
+                    self.put.fetch_add(1, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+            ResponseTemplate::new(200)
+        }
     }
 
-    #[test]
-    fn decide_skip_overwrite_true_with_different_digest_uploads() {
-        let remote = Some(OTHER_DIGEST.to_string());
-        assert_eq!(decide_skip(true, true, LOCAL_DIGEST, Some(&remote)), None);
+    async fn head_200(server: &MockServer, sfc_digest: Option<&str>) {
+        let mut tpl = ResponseTemplate::new(200);
+        if let Some(d) = sfc_digest {
+            tpl = tpl.insert_header("x-amz-meta-sfc-digest", d);
+        }
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(tpl)
+            .mount(server)
+            .await;
     }
 
-    #[test]
-    fn decide_skip_overwrite_true_with_missing_digest_header_uploads() {
-        // Remote object exists but was written without an sfc-digest
-        // header (e.g. by a legacy path) — we cannot assert equality so
-        // we must upload.
-        let remote_no_digest: Option<String> = None;
-        assert_eq!(
-            decide_skip(true, true, LOCAL_DIGEST, Some(&remote_no_digest)),
-            None
-        );
+    async fn head_404(server: &MockServer) {
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(server)
+            .await;
+    }
+
+    async fn put_200(server: &MockServer) {
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(server)
+            .await;
+    }
+
+    async fn expect_put_carries_digest(server: &MockServer, digest: &str) {
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .and(header("x-amz-meta-sfc-digest", digest))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn uploads_when_overwrite_true_and_remote_absent() {
+        let server = MockServer::start().await;
+        head_404(&server).await;
+        expect_put_carries_digest(&server, LOCAL_DIGEST).await;
+
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", true, true)
+            .await
+            .expect("upload should succeed");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn skips_when_overwrite_true_and_remote_digest_matches() {
+        let server = MockServer::start().await;
+        head_200(&server, Some(LOCAL_DIGEST)).await;
+        // No PUT mock mounted: if the code attempts to upload, the test
+        // fails with an unmatched-request error.
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", true, true)
+            .await
+            .expect("skip path should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn uploads_when_overwrite_true_and_remote_digest_differs() {
+        let server = MockServer::start().await;
+        head_200(&server, Some(OTHER_DIGEST)).await;
+        expect_put_carries_digest(&server, LOCAL_DIGEST).await;
+
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", true, true)
+            .await
+            .expect("upload should succeed");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn uploads_when_overwrite_true_and_remote_digest_missing() {
+        let server = MockServer::start().await;
+        head_200(&server, None).await;
+        expect_put_carries_digest(&server, LOCAL_DIGEST).await;
+
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", true, true)
+            .await
+            .expect("upload should succeed");
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn always_uploads_when_overwrite_true_and_skip_on_match_disabled() {
+        // ODBC preset: even when the remote digest matches, always
+        // re-upload and skip the HEAD entirely.
+        let server = MockServer::start().await;
+        let counter = MethodCounter::default();
+        Mock::given(path("/my-bucket/prefix/file.csv"))
+            .respond_with(counter.clone())
+            .mount(&server)
+            .await;
+
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", true, false)
+            .await
+            .expect("upload should succeed");
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(counter.head.load(Ordering::SeqCst), 0, "no HEAD expected");
+        assert_eq!(counter.put.load(Ordering::SeqCst), 1, "one PUT expected");
+    }
+
+    #[tokio::test]
+    async fn skips_when_overwrite_false_and_remote_exists() {
+        // Classic existence-skip: digest isn't consulted.
+        let server = MockServer::start().await;
+        head_200(&server, Some(OTHER_DIGEST)).await;
+        // No PUT mock — upload would fail if attempted.
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", false, true)
+            .await
+            .expect("skip path should succeed");
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn uploads_when_overwrite_false_and_remote_absent() {
+        let server = MockServer::start().await;
+        head_404(&server).await;
+        put_200(&server).await;
+
+        let stage = make_s3_stage(&server.uri());
+        let status = upload_to_s3_or_skip(prepared(LOCAL_DIGEST), &stage, "file.csv", false, true)
+            .await
+            .expect("upload should succeed");
+        assert_eq!(status, UploadStatus::Uploaded);
     }
 
     #[test]

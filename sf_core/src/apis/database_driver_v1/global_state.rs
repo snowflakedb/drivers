@@ -28,13 +28,9 @@ pub enum PutGetResultsetFlavor {
 #[derive(Debug, Clone)]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
-    /// On PUT with `OVERWRITE=TRUE`, skip re-upload when the remote stage
-    /// object's SHA-256 digest (written as `x-amz-meta-sfc-digest` on S3)
-    /// already equals the local file's digest. Enabled for Python/JDBC,
-    /// which mirrors `_skip_upload_on_content_match` in the Python
-    /// connector. Disabled for ODBC — legacy libsnowflakeclient never had
-    /// this optimization, so leaving it off preserves the prior
-    /// observable behavior (unconditional re-upload on OVERWRITE=TRUE).
+    /// On PUT with `OVERWRITE=TRUE`, skip re-upload when the remote
+    /// `sfc-digest` already matches the local SHA-256. Disabled for
+    /// ODBC — legacy libsnowflakeclient always re-uploaded.
     pub skip_upload_on_content_match: bool,
 }
 
