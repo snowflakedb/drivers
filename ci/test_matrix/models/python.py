@@ -23,6 +23,33 @@ def is_valid(c):
 
 CONSTRAINTS = [is_valid]
 
+
+def merge_valid(c):
+    """Pairwise-only block-list: combos returning False run at nightly only.
+
+    macOS runner availability is the binding constraint on merge-queue
+    throughput. Hold MQ macOS load to one Intel + one ARM job:
+
+      * macos-arm:  block from pairwise entirely. The single ARM job at
+        merge comes from the explicit macOS entry in PR_CELLS below — it
+        runs at trigger_level=pr and is promoted to merge by the
+        cumulative trigger filter.
+      * macos-x64 (macos-15-intel): pin to a single representative combo
+        (aws + py3.13 + test). Every other Intel mac combo runs at
+        nightly via the unfiltered cartesian product.
+    """
+    if c["OS"] == "macos":
+        if c["Arch"] == "arm":                  return False
+        if c["Arch"] == "x64":
+            if c["Cloud"] != "aws":             return False
+            if c["PyVersion"] != "3.13":        return False
+            if c["HatchEnv"] != "test":         return False
+
+    return True
+
+
+MERGE_VALID = [merge_valid]
+
 PR_CELLS = [
     {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "PyVersion": "3.10", "HatchEnv": "test"},
     {"OS": "macos",   "Arch": "arm", "Cloud": "gcp",   "PyVersion": "3.12", "HatchEnv": "test-pandas"},

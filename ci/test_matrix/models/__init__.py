@@ -46,6 +46,26 @@ PR_CELLS: list[dict[str, str]]
     Explicit cells that always run on every PR. Each cell must list a value
     for every declared parameter (loader rejects missing or extra keys).
 
+MERGE_VALID: list[Callable[[dict[str, str]], bool]]   (optional, default [])
+    Pairwise-only block-list. Same shape and semantics as CONSTRAINTS
+    (return True = keep, return False = forbid). Predicates here gate
+    *only* the merge-level pairwise cover — combos rejected by MERGE_VALID
+    still appear at nightly via the unfiltered cartesian product, and PR
+    cells listed in PR_CELLS still run regardless. Use for lanes whose
+    runner cost or availability makes them unsuitable for every-MQ-run
+    execution but where nightly should still catch interaction bugs:
+
+        def merge_valid(c):
+            # Limited macOS runner availability — keep Intel mac off the MQ.
+            if c["OS"] == "macos" and c["Arch"] == "x64": return False
+            return True
+
+        MERGE_VALID = [merge_valid]
+
+    Mapping coverage is unaffected: validate_mappings runs over the full
+    constraint-valid combo set, so a MERGE_VALID-blocked combo still needs
+    its (OS, Arch) row in the mappings tables.
+
 JSON_CELLS: dict[str, list[dict[str, str]]]
     Maps trigger level ("pr" / "merge" / "nightly") to cells that get
     duplicated with result_format="json" at that level. Same per-cell
