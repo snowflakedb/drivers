@@ -1181,6 +1181,208 @@ class BuildTargetsTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Build matrix — ODBC driver-build alignment
+# ---------------------------------------------------------------------------
+
+class OdbcBuildMatrixTests(unittest.TestCase):
+    """
+    Coverage for the --emit-build-matrix generator mode that drives
+    test-odbc.yml's build_odbc_driver matrix.
+
+    Locks in:
+      * Coverage equivalence — every active test row with driver_artifact
+        has a corresponding build matrix entry.
+      * No over-build / under-build — the build matrix is a deduplicated
+        projection of active test rows' driver_artifact.
+      * Per-trigger contraction — PR ⊆ merge ⊆ nightly.
+      * Legacy parity — at nightly the matrix matches the previously
+        hardcoded include block in test-odbc.yml.
+      * Schema — required fields are present, optional fields appear only
+        where applicable, output is alphabetically ordered.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(ODBC_PATH, "odbc")
+        cls.matrix_pr      = gm.build_matrix("odbc", "pull_request")
+        cls.matrix_merge   = gm.build_matrix("odbc", "merge_group")
+        cls.matrix_nightly = gm.build_matrix("odbc", "schedule")
+
+    def _active_artifact_rows(self, level: str) -> list:
+        return [
+            r for r in gm.filter_active(self.gha, level)
+            if r.get("driver_artifact")
+        ]
+
+    def test_only_odbc_driver_supported(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            gm.build_matrix("python", "pull_request")
+        self.assertIn("odbc", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            gm.build_matrix("core", "pull_request")
+        self.assertIn("odbc", str(ctx.exception))
+
+    def test_pr_matches_active_rows(self) -> None:
+        expected_names = {r["driver_artifact"] for r in self._active_artifact_rows("pr")}
+        actual_names = {entry["name"] for entry in self.matrix_pr}
+        self.assertEqual(actual_names, expected_names)
+
+    def test_merge_matches_active_rows(self) -> None:
+        expected_names = {r["driver_artifact"] for r in self._active_artifact_rows("merge")}
+        actual_names = {entry["name"] for entry in self.matrix_merge}
+        self.assertEqual(actual_names, expected_names)
+
+    def test_nightly_matches_active_rows(self) -> None:
+        expected_names = {r["driver_artifact"] for r in self._active_artifact_rows("nightly")}
+        actual_names = {entry["name"] for entry in self.matrix_nightly}
+        self.assertEqual(actual_names, expected_names)
+
+    def test_pr_subset_of_merge_subset_of_nightly(self) -> None:
+        names_pr      = {e["name"] for e in self.matrix_pr}
+        names_merge   = {e["name"] for e in self.matrix_merge}
+        names_nightly = {e["name"] for e in self.matrix_nightly}
+        self.assertTrue(names_pr.issubset(names_merge),
+                        f"PR names {names_pr} not subset of merge {names_merge}")
+        self.assertTrue(names_merge.issubset(names_nightly),
+                        f"merge names {names_merge} not subset of nightly {names_nightly}")
+
+    def test_no_duplicates_per_level(self) -> None:
+        for level, matrix in [
+            ("pr", self.matrix_pr),
+            ("merge", self.matrix_merge),
+            ("nightly", self.matrix_nightly),
+        ]:
+            names = [e["name"] for e in matrix]
+            self.assertEqual(
+                len(names), len(set(names)),
+                f"[{level}] build_matrix has duplicate entries: {names}",
+            )
+
+    def test_nightly_matches_legacy_hardcoded_matrix(self) -> None:
+        # Regression guard: at nightly scope the generator output must be the
+        # set previously hardcoded as build_odbc_driver:matrix:include in
+        # test-odbc.yml. If a future PR shrinks ODBC_PLATFORM, this test
+        # signals the change so the workflow assumption (nightly builds all 5
+        # driver flavours) can be updated deliberately.
+        legacy = {
+            "Linux x64":     {"os": "ubuntu-latest", "driver_lib": "libsfodbc.so",
+                              "cache_key": "odbc"},
+            "macOS ARM64":   {"os": "macos-latest", "driver_lib": "libsfodbc.dylib",
+                              "cache_key": "odbc"},
+            "Windows x64":   {"os": "windows-latest", "driver_lib": "sfodbc.dll",
+                              "cargo_extra": "--features vendored-openssl",
+                              "cache_key": "odbc-x64",
+                              "vcpkg_triplet": "x64-windows"},
+            "Windows x86":   {"os": "windows-latest", "driver_lib": "sfodbc32.dll",
+                              "cargo_target": "i686-pc-windows-msvc",
+                              "cargo_extra": "--no-default-features --features vendored-openssl",
+                              "cache_key": "odbc-x86",
+                              "msvc_arch": "x86", "vcpkg_triplet": "x86-windows"},
+            "Windows ARM64": {"os": "windows-11-arm", "driver_lib": "sfodbc.dll",
+                              "cargo_extra": "--features vendored-openssl",
+                              "cache_key": "odbc-arm64",
+                              "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows"},
+        }
+        actual = {e["name"]: {k: v for k, v in e.items() if k not in ("name", "driver_artifact")}
+                  for e in self.matrix_nightly}
+        self.assertEqual(
+            actual, legacy,
+            "nightly build_matrix diverged from the legacy test-odbc.yml "
+            "hardcoded build_odbc_driver matrix. If this is intentional, "
+            "update the `legacy` dict in this test to match.",
+        )
+
+    def test_required_keys_on_every_entry(self) -> None:
+        required = {"name", "os", "driver_lib", "driver_artifact", "cache_key"}
+        for level, matrix in [
+            ("pr", self.matrix_pr),
+            ("merge", self.matrix_merge),
+            ("nightly", self.matrix_nightly),
+        ]:
+            for entry in matrix:
+                missing = required - entry.keys()
+                self.assertFalse(
+                    missing,
+                    f"[{level}] build_matrix entry {entry['name']} missing keys {missing}",
+                )
+
+    def test_optional_keys_only_where_applicable(self) -> None:
+        # cargo_target only on Windows x86; msvc_arch only on Windows non-x64;
+        # vcpkg_triplet only on Windows; cargo_extra only on Windows.
+        for entry in self.matrix_nightly:
+            name = entry["name"]
+            if name == "Windows x86":
+                self.assertEqual(entry.get("cargo_target"), "i686-pc-windows-msvc")
+            elif name in ("Windows x64", "Windows ARM64"):
+                self.assertNotIn("cargo_target", entry, name)
+            else:  # Linux / macOS lanes
+                self.assertNotIn("cargo_target", entry, name)
+                self.assertNotIn("cargo_extra", entry, name)
+                self.assertNotIn("msvc_arch", entry, name)
+                self.assertNotIn("vcpkg_triplet", entry, name)
+
+    def test_pr_count_at_4(self) -> None:
+        # Pin the post-MERGE_VALID PR-level count: 4 driver flavours
+        # (Linux x64, macOS ARM64, Windows x64, Windows x86).
+        # Windows ARM64 is only at merge level via pairwise.
+        self.assertEqual(
+            len(self.matrix_pr), 4,
+            f"expected 4 PR-level driver builds; got {len(self.matrix_pr)}: "
+            f"{[e['name'] for e in self.matrix_pr]}",
+        )
+        self.assertEqual(
+            {e["name"] for e in self.matrix_pr},
+            {"Linux x64", "macOS ARM64", "Windows x64", "Windows x86"},
+        )
+
+    def test_merge_includes_windows_arm(self) -> None:
+        # Windows ARM64 is added at merge via pairwise (no PR cell uses it),
+        # so the merge build matrix must include it.
+        names = {e["name"] for e in self.matrix_merge}
+        self.assertIn("Windows ARM64", names)
+
+    def test_emit_build_matrix_cli_format(self) -> None:
+        # CLI emits exactly one line of the form `matrix=<json>`.
+        import contextlib
+        import io
+        import json as _json
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gm.emit_build_matrix("odbc", "pull_request")
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.startswith("matrix="))
+        payload = _json.loads(line[len("matrix="):])
+        self.assertEqual(payload, self.matrix_pr)
+
+    def test_validate_mappings_raises_on_missing_cache_key(self) -> None:
+        # Drift simulation: pop cache_key from a built lane, generate() must
+        # fail loud rather than silently emit a build entry without a cache
+        # key.
+        original = gm.ODBC_PLATFORM[("ubuntu", "x64")].copy()
+        gm.ODBC_PLATFORM[("ubuntu", "x64")].pop("cache_key")
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.generate(ODBC_PATH, "odbc")
+            self.assertIn("cache_key", str(ctx.exception))
+        finally:
+            gm.ODBC_PLATFORM[("ubuntu", "x64")] = original
+
+    def test_alphabetical_order(self) -> None:
+        # Reproducibility: output is sorted by name regardless of which test
+        # row triggered the lane's inclusion first.
+        for level, matrix in [
+            ("pr", self.matrix_pr),
+            ("merge", self.matrix_merge),
+            ("nightly", self.matrix_nightly),
+        ]:
+            names = [e["name"] for e in matrix]
+            self.assertEqual(
+                names, sorted(names),
+                f"[{level}] build_matrix entries not in alphabetical order: {names}",
+            )
+
+
+# ---------------------------------------------------------------------------
 # Trigger-level filtering
 # ---------------------------------------------------------------------------
 
