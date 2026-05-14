@@ -1,4 +1,4 @@
-import type { Connection, ConnectionOptions } from 'snowflake-sdk';
+import type { Connection } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { createConnection, connectAsync, destroyAsync, getSnowflakeSDK } from './utils';
 import getTestParameter from './utils/getTestParameter';
@@ -42,7 +42,7 @@ describe('Connection Serialization', () => {
       {
         account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
         host: getTestParameter('SNOWFLAKE_TEST_HOST'),
-      } as ConnectionOptions,
+      },
       snowflake.serializeConnection(connection),
     );
 
