@@ -12,12 +12,7 @@ use crate::rest::snowflake::{
 const HEARTBEAT_PATH: &str = "/session/heartbeat";
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(300);
 
-#[derive(Debug, serde::Deserialize)]
-struct HeartbeatResponse {
-    success: bool,
-    message: Option<String>,
-    code: Option<String>,
-}
+type HeartbeatResponse = crate::rest::snowflake::SnowflakeResponse<serde_json::Value>;
 
 /// Send a heartbeat POST to keep the session alive.
 ///
@@ -50,7 +45,7 @@ pub async fn send_heartbeat(
                 context: "Failed to execute heartbeat request",
             })?;
 
-    let parsed: HeartbeatResponse = read_response_json(response)
+    let parsed: HeartbeatResponse = read_response_json::<serde_json::Value>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -176,8 +171,8 @@ mod tests {
             .and(path("/session/heartbeat"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": false,
-                "message": "Session gone",
-                "code": "390112"
+                "message": "Some heartbeat failure",
+                "code": "390100"
             })))
             .mount(&server)
             .await;

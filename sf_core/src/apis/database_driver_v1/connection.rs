@@ -2427,7 +2427,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/session/heartbeat"))
             .respond_with(ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({"success": false, "message": "Session gone", "code": "390112"}),
+                serde_json::json!({"success": false, "message": "Heartbeat failed", "code": "390100"}),
             ))
             .mount(&server)
             .await;

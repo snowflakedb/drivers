@@ -180,15 +180,7 @@ pub struct AuthResponseMain {
     pub _proof_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AuthResponse {
-    #[serde(default)]
-    pub data: AuthResponseMain,
-    pub message: Option<String>,
-    #[serde(rename = "code")]
-    pub _code: Option<String>,
-    pub success: bool,
-}
+pub(crate) type AuthResponse = crate::rest::snowflake::SnowflakeResponse<AuthResponseMain>;
 
 #[cfg(test)]
 mod tests {

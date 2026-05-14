@@ -510,7 +510,7 @@ async fn send_login_request(
             context: "login request",
         })?;
 
-    read_response_json::<AuthResponse>(response)
+    read_response_json::<auth::AuthResponseMain>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)
 }
@@ -564,7 +564,7 @@ pub async fn snowflake_login_with_client(
     // via the normal DUO push/passcode flow.
     if !auth_response.success && used_cached_mfa_token {
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
@@ -591,7 +591,7 @@ pub async fn snowflake_login_with_client(
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
@@ -1198,7 +1198,7 @@ async fn execute_sync_query<'a>(
             context: "query request",
         })?;
 
-    let query_response = read_response_json::<query_response::Response>(response)
+    let query_response = read_response_json::<query_response::Data>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1349,7 +1349,7 @@ pub async fn get_query_status(
             context: "query status",
         })?;
 
-    let body: QueryStatusResponse = read_response_json(response)
+    let body: QueryStatusResponse = read_response_json::<Option<QueryStatusResponseData>>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1396,13 +1396,7 @@ pub async fn get_query_status(
     })
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct QueryStatusResponse {
-    success: bool,
-    message: Option<String>,
-    code: Option<String>,
-    data: Option<QueryStatusResponseData>,
-}
+type QueryStatusResponse = SnowflakeResponse<Option<QueryStatusResponseData>>;
 
 #[derive(Debug, serde::Deserialize)]
 struct QueryStatusResponseData {
@@ -1472,7 +1466,7 @@ pub async fn snowflake_abort_query(
         context: "Failed to execute abort query request",
     })?;
 
-    let abort_response = read_response_json::<query_response::AbortQueryResponse>(response)
+    let abort_response = read_response_json::<serde_json::Value>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1491,11 +1485,30 @@ pub async fn snowflake_abort_query(
     Ok(())
 }
 
+/// Standard Snowflake JSON response envelope: `{success, code, message, data: T}`.
+///
+/// Every REST endpoint parsed by [`read_response_json`] returns this shape; the
+/// generic `T` is the endpoint-specific payload. Keeping the envelope uniform
+/// lets `read_response_json` inspect `success` + `code` centrally and map
+/// body-level `390112` (session-token expired) to `SessionExpired` for the
+/// single-flight `RefreshContext` refresh path — without each caller having
+/// to re-implement that check.
+#[derive(Debug, serde::Deserialize)]
+pub struct SnowflakeResponse<T> {
+    pub success: bool,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub data: T,
+}
+
 pub(crate) async fn read_response_json<T>(
     response: reqwest::Response,
-) -> Result<T, SnowflakeResponseError>
+) -> Result<SnowflakeResponse<T>, SnowflakeResponseError>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + Default,
 {
     let response_status = response.status();
     let response_text = response.text().await;
@@ -1525,9 +1538,19 @@ where
     let response_text = response_text.context(ResponseTextSnafu)?;
 
     tracing::debug!(response_len = response_text.len(), "Received HTTP response");
-    let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
+    let parsed: SnowflakeResponse<T> =
+        serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
-    Ok(response_data)
+    // 2xx with `success:false, code:"390112"` means the session token expired.
+    // Surface it as SessionExpired so the RefreshContext can refresh and retry,
+    // matching the HTTP 401 branch above.
+    if !parsed.success
+        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(SESSION_TOKEN_EXPIRED)
+    {
+        return SessionExpiredSnafu.fail();
+    }
+
+    Ok(parsed)
 }
 
 #[track_caller]
@@ -2528,5 +2551,37 @@ mod tests {
                 request_ids
             );
         }
+    }
+
+    /// 2xx response carrying `success:false, code:"390112"` must be surfaced as
+    /// `SessionExpired` so the RefreshContext can refresh and retry — the only
+    /// behavior this envelope refactor introduces beyond the existing HTTP 401 path.
+    #[tokio::test]
+    async fn read_response_json_maps_body_390112_to_session_expired() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": false,
+                "code": "390112",
+                "message": "Session token expired",
+            })))
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .post(server.uri())
+            .send()
+            .await
+            .expect("mock request sends");
+
+        let result = read_response_json::<serde_json::Value>(response).await;
+        assert!(
+            matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
+            "expected SessionExpired, got {result:?}"
+        );
     }
 }
