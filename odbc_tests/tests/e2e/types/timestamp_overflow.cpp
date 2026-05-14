@@ -39,7 +39,9 @@ TEST_CASE("TIMESTAMP_NTZ year overflow surfaces a datetime overflow error", "[ti
   auto result = run_overflow_query(stmt, kNtzOverflowQuery);
 
   // Then the driver reports SQL_ERROR with SQLSTATE 22007 (invalid datetime format)
-  INFO("which_step=\"" << result.which_step << "\" sqlstate=\"" << result.sqlstate << "\" native_error=" << result.native_error << " msg=\"" << result.message << "\" rendered=\"" << result.rendered << "\"");
+  INFO("which_step=\"" << result.which_step << "\" sqlstate=\"" << result.sqlstate
+                       << "\" native_error=" << result.native_error << " msg=\"" << result.message << "\" rendered=\""
+                       << result.rendered << "\"");
   REQUIRE(result.ret == SQL_ERROR);
   CHECK(result.sqlstate == "22007");
 }
@@ -53,7 +55,9 @@ TEST_CASE("TIMESTAMP_LTZ year overflow surfaces a datetime overflow error", "[ti
   auto result = run_overflow_query(stmt, kLtzOverflowQuery);
 
   // Then the driver reports SQL_ERROR with SQLSTATE 22007 (invalid datetime format)
-  INFO("which_step=\"" << result.which_step << "\" sqlstate=\"" << result.sqlstate << "\" native_error=" << result.native_error << " msg=\"" << result.message << "\" rendered=\"" << result.rendered << "\"");
+  INFO("which_step=\"" << result.which_step << "\" sqlstate=\"" << result.sqlstate
+                       << "\" native_error=" << result.native_error << " msg=\"" << result.message << "\" rendered=\""
+                       << result.rendered << "\"");
   REQUIRE(result.ret == SQL_ERROR);
   CHECK(result.sqlstate == "22007");
 }
@@ -67,7 +71,9 @@ TEST_CASE("TIMESTAMP_TZ year overflow surfaces a datetime overflow error", "[tim
   auto result = run_overflow_query(stmt, kTzOverflowQuery);
 
   // Then the driver reports SQL_ERROR with SQLSTATE 22007 (invalid datetime format)
-  INFO("which_step=\"" << result.which_step << "\" sqlstate=\"" << result.sqlstate << "\" native_error=" << result.native_error << " msg=\"" << result.message << "\" rendered=\"" << result.rendered << "\"");
+  INFO("which_step=\"" << result.which_step << "\" sqlstate=\"" << result.sqlstate
+                       << "\" native_error=" << result.native_error << " msg=\"" << result.message << "\" rendered=\""
+                       << result.rendered << "\"");
   REQUIRE(result.ret == SQL_ERROR);
   CHECK(result.sqlstate == "22007");
 }
