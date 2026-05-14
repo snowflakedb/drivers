@@ -832,6 +832,71 @@ class TestApplicationProperty:
         assert conn.config.application == "MyApp"
 
 
+class TestInternalApplicationName:
+    """Unit tests for internal_application_name and internal_application_version kwargs.
+
+    Mirrors the old connector where ``internal_application_name`` /
+    ``internal_application_version`` override ``CLIENT_APP_ID`` /
+    ``CLIENT_APP_VERSION`` in the login request. Tools like SnowSQL and Snow
+    CLI use these to identify themselves to the server.
+    """
+
+    def test_internal_application_name_overrides_client_app_id(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(user="u", account="a", internal_application_name="SnowSQL")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value="SnowSQL")
+
+    def test_internal_application_name_defaults_to_client_name(self, mock_db_api):
+        from snowflake.connector.connection import CLIENT_NAME, Connection
+
+        Connection(user="u", account="a")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value=CLIENT_NAME)
+
+    def test_internal_application_name_does_not_affect_application_property(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a", internal_application_name="SnowSQL")
+        assert conn.application == "PythonConnector"
+
+    def test_internal_application_name_combined_with_application(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(
+            user="u",
+            account="a",
+            internal_application_name="SnowSQL",
+            application="SNOWCLI.STAGE.COPY",
+        )
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value="SnowSQL")
+        assert request.options["application"] == ConfigSetting(string_value="SNOWCLI.STAGE.COPY")
+        assert conn.application == "SNOWCLI.STAGE.COPY"
+
+    def test_internal_application_version_overrides_client_app_version(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(user="u", account="a", internal_application_version="1.2.3")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["client_app_version"] == ConfigSetting(string_value="1.2.3")
+
+    def test_internal_application_version_not_sent_when_omitted(self, mock_db_api):
+        """When the caller does not override, client_app_version must not be
+        sent so the Rust core falls back to its compiled-in default."""
+        from snowflake.connector.connection import Connection
+
+        Connection(user="u", account="a")
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert "client_app_version" not in request.options
+
+
 class TestLogMaxQueryLength:
     """Unit tests for Connection.log_max_query_length and _format_query_for_log."""
 

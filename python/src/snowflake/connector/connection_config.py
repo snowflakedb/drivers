@@ -51,6 +51,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     client_app_id: str | None = None
     """Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)"""
 
+    client_app_version: str | None = None
+    """Driver version sent as CLIENT_APP_VERSION in the login request"""
+
     client_store_temporary_credential: bool | None = False
     """Enable MFA token caching for USERNAME_PASSWORD_MFA authentication. Default: False"""
 

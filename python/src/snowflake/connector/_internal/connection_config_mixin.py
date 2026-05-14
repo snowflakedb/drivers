@@ -268,8 +268,16 @@ class ConnectionConfigMixin:
         * ``application`` - validates against ``_APPLICATION_RE`` and defaults
           to ``_APPLICATION_NAME``. The value is forwarded to the Rust core as
           ``application`` and lands in CLIENT_ENVIRONMENT.APPLICATION on the
-          wire. ``client_app_id`` (CLIENT_APP_ID) is always the driver name so
-          server-side feature gating tied to the client type keeps working.
+          wire. ``client_app_id`` (CLIENT_APP_ID) is the driver name by default
+          so server-side feature gating tied to the client type keeps working;
+          tools that re-host the driver (SnowSQL, Snow CLI) can override it via
+          ``internal_application_name``.
+        * ``internal_application_name`` / ``internal_application_version`` -
+          popped from kwargs and mapped to ``client_app_id`` (CLIENT_APP_ID)
+          and ``client_app_version`` (CLIENT_APP_VERSION) respectively. When
+          omitted, ``client_app_id`` defaults to ``_APPLICATION_NAME`` and
+          ``client_app_version`` is left unset so the Rust core falls back to
+          its compiled-in default.
         * ``autocommit`` - type-checked (must be ``bool``), then merged into
           ``session_parameters["AUTOCOMMIT"]``.
         """
@@ -278,11 +286,20 @@ class ConnectionConfigMixin:
                 "Cannot pass both a ConnectionConfig object and keyword arguments. Use one or the other."
             )
 
+        internal_app_name: Any = None
+        internal_app_version: Any = None
         if config is None:
             if connection_name is not None:
                 kwargs["connection_name"] = connection_name
             if connections_file_path is not None:
                 kwargs["connections_file_path"] = connections_file_path
+            # Pop the ``internal_application_*`` overrides before
+            # ``from_kwargs`` runs: they are wrapper-internal levers that
+            # ultimately populate ``client_app_id`` / ``client_app_version``,
+            # which ``_INTERNAL_PARAMS`` forbids end users from setting
+            # directly.
+            internal_app_name = kwargs.pop("internal_application_name", None)
+            internal_app_version = kwargs.pop("internal_application_version", None)
             config = cls.from_kwargs(**kwargs)
         else:
             if connection_name is not None:
@@ -303,11 +320,20 @@ class ConnectionConfigMixin:
                 raise ProgrammingError(f"Invalid application name: {application!r}")
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
-        # CLIENT_APP_ID is the driver identity — always the driver name.
+        # CLIENT_APP_ID is the driver identity. Defaults to the driver name,
+        # but can be overridden via ``internal_application_name`` (used e.g.
+        # by SnowSQL / Snow CLI to identify themselves to the server).
         # CLIENT_ENVIRONMENT.APPLICATION (server-side ``application``) carries
-        # the user-facing application name. This mirrors the old connector
-        # where the two values are independent.
-        config.client_app_id = cls._APPLICATION_NAME  # type: ignore[attr-defined]
+        # the user-facing application name; the two values are independent.
+        if isinstance(internal_app_name, str) and internal_app_name:
+            config.client_app_id = internal_app_name  # type: ignore[attr-defined]
+        else:
+            config.client_app_id = cls._APPLICATION_NAME  # type: ignore[attr-defined]
+        # CLIENT_APP_VERSION is only sent when the caller explicitly overrides
+        # it via ``internal_application_version`` — otherwise the Rust core
+        # falls back to its compiled-in default.
+        if isinstance(internal_app_version, str) and internal_app_version:
+            config.client_app_version = internal_app_version  # type: ignore[attr-defined]
 
         if config.autocommit is not None:
             if not isinstance(config.autocommit, bool):
