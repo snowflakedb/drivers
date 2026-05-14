@@ -1,5 +1,5 @@
 pub use crate::chunks::convert_string_rowset_to_arrow_reader;
-use crate::query_types::{GeoRepresentation, RowType};
+use crate::query_types::{GeoRepresentation, RowType, VectorElementType};
 use arrow::array::Array;
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
@@ -274,13 +274,25 @@ pub fn create_field_with_type(
                     .with_metadata(metadata),
             )
         }
-        RowType::Vector { name, nullable } => {
+        RowType::Vector {
+            name,
+            nullable,
+            dimension,
+            element_type,
+        } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "VECTOR".to_string());
-            Ok(
-                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
-                    .with_metadata(metadata),
-            )
+            let child_type = match element_type {
+                VectorElementType::Int32 => DataType::Int32,
+                VectorElementType::Float32 => DataType::Float32,
+            };
+            let data_type = data_type.unwrap_or_else(|| {
+                DataType::FixedSizeList(
+                    Arc::new(Field::new_list_field(child_type, true)),
+                    *dimension as i32,
+                )
+            });
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
     }
 }

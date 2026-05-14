@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arrow::array::{Array, RecordBatch, RecordBatchIterator, RecordBatchReader};
 use arrow::datatypes::{
-    DataType, Date32Type, Decimal128Type, Field, Fields, Int32Type, Int64Type, Schema,
+    DataType, Date32Type, Decimal128Type, Field, Fields, Float32Type, Int32Type, Int64Type, Schema,
 };
 use arrow::error::ArrowError;
 use snafu::ResultExt;
@@ -11,7 +11,7 @@ use super::ChunkError;
 use super::error::*;
 use super::prefetch::ParseChunk;
 use crate::arrow_utils::{create_field, create_field_with_type};
-use crate::query_types::RowType;
+use crate::query_types::{RowType, VectorElementType};
 
 #[derive(Clone)]
 pub struct JsonChunkParser {
@@ -206,6 +206,20 @@ pub(super) enum FixedStorage {
     },
 }
 
+pub(super) enum VectorValuesBuilder {
+    Int32(arrow::array::PrimitiveBuilder<Int32Type>),
+    Float32(arrow::array::PrimitiveBuilder<Float32Type>),
+}
+
+impl VectorValuesBuilder {
+    fn finish(self) -> Arc<dyn Array> {
+        match self {
+            VectorValuesBuilder::Int32(mut b) => Arc::new(b.finish()),
+            VectorValuesBuilder::Float32(mut b) => Arc::new(b.finish()),
+        }
+    }
+}
+
 /// i64 fast-path storage for INTERVAL DAY TO SECOND columns. Falls back to Decimal128
 /// when a nanosecond value exceeds i64 range (>106,751 days).
 pub(super) enum IntervalDaySecondStorage {
@@ -243,6 +257,11 @@ pub(super) enum ColumnBuilder {
     },
     Text {
         builder: arrow::array::StringBuilder,
+    },
+    Vector {
+        dimension: usize,
+        values: VectorValuesBuilder,
+        nulls: arrow::array::BooleanBufferBuilder,
     },
     Boolean {
         builder: arrow::array::BooleanBuilder,
@@ -319,8 +338,7 @@ impl ColumnBuilder {
             RowType::Text { .. }
             | RowType::Variant { .. }
             | RowType::Object { .. }
-            | RowType::Array { .. }
-            | RowType::Vector { .. } => ColumnBuilder::Text {
+            | RowType::Array { .. } => ColumnBuilder::Text {
                 builder: arrow::array::StringBuilder::with_capacity(capacity, capacity * 8),
             },
             RowType::Geography { representation, .. }
@@ -332,6 +350,28 @@ impl ColumnBuilder {
                     builder: arrow::array::BinaryBuilder::with_capacity(capacity, capacity * 16),
                 },
             },
+            RowType::Vector {
+                dimension,
+                element_type,
+                ..
+            } => {
+                // Snowflake bounds VECTOR dimension at 4096, so the multiplication
+                // fits in usize on all supported platforms.
+                let elem_capacity = capacity.saturating_mul(*dimension);
+                let values = match element_type {
+                    VectorElementType::Int32 => VectorValuesBuilder::Int32(
+                        arrow::array::PrimitiveBuilder::with_capacity(elem_capacity),
+                    ),
+                    VectorElementType::Float32 => VectorValuesBuilder::Float32(
+                        arrow::array::PrimitiveBuilder::with_capacity(elem_capacity),
+                    ),
+                };
+                ColumnBuilder::Vector {
+                    dimension: *dimension,
+                    values,
+                    nulls: arrow::array::BooleanBufferBuilder::new(capacity),
+                }
+            }
             RowType::Boolean { .. } => ColumnBuilder::Boolean {
                 builder: arrow::array::BooleanBuilder::with_capacity(capacity),
             },
@@ -442,6 +482,14 @@ impl ColumnBuilder {
                 FixedStorage::I128 { builder } => builder.append_null(),
             },
             ColumnBuilder::Text { builder, .. } => builder.append_null(),
+            ColumnBuilder::Vector {
+                dimension,
+                values,
+                nulls,
+            } => {
+                push_vector_placeholders(values, *dimension);
+                nulls.append(false);
+            }
             ColumnBuilder::Boolean { builder } => builder.append_null(),
             ColumnBuilder::Real { builder } => builder.append_null(),
             ColumnBuilder::Date { builder } => builder.append_null(),
@@ -530,6 +578,14 @@ impl ColumnBuilder {
                 let s = std::str::from_utf8(cell)
                     .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
                 builder.append_value(s);
+            }
+            ColumnBuilder::Vector {
+                dimension,
+                values,
+                nulls,
+            } => {
+                push_vector_value(cell, *dimension, values)?;
+                nulls.append(true);
             }
             ColumnBuilder::Boolean { builder } => {
                 let v = match cell {
@@ -696,6 +752,26 @@ impl ColumnBuilder {
                 create_field(row_type).map_err(err)?,
                 Arc::new(builder.finish()),
             )),
+            ColumnBuilder::Vector {
+                dimension,
+                values,
+                mut nulls,
+            } => {
+                let field = create_field(row_type).map_err(err)?;
+                let DataType::FixedSizeList(child_field, _) = field.data_type() else {
+                    unreachable!("create_field on RowType::Vector always yields FixedSizeList");
+                };
+                let child_field = Arc::clone(child_field);
+                let values_arr = values.finish();
+                let null_buf = arrow::buffer::NullBuffer::new(nulls.finish());
+                let list = arrow::array::FixedSizeListArray::try_new(
+                    child_field,
+                    dimension as i32,
+                    values_arr,
+                    Some(null_buf),
+                )?;
+                Ok((field, Arc::new(list)))
+            }
             ColumnBuilder::Boolean { mut builder } => Ok((
                 create_field(row_type).map_err(err)?,
                 Arc::new(builder.finish()),
@@ -880,6 +956,63 @@ fn empty_batch_from_row_types(row_types: &[RowType]) -> Result<Vec<RecordBatch>,
     let schema = Arc::new(Schema::new(fields));
     let batch = RecordBatch::new_empty(schema);
     Ok(vec![batch])
+}
+
+/// Appends `dimension` placeholder elements to the child buffer of a VECTOR column.
+/// Used when the outer list element is NULL: the FixedSizeList layout still reserves
+/// `dimension` child slots per outer row, and the outer null buffer masks them out.
+/// The placeholder value (zero) is never read — it just keeps the child buffer aligned.
+fn push_vector_placeholders(values: &mut VectorValuesBuilder, dimension: usize) {
+    match values {
+        VectorValuesBuilder::Int32(builder) => {
+            builder.append_values(&vec![0; dimension], &vec![true; dimension])
+        }
+        VectorValuesBuilder::Float32(builder) => {
+            builder.append_values(&vec![0.0; dimension], &vec![true; dimension])
+        }
+    }
+}
+
+/// Parses a VECTOR cell — a JSON array like `[1,2,3]` or `[1.5,2.5,3.5]` — and
+/// appends its `dimension` elements to the child values builder.
+fn push_vector_value(
+    cell: &[u8],
+    dimension: usize,
+    values: &mut VectorValuesBuilder,
+) -> Result<(), ArrowError> {
+    let elems: Vec<serde_json::Value> =
+        serde_json::from_slice(cell).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+    if elems.len() != dimension {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "VECTOR expected {dimension} elements, got {}",
+            elems.len()
+        )));
+    }
+    // VECTOR(INT) elements are i32 and VECTOR(FLOAT) elements are f32 on the server
+    // side, so these narrowing casts are lossless for conformant server output.
+    match values {
+        VectorValuesBuilder::Int32(builder) => {
+            for elem in elems {
+                let v = elem.as_i64().ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(
+                        "VECTOR(INT) element must be a JSON integer".to_string(),
+                    )
+                })?;
+                builder.append_value(v as i32);
+            }
+        }
+        VectorValuesBuilder::Float32(builder) => {
+            for elem in elems {
+                let v = elem.as_f64().ok_or_else(|| {
+                    ArrowError::InvalidArgumentError(
+                        "VECTOR(FLOAT) element must be a JSON number".to_string(),
+                    )
+                })?;
+                builder.append_value(v as f32);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Parses a DECFLOAT string (decimal or scientific notation) into (exponent, mantissa_bytes).
@@ -1314,6 +1447,101 @@ mod tests {
         assert_eq!(ages.value(0), 30);
         assert!(ages.is_null(1));
         assert_eq!(ages.value(2), 25);
+    }
+
+    #[test]
+    fn vector_int_values_and_nulls() {
+        let rt = vec![RowType::vector(
+            "v",
+            true,
+            3,
+            crate::query_types::VectorElementType::Int32,
+        )];
+        let data = b"[\"[1,2,3]\"],\n[null],\n[\"[-5,0,7]\"],\n";
+        let batches = parse(rt, data);
+        assert_eq!(batches.len(), 1);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::FixedSizeListArray>()
+            .unwrap();
+        assert_eq!(col.len(), 3);
+        assert!(!col.is_null(0));
+        assert!(col.is_null(1));
+        assert!(!col.is_null(2));
+
+        let row0 = col.value(0);
+        let row0 = row0.as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(row0.values(), &[1, 2, 3]);
+        let row2 = col.value(2);
+        let row2 = row2.as_any().downcast_ref::<Int32Array>().unwrap();
+        assert_eq!(row2.values(), &[-5, 0, 7]);
+    }
+
+    #[test]
+    fn vector_float_values_and_nulls() {
+        let rt = vec![RowType::vector(
+            "v",
+            true,
+            3,
+            crate::query_types::VectorElementType::Float32,
+        )];
+        let data = b"[\"[1.5,2.5,3.5]\"],\n[null],\n";
+        let batches = parse(rt, data);
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::FixedSizeListArray>()
+            .unwrap();
+        assert_eq!(col.len(), 2);
+        assert!(!col.is_null(0));
+        assert!(col.is_null(1));
+        let row0 = col.value(0);
+        let row0 = row0
+            .as_any()
+            .downcast_ref::<arrow::array::Float32Array>()
+            .unwrap();
+        assert_eq!(row0.values(), &[1.5f32, 2.5f32, 3.5f32]);
+    }
+
+    #[test]
+    fn vector_dimension_mismatch_is_error() {
+        let rt = vec![RowType::vector(
+            "v",
+            false,
+            3,
+            crate::query_types::VectorElementType::Int32,
+        )];
+        let data = b"[\"[1,2]\"],\n";
+        let parser = JsonChunkParser { row_types: rt };
+        let result = parser.parse_chunk(data.to_vec());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn vector_int_rejects_non_integer_element() {
+        let rt = vec![RowType::vector(
+            "v",
+            false,
+            2,
+            crate::query_types::VectorElementType::Int32,
+        )];
+        let parser = JsonChunkParser { row_types: rt };
+        let result = parser.parse_chunk(b"[\"[1,\\\"foo\\\"]\"],\n".to_vec());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn vector_rejects_malformed_json_cell() {
+        let rt = vec![RowType::vector(
+            "v",
+            false,
+            2,
+            crate::query_types::VectorElementType::Int32,
+        )];
+        let parser = JsonChunkParser { row_types: rt };
+        let result = parser.parse_chunk(b"[\"not-json\"],\n".to_vec());
+        assert!(result.is_err());
     }
 
     #[test]

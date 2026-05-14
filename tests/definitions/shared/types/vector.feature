@@ -47,9 +47,17 @@ Feature: VECTOR type support
     Then Result should preserve <subtype> boundary values
 
     Examples:
-      | subtype | vec_type | expected_value                                        |
-      | INT     | INT      | [-2147483648, 2147483647, 0]                          |
-      | FLOAT   | FLOAT    | [3.4028235e38, -3.4028235e38, 1.1754944e-38, 0.0]    |
+      | subtype | vec_type | expected_value                      |
+      | INT     | INT      | [-2147483648, 2147483647, 0]        |
+      | FLOAT   | FLOAT    | [3.4028235e38, -3.4028235e38, 0.0]  |
+
+  @python_e2e
+  Scenario: should preserve FLOAT smallest-normal
+    # VECTOR(FLOAT) must round-trip the smallest IEEE 754 single-precision
+    # normal value (1.1754944e-38) without underflowing to zero.
+    Given Snowflake client is logged in
+    When Query selects a VECTOR(FLOAT, ...) containing FLOAT32_SMALLEST_NORMAL
+    Then the smallest-normal value must not underflow to zero
 
   @python_e2e
   Scenario: should select max-dimension vector

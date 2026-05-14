@@ -48,8 +48,6 @@ LARGE_RESULT_SET_SIZE = 20_000
 # VECTOR(FLOAT) uses 32-bit floats — need relaxed tolerance vs 64-bit assert_floats_equal.
 FLOAT32_APPROX = {"rel": 1e-6}
 
-pytestmark = pytest.mark.skip_for_json_result_set(reason="VECTOR type is not supported in JSON result format")
-
 
 class TestVectorTypeCasting:
     """Tests for VECTOR type casting to appropriate type."""
@@ -119,7 +117,7 @@ class TestVectorLiteral:
 
     BOUNDARY_TEST_CASES = [
         ("INT", "INT", [INT32_MIN, INT32_MAX, 0]),
-        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, FLOAT32_SMALLEST_NORMAL, 0.0]),
+        ("FLOAT", "FLOAT", [FLOAT32_MAX, -FLOAT32_MAX, 0.0]),
     ]
 
     @pytest.mark.parametrize(
@@ -144,6 +142,23 @@ class TestVectorLiteral:
         else:
             assert result[0] == expected_value
             assert_type(result[0], int)
+
+    @pytest.mark.skip_for_json_result_set(
+        reason="Server-side JSON serialization flushes FLOAT32 subnormals to zero; "
+        "Arrow format preserves the bit pattern"
+    )
+    def test_should_preserve_float_smallest_normal(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query selects a VECTOR(FLOAT, ...) containing FLOAT32_SMALLEST_NORMAL
+        expected = [FLOAT32_SMALLEST_NORMAL]
+        sql = f"SELECT {expected}::VECTOR(FLOAT, {len(expected)})"
+        result = execute_query(sql, single_row=True)
+
+        # Then the smallest-normal value must not underflow to zero
+        assert result[0] == pytest.approx(expected, rel=1e-6, abs=0)
+        assert_type(result[0], float)
 
     def test_should_select_max_dimension_vector(self, execute_query):
         # Given Snowflake client is logged in

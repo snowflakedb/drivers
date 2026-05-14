@@ -252,7 +252,8 @@ pub(super) fn column_metadata_to_row_type(
         length: column_metadata.length.map(|v| v as u64),
         precision: column_metadata.precision.map(|v| v as u64),
         ext_type_name: None,
-        _fields: None,
+        vector_dimension: None,
+        fields: None,
     };
     (&temp_row_type)
         .try_into()

@@ -204,18 +204,22 @@ pub struct RowType {
     #[serde(rename = "extTypeName")]
     pub ext_type_name: Option<String>,
 
-    // unused fields
+    /// Number of elements in a VECTOR column. Only set for VECTOR columns.
+    #[serde(rename = "vectorDimension")]
+    pub vector_dimension: Option<u64>,
+
     #[serde(rename = "fields")]
-    pub _fields: Option<Vec<FieldMetadata>>,
+    pub fields: Option<Vec<FieldMetadata>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct FieldMetadata {
-    //unused fields
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    // unused fields
     #[serde(rename = "name")]
     _name: Option<String>,
-    #[serde(rename = "type")]
-    _type_: String,
     #[serde(rename = "nullable")]
     _nullable: bool,
     #[serde(rename = "length")]
@@ -691,13 +695,59 @@ impl TryFrom<&RowType> for query_types::RowType {
                 nullable,
                 geo_representation(&value.type_),
             )),
-            "VECTOR" => Ok(query_types::RowType::vector(&name, nullable)),
+            "VECTOR" => parse_vector_row_type(&name, nullable, value),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
             .fail(),
         }
     }
+}
+
+/// Parses a `VECTOR` row type. The server must send both `vectorDimension` and a
+/// single-element `fields` array describing the element type (`FIXED` or `REAL`).
+fn parse_vector_row_type(
+    name: &str,
+    nullable: bool,
+    value: &RowType,
+) -> Result<query_types::RowType, QueryResponseError> {
+    let raw_dim = value.vector_dimension.context(MissingParameterSnafu {
+        parameter: format!("row type -> vectorDimension for VECTOR column '{name}'"),
+    })?;
+    // Snowflake VECTOR dimensions are bounded (<= 4096) and always fit in usize.
+    // Cast via `as` to match the trust-the-server convention used elsewhere for
+    // server-provided sizes; Arrow's FixedSizeListArray will reject an invalid
+    // size when the array is finalised.
+    let dimension = raw_dim as usize;
+
+    let element_field =
+        value
+            .fields
+            .as_ref()
+            .and_then(|f| f.first())
+            .context(MissingParameterSnafu {
+                parameter: format!("row type -> fields for VECTOR column '{name}'"),
+            })?;
+    let element_type = if element_field.type_.eq_ignore_ascii_case("FIXED") {
+        query_types::VectorElementType::Int32
+    } else if element_field.type_.eq_ignore_ascii_case("REAL") {
+        query_types::VectorElementType::Float32
+    } else {
+        return InvalidFormatSnafu {
+            message: format!(
+                "Unsupported VECTOR element type '{}' for column '{name}'",
+                element_field.type_,
+            ),
+        }
+        .fail();
+    };
+
+    Ok(query_types::RowType::vector(
+        name,
+        nullable,
+        dimension,
+        element_type,
+    ))
 }
 
 impl TryFrom<&StageInfo> for file_manager::StageInfo {
@@ -1050,7 +1100,8 @@ mod tests {
             length: Some(1024),
             byte_length: Some(4096),
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1074,7 +1125,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1098,7 +1150,8 @@ mod tests {
             length: Some(512),
             byte_length: Some(2048),
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1206,7 +1259,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -1230,7 +1284,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1252,7 +1307,8 @@ mod tests {
             length: Some(134_217_728),
             byte_length: Some(134_217_728),
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -1276,7 +1332,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -1300,7 +1357,8 @@ mod tests {
             length: Some(67_108_864),
             byte_length: Some(67_108_864),
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
@@ -1323,7 +1381,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1333,22 +1392,100 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_vector_type_is_supported() {
-        let row_type = RowType {
-            name: "col".to_string(),
-            type_: "VECTOR".to_string(),
-            nullable: true,
+    fn make_row_type(name: &str, type_: &str, nullable: bool) -> RowType {
+        RowType {
+            name: name.to_string(),
+            type_: type_.to_string(),
+            nullable,
             scale: None,
             precision: None,
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
-        };
+            vector_dimension: None,
+            fields: None,
+        }
+    }
 
+    fn vector_field_metadata(type_: &str) -> FieldMetadata {
+        FieldMetadata {
+            type_: type_.to_string(),
+            _name: None,
+            _nullable: true,
+            _length: None,
+            _scale: None,
+            _precision: None,
+            _fields: None,
+        }
+    }
+
+    fn make_vector_row_type(dimension: Option<u64>, element_type: Option<&str>) -> RowType {
+        let mut row = make_row_type("col", "VECTOR", true);
+        row.vector_dimension = dimension;
+        row.fields = element_type.map(|t| vec![vector_field_metadata(t)]);
+        row
+    }
+
+    #[test]
+    fn test_vector_int_type_carries_dimension_and_element() {
+        let row_type = make_vector_row_type(Some(3), Some("FIXED"));
         let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
-        assert!(matches!(result, crate::query_types::RowType::Vector { .. }));
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Vector {
+                dimension: 3,
+                element_type: crate::query_types::VectorElementType::Int32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_vector_float_type_carries_dimension_and_element() {
+        let row_type = make_vector_row_type(Some(5), Some("REAL"));
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Vector {
+                dimension: 5,
+                element_type: crate::query_types::VectorElementType::Float32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_vector_element_type_is_case_insensitive() {
+        let row_type = make_vector_row_type(Some(2), Some("fixed"));
+        let result: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            result,
+            crate::query_types::RowType::Vector {
+                element_type: crate::query_types::VectorElementType::Int32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_vector_unsupported_element_type_returns_error() {
+        let row_type = make_vector_row_type(Some(3), Some("TEXT"));
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vector_missing_dimension_returns_error() {
+        let row_type = make_vector_row_type(None, Some("FIXED"));
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vector_missing_fields_returns_error() {
+        let row_type = make_vector_row_type(Some(3), None);
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1362,7 +1499,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -1386,7 +1524,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -1410,7 +1549,8 @@ mod tests {
             length: None,
             byte_length: Some(100),
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -1434,7 +1574,8 @@ mod tests {
             length: Some(100),
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
@@ -1459,7 +1600,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: Some("GEOGRAPHY".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1485,7 +1627,8 @@ mod tests {
             length: Some(100),
             byte_length: Some(400),
             ext_type_name: Some("".to_string()),
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
@@ -1565,7 +1708,8 @@ mod tests {
             length: None,
             byte_length: None,
             ext_type_name: None,
-            _fields: None,
+            vector_dimension: None,
+            fields: None,
         };
 
         let result: crate::query_types::RowType = (&row_type)
