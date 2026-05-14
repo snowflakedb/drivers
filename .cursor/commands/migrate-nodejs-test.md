@@ -41,9 +41,29 @@ For each `it()` in the file, classify it as one of:
 
 - **Migrate**: covers one positive and (optionally) one negative path of a public driver method — e.g. "a query can be cancelled", "connecting with bad credentials fails".
 - **Flag for `sf_core`**: digs into edge cases, parameter matrices, or internals (reaches into `../../lib/...`, uses `wiremock` / `sinon` / `rewiremock` / `mock-require` to assert on internal behaviour). **Stop and notify the user** before migrating these — that coverage should be added to `sf_core`, not duplicated as slow Node.js E2E tests against a live account.
-- **Drop**: already covered by something in `tests/e2e/`, or pure unit logic with no public-API surface.
+- **Drop**: already covered by something in `tests/e2e/`, pure unit logic with no public-API surface, **or exercises a server property rather than a driver property** (see below).
 
 When in doubt, migrate only the happy-path + one failure-mode case for each public method, and flag the rest for `sf_core` coverage.
+
+**Driver property vs. server property.** Before migrating, ask: "If I swap the SQL in this test for
+different SQL that goes through the same public driver method, does the test still assert something
+new about the *driver*?" If the answer is no, it's testing the server, not the driver, and should be
+**dropped**. Concrete examples from past migrations:
+
+- ✅ Driver: "a query can be cancelled" (`statement.cancel`), "connection.serialize() returns a JSON
+  string", "10 concurrent `execute()` calls on one connection all complete with correct rows" (the
+  driver multiplexes), "10 concurrent `execute()` calls on 10 independent connections all complete"
+  (independent connection state).
+- ❌ Server: "10 concurrent `create table` statements succeed" (same driver code path as any other
+  concurrent `execute()` — only the SQL differs), "joining two tables returns the right rows",
+  anything that's really asserting the cluster does its job.
+
+**Strip session-setting setup unless the assertion depends on it.** Legacy tests often start with
+`alter session set <foo> = <bar>` in `before(...)`. Migrate the session setting only if removing it
+would change what the assertion checks. Common cases to **drop**: `use_cached_result = false` for
+tests that assert on row counts (the cache returns the same rows), timezone/format settings for
+tests that don't read date/time output, etc. If you keep the setting, the test description or a
+short comment should make it obvious *why* the setting matters.
 
 ### Step 3: Propose new file name
 
@@ -79,6 +99,10 @@ Apply these rules — they are the migration spec, follow them literally.
 - When you have to cast around an incomplete `snowflake-sdk` type (e.g. the multi-statement helpers
   above, or any other gap in the upstream `.d.ts`), leave a short `// TODO:` comment at the cast
   site noting it's a missing-SDK-types gap, so it's easy to find and remove once the types catch up.
+- Casts that just narrow a correctly-typed union are **not** SDK-types gaps and should **not** carry
+  a TODO. The most common case: `executeAsync` returns `{ statement: RowStatement | FileAndStageBindStatement, ... }`,
+  so when a test only needs the row-statement surface, `statement as RowStatement` is a plain
+  narrowing cast — no comment.
 
 #### Connection lifecycle
 
@@ -91,6 +115,11 @@ Apply these rules — they are the migration spec, follow them literally.
   or repo root) first, then `process.env` as fallback.
 - Replace `testUtil.connectAsync(conn)` with `connectAsync(conn)` from `tests/e2e/utils`.
 - Replace `testUtil.destroyConnectionAsync(conn)` with `destroyAsync(conn)` from `tests/e2e/utils`.
+- **Default to per-test connection lifecycle**: each `it()` should `createConnection()` + `connectAsync()`
+  at the top and `destroyAsync()` in a `finally`. Only lift the connection into `beforeAll` /
+  `afterAll` when there is a concrete reason to share state across tests (e.g. shared session-level
+  setup that's expensive to repeat). The legacy Mocha shape of "one shared connection in `before`"
+  is the wrong default — it couples tests together and hides which tests actually need a connection.
 
 #### Logger
 
@@ -109,11 +138,35 @@ Apply these rules — they are the migration spec, follow them literally.
 - Reserve the inline `new Promise` pattern for callback APIs the helpers don't cover — e.g.
   `statement.cancel(cb)`, or mid-stream interactions where you need access to the live `stmt`
   inside `streamRows()` (`hasNext()` / `NextResult()` walking).
+- If the same callback / streaming pattern is repeated more than once **within the same migrated
+  file** (e.g. "stream all rows and return the count"), extract a small module-local helper at the
+  top of the file rather than inlining the `new Promise` twice. Only promote a helper to
+  `tests/e2e/utils/` once it's needed by a second test file.
 - Use smaller timeouts where the exact delay is not semantically important.
+
+#### Resource cleanup
+
+- Any test that opens a `Connection` (the default — see "Connection lifecycle" above) or creates
+  cluster-scoped resources (tables, stages, file formats, etc.) must wrap the cleanup in
+  `try { ... } finally { ... }` so a failing assertion doesn't leak state. The legacy Mocha tests
+  frequently leak on failure — don't carry that forward.
+- For best-effort destroy of multiple connections in a `finally`, swallow individual errors so one
+  bad destroy doesn't mask the real test failure:
+  `await Promise.all(conns.map((c) => destroyAsync(c).catch(() => undefined)))`.
+  For a single connection in a `finally`, let `destroyAsync` propagate — the swallowing pattern is
+  only for the multi-connection case.
 
 #### Assertions
 
 - Replace `assert.ok(!err)` / `testUtil.checkError(err)` with Vitest `expect()`.
+- **Fan-out tests must use distinct values per worker.** When a test runs N concurrent calls
+  through the same driver method and asserts on the per-call result, each call should use a
+  *different* input that produces a *different* expected output, and the assertion should compare
+  position-for-position (e.g. `expect(actuals).toEqual(expecteds)`). The lazy shape
+  `expect(rowCounts).toEqual(Array(N).fill(SAME_VALUE))` cannot catch a bug where results from one
+  in-flight statement bleed into another. Prefer hardcoded distinct constants per test (e.g.
+  `const expectedRowCounts = [2837, 6104, 1592, 8471, 3963]`) over `Math.random()` — tests must be
+  deterministic.
 
 #### Naming inside the file
 
