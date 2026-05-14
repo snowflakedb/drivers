@@ -14,6 +14,15 @@ Subcommands
     Pick a random reviewer from the candidates listed in
     ``.github/reviewers`` (or another path via ``REVIEWERS_PATH``),
     excluding the PR author and any user already requested for review.
+    Candidates whose Slack status currently signals out-of-office (see
+    :data:`_OOO_STATUS_EMOJIS` / :data:`_OOO_TEXT_REGEX`) are dropped
+    from the pool before the random pick — unless the OOO filter would
+    empty the pool, in which case the unfiltered list is used so the
+    PR is never left without a reviewer. Status comes from
+    ``users.info`` and requires ``SLACK_BOT_TOKEN`` with the
+    ``users:read`` scope (granted implicitly by ``users:read.email``);
+    when the token is missing or the lookup fails the filter no-ops
+    silently.
     Requests review and adds the user as an assignee via the REST
     endpoints ``POST /pulls/:n/requested_reviewers`` and
     ``POST /issues/:n/assignees`` (we avoid ``gh pr edit`` because its
@@ -118,6 +127,7 @@ import json
 import logging
 import os
 import random
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -131,6 +141,41 @@ DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
 
 # Review states that mean the reviewer has taken action on the PR.
 ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED"}
+
+# Slack status emojis that, when set on a reviewer's profile, signal
+# unavailability. Conservative list — extend as the team converges on
+# conventions. Lowercased for case-insensitive comparison.
+_OOO_STATUS_EMOJIS = frozenset({
+    ":palm_tree:",
+    ":beach:",
+    ":beach_with_umbrella:",
+    ":airplane:",
+    ":airplane_departure:",
+    ":airplane_arriving:",
+    ":no_entry_sign:",
+    ":zzz:",
+    ":hospital:",
+    ":face_with_thermometer:",
+    ":vacation:",
+})
+
+# Free-text patterns that signal OOO when present in a Slack status_text.
+# Matched against the lowercased status text with simple word boundaries
+# so e.g. "google" does not false-match "ooo". The token "ooo" itself is
+# a real-world OOO abbreviation so we accept it standalone.
+_OOO_TEXT_REGEX = re.compile(
+    r"\b("
+    r"ooo|"
+    r"out[ -]of[ -]office|"
+    r"pto|"
+    r"vacation|"
+    r"holiday|"
+    r"afk|"
+    r"away until|"
+    r"on leave"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -449,8 +494,110 @@ def slack_lookup_by_email(email: str, token: str) -> str | None:
     return ((data.get("user") or {}).get("id")) or None
 
 
+def slack_user_status(uid: str, token: str) -> dict | None:
+    """Return ``{emoji, text, expiration}`` for *uid* via ``users.info``.
+
+    Used to decide whether a reviewer is currently out of office. Reads
+    only ``profile.status_emoji`` / ``profile.status_text`` /
+    ``profile.status_expiration`` from the response — no other profile
+    fields are inspected.
+
+    Requires the ``users:read`` scope on the bot token. Slack grants
+    ``users:read`` implicitly when ``users:read.email`` is granted, so
+    no scope change is needed beyond what the assign + reminder paths
+    already require. ``None`` is returned on any failure (network,
+    auth, parse, ``user_not_found``) so the caller can gracefully
+    skip OOO filtering instead of crashing.
+    """
+    if not uid or not token:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--max-time",
+                "10",
+                "-G",
+                "https://slack.com/api/users.info",
+                "--data-urlencode",
+                f"user={uid}",
+                "-H",
+                f"Authorization: Bearer {token}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        log.warning("curl not available, cannot fetch status for %s: %s", uid, e)
+        return None
+
+    if result.returncode != 0:
+        log.warning(
+            "users.info curl failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return None
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        log.warning(
+            "users.info returned non-JSON for %s: %r",
+            uid,
+            result.stdout[:200],
+        )
+        return None
+
+    if not data.get("ok"):
+        err = data.get("error", "unknown")
+        log.info(
+            "users.info error for %s: %s (OOO filter will treat as available).",
+            uid,
+            err,
+        )
+        return None
+
+    profile = (data.get("user") or {}).get("profile") or {}
+    return {
+        "emoji": (profile.get("status_emoji") or "").strip(),
+        "text": (profile.get("status_text") or "").strip(),
+        "expiration": int(profile.get("status_expiration") or 0),
+    }
+
+
+def _is_ooo(status: dict | None, now_ts: float | None = None) -> bool:
+    """Return True when a Slack status indicates the user is OOO.
+
+    ``status`` is the dict returned by :func:`slack_user_status`
+    (``None`` if the lookup failed — treated as "available").
+
+    A status is considered OOO when its emoji is in
+    ``_OOO_STATUS_EMOJIS`` *or* its text matches ``_OOO_TEXT_REGEX``,
+    AND the status hasn't expired yet (``status_expiration == 0`` or
+    in the future).
+    """
+    if not status:
+        return False
+    expiration = status.get("expiration") or 0
+    if expiration:
+        if now_ts is None:
+            now_ts = datetime.now(timezone.utc).timestamp()
+        if expiration < now_ts:
+            return False
+    emoji = (status.get("emoji") or "").lower()
+    if emoji in _OOO_STATUS_EMOJIS:
+        return True
+    text = status.get("text") or ""
+    if text and _OOO_TEXT_REGEX.search(text):
+        return True
+    return False
+
+
 class ReviewerDisplay:
-    """Cache GitHub login -> Slack mention string.
+    """Cache GitHub login -> Slack mention string + OOO state.
 
     Resolution order, per reviewer:
 
@@ -459,7 +606,10 @@ class ReviewerDisplay:
     2. If a Slack bot token is configured, call ``users.lookupByEmail``
        with that email. On a match, return ``<@U…>`` so Slack renders a
        real channel mention that notifies the reviewer (the message is
-       posted in the channel — the bot never sends DMs).
+       posted in the channel — the bot never sends DMs). Also fetch
+       ``users.info`` for the same user and check for an OOO status
+       (see :func:`_is_ooo`); the result is cached so each reviewer is
+       only checked once per workflow run.
     3. Otherwise (no token, no email, lookup failed, or
        ``users_not_found``), fall back to the plain commit author name
        (e.g. ``Maxymilian Kowalski``). This is *not* a clickable mention
@@ -480,18 +630,24 @@ class ReviewerDisplay:
     ) -> None:
         self._repo = repo
         self._slack_token = slack_token
-        self._cache: dict[str, str] = {}
+        # login -> {"mention": str, "ooo": bool, "ooo_emoji": str | None}
+        self._cache: dict[str, dict] = {}
 
-    def name(self, login: str) -> str:
+    def _resolve(self, login: str) -> dict:
         if not login:
-            return ""
-        if login in self._cache:
-            return self._cache[login]
+            return {"mention": "", "ooo": False, "ooo_emoji": None}
+        cached = self._cache.get(login)
+        if cached is not None:
+            return cached
 
         commit_name: str | None = None
         commit_email: str | None = None
         if self._repo:
             commit_name, commit_email = github_commit_author(self._repo, login)
+
+        mention: str | None = None
+        ooo = False
+        ooo_emoji: str | None = None
 
         if commit_email and self._slack_token:
             slack_uid = slack_lookup_by_email(commit_email, self._slack_token)
@@ -503,26 +659,45 @@ class ReviewerDisplay:
                     slack_uid,
                     commit_email,
                 )
-                self._cache[login] = mention
-                return mention
+                status = slack_user_status(slack_uid, self._slack_token)
+                if _is_ooo(status):
+                    ooo = True
+                    ooo_emoji = (status or {}).get("emoji") or None
+                    log.info(
+                        "Reviewer %s is OOO (emoji=%r, text=%r).",
+                        login,
+                        (status or {}).get("emoji", ""),
+                        (status or {}).get("text", ""),
+                    )
 
-        if commit_name:
-            log.info(
-                "No Slack lookup match for %s; using commit author name %r.",
-                login,
-                commit_name,
-            )
-            self._cache[login] = commit_name
-            return commit_name
+        if mention is None:
+            if commit_name:
+                log.info(
+                    "No Slack lookup match for %s; using commit author name %r.",
+                    login,
+                    commit_name,
+                )
+                mention = commit_name
+            else:
+                mention = f"@{login}"
+                log.info(
+                    "No commit author name for %s in %s; falling back to GitHub login.",
+                    login,
+                    self._repo,
+                )
 
-        mention = f"@{login}"
-        log.info(
-            "No commit author name for %s in %s; falling back to GitHub login.",
-            login,
-            self._repo,
-        )
-        self._cache[login] = mention
-        return mention
+        entry = {"mention": mention, "ooo": ooo, "ooo_emoji": ooo_emoji}
+        self._cache[login] = entry
+        return entry
+
+    def name(self, login: str) -> str:
+        return self._resolve(login)["mention"]
+
+    def is_ooo(self, login: str) -> bool:
+        return bool(self._resolve(login)["ooo"])
+
+    def ooo_emoji(self, login: str) -> str | None:
+        return self._resolve(login)["ooo_emoji"]
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +770,33 @@ def _pick_reviewer(
     if not pool:
         return None
     return random.choice(pool)
+
+
+def _filter_ooo(
+    candidates: list[str], names: ReviewerDisplay
+) -> list[str]:
+    """Drop candidates whose Slack status currently signals OOO.
+
+    Falls back to the unfiltered pool when *every* candidate appears
+    OOO (or status lookups failed) so a PR is never left unassigned.
+    Cheap on repeat calls — ``ReviewerDisplay`` caches per login.
+    """
+    available = [c for c in candidates if not names.is_ooo(c)]
+    if not available:
+        log.info(
+            "All %d candidate(s) appear OOO or Slack status unavailable; "
+            "falling back to the full pool so the PR isn't left unassigned.",
+            len(candidates),
+        )
+        return list(candidates)
+    skipped = [c for c in candidates if names.is_ooo(c)]
+    if skipped:
+        log.info(
+            "OOO filter dropped %d candidate(s): %s",
+            len(skipped),
+            ", ".join(skipped),
+        )
+    return available
 
 
 def _skip_assign(reason: str) -> int:
@@ -671,7 +873,19 @@ def cmd_assign(args: argparse.Namespace) -> int:
         set_gh_output("skip", "true")
         return 0
 
-    reviewer = _pick_reviewer(candidates, excluded=[author, *already_requested])
+    # Build the display/OOO resolver early so we can pre-filter the
+    # candidate pool by Slack status. The resolver caches per-login
+    # lookups, so reusing it later for the picked reviewer's mention
+    # doesn't re-hit Slack.
+    names = ReviewerDisplay(
+        repo=repo,
+        slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
+    )
+    available_candidates = _filter_ooo(candidates, names)
+
+    reviewer = _pick_reviewer(
+        available_candidates, excluded=[author, *already_requested]
+    )
     if not reviewer:
         return _skip_assign(
             f"No eligible reviewer found in {reviewers_path} (author={author})."
@@ -692,10 +906,6 @@ def cmd_assign(args: argparse.Namespace) -> int:
         set_gh_output("skip", "true")
         return 0
 
-    names = ReviewerDisplay(
-        repo=repo,
-        slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
-    )
     reviewer_display = names.name(reviewer)
     fallback = (
         f"New PR ready for review: #{pr_number} — {title} "
@@ -871,6 +1081,21 @@ def _reminder_fallback_text(awaiting: list[dict]) -> str:
     return f"{len(awaiting)} PR(s) waiting on a reviewer"
 
 
+def _decorate_reviewer(names: ReviewerDisplay, login: str) -> str:
+    """Render a reviewer mention, appending an OOO marker when applicable.
+
+    Uses the reviewer's own Slack status emoji when one is configured
+    (so a `:palm_tree:` user shows up as ``<@U…> :palm_tree:``); falls
+    back to ``:zzz:`` when the OOO heuristic matched on status_text but
+    no emoji was set. Non-OOO reviewers render unchanged.
+    """
+    label = names.name(login)
+    if not names.is_ooo(login):
+        return label
+    emoji = names.ooo_emoji(login) or ":zzz:"
+    return f"{label} {emoji}"
+
+
 def _build_reminder_blocks(
     awaiting: list[dict], names: ReviewerDisplay
 ) -> list[dict]:
@@ -888,7 +1113,7 @@ def _build_reminder_blocks(
             u for u in pr["commented_only"] if u not in pr["requested"]
         ]
         people_str = (
-            ", ".join(names.name(u) for u in people)
+            ", ".join(_decorate_reviewer(names, u) for u in people)
             if people
             else "_no reviewer_"
         )
