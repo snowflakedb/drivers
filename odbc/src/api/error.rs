@@ -1089,6 +1089,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: None,
+                    query_id: None,
                     location: loc(),
                 }),
                 location: loc(),
