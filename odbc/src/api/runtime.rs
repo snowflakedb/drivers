@@ -1,4 +1,6 @@
+use std::future::Future;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::sync::RwLock;
 
 use sf_core::protobuf::apis::database_driver_v1::{
@@ -19,9 +21,13 @@ use crate::api::handle_registry::HandleManager;
 /// creates it, and the last `SQLFreeHandle(SQL_HANDLE_ENV)` tears it down.
 /// On Windows the ODBC Driver Manager unloads the driver DLL after the last
 /// environment is freed, so we must shut down before that happens.
+///
+/// The `client` is held behind an `Arc` so fire-and-forget tasks
+/// (`spawn_telemetry`) can take a cheap clone without forcing the generated
+/// `DatabaseDriverClient` itself to be `Clone`.
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
-    client: DatabaseDriverClient,
+    client: Arc<DatabaseDriverClient>,
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
     pub stmt_registry: HandleManager<crate::api::Statement>,
@@ -30,6 +36,25 @@ pub struct OdbcGlobals {
 impl OdbcGlobals {
     pub fn block_on<T>(&self, f: impl AsyncFnOnce(&DatabaseDriverClient) -> T) -> T {
         self.runtime.block_on(f(&self.client))
+    }
+
+    /// Spawn a fire-and-forget telemetry task on the shared runtime.
+    ///
+    /// The closure receives a cheap `Arc` clone of the driver client so it
+    /// can issue `telemetry_send_*` RPCs from inside the spawned future.
+    /// Tasks are detached: failures are silently dropped, and the SQL hot
+    /// path continues without waiting for the task to start running.
+    ///
+    /// Callers must not touch ODBC handle registries from inside the
+    /// spawned future — registry guards are not `Send` across an await
+    /// boundary.
+    pub fn spawn_telemetry<F, Fut>(&self, f: F)
+    where
+        F: FnOnce(Arc<DatabaseDriverClient>) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let client = Arc::clone(&self.client);
+        self.runtime.spawn(f(client));
     }
 }
 
@@ -102,7 +127,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
             .enable_all()
             .build()
             .context(RuntimeCreationSnafu)?;
-        let client = database_driver_client_with(providers);
+        let client = Arc::new(database_driver_client_with(providers));
         guard.globals = Some(OdbcGlobals {
             runtime,
             client,

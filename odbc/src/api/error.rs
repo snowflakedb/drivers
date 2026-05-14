@@ -21,35 +21,45 @@ use sf_core::protobuf::generated::database_driver_v1::{
 use error_trace::ErrorTrace;
 use sf_core::protobuf::generated::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
+use strum_macros::{EnumDiscriminants, EnumProperty, IntoStaticStr};
 
-#[derive(Snafu, Debug, ErrorTrace)]
+#[derive(Snafu, Debug, ErrorTrace, EnumProperty, IntoStaticStr, EnumDiscriminants)]
 #[snafu(visibility(pub))]
+#[strum_discriminants(
+    name(OdbcErrorKind),
+    derive(strum_macros::EnumIter, strum_macros::EnumCount)
+)]
 pub enum OdbcError {
     #[snafu(display("Freeing environment failed: environment has connections"))]
+    #[strum(props(error_source = "connection_pool"))]
     EnvironmentHasConnections {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Freeing connection failed: connection is still connected"))]
+    #[strum(props(error_source = "connection_pool"))]
     ConnectionStillConnected {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Connection has no environment"))]
+    #[strum(props(error_source = "connection_pool"))]
     ConnectionHasNoEnvironment {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Failed to lock environment"))]
+    #[strum(props(error_source = "connection_pool"))]
     EnvironmentLockPoisoned {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Connection is disconnected"))]
+    #[strum(props(error_source = "connection_pool"))]
     Disconnected {
         #[snafu(implicit)]
         location: Location,
@@ -206,6 +216,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid catalog name: {name}"))]
+    #[strum(props(error_source = "config_parsing"))]
     InvalidCatalogName {
         name: String,
         #[snafu(implicit)]
@@ -282,6 +293,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to parse port '{port}'"))]
+    #[strum(props(error_source = "config_parsing"))]
     InvalidPort {
         port: String,
         source: std::num::ParseIntError,
@@ -290,6 +302,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to set SQL query: {query}"))]
+    #[strum(props(error_source = "result_processing"))]
     SetSqlQuery {
         query: String,
         #[snafu(implicit)]
@@ -297,6 +310,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to prepare statement: {statement}"))]
+    #[strum(props(error_source = "result_processing"))]
     PrepareStatement {
         statement: String,
         #[snafu(implicit)]
@@ -304,6 +318,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to execute statement: {statement}"))]
+    #[strum(props(error_source = "result_processing"))]
     ExecuteStatement {
         statement: String,
         #[snafu(implicit)]
@@ -311,6 +326,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to bind parameters: {parameters}"))]
+    #[strum(props(error_source = "data_conversion"))]
     BindParameters {
         parameters: String,
         #[snafu(implicit)]
@@ -318,6 +334,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Connection initialization failed: {connection}"))]
+    #[strum(props(error_source = "connection_pool"))]
     ConnectionInit {
         connection: String,
         #[snafu(implicit)]
@@ -325,6 +342,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error reading arrow value: {source:?}"))]
+    #[strum(props(error_source = "data_conversion"))]
     ConversionError {
         #[snafu(source(from(ConversionError, Box::new)))]
         source: Box<ConversionError>,
@@ -333,6 +351,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error binding JSON parameters: {source:?}"))]
+    #[strum(props(error_source = "data_conversion"))]
     JsonBinding {
         source: JsonBindingError,
         #[snafu(implicit)]
@@ -340,6 +359,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error binding parameters: {parameters}"))]
+    #[strum(props(error_source = "data_conversion"))]
     ParameterBinding {
         parameters: String,
         #[snafu(implicit)]
@@ -347,6 +367,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error fetching data: {source}"))]
+    #[strum(props(error_source = "result_processing"))]
     FetchData {
         source: ArrowError,
         #[snafu(implicit)]
@@ -354,18 +375,21 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Text conversion error: {source}"))]
+    #[strum(props(error_source = "data_conversion"))]
     TextConversionFromUtf8 {
         source: FromUtf8Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Text conversion error: {source}"))]
+    #[strum(props(error_source = "data_conversion"))]
     TextConversionFromUtf16 {
         source: FromUtf16Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Text conversion error: {source}"))]
+    #[strum(props(error_source = "data_conversion"))]
     TextConversionUtf8 {
         source: Utf8Error,
         #[snafu(implicit)]
@@ -373,6 +397,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error while creating arrow array stream reader: {source}"))]
+    #[strum(props(error_source = "result_processing"))]
     ArrowArrayStreamReaderCreation {
         source: ArrowError,
         #[snafu(implicit)]
@@ -380,6 +405,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Received core protobuf error"))]
+    #[strum(props(error_source = "result_processing"))]
     CoreError {
         source: Box<CoreProtobufError>,
         #[snafu(implicit)]
@@ -387,6 +413,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("[Core] Required field missing: {message}"))]
+    #[strum(props(error_source = "result_processing"))]
     ProtoRequiredFieldMissing {
         message: String,
         #[snafu(implicit)]
@@ -401,6 +428,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("ODBC runtime error"))]
+    #[strum(props(error_source = "connection_pool"))]
     OdbcRuntime {
         source: crate::api::runtime::OdbcRuntimeError,
         #[snafu(implicit)]
@@ -408,6 +436,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Data source name not found: {dsn}"))]
+    #[strum(props(error_source = "config_parsing"))]
     DataSourceNotFound {
         dsn: String,
         #[snafu(implicit)]
@@ -421,6 +450,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid connection string: {reason}"))]
+    #[strum(props(error_source = "config_parsing"))]
     InvalidConnectionString {
         reason: String,
         #[snafu(implicit)]
@@ -485,6 +515,13 @@ fn is_well_formed_sql_state(state: &str) -> bool {
 }
 
 impl OdbcError {
+    pub fn telemetry_classification(&self) -> (&'static str, &'static str) {
+        use strum::EnumProperty;
+        let exception_type: &'static str = self.into();
+        let error_source = self.get_str("error_source").unwrap_or("unknown");
+        (exception_type, error_source)
+    }
+
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
         let base = self.structured_message().unwrap_or_else(|| {
@@ -849,6 +886,53 @@ mod tests {
         InvalidCharacterValueForCastSnafu, InvalidNumericLiteralSnafu,
         NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
     };
+
+    fn loc() -> Location {
+        Location::new("test", 0, 0)
+    }
+
+    #[test]
+    fn telemetry_classification_covers_each_error_source() {
+        assert_eq!(
+            OdbcError::ConversionError {
+                source: Box::new(ConversionError::ArrowArrayDowncast {
+                    expected_type: "Int32Array".into(),
+                    location: loc(),
+                }),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("ConversionError", "data_conversion")
+        );
+
+        assert_eq!(
+            OdbcError::Disconnected { location: loc() }.telemetry_classification(),
+            ("Disconnected", "connection_pool")
+        );
+
+        assert_eq!(
+            OdbcError::InvalidConnectionString {
+                reason: "bad".into(),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("InvalidConnectionString", "config_parsing")
+        );
+
+        assert_eq!(
+            OdbcError::ProtoRequiredFieldMissing {
+                message: "x".into(),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("ProtoRequiredFieldMissing", "result_processing")
+        );
+
+        assert_eq!(
+            OdbcError::InvalidHandle { location: loc() }.telemetry_classification(),
+            ("InvalidHandle", "unknown")
+        );
+    }
 
     #[test]
     fn numeric_magnitude_overflow_maps_to_22003() {

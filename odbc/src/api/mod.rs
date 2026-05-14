@@ -13,6 +13,7 @@ pub mod query_type;
 pub mod runtime;
 pub mod sql_state;
 pub mod statement;
+pub mod telemetry;
 pub mod types;
 pub mod utils;
 
