@@ -17,6 +17,9 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+          - os: macos-latest
+            name: macOS Universal
+            driver_lib: libSnowflake.dylib
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
@@ -58,6 +61,14 @@ jobs:
           kind: vcpkg
           key-suffix: x64-windows
 
+      - name: Restore Homebrew cache (macOS)
+        if: matrix.os == 'macos-latest'
+        id: brew-cache-ref
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: brew
+
       - name: Install build prerequisites (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -89,6 +100,28 @@ jobs:
           python3 -m pip install 'cmake>=4.0.3'
           cmake --version
 
+      - name: Install build prerequisites (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          # Skip Homebrew's self-update (~30-60s) — we only need stable formulae.
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -euxo pipefail
+          # cmake via the official Kitware pip wheel, in a dedicated venv so we
+          # don't fight macos-latest's PEP-668 externally-managed python3. See
+          # _test-odbc.yml's macOS install for the same rationale.
+          CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
+          python3 -m venv "$CMAKE_VENV"
+          "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
+          "$CMAKE_VENV/bin/pip" install 'cmake>=4.0.3'
+          echo "$CMAKE_VENV/bin" >> "$GITHUB_PATH"
+          "$CMAKE_VENV/bin/cmake" --version
+          # unixodbc is the DM our test harness links against; ccache speeds up
+          # _deps rebuilds; ninja is the cmake generator used by run_tests_unix.sh.
+          brew install unixodbc ccache ninja
+          echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> "$GITHUB_ENV"
+
       - name: Install reference ODBC driver
         uses: ./.github/actions/install-reference-odbc
 
@@ -118,6 +151,31 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_TYPE: OLD
 
+      - name: Run Old ODBC tests (macOS)
+        # /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib is the
+        # documented driver path produced by the released macuniversal .pkg
+        # (see docs.snowflake.com → odbc-mac). The .pkg writes a universal
+        # binary that loads on both x86_64 and arm64 hosts, so a single
+        # DRIVER_PATH covers any macos-latest runner architecture.
+        if: matrix.os == 'macos-latest'
+        id: run_odbc_ref_tests_macos
+        run: |
+          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
+        env:
+          DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
+      - name: Run flaky Old ODBC tests (macOS)
+        if: matrix.os == 'macos-latest'
+        continue-on-error: true
+        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'
         id: run_odbc_ref_tests_windows
@@ -139,7 +197,7 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: OLD
 
-      - name: Cleanup orphaned test schemas
+      - name: Cleanup orphaned test schemas (Linux)
         if: always() && matrix.os == 'ubuntu-latest'
         run: |
           TOOL="odbc_tests/cmake-build/tools/schema_tool"
@@ -151,6 +209,19 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+
+      - name: Cleanup orphaned test schemas (macOS)
+        if: always() && matrix.os == 'macos-latest'
+        run: |
+          TOOL="odbc_tests/cmake-build/tools/schema_tool"
+          if [[ -x "$TOOL" ]]; then
+            "$TOOL" cleanup --age-days 2
+          else
+            echo "schema_tool not found (build may have failed), skipping cleanup"
+          fi
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
 
       - name: Save test dependencies cache
         if: always()
@@ -179,3 +250,12 @@ jobs:
           kind: vcpkg
           key-suffix: x64-windows
           cache-hit: ${{ steps.vcpkg-cache-ref.outputs.cache-hit }}
+
+      - name: Save Homebrew cache (macOS)
+        if: always() && matrix.os == 'macos-latest'
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: brew
+          cache-hit: ${{ steps.brew-cache-ref.outputs.cache-hit }}

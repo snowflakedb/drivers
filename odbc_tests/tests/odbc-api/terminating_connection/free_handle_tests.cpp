@@ -54,7 +54,19 @@ TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: HY010 - Cannot free environment wit
   // Try to free environment while connection exists
   // HY010: Function sequence error
   ret = SQLFreeHandle(SQL_HANDLE_ENV, env_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", env_handle(), SQL_HANDLE_ENV);
+  if (get_platform() == PLATFORM::PLATFORM_MACOS) {
+    // Brew's unixODBC 2.3.14 short-circuits this call inside
+    // the Driver Manager and marks the env handle as freed BEFORE the
+    // function-sequence-error diagnostic is recorded. Any subsequent
+    // SQLGetDiagRec on the env therefore returns SQL_INVALID_HANDLE instead
+    // of HY010 (verified: probe in PR #1151 review). The driver never sees
+    // the call. We can still observe that the DM rejected the free; the
+    // strict SQLSTATE check is verified on Linux and Windows in the same
+    // test, which exercises identical driver code paths.
+    REQUIRE(ret == SQL_ERROR);
+  } else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", env_handle(), SQL_HANDLE_ENV);
+  }
 
   // Clean up
   SQLFreeHandle(SQL_HANDLE_DBC, dbc);
@@ -495,7 +507,13 @@ TEST_CASE("SQLFreeHandle: Complete handle hierarchy cleanup in correct order",
 
   // HY010: Function sequence error
   ret = SQLFreeHandle(SQL_HANDLE_ENV, env);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", env, SQL_HANDLE_ENV);
+  if (get_platform() == PLATFORM::PLATFORM_MACOS) {
+    // Brew unixODBC 2.3.14 marks env-as-freed before recording the diag, so
+    // HY010 is unreachable. Observe only the SQL_ERROR rejection.
+    REQUIRE(ret == SQL_ERROR);
+  } else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", env, SQL_HANDLE_ENV);
+  }
 
   ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc);
   REQUIRE(ret == SQL_SUCCESS);
