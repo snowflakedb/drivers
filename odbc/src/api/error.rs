@@ -731,6 +731,16 @@ impl OdbcError {
         }
     }
 
+    pub fn query_id(&self) -> Option<&str> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { query_id, .. } => query_id.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     #[track_caller]
     pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
         let loc = std::panic::Location::caller();
@@ -747,6 +757,7 @@ impl OdbcError {
                 status_code: driver_exception.status_code,
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
+                query_id: driver_exception.query_id,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
@@ -775,6 +786,8 @@ pub enum CoreProtobufError {
         error_trace: Vec<ErrorTraceEntry>,
         /// ANSI SQL state forwarded from the server response, if present.
         sql_state: Option<String>,
+        /// Snowflake Query ID from the failed query, if available.
+        query_id: Option<String>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -852,6 +865,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: None,
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -883,6 +897,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: None,
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -911,6 +926,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -947,6 +963,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1005,6 +1022,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
