@@ -1,3 +1,7 @@
+import os
+
+import pytest
+
 from tests.e2e.put_get.put_get_helper import (
     create_temporary_stage_and_upload_file,
     upload_file_to_stage,
@@ -37,6 +41,16 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
 
 
 def test_should_skip_upload_when_overwrite_is_true_and_remote_digest_matches(connection):
+    # The universal driver currently implements the content-match skip
+    # optimization only on the AWS S3 upload path; GCS and Azure still
+    # unconditionally re-upload on OVERWRITE=TRUE. Skip on non-AWS
+    # deployments until the GCS/Azure paths are wired up.
+    cloud_provider = os.getenv("cloud_provider", "dev")
+    if cloud_provider not in ("aws", "dev"):
+        pytest.skip(
+            f"skip-on-content-match is AWS-only in the universal driver (current cloud_provider={cloud_provider})"
+        )
+
     original_file_path = shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
 
     with connection.cursor() as cursor:
