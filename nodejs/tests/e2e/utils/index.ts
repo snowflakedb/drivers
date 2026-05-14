@@ -1,4 +1,10 @@
-import type { Connection, ConnectionOptions } from 'snowflake-sdk';
+import type {
+  Connection,
+  ConnectionOptions,
+  FileAndStageBindStatement,
+  RowStatement,
+  StatementOption,
+} from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk';
 // TODO:
 // Ensure tests run against the built package to catch any missing files in the build output
@@ -39,6 +45,30 @@ export function connectAsync(connection: Connection): Promise<void> {
 export function destroyAsync(connection: Connection): Promise<void> {
   return new Promise((resolve, reject) => {
     connection.destroy((err) => (err ? reject(err) : resolve()));
+  });
+}
+
+export function executeAsync(
+  connection: Connection,
+  sqlText: string,
+  additionalParameters: Partial<Omit<StatementOption, 'sqlText' | 'complete'>> = {},
+): Promise<{
+  statement: RowStatement | FileAndStageBindStatement;
+  rows: unknown[] | undefined;
+}> {
+  return new Promise((resolve, reject) => {
+    connection.execute({
+      sqlText,
+      ...additionalParameters,
+      complete: (err, statement, rows) => {
+        if (err) {
+          (err as Error & { statement?: typeof statement }).statement = statement;
+          reject(err);
+        } else {
+          resolve({ statement, rows });
+        }
+      },
+    });
   });
 }
 
