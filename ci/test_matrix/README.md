@@ -66,6 +66,32 @@ only on macOS-arm-aws-py3.13) are not guaranteed to surface at `merge`.
 GHA picks the level from `GITHUB_EVENT_NAME` (`pull_request` → pr,
 `merge_group`/`push` → merge, `schedule` → nightly).
 
+### Forcing a higher scope on a PR
+
+Apply one of these labels to a PR. Adding the label re-triggers the
+workflow automatically (no commit required) at the upgraded scope:
+
+| Label              | Effect                                              |
+|--------------------|-----------------------------------------------------|
+| `ci:scope-merge`   | Run the pairwise cover (`pr` + `merge` cells).      |
+| `ci:scope-nightly` | Run every constraint-valid combination.             |
+
+Labels can only upgrade scope — they never downgrade an event's level.
+`detect-changes` still gates which drivers run, so labeling a Python-only
+PR with `ci:scope-merge` runs Python tests at merge scope and leaves the
+ODBC and core test jobs skipped.
+
+Adding a scope-up label cancels the in-flight run (via the workflow's
+`concurrency` group) and starts a fresh one at the upgraded scope. This
+re-runs cells that already ran at the lower scope — see the
+`scope-label-gate` job in each `test-{driver}.yml` for the full filter.
+Adding any other label (e.g. an auto-applied `python` or `shared` tag)
+does not disturb in-flight runs.
+
+Removing a scope-up label is silently a no-op — the workflow does not
+re-trigger, and the in-flight run keeps the upgraded scope it computed
+when the label was added. The next push reverts to the default scope.
+
 ## Editing the matrix
 
 After any edit, run `python ci/test_matrix/generate_matrix.py --all` and

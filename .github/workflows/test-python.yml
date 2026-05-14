@@ -2,6 +2,11 @@ name: Python CI
 
 on:
   pull_request:
+    # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
+    # a PR re-runs the workflow at the upgraded scope without needing a new
+    # commit. Unrelated labels are filtered by the `scope-label-gate` job
+    # below; concurrency keeps in-flight runs alive for those.
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     types: [ checks_requested ]
 
@@ -9,26 +14,47 @@ concurrency:
   # Group by PR number for PRs; fall back to run ID for merge_group runs
   # (each run is unique so they won't cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  # Don't cancel an in-flight run when an unrelated label is added/removed —
+  # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
+  # push/synchronize/reopen events should replace the running matrix.
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 env:
   CARGO_TERM_COLOR: always
   PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
 
 jobs:
+  # Filter out PR runs triggered solely by adding an unrelated label
+  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
+  # evaluates to false on those events, this job is skipped, and every
+  # downstream job that `needs:` it is skipped too. Scope-up labels
+  # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
+  # workflow at the upgraded scope.
+  scope-label-gate:
+    if: |
+      github.event.action != 'labeled' ||
+      contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+
   detect-changes:
+    needs: scope-label-gate
     uses: ./.github/workflows/detect-changes.yml
 
   load-python-matrix:
+    needs: scope-label-gate
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - id: read
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           python ci/test_matrix/generate_matrix.py \
-            --driver python --event "$GITHUB_EVENT_NAME" --emit-active \
+            --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
             >> "$GITHUB_OUTPUT"
 
   # ── Build all wheels via shared reusable workflow ────────────────────

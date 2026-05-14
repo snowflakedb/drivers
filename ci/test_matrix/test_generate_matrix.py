@@ -998,5 +998,56 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(len(gm.filter_active(rows, "nightly")), 3)
 
 
+class LabelResolutionTests(unittest.TestCase):
+    """
+    Lock in the scope-up label semantics: PR labels can upgrade the trigger
+    level above what the event would produce, but never downgrade it. Multiple
+    scope-up labels: highest wins. Unknown labels are ignored.
+    """
+
+    def test_empty_labels_falls_back_to_event(self) -> None:
+        self.assertEqual(gm.level_for_event_and_labels("pull_request", []), "pr")
+        self.assertEqual(gm.level_for_event_and_labels("pull_request", None), "pr")
+        self.assertEqual(gm.level_for_event_and_labels("merge_group", []), "merge")
+
+    def test_scope_merge_label_upgrades_pr_to_merge(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels("pull_request", ["ci:scope-merge"]),
+            "merge",
+        )
+
+    def test_scope_nightly_label_upgrades_pr_to_nightly(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels("pull_request", ["ci:scope-nightly"]),
+            "nightly",
+        )
+
+    def test_multiple_scope_labels_highest_wins(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels(
+                "pull_request", ["ci:scope-merge", "ci:scope-nightly"]
+            ),
+            "nightly",
+        )
+
+    def test_unknown_labels_ignored(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels("pull_request", ["bug", "enhancement"]),
+            "pr",
+        )
+
+    def test_label_cannot_downgrade_event(self) -> None:
+        # ci:scope-merge on a merge_group event stays at merge (not downgraded).
+        self.assertEqual(
+            gm.level_for_event_and_labels("merge_group", ["ci:scope-merge"]),
+            "merge",
+        )
+        # And cannot pull schedule (nightly) down to merge.
+        self.assertEqual(
+            gm.level_for_event_and_labels("schedule", ["ci:scope-merge"]),
+            "nightly",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
