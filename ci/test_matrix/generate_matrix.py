@@ -622,6 +622,39 @@ def emit_active(driver: str, event: str | None, labels: list[str] | None = None)
     print(f"matrix={json.dumps(active)}")
 
 
+def emit_wheel_targets(driver: str, event: str | None) -> None:
+    """
+    Print `wheel-targets=<json>` — the minimal _build-python-wheels.yml
+    ``targets`` object for the test cells active at the current event level.
+
+    Only considers rows that need a pre-built wheel (sdist-only rows are
+    ignored). The output maps platform target keys (e.g. "linux_x86") to
+    lists of Python version strings, matching the schema expected by the
+    reusable workflow's ``targets`` input.
+    """
+    model_path = MODELS_DIR / f"{driver}.py"
+    gha_rows = generate(model_path, driver)
+    level = level_for_event(event)
+    active = filter_active(gha_rows, level)
+
+    artifact_to_target: dict[str, str] = {
+        p["wheel_artifact"]: p["target"] for p in PYTHON_PLATFORM.values()
+    }
+
+    targets: dict[str, set[str]] = {}
+    for row in active:
+        artifact = row.get("wheel_artifact")
+        py = row.get("py")
+        if not artifact or not py:
+            continue
+        target_key = artifact_to_target.get(artifact)
+        if target_key:
+            targets.setdefault(target_key, set()).add(py)
+
+    result = {k: sorted(v) for k, v in sorted(targets.items())}
+    print(f"wheel-targets={json.dumps(result)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pairwise CI matrix generator")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -645,6 +678,12 @@ def main() -> None:
         help="Print 'matrix=<json>' for the active level (requires --driver and --event). "
              "Used inside CI workflow steps to feed strategy.matrix.include.",
     )
+    parser.add_argument(
+        "--emit-wheel-targets",
+        action="store_true",
+        help="Print 'wheel-targets=<json>' — the minimal _build-python-wheels.yml targets "
+             "object for the active test cells (requires --driver python and --event).",
+    )
     args = parser.parse_args()
 
     if args.emit_active:
@@ -652,6 +691,12 @@ def main() -> None:
             parser.error("--emit-active requires --driver and is incompatible with --all")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
         emit_active(args.driver, args.event, labels)
+        return
+
+    if args.emit_wheel_targets:
+        if args.all or args.driver != "python":
+            parser.error("--emit-wheel-targets requires --driver python and is incompatible with --all")
+        emit_wheel_targets(args.driver, args.event)
         return
 
     drivers = ["odbc", "python", "core"] if args.all else [args.driver]

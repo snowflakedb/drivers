@@ -47,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
+      wheel-targets: ${{ steps.read.outputs.wheel-targets }}
     steps:
       - uses: actions/checkout@v4
       - id: read
@@ -56,14 +57,21 @@ jobs:
           python ci/test_matrix/generate_matrix.py \
             --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
             >> "$GITHUB_OUTPUT"
+          python ci/test_matrix/generate_matrix.py \
+            --driver python --event "$GITHUB_EVENT_NAME" --emit-wheel-targets \
+            >> "$GITHUB_OUTPUT"
 
-  # ── Build all wheels via shared reusable workflow ────────────────────
+  # ── Build wheels via shared reusable workflow ────────────────────────
+  # Only builds wheels actually needed by the active test cells for the
+  # current event level (PR builds fewer wheels than merge/nightly).
   build_wheels:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    needs: [detect-changes, load-python-matrix]
+    if: |
+      (github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true')
+      && needs.load-python-matrix.outputs.wheel-targets != '{}'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.13"], "linux_aarch": ["3.11","3.14"], "macos_arm": ["3.12","3.14"], "macos_x86": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: ${{ needs.load-python-matrix.outputs.wheel-targets }}
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -547,9 +555,11 @@ jobs:
   # @pytest.mark.flaky (excluded from every other job by the default
   # `-m "not flaky"` in python/pyproject.toml addopts). Failures here do
   # not gate merges and the job is intentionally omitted from python-status.
+  # Merge-only: the hardcoded manylinux_x86_64 py3.13 wheel is only
+  # guaranteed to be built at merge level (PR builds a minimal wheel set).
   python_flaky_tests:
     needs: [detect-changes, build_wheels]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    if: github.event_name == 'merge_group' && needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     name: python_flaky_tests (ubuntu-latest, py3.13, aws)
     continue-on-error: true

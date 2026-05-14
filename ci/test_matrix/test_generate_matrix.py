@@ -14,7 +14,7 @@ import itertools
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -1047,6 +1047,79 @@ class LabelResolutionTests(unittest.TestCase):
             gm.level_for_event_and_labels("schedule", ["ci:scope-merge"]),
             "nightly",
         )
+
+
+# ---------------------------------------------------------------------------
+# Wheel-target emission
+# ---------------------------------------------------------------------------
+
+class WheelTargetTests(unittest.TestCase):
+    """emit_wheel_targets produces the minimal _build-python-wheels.yml targets."""
+
+    @staticmethod
+    def _capture_wheel_targets(event: str) -> dict:
+        """Run emit_wheel_targets and parse the JSON from stdout."""
+        import json
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            gm.emit_wheel_targets("python", event)
+        line = buf.getvalue().strip()
+        prefix = "wheel-targets="
+        assert line.startswith(prefix), f"unexpected output: {line}"
+        return json.loads(line[len(prefix):])
+
+    def test_pr_targets_match_pr_cells(self) -> None:
+        """Every PR wheel target must trace back to a PR_CELLS entry, and
+        every non-sdist PR cell must have a corresponding wheel target."""
+        targets = self._capture_wheel_targets("pull_request")
+
+        _, _, _, pr_cells, _ = gm.load_model(gm.MODELS_DIR / "python.py")
+        expected: dict[str, set[str]] = {}
+        for cell in pr_cells:
+            py = cell["PyVersion"]
+            if py in gm.SDIST_PY:
+                continue
+            plat = gm.PYTHON_PLATFORM.get((cell["OS"], cell["Arch"]))
+            if plat is None or py not in plat["wheels"]:
+                continue
+            expected.setdefault(plat["target"], set()).add(py)
+
+        self.assertEqual(
+            {k: set(v) for k, v in targets.items()},
+            expected,
+            "PR wheel targets should exactly match the wheels needed by PR_CELLS",
+        )
+
+    def test_merge_superset_of_pr(self) -> None:
+        pr = self._capture_wheel_targets("pull_request")
+        merge = self._capture_wheel_targets("merge_group")
+        for platform, versions in pr.items():
+            self.assertIn(platform, merge, f"{platform} in PR but missing from merge")
+            for v in versions:
+                self.assertIn(
+                    v, merge[platform],
+                    f"{platform} py{v} in PR but missing from merge",
+                )
+
+    def test_nightly_covers_all_python_platform_wheels(self) -> None:
+        targets = self._capture_wheel_targets("schedule")
+        for (os_, arch), plat in gm.PYTHON_PLATFORM.items():
+            target_key = plat["target"]
+            self.assertIn(target_key, targets, f"missing {target_key}")
+            for v in plat["wheels"]:
+                self.assertIn(
+                    v, targets[target_key],
+                    f"{target_key} py{v} missing at nightly level",
+                )
+
+    def test_sdist_versions_excluded(self) -> None:
+        targets = self._capture_wheel_targets("schedule")
+        for v in gm.SDIST_PY:
+            for versions in targets.values():
+                self.assertNotIn(
+                    v, versions,
+                    f"sdist-only version {v} should never appear in wheel targets",
+                )
 
 
 if __name__ == "__main__":
