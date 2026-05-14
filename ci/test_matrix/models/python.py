@@ -24,8 +24,8 @@ def is_valid(c):
 CONSTRAINTS = [is_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "PyVersion": "3.10", "HatchEnv": "test"},
-    {"OS": "macos",   "Arch": "arm", "Cloud": "gcp",   "PyVersion": "3.12", "HatchEnv": "test-pandas"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "PyVersion": "3.13", "HatchEnv": "test"},
+    {"OS": "macos",   "Arch": "arm", "Cloud": "gcp",   "PyVersion": "3.10", "HatchEnv": "test-pandas"},
     {"OS": "windows", "Arch": "x64", "Cloud": "azure", "PyVersion": "3.14", "HatchEnv": "test"},
 ]
 
