@@ -135,12 +135,21 @@ _TRIGGER_LEVELS_FOR_JSON = ("pr", "merge", "nightly")
 
 def load_model(
     path: Path,
-) -> tuple[dict[str, list[str]], list, list[dict[str, str]], dict[str, list[dict[str, str]]]]:
+) -> tuple[
+    dict[str, list[str]],
+    list,
+    list,
+    list[dict[str, str]],
+    dict[str, list[dict[str, str]]],
+]:
     """
     Load a model module and validate its shape.
 
-    Returns (params, constraints, pr_cells, json_cells). Constraints are
-    callables `(combo) -> bool` returning True when the combo is valid.
+    Returns (params, constraints, merge_valid, pr_cells, json_cells).
+    Constraints and merge_valid are lists of callables `(combo) -> bool`
+    returning True when the combo is valid. CONSTRAINTS gates *all* trigger
+    levels (full cartesian product); MERGE_VALID additionally gates the
+    pairwise pass — a combo blocked by MERGE_VALID still appears at nightly.
     Raises ValueError on any malformed input.
     """
     spec = importlib.util.spec_from_file_location(f"_model_{path.stem}", path)
@@ -151,6 +160,7 @@ def load_model(
 
     raw_params = getattr(module, "PARAMS", None)
     raw_constraints = getattr(module, "CONSTRAINTS", [])
+    raw_merge_valid = getattr(module, "MERGE_VALID", [])
     raw_pr = getattr(module, "PR_CELLS", [])
     raw_json = getattr(module, "JSON_CELLS", {})
 
@@ -170,6 +180,15 @@ def load_model(
             )
     constraints = list(raw_constraints)
 
+    if not isinstance(raw_merge_valid, list):
+        raise ValueError(f"{path}: MERGE_VALID must be a list of callables")
+    for i, c in enumerate(raw_merge_valid):
+        if not callable(c):
+            raise ValueError(
+                f"{path}: MERGE_VALID[{i}] must be callable; got {type(c).__name__}"
+            )
+    merge_valid = list(raw_merge_valid)
+
     pr_cells = [_normalize_cell(c, params, path, "PR_CELLS") for c in raw_pr]
 
     json_cells: dict[str, list[dict[str, str]]] = {lvl: [] for lvl in _TRIGGER_LEVELS_FOR_JSON}
@@ -186,7 +205,7 @@ def load_model(
                 _normalize_cell(c, params, path, f"JSON_CELLS[{level!r}]")
             )
 
-    return params, constraints, pr_cells, json_cells
+    return params, constraints, merge_valid, pr_cells, json_cells
 
 
 def _normalize_cell(
@@ -392,7 +411,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
 
     Returns the list of GitHub Actions matrix rows.
     """
-    params, constraints, pr_cells, json_cells = load_model(model_path)
+    params, constraints, merge_valid, pr_cells, json_cells = load_model(model_path)
     param_names = list(params.keys())
     param_values = list(params.values())
 
@@ -416,9 +435,16 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     # because the wheel doesn't exist, leaving the (windows, arm) value pair
     # technically "covered" in the abstract pairwise sense but with zero
     # actual matrix rows at merge level.
+    #
+    # MERGE_VALID adds an extra block-list that only applies to the pairwise
+    # pass: combos rejected here still flow through to nightly, but never
+    # land in pr/merge. Use it to keep expensive lanes (e.g. limited macOS
+    # runners) out of the merge queue without losing nightly coverage.
     def _routing_valid(combo_tuple: tuple) -> bool:
         combo = dict(zip(param_names, combo_tuple))
         if not apply_constraints(combo, constraints):
+            return False
+        if not apply_constraints(combo, merge_valid):
             return False
         # `trigger` doesn't influence the build/skip decision, so any
         # placeholder value works. Pass "merge" for clarity.

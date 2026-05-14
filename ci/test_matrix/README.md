@@ -50,7 +50,10 @@ Each emitted row carries a `trigger_level`. Levels are cumulative.
 across every pair of parameters. With *n* parameters of size *k*, full
 coverage is *kⁿ* combinations; pairwise is roughly *k²* — orders of
 magnitude smaller, while still catching any bug that depends on a
-two-parameter interaction.
+two-parameter interaction. A model can further restrict the pairwise pool
+via the optional `MERGE_VALID` block-list (see *Restrict a combo to
+nightly only* below) — useful when a lane is too expensive for the merge
+queue but should still run at nightly.
 
 Concretely, for `odbc.py` the parameter space is OS×Arch×Cloud. After
 applying the constraints (e.g. macOS only on arm, ubuntu only on x64), 12
@@ -110,6 +113,43 @@ the final statement of `is_valid`. This blocks the two accidental drift
 patterns: allow-list creep (`return c["X"] in (...)`) and early
 `return True` short-circuits.
 
+### Restrict a combo to nightly only (`MERGE_VALID`)
+
+Append a predicate to `MERGE_VALID` in `models/<driver>.py` to keep a combo
+out of the merge-queue pairwise pool while still exercising it at nightly.
+Same block-list shape and `True = keep` semantics as `is_valid`, but the
+predicate runs **only inside the pairwise pass**:
+
+* Combos rejected by `MERGE_VALID` do **not** appear at `pr` or `merge`.
+* Combos rejected by `MERGE_VALID` **do** still appear at `nightly` (the
+  full constraint-valid cartesian product is unchanged).
+* Cells listed in `PR_CELLS` always run at `pr` (and therefore at `merge`
+  cumulatively), regardless of `MERGE_VALID`.
+* Mapping coverage is unchanged: `validate_mappings` runs over the full
+  set, so a `MERGE_VALID`-blocked combo whose `(OS, Arch)` is missing from
+  the mapping tables still raises loud.
+
+```python
+def merge_valid(c):
+    if c["OS"] == "macos":
+        # Limited macOS runner availability — defer to nightly.
+        if c["Arch"] == "arm": return False
+        if c["Arch"] == "x64":
+            if c["Cloud"] != "aws":      return False
+            if c["PyVersion"] != "3.13": return False
+            if c["HatchEnv"] != "test":  return False
+    return True
+
+
+MERGE_VALID = [merge_valid]
+```
+
+Use this when a lane's runner cost or scarcity (e.g. `macos-15-intel`)
+makes it unsuitable for every-MQ-run execution but you still want nightly
+to catch interaction bugs. To trim merge-queue load, prefer pinning a
+single representative combo to keep pairwise meaningful — blocking an
+entire OS lane drops all `(OS, X)` pair coverage at merge.
+
 ### Reordering `PARAMS`
 
 `PARAMS` order affects which specific cells land in the merge-level
@@ -150,7 +190,8 @@ merge-level JSON count is pinned by `JsonVariantRegressionTests`.
 ### Add a new driver
 
 1. Create `models/<new>.py` exposing `PARAMS`, `CONSTRAINTS`, `PR_CELLS`, and
-   `JSON_CELLS` (see `models/__init__.py` for the schema).
+   `JSON_CELLS` (and optionally `MERGE_VALID`); see `models/__init__.py` for
+   the schema.
 2. Create `mappings/<new>.py` with `<NEW>_PLATFORM` (or whatever the driver
    needs); re-export it from `mappings/__init__.py`.
 3. In `generate_matrix.py`, add a `_build_<new>_row` builder and route to it

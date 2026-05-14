@@ -68,7 +68,7 @@ class LoadModelTests(unittest.TestCase):
             "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
         )
         try:
-            params, constraints, pr_cells, json_cells = gm.load_model(path)
+            params, constraints, _merge_valid, pr_cells, json_cells = gm.load_model(path)
             self.assertEqual(params, {"OS": ["ubuntu", "macos"], "Arch": ["x64", "arm"]})
             self.assertEqual(len(constraints), 1)
             self.assertTrue(callable(constraints[0]))
@@ -92,7 +92,7 @@ class LoadModelTests(unittest.TestCase):
             "}\n"
         )
         try:
-            _params, _c, _pr, json_cells = gm.load_model(path)
+            _params, _c, _mv, _pr, json_cells = gm.load_model(path)
             self.assertEqual(json_cells["pr"], [{"OS": "ubuntu", "Arch": "x64"}])
             self.assertEqual(json_cells["merge"], [{"OS": "macos", "Arch": "arm"}])
             self.assertEqual(json_cells["nightly"], [])
@@ -215,7 +215,7 @@ class LoadModelTests(unittest.TestCase):
             "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
         )
         try:
-            _, constraints, _, _ = gm.load_model(path)
+            _, constraints, _mv, _, _ = gm.load_model(path)
             self.assertEqual(len(constraints), 1)
             # Forbidden by an explicit return False.
             self.assertFalse(constraints[0]({"OS": "macos", "Arch": "x64"}))
@@ -224,6 +224,254 @@ class LoadModelTests(unittest.TestCase):
             self.assertTrue(constraints[0]({"OS": "ubuntu", "Arch": "x64"}))
         finally:
             path.unlink(missing_ok=True)
+
+
+    def test_merge_valid_defaults_to_empty(self) -> None:
+        """A model without MERGE_VALID should load with merge_valid=[]."""
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "CONSTRAINTS = []\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            _params, _constraints, merge_valid, _pr, _json = gm.load_model(path)
+            self.assertEqual(merge_valid, [])
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_loads_callable(self) -> None:
+        """MERGE_VALID predicates should round-trip through load_model unchanged."""
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "CONSTRAINTS = []\n"
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            _params, _c, merge_valid, _pr, _json = gm.load_model(path)
+            self.assertEqual(len(merge_valid), 1)
+            self.assertTrue(callable(merge_valid[0]))
+            self.assertFalse(merge_valid[0]({"OS": "macos", "Arch": "x64"}))
+            self.assertTrue(merge_valid[0]({"OS": "macos", "Arch": "arm"}))
+            self.assertTrue(merge_valid[0]({"OS": "ubuntu", "Arch": "x64"}))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_must_be_callable(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "CONSTRAINTS = []\n"
+            "MERGE_VALID = ['not callable']\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("MERGE_VALID", str(ctx.exception))
+            self.assertIn("callable", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_must_be_a_list(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "CONSTRAINTS = []\n"
+            "MERGE_VALID = 'not a list'\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("MERGE_VALID", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+
+class MergeValidSemanticsTests(unittest.TestCase):
+    """
+    End-to-end semantics for MERGE_VALID.
+
+    Combos rejected by MERGE_VALID:
+      * MUST NOT appear at trigger_level=pr or merge.
+      * MUST still appear at nightly (full cartesian product preserved).
+    Combos listed in PR_CELLS take precedence — they always run on PR
+    even if MERGE_VALID would block them from the pairwise pool.
+    Mapping coverage is unaffected: a missing mapping for a MERGE_VALID-
+    blocked but otherwise-valid combo still raises in validate_mappings.
+    """
+
+    def _write_python_model(self, merge_valid_block: str = "") -> Path:
+        return _write_model(
+            "PARAMS = {\n"
+            "    'OS':        ['ubuntu', 'macos', 'windows'],\n"
+            "    'Arch':      ['x64', 'arm'],\n"
+            "    'Cloud':     ['aws', 'gcp', 'azure'],\n"
+            "    'PyVersion': ['3.10', '3.11', '3.12', '3.13', '3.14'],\n"
+            "    'HatchEnv':  ['test', 'test-pandas'],\n"
+            "}\n"
+            "def is_valid(c):\n"
+            "    if c['OS'] == 'windows' and c['Arch'] == 'arm':\n"
+            "        if c['PyVersion'] == '3.10':      return False\n"
+            "        if c['HatchEnv'] == 'test-pandas': return False\n"
+            "    return True\n"
+            "CONSTRAINTS = [is_valid]\n"
+            f"{merge_valid_block}"
+            "PR_CELLS = [\n"
+            "    {'OS': 'ubuntu',  'Arch': 'x64', 'Cloud': 'aws',\n"
+            "     'PyVersion': '3.10', 'HatchEnv': 'test'},\n"
+            "    {'OS': 'macos',   'Arch': 'arm', 'Cloud': 'gcp',\n"
+            "     'PyVersion': '3.12', 'HatchEnv': 'test-pandas'},\n"
+            "    {'OS': 'windows', 'Arch': 'x64', 'Cloud': 'azure',\n"
+            "     'PyVersion': '3.14', 'HatchEnv': 'test'},\n"
+            "]\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+
+    def test_macos_x64_only_at_nightly(self) -> None:
+        """Block macos-x64 from merge; nightly must still see it."""
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            mac_x64 = [r for r in rows if r["os"] == "macos-15-intel"]
+            self.assertTrue(mac_x64, "macos-x64 must still appear at nightly")
+            for r in mac_x64:
+                self.assertEqual(
+                    r["trigger_level"], "nightly",
+                    f"macos-x64 row {r['name']} should be nightly-only "
+                    f"under MERGE_VALID, got trigger_level={r['trigger_level']}",
+                )
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_pr_cells_unaffected_by_merge_valid(self) -> None:
+        """PR_CELLS bypass MERGE_VALID — they always run at PR scope."""
+        # Block ALL macos via MERGE_VALID; the PR_CELLS macos row should
+        # still appear at trigger_level=pr.
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            mac_pr = [
+                r for r in rows
+                if "macos" in r["os"] and r["trigger_level"] == "pr"
+            ]
+            self.assertEqual(
+                len(mac_pr), 1,
+                f"expected the explicit macOS PR cell to survive MERGE_VALID; "
+                f"got {[r['name'] for r in mac_pr]}",
+            )
+            self.assertEqual(mac_pr[0]["py"], "3.12")
+            self.assertEqual(mac_pr[0]["cloud_provider"], "gcp")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_does_not_block_nightly_combos(self) -> None:
+        """Combos blocked from merge must appear in the full nightly product."""
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            # macOS-x64 has wheels for 3.11, 3.12, 3.13, 3.14 plus py3.10 sdist.
+            # Without MERGE_VALID nightly emits exactly those rows; with
+            # MERGE_VALID they should still appear, just at trigger_level=nightly.
+            mac_x64_pys = {r["py"] for r in rows if r["os"] == "macos-15-intel"}
+            self.assertEqual(
+                mac_x64_pys, {"3.10", "3.11", "3.12", "3.13", "3.14"},
+                f"nightly must cover every PyVersion on macos-x64; got {mac_x64_pys}",
+            )
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_empty_merge_valid_is_no_op(self) -> None:
+        """Adding MERGE_VALID = [] to a model must not change the matrix."""
+        without = self._write_python_model("")
+        with_empty = self._write_python_model("MERGE_VALID = []\n")
+        try:
+            rows_a = gm.generate(without, "python")
+            rows_b = gm.generate(with_empty, "python")
+            self.assertEqual(rows_a, rows_b)
+        finally:
+            without.unlink(missing_ok=True)
+            with_empty.unlink(missing_ok=True)
+
+    def test_merge_valid_predicates_anded(self) -> None:
+        """Multiple MERGE_VALID predicates: all must pass for a combo to be in pairwise."""
+        block = (
+            "def block_x64(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "def block_arm_aws(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'arm' and c['Cloud'] == 'aws':\n"
+            "        return False\n"
+            "    return True\n"
+            "MERGE_VALID = [block_x64, block_arm_aws]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            # No macos-x64 should reach merge level (blocked by 1st predicate).
+            mac_x64_at_merge = [
+                r for r in rows
+                if r["os"] == "macos-15-intel" and r["trigger_level"] in ("pr", "merge")
+            ]
+            self.assertEqual(mac_x64_at_merge, [])
+            # No macos-arm + aws should reach merge level (blocked by 2nd predicate),
+            # but PR_CELLS uses macos-arm + gcp so the PR cell is unaffected.
+            mac_arm_aws_at_merge = [
+                r for r in rows
+                if r["os"] == "macos-latest" and r["cloud_provider"] == "aws"
+                and r["trigger_level"] in ("pr", "merge")
+            ]
+            self.assertEqual(mac_arm_aws_at_merge, [])
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_does_not_affect_mapping_validation(self) -> None:
+        """validate_mappings runs over the full constraint-valid set, not the
+        MERGE_VALID-restricted set, so a missing mapping for a MERGE_VALID-
+        blocked combo still raises."""
+        # Pop a mapping for an (OS, Arch) that MERGE_VALID will block, and
+        # confirm generate() still raises because validate_mappings sees the
+        # combo via the unfiltered cartesian product.
+        original = gm.PYTHON_PLATFORM.pop(("macos", "x64"), None)
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.generate(path, "python")
+            self.assertIn("PYTHON_PLATFORM", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+            if original is not None:
+                gm.PYTHON_PLATFORM[("macos", "x64")] = original
 
 
 class BlockListShapeTests(unittest.TestCase):
@@ -519,6 +767,36 @@ class PythonMatrixTests(unittest.TestCase):
             missing = required - r.keys()
             self.assertFalse(missing, f"row {r} missing keys {missing}")
 
+    def test_no_duplicate_macos_rows_at_mq(self) -> None:
+        # Regression test for the python.py MERGE_VALID/PR_CELLS sync invariant.
+        # The merge_valid() predicate pins macos-arm to one combo and macos-x64
+        # to another. The macOS entry in PR_CELLS MUST match the macos-arm pin
+        # exactly; if they diverge, the PR cell ships at trigger_level=pr while
+        # pairwise ships a *different* macos-arm row at trigger_level=merge,
+        # giving two macOS-arm jobs at the merge queue (defeating the point of
+        # MERGE_VALID). This test fails loudly when the sync drifts.
+        mq_macos = [
+            r for r in self.gha
+            if r["os"] == "macos-latest" and r["trigger_level"] in ("pr", "merge")
+        ]
+        self.assertEqual(
+            len(mq_macos), 1,
+            f"expected exactly one macos-arm row at merge-queue scope; "
+            f"got {[r['name'] for r in mq_macos]}. "
+            f"This usually means the PR_CELLS macOS entry has drifted "
+            f"away from the macos-arm pin in merge_valid(): both reach "
+            f"the merge level and macOS runs twice per MQ build.",
+        )
+        mq_intel = [
+            r for r in self.gha
+            if r["os"] == "macos-15-intel" and r["trigger_level"] in ("pr", "merge")
+        ]
+        self.assertEqual(
+            len(mq_intel), 1,
+            f"expected exactly one macos-x64 row at merge-queue scope; "
+            f"got {[r['name'] for r in mq_intel]}",
+        )
+
 
 class CoreMatrixTests(unittest.TestCase):
     @classmethod
@@ -603,7 +881,7 @@ class ValidationTests(unittest.TestCase):
             with redirect_stderr(buf):
                 # We only want loader/constraint behavior; sidestep validate_mappings
                 # by calling internals.
-                params, constraints, pr_cells, _json_cells = gm.load_model(path)
+                params, constraints, _mv, pr_cells, _json_cells = gm.load_model(path)
                 all_combos = [
                     c for c in (
                         dict(zip(params.keys(), v))

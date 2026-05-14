@@ -24,6 +24,23 @@ def is_valid(c):
 
 CONSTRAINTS = [is_valid]
 
+
+def merge_valid(c):
+    """Pairwise-only block-list: combos returning False run at nightly only.
+
+    macOS runner availability is scarce. Hold MQ macOS load to a single
+    job (the explicit PR_CELL macos-arm-gcp, which still runs at merge
+    cumulatively) by blocking macOS from the pairwise pool entirely.
+    Other (macos, Cloud) cells run at nightly via the unfiltered cartesian
+    product.
+    """
+    if c["OS"] == "macos": return False
+
+    return True
+
+
+MERGE_VALID = [merge_valid]
+
 PR_CELLS = [
     {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws"},
     {"OS": "macos",   "Arch": "arm", "Cloud": "gcp"},
