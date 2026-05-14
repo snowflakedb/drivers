@@ -1,4 +1,4 @@
-import type { Connection, FileAndStageBindStatement, RowStatement } from 'snowflake-sdk';
+import type { Connection } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { createConnection, connectAsync, destroyAsync, executeAsync } from './utils';
 
@@ -23,18 +23,17 @@ describe('Multi Statement', () => {
         binds: [1, 2, 4],
         complete: (err, stmt) => {
           if (err) return reject(err);
-          // TODO: We need better TypeScript support for multi-statements
-          const multiStmt = stmt as FileAndStageBindStatement;
-          const stream = (stmt as RowStatement).streamRows();
-          stream.on('error', reject);
-          stream.on('data', (row: Record<string, unknown>) => {
-            cellCount += Object.values(row).length;
-            if (multiStmt.hasNext()) {
-              multiStmt.NextResult();
-            } else {
-              resolve();
-            }
-          });
+          stmt
+            .streamRows()
+            .on('error', reject)
+            .on('data', (row: Record<string, unknown>) => {
+              cellCount += Object.values(row).length;
+              if ('hasNext' in stmt && stmt.hasNext()) {
+                stmt.NextResult();
+              } else {
+                resolve();
+              }
+            });
         },
       });
     });
@@ -53,10 +52,8 @@ describe('Multi Statement', () => {
         complete: (err, stmt) => {
           if (err) return reject(err);
           seenSqlTexts.push(stmt.getSqlText());
-          // TODO: We need better TypeScript support for multi-statements
-          const multiStmt = stmt as FileAndStageBindStatement;
-          if (multiStmt.hasNext()) {
-            multiStmt.NextResult();
+          if ('hasNext' in stmt && stmt.hasNext()) {
+            stmt.NextResult();
           } else {
             resolve();
           }
