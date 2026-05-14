@@ -19,24 +19,15 @@ const DEFAULT_TEXT_LENGTH: u64 = 16_777_216;
 const DEFAULT_TEXT_BYTE_LENGTH_MULTIPLIER: u64 = 1;
 
 /// Response from the `POST /queries/{qid}/abort-request` endpoint.
-#[derive(Debug, Deserialize)]
-pub struct AbortQueryResponse {
-    pub success: bool,
-    pub message: Option<String>,
-}
+///
+/// The endpoint carries no payload beyond the standard envelope, so we use
+/// `serde_json::Value` for `T`. `#[serde(default)]` on the envelope makes the
+/// absent `data` field parse to `Value::Null`.
+pub type AbortQueryResponse = crate::rest::snowflake::SnowflakeResponse<serde_json::Value>;
 
-#[derive(Deserialize)]
-pub struct Response {
-    pub data: Data,
-    #[serde(rename = "message")]
-    pub message: Option<String>,
-    #[serde(rename = "code")]
-    pub code: Option<String>,
-    #[serde(rename = "success")]
-    pub success: bool,
-}
+pub type Response = crate::rest::snowflake::SnowflakeResponse<Data>;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Data {
     #[serde(rename = "rowset")]
     pub rowset: Option<Vec<Vec<Option<String>>>>,
