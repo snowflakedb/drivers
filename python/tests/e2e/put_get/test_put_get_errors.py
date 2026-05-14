@@ -8,10 +8,13 @@ failure scenarios.
 import tempfile
 import uuid
 
+from pathlib import Path
+
 import pytest
 
 from snowflake.connector.errors import OperationalError, ProgrammingError
 from tests.e2e.put_get.put_get_helper import (
+    as_file_uri,
     create_temporary_stage,
 )
 
@@ -40,7 +43,8 @@ def test_should_return_error_when_getting_nonexistent_file_from_stage(connection
         with tempfile.TemporaryDirectory() as temp_dir:
             # When GET is executed for a file that does not exist in stage
             nonexistent_file = f"nonexistent_file_{uuid.uuid4().hex}.csv"
-            get_command = f"GET @{stage_name}/{nonexistent_file} 'file://{temp_dir}/'"
+            download_uri = as_file_uri(Path(temp_dir))
+            get_command = f"GET @{stage_name}/{nonexistent_file} 'file://{download_uri}/'"
 
             # Then An error is raised indicating the remote file does not exist
             with pytest.raises(OperationalError) as excinfo:
