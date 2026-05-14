@@ -117,6 +117,8 @@ jobs:
               - '.github/workflows/test-rust-core.yml'
               - '.github/actions/setup-msvc/**'
               - '.github/actions/setup-windows-openssl/**'
+              - 'ci/test_matrix/models/core.py'
+              - 'ci/test_matrix/mappings/core.py'
             jdbc:
               - 'jdbc/**'
               - 'jdbc_bridge/**'
@@ -137,6 +139,8 @@ jobs:
               - '.github/actions/setup-msvc/**'
               - '.github/actions/setup-windows-openssl/**'
               - '.github/actions/vcpkg-version/**'
+              - 'ci/test_matrix/models/odbc.py'
+              - 'ci/test_matrix/mappings/odbc.py'
             odbc_e2e_integ:
               - 'odbc_tests/tests/e2e/**'
               - 'odbc_tests/tests/integration/**'
@@ -149,6 +153,8 @@ jobs:
               - 'scripts/odbc/run_tests_windows.ps1'
               - 'ci/reference-odbc-version'
               - 'ci/reference-odbc-checksums'
+              - 'ci/test_matrix/models/odbc.py'
+              - 'ci/test_matrix/mappings/odbc.py'
             python:
               - 'python/**'
               - 'pep249_dbapi/**'
@@ -158,14 +164,16 @@ jobs:
               - '.github/workflows/_build-python-wheels.yml'
               - '.github/workflows/build-python-release.yml'
               - '.github/actions/setup-windows-openssl/**'
+              - 'ci/test_matrix/models/python.py'
+              - 'ci/test_matrix/mappings/python.py'
             python_e2e_integ:
               - 'python/tests/e2e/**'
               - 'python/tests/integ/**'
               - 'python/tests/*.py'
               - 'python/tests/helpers/**'
               - '.github/workflows/test-python.yml'
-              - 'ci/test_matrix/mappings/python.py'
               - 'ci/test_matrix/models/python.py'
+              - 'ci/test_matrix/mappings/python.py'
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
@@ -188,7 +196,19 @@ jobs:
               - '.buildkite/**'
               - 'scripts/decode_secrets.*'
               - 'scripts/shared/**'
+              # `ci/**` covers Dockerfiles, Jenkinsfiles, the matrix
+              # generator engine, shared mappings, etc. Per-driver
+              # ci/test_matrix/{models,mappings}/<driver>.py are excluded
+              # here and listed under each driver's filter above so that
+              # editing only python.py (for example) no longer triggers
+              # JDBC/ODBC/core test runs.
               - 'ci/**'
+              - '!ci/test_matrix/models/core.py'
+              - '!ci/test_matrix/models/odbc.py'
+              - '!ci/test_matrix/models/python.py'
+              - '!ci/test_matrix/mappings/core.py'
+              - '!ci/test_matrix/mappings/odbc.py'
+              - '!ci/test_matrix/mappings/python.py'
             docs_only:
               - '**/*.md'
               - 'LICENSE'
