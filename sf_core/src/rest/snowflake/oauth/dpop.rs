@@ -40,6 +40,7 @@ const DPOP_NONCE_HEADER: &str = "DPoP-Nonce";
 const COORD_BYTES: i32 = 32;
 
 /// Wrapper around an openssl P-256 EC private key used for DPoP proofs.
+#[derive(Clone)]
 pub(crate) struct DPoPKey {
     key: EcKey<Private>,
 }
@@ -54,6 +55,8 @@ impl DPoPKey {
     }
 
     /// Recover a key previously serialized by [`DPoPKey::to_jwk_json`].
+    /// Wired into the DPoP-bundled cache rehydration path (B.11) and the
+    /// Snowflake-login DPoP signing path (C.5).
     pub(crate) fn from_jwk_json(json: &str) -> Result<Self, OAuthError> {
         let jwk: serde_json::Value = serde_json::from_str(json).map_err(|e| {
             DPoPJwkParseSnafu {

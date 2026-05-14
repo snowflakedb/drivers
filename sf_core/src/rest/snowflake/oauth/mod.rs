@@ -9,45 +9,25 @@
 //! redaction expectations, and gotchas are catalogued in
 //! `analysis_feature_oauth.md` (especially §2–§9 and §14).
 //!
-//! Re-exports below pin the surface that step 2.3 (`auth_request_data`
-//! wiring) will consume; everything else stays private to this module.
-//!
-//! `#![allow(dead_code)]` is intentional: until step 2.3 wires
-//! `LoginMethod::OAuth*` into `auth_request_data`, no production caller
-//! references these helpers — exclusively the unit tests below do. The
-//! allow is removed by the wiring step.
-#![allow(dead_code)]
+//! The re-exports below pin the surface that `auth_request_data`
+//! consumes when wiring `LoginMethod::OAuth*` (analysis §6 / §10.1)
+//! and that `snowflake_login_with_client` uses for the
+//! refresh-on-failure retry path (analysis §8 / §14 #9).
 
-// The submodules below are not yet wired into `auth_request_data` (that is
-// step 2.3). Suppress dead-code warnings on the new surface until then so
-// that `cargo clippy -D warnings` stays green for downstream consumers.
-#[allow(dead_code)]
 mod authorization_code;
-#[allow(dead_code)]
 mod client_credentials;
-#[allow(dead_code)]
-mod dpop;
-#[allow(dead_code)]
+pub(crate) mod dpop;
 mod error;
-#[allow(dead_code)]
 mod http_client;
-#[allow(dead_code)]
 mod loopback_server;
+// Standalone PKCE helper kept as scaffolding; the active flow uses
+// `oauth2::PkceCodeChallenge` directly (analysis §9: PKCE always-on).
 #[allow(dead_code)]
 mod pkce;
-#[allow(dead_code)]
 mod token;
 
-#[allow(unused_imports)]
-pub(crate) use authorization_code::{AcquiredOAuthToken, acquire_authorization_code};
-#[allow(unused_imports)]
+pub(crate) use authorization_code::acquire_authorization_code;
 pub(crate) use client_credentials::acquire_client_credentials;
-#[allow(unused_imports)]
-pub(crate) use error::OAuthError;
-#[allow(unused_imports)]
-pub(crate) use token::{
-    host_from_token_url, remove_oauth_access_token, remove_oauth_dpop_bundled,
-    remove_oauth_refresh_token, store_oauth_access_token, store_oauth_dpop_bundled,
-    store_oauth_refresh_token, try_get_cached_oauth_access_token,
-    try_get_cached_oauth_dpop_bundled, try_get_cached_oauth_refresh_token,
-};
+pub(crate) use error::EndpointUrlParseSnafu;
+pub use error::OAuthError;
+pub(crate) use token::{host_from_token_url, remove_oauth_access_token, remove_oauth_dpop_bundled};

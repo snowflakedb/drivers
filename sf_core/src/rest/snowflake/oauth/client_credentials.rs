@@ -11,13 +11,15 @@
 //! the `oauth2` crate via [`OAuthHttpClient`], which also injects the
 //! optional DPoP proof header.
 
+use std::time::Duration;
+
 use oauth2::basic::BasicClient;
 use oauth2::{AuthUrl, ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
 use url::Url;
 
 use super::authorization_code::{AcquiredOAuthToken, map_request_token_error};
 use super::dpop::DPoPKey;
-use super::error::{MissingAccessTokenSnafu, OAuthError};
+use super::error::{AuthenticationTimeoutSnafu, MissingAccessTokenSnafu, OAuthError};
 use super::http_client::{DPoPContext, OAuthHttpClient};
 use crate::config::rest_parameters::OAuthClientCredentialsConfig;
 use crate::sensitive::SensitiveString;
@@ -40,6 +42,14 @@ pub(crate) async fn acquire_client_credentials(
         None
     };
 
+    // Drift B.1: `LOCAL_APPLICATION` substitution is intentionally NOT
+    // performed for CC. CC is external-IdP only (analysis §4: Snowflake's
+    // GS does not issue tokens for `grant_type=client_credentials`), and
+    // `LoginMethod::from_settings` enforces non-empty `client_id` /
+    // `client_secret` before the config ever reaches this function — so
+    // the Snowflake-IdP substitution path documented for AC has no
+    // analogue here.
+    //
     // Client Credentials has no `authorize_url` step, but the `oauth2`
     // typestate still requires the field to be set. We reuse the token
     // URL — the value is never read for CC.
@@ -54,10 +64,20 @@ pub(crate) async fn acquire_client_credentials(
     }
 
     let http = make_http_client(client, dpop_key.as_ref(), &config.token_url);
-    let response = request
-        .request_async(&http)
-        .await
-        .map_err(map_request_token_error)?;
+
+    // Drift B.3: enforce the configured `authentication_timeout` budget
+    // around the token-endpoint round-trip. Previously the field was
+    // parsed but never honored for CC.
+    let budget = Duration::from_secs(config.authentication_timeout_secs);
+    let response = match tokio::time::timeout(budget, request.request_async(&http)).await {
+        Ok(inner) => inner.map_err(map_request_token_error)?,
+        Err(_) => {
+            return AuthenticationTimeoutSnafu {
+                elapsed_secs: config.authentication_timeout_secs,
+            }
+            .fail();
+        }
+    };
 
     let access_token = SensitiveString::from(response.access_token().secret().clone());
     if access_token.reveal().is_empty() {
@@ -80,11 +100,11 @@ pub(crate) async fn acquire_client_credentials(
     })
 }
 
-fn make_http_client<'a>(
-    client: &'a reqwest::Client,
-    dpop_key: Option<&'a DPoPKey>,
-    token_url: &'a Url,
-) -> OAuthHttpClient<'a> {
+fn make_http_client(
+    client: &reqwest::Client,
+    dpop_key: Option<&DPoPKey>,
+    token_url: &Url,
+) -> OAuthHttpClient {
     let adapter = OAuthHttpClient::new(client);
     if let Some(key) = dpop_key {
         adapter.with_dpop(DPoPContext::new(key, token_url))

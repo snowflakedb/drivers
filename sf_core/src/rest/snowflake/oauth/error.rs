@@ -13,7 +13,7 @@ use snafu::{Location, Snafu};
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
-pub(crate) enum OAuthError {
+pub enum OAuthError {
     /// `state` mismatch on the loopback redirect — analysis §14 #7.
     /// Equality is enforced via `oauth2::CsrfToken`'s timing-safe
     /// `PartialEq` (the `timing-resistant-secret-traits` feature
@@ -50,6 +50,19 @@ pub(crate) enum OAuthError {
     /// 120s default, analysis §3.5).
     #[snafu(display("OAuth browser authorization timed out"))]
     BrowserTimeout {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// End-to-end `authentication_timeout` budget expired during the
+    /// OAuth flow — covers the loopback wait, the IdP token exchange
+    /// (or refresh), and any retry attempt (drift B.3; `doc/oauth.md`
+    /// §2). Distinct from [`Self::BrowserTimeout`] so callers can
+    /// distinguish "browser leg ran too long" from "the whole flow
+    /// budget was exhausted".
+    #[snafu(display("OAuth authentication budget exceeded after {elapsed_secs}s"))]
+    AuthenticationTimeout {
+        elapsed_secs: u64,
         #[snafu(implicit)]
         location: Location,
     },

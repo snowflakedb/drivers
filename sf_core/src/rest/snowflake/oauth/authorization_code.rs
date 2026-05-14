@@ -23,7 +23,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oauth2::basic::{BasicClient, BasicErrorResponse, BasicErrorResponseType};
 use oauth2::{
@@ -36,8 +36,8 @@ use url::Url;
 
 use super::dpop::{self, DPoPKey};
 use super::error::{
-    EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu, OAuthError,
-    RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
+    AuthenticationTimeoutSnafu, EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu,
+    OAuthError, RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
 };
 use super::http_client::{DPoPContext, OAuthHttpClient};
 use super::loopback_server::{self, RedirectResult};
@@ -46,22 +46,82 @@ use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
 use crate::sensitive::SensitiveString;
 use crate::token_cache::TokenCache;
 
-/// What an OAuth flow returns to the caller (step 2.3 will hand this to
-/// the Snowflake login-request).
+/// Drift B.3: shared deadline for the AC flow. Tracks the start instant
+/// and the configured `authentication_timeout` budget so that the
+/// loopback wait, the IdP token exchange, and the refresh exchange
+/// all share one end-to-end deadline rather than each getting its own
+/// 120 s window. `remaining()` returns `None` once the budget is
+/// exhausted, at which point [`run_with_deadline`] short-circuits with
+/// [`OAuthError::AuthenticationTimeout`].
+#[derive(Clone, Copy, Debug)]
+struct FlowDeadline {
+    start: Instant,
+    budget: Duration,
+}
+
+impl FlowDeadline {
+    fn new(budget_secs: u64) -> Self {
+        Self {
+            start: Instant::now(),
+            budget: Duration::from_secs(budget_secs),
+        }
+    }
+
+    fn remaining(&self) -> Option<Duration> {
+        self.budget.checked_sub(self.start.elapsed())
+    }
+
+    fn elapsed_secs(&self) -> u64 {
+        self.start.elapsed().as_secs()
+    }
+}
+
+/// Run `fut` under the deadline; on timeout return
+/// [`OAuthError::AuthenticationTimeout`] without dragging the caller's
+/// own error type into the signature.
+async fn run_with_deadline<F, T>(deadline: FlowDeadline, fut: F) -> Result<T, OAuthError>
+where
+    F: Future<Output = Result<T, OAuthError>>,
+{
+    let Some(remaining) = deadline.remaining() else {
+        return AuthenticationTimeoutSnafu {
+            elapsed_secs: deadline.elapsed_secs(),
+        }
+        .fail();
+    };
+    match tokio::time::timeout(remaining, fut).await {
+        Ok(inner) => inner,
+        Err(_) => AuthenticationTimeoutSnafu {
+            elapsed_secs: deadline.elapsed_secs(),
+        }
+        .fail(),
+    }
+}
+
+/// What an OAuth flow returns to the caller (the wiring layer hands
+/// the access token, and optionally the DPoP JWK, to the Snowflake
+/// login-request).
 #[derive(Debug)]
 pub(crate) struct AcquiredOAuthToken {
     pub(crate) access_token: SensitiveString,
+    /// Refresh token returned by the IdP, when issued. Persisted by the
+    /// flow itself; the wiring layer does not consume it directly.
+    #[allow(dead_code)]
     pub(crate) refresh_token: Option<SensitiveString>,
-    /// Present iff DPoP was negotiated. Carries the JWK JSON so step 2.3
-    /// can reuse the same key when signing the Snowflake login-request
+    /// Present iff DPoP was negotiated. Carries the JWK JSON so the
+    /// Snowflake login-request can reuse the same key when signing
     /// (analysis §5.1).
     pub(crate) dpop_jwk_json: Option<String>,
+    /// IdP-reported lifetime of the access token, when present. Snowflake
+    /// drives session validity itself, so this is informational only.
+    #[allow(dead_code)]
     pub(crate) expires_in: Option<Duration>,
 }
 
 /// Closure-shaped browser launcher. Production callers go through
-/// [`webbrowser::open`] with a stderr paste fallback; tests can
-/// substitute a deterministic driver that pokes the loopback directly.
+/// [`webbrowser::open`] with a stdout paste fallback (drift C.6 — the
+/// fallback URL is stdout per `doc/oauth.md` §3); tests can substitute a
+/// deterministic driver that pokes the loopback directly.
 type BrowserLaunchFn = Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
 fn default_browser_launch() -> BrowserLaunchFn {
@@ -74,7 +134,7 @@ fn default_browser_launch() -> BrowserLaunchFn {
             );
             if let Err(e) = webbrowser::open(authorize_url.as_str()) {
                 tracing::warn!(error = %e, "Failed to launch system browser; printing paste fallback");
-                eprintln!("Open this URL in your browser to continue: {authorize_url}");
+                println!("Open this URL in your browser to continue: {authorize_url}");
             }
         })
     })
@@ -114,17 +174,34 @@ async fn acquire_authorization_code_inner(
 
     let token_url = resolve_token_url(server_url, config.token_url.as_ref())?;
     let cache_host_url = token_url.as_str();
+    // Drift B.3: single end-to-end deadline shared by the loopback
+    // wait, the IdP token exchange and any refresh exchange.
+    let deadline = FlowDeadline::new(config.authentication_timeout_secs);
 
     // 1. Cache short-circuit (analysis §3.2 + §7).
-    if let Some(cached) =
-        try_cache_short_circuit(client, &token_url, cache_host_url, config, token_cache).await
+    if let Some(cached) = try_cache_short_circuit(
+        client,
+        &token_url,
+        cache_host_url,
+        config,
+        token_cache,
+        deadline,
+    )
+    .await
     {
         return Ok(cached);
     }
 
     // 2. Interactive flow.
-    let result =
-        run_interactive_flow(client, server_url, &token_url, config, launch_browser).await?;
+    let result = run_interactive_flow(
+        client,
+        server_url,
+        &token_url,
+        config,
+        launch_browser,
+        deadline,
+    )
+    .await?;
 
     persist_access_token(config, cache_host_url, token_cache, &result);
     persist_refresh_token(config, cache_host_url, token_cache, &result);
@@ -139,6 +216,7 @@ async fn try_cache_short_circuit(
     cache_host_url: &str,
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
+    deadline: FlowDeadline,
 ) -> Option<AcquiredOAuthToken> {
     if !config.client_store_temporary_credential {
         tracing::debug!("OAuth token cache disabled; skipping cache lookup");
@@ -148,6 +226,38 @@ async fn try_cache_short_circuit(
         tracing::debug!("No OAuth token cache available; skipping cache lookup");
         return None;
     };
+
+    // Drift B.11: when DPoP is enabled, look up the bundled cache entry
+    // first. The bundle carries both the access token and the JWK JSON
+    // so the same DPoP key can sign the Snowflake login leg without
+    // re-running the interactive flow (analysis §5.1, §6).
+    if config.enable_dpop
+        && let Some((cached_at, jwk_json)) =
+            token::try_get_cached_oauth_dpop_bundled(cache_host_url, &config.username, token_cache)
+    {
+        // Validate the cached JWK before handing the bundle back to
+        // the caller. A corrupt JWK would only surface later when
+        // the Snowflake-login DPoP signing path tries to rehydrate
+        // the key, so fail fast here and evict the bad entry.
+        match dpop::DPoPKey::from_jwk_json(&jwk_json) {
+            Ok(_) => {
+                tracing::debug!("OAuth access token served from DPoP-bundled cache");
+                return Some(AcquiredOAuthToken {
+                    access_token: cached_at,
+                    refresh_token: None,
+                    dpop_jwk_json: Some(jwk_json),
+                    expires_in: None,
+                });
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Cached DPoP-bundled access token has unparseable JWK; evicting"
+                );
+                token::remove_oauth_dpop_bundled(cache_host_url, &config.username, token_cache);
+            }
+        }
+    }
 
     if let Some(cached) =
         token::try_get_cached_oauth_access_token(cache_host_url, &config.username, token_cache)
@@ -165,7 +275,32 @@ async fn try_cache_short_circuit(
         token::try_get_cached_oauth_refresh_token(cache_host_url, &config.username, token_cache)
     {
         tracing::debug!("Cache short-circuit hit on OAuth refresh token; attempting exchange");
-        match refresh_access_token(client, token_url, config, refresh.reveal()).await {
+        // Drift B.12: when DPoP was negotiated for this connection, we
+        // must reuse the same key on the refresh leg so the IdP can
+        // verify the proof JWT and so we can rebundle the new access
+        // token with the same JWK afterwards. Generating a fresh key
+        // here would silently break the cached-bundle contract.
+        let dpop_key = if config.enable_dpop {
+            match dpop::DPoPKey::generate() {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to generate DPoP key for refresh leg");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        match refresh_access_token(
+            client,
+            token_url,
+            config,
+            refresh.reveal(),
+            dpop_key.as_ref(),
+            deadline,
+        )
+        .await
+        {
             Ok(refreshed) => {
                 tracing::info!("Refreshed OAuth access token");
                 persist_access_token(config, cache_host_url, token_cache, &refreshed);
@@ -194,6 +329,7 @@ async fn run_interactive_flow(
     token_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
     launch_browser: BrowserLaunchFn,
+    deadline: FlowDeadline,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     let authorize_url_base = resolve_authorize_url(server_url, config.authorization_url.as_ref())?;
     let binding = loopback_server::bind(config.redirect_uri.as_ref()).await?;
@@ -213,11 +349,23 @@ async fn run_interactive_flow(
         redirect_uri.clone(),
     )?;
 
-    let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    // PKCE S256 is on by default across drivers (analysis §3.3); Python
+    // is the only one with a `oauth_disable_pkce` escape hatch and we
+    // mirror it here (drift A.2). When disabled we skip both the
+    // `set_pkce_challenge` on the authorize URL and the
+    // `set_pkce_verifier` on the token exchange.
+    let pkce = if config.disable_pkce {
+        None
+    } else {
+        Some(PkceCodeChallenge::new_random_sha256())
+    };
 
-    let mut request = oauth_client
-        .authorize_url(CsrfToken::new_random)
-        .set_pkce_challenge(pkce_challenge);
+    // 256-bit CSRF state per `doc/oauth.md` §3 ("Key properties") and
+    // analysis §3.4 (drift A.4). 32 random bytes base64url-encoded.
+    let mut request = oauth_client.authorize_url(|| CsrfToken::new_random_len(32));
+    if let Some((challenge, _)) = pkce.as_ref() {
+        request = request.set_pkce_challenge(challenge.clone());
+    }
     if let Some(scope) = config.scope.as_deref() {
         request = request.add_scope(Scope::new(scope.to_string()));
     }
@@ -235,11 +383,19 @@ async fn run_interactive_flow(
 
     // Run the browser launcher concurrently with the redirect listener so
     // we don't lose the redirect if the browser launcher takes its time.
-    let timeout = Duration::from_secs(config.authentication_timeout_secs);
+    // Drift B.3: cap the loopback wait at the *remaining* end-to-end
+    // budget, not the full `authentication_timeout` — otherwise a
+    // delayed click leaves no time for the token exchange below.
     let listener = binding;
+    let loopback_budget = deadline.remaining().ok_or_else(|| {
+        AuthenticationTimeoutSnafu {
+            elapsed_secs: deadline.elapsed_secs(),
+        }
+        .build()
+    })?;
 
     let (redirect_result, _) = tokio::join!(
-        listener.wait_for_redirect(timeout),
+        listener.wait_for_redirect(loopback_budget),
         launch_browser(authorize_url, redirect_uri),
     );
     let redirect: RedirectResult = redirect_result?;
@@ -250,18 +406,24 @@ async fn run_interactive_flow(
 
     let http = make_http_client(client, dpop_key.as_ref(), token_url);
 
-    let mut exchange = oauth_client
-        .exchange_code(AuthorizationCode::new(redirect.code.reveal().to_string()))
-        .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier.into_secret()));
+    let mut exchange =
+        oauth_client.exchange_code(AuthorizationCode::new(redirect.code.reveal().to_string()));
+    if let Some((_, verifier)) = pkce {
+        exchange = exchange.set_pkce_verifier(PkceCodeVerifier::new(verifier.into_secret()));
+    }
     if config.enable_single_use_refresh_tokens {
         exchange = exchange.add_extra_param("enable_single_use_refresh_tokens", "true");
     }
 
     tracing::debug!("Starting OAuth code exchange");
-    let response = exchange
-        .request_async(&http)
-        .await
-        .map_err(map_request_token_error)?;
+    // Drift B.3: token exchange shares the same end-to-end budget.
+    let response = run_with_deadline(deadline, async {
+        exchange
+            .request_async(&http)
+            .await
+            .map_err(map_request_token_error)
+    })
+    .await?;
 
     let access_token = SensitiveString::from(response.access_token().secret().clone());
     if access_token.reveal().is_empty() {
@@ -292,6 +454,8 @@ async fn refresh_access_token(
     token_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
     refresh_token: &str,
+    dpop_key: Option<&DPoPKey>,
+    deadline: FlowDeadline,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     tracing::debug!("Refreshing OAuth access token");
     // For the refresh leg we don't need authorize_url; reuse the same
@@ -302,7 +466,10 @@ async fn refresh_access_token(
         token_url.clone()
     })?;
 
-    let http = make_http_client(client, None, token_url);
+    // Drift B.12: reuse the caller-supplied DPoP key on the refresh hop
+    // so the IdP can verify the proof and so the new access token can be
+    // rebundled under the same JWK below.
+    let http = make_http_client(client, dpop_key, token_url);
 
     let refresh = RefreshToken::new(refresh_token.to_string());
     let mut request = oauth_client.exchange_refresh_token(&refresh);
@@ -310,10 +477,15 @@ async fn refresh_access_token(
         request = request.add_scope(Scope::new(scope.to_string()));
     }
 
-    let response = request
-        .request_async(&http)
-        .await
-        .map_err(map_refresh_token_error)?;
+    // Drift B.3: refresh exchange shares the AC flow's end-to-end
+    // deadline.
+    let response = run_with_deadline(deadline, async {
+        request
+            .request_async(&http)
+            .await
+            .map_err(map_refresh_token_error)
+    })
+    .await?;
 
     let access_token = SensitiveString::from(response.access_token().secret().clone());
     if access_token.reveal().is_empty() {
@@ -325,19 +497,28 @@ async fn refresh_access_token(
         .filter(|s| !s.is_empty())
         .map(SensitiveString::from);
 
+    // Drift B.12: serialize the DPoP JWK alongside the new access token
+    // so `persist_access_token` takes the bundled-cache write path
+    // (analysis §6: "DPoP key + access token JSON" lives under the
+    // bundled entry, not `OAUTH_ACCESS_TOKEN`).
+    let dpop_jwk_json = match dpop_key {
+        Some(k) => Some(k.to_jwk_json()?),
+        None => None,
+    };
+
     Ok(AcquiredOAuthToken {
         access_token,
         refresh_token,
-        dpop_jwk_json: None,
+        dpop_jwk_json,
         expires_in: response.expires_in(),
     })
 }
 
-fn make_http_client<'a>(
-    client: &'a reqwest::Client,
-    dpop_key: Option<&'a DPoPKey>,
-    token_url: &'a Url,
-) -> OAuthHttpClient<'a> {
+fn make_http_client(
+    client: &reqwest::Client,
+    dpop_key: Option<&DPoPKey>,
+    token_url: &Url,
+) -> OAuthHttpClient {
     let adapter = OAuthHttpClient::new(client);
     if let Some(key) = dpop_key {
         adapter.with_dpop(DPoPContext::new(key, token_url))
@@ -355,12 +536,40 @@ fn build_oauth_client(
     BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
     OAuthError,
 > {
-    let _ = config.disable_pkce; // PKCE is always enabled in the rewrite (analysis §9: Python-only escape hatch).
-    Ok(BasicClient::new(ClientId::new(config.client_id.clone()))
-        .set_client_secret(ClientSecret::new(config.client_secret.reveal().to_string()))
+    // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for missing
+    // client_id/client_secret (`doc/oauth.md` §2; analysis §1, §9 — drift
+    // B.1). We treat "user did not override the token URL" as the
+    // Snowflake-as-IdP signal, matching JDBC's `OAuthUtil` heuristic.
+    let snowflake_idp = config.token_url.is_none();
+    let (client_id, client_secret) = resolve_client_credentials(config, snowflake_idp);
+    Ok(BasicClient::new(ClientId::new(client_id))
+        .set_client_secret(ClientSecret::new(client_secret))
         .set_auth_uri(AuthUrl::from_url(authorize_url))
         .set_token_uri(TokenUrl::from_url(token_url))
         .set_redirect_uri(RedirectUrl::from_url(redirect_uri)))
+}
+
+/// Drift B.1: if no client credentials were provided and Snowflake is
+/// the IdP, substitute the literal `LOCAL_APPLICATION` for both
+/// `client_id` and `client_secret` (matches JDBC, ODBC, Python, .NET,
+/// Go and Node — analysis §1 and §2). External IdPs require explicit
+/// credentials, so the empty values fall through unchanged.
+fn resolve_client_credentials(
+    config: &OAuthAuthorizationCodeConfig,
+    snowflake_idp: bool,
+) -> (String, String) {
+    const LOCAL_APPLICATION: &str = "LOCAL_APPLICATION";
+    let client_id = if snowflake_idp && config.client_id.is_empty() {
+        LOCAL_APPLICATION.to_string()
+    } else {
+        config.client_id.clone()
+    };
+    let client_secret = if snowflake_idp && config.client_secret.reveal().is_empty() {
+        LOCAL_APPLICATION.to_string()
+    } else {
+        config.client_secret.reveal().to_string()
+    };
+    (client_id, client_secret)
 }
 
 /// Translate the `oauth2` crate's `RequestTokenError` into an

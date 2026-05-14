@@ -465,6 +465,58 @@ impl LoginMethod {
         settings.get_string(key).filter(|s| !s.is_empty())
     }
 
+    /// Read a boolean parameter that wrappers may submit as a typed bool,
+    /// a string (`"true"`, `"1"`), or an int (`0`/`1`). Defaults to `false`
+    /// when absent or unparseable so OAuth knobs like `enable_dpop` behave
+    /// the same regardless of the wrapper's setting representation.
+    fn get_flexible_bool(settings: &dyn Settings, key: &str) -> bool {
+        settings
+            .get_bool(key)
+            .or_else(|| {
+                settings
+                    .get_string(key)
+                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            })
+            .or_else(|| settings.get_int(key).map(|v| v != 0))
+            .unwrap_or(false)
+    }
+
+    /// Parse an optional URL parameter, returning [`InvalidParameterValue`]
+    /// when the user supplied a value that cannot be parsed by the `url`
+    /// crate. Empty/missing values resolve to `None` so callers can fall
+    /// back to flow-time defaults (e.g. `https://{host}/oauth/authorize`).
+    fn parse_optional_url(
+        settings: &dyn Settings,
+        key: &'static str,
+    ) -> Result<Option<Url>, ConfigError> {
+        let Some(raw) = Self::non_empty_string(settings, key) else {
+            return Ok(None);
+        };
+        let url = Url::parse(&raw).map_err(|e| {
+            InvalidParameterValueSnafu {
+                parameter: key,
+                value: raw,
+                explanation: format!("Could not parse URL: {e}"),
+            }
+            .build()
+        })?;
+        Ok(Some(url))
+    }
+
+    /// Parse a required URL parameter (e.g. CC `oauth_token_request_url`).
+    fn parse_required_url(settings: &dyn Settings, key: &'static str) -> Result<Url, ConfigError> {
+        let raw = Self::non_empty_string(settings, key)
+            .context(MissingParameterSnafu { parameter: key })?;
+        Url::parse(&raw).map_err(|e| {
+            InvalidParameterValueSnafu {
+                parameter: key,
+                value: raw,
+                explanation: format!("Could not parse URL: {e}"),
+            }
+            .build()
+        })
+    }
+
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
         let auth_upper = authenticator.to_ascii_uppercase();
@@ -540,6 +592,86 @@ impl LoginMethod {
                     password: password.into(),
                     okta_url,
                     disable_saml_url_check,
+                    authentication_timeout_secs,
+                }))
+            }
+            "OAUTH" => Ok(Self::OAuthAccessToken {
+                username: Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                token: Self::non_empty_string(settings, "token")
+                    .context(MissingParameterSnafu { parameter: "token" })?
+                    .into(),
+            }),
+            "OAUTH_AUTHORIZATION_CODE" => {
+                let username = Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?;
+                // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
+                // missing client_id/client_secret at flow time
+                // (analysis_feature_oauth.md §1, §9). Keep them empty here
+                // and let the AC provider apply that default.
+                let client_id =
+                    Self::non_empty_string(settings, "oauth_client_id").unwrap_or_default();
+                let client_secret =
+                    Self::non_empty_string(settings, "oauth_client_secret").unwrap_or_default();
+                let authorization_url =
+                    Self::parse_optional_url(settings, "oauth_authorization_url")?;
+                let token_url = Self::parse_optional_url(settings, "oauth_token_request_url")?;
+                let redirect_uri = Self::parse_optional_url(settings, "oauth_redirect_uri")?;
+                let scope = Self::non_empty_string(settings, "oauth_scope");
+                let enable_single_use_refresh_tokens =
+                    Self::get_flexible_bool(settings, "oauth_enable_single_use_refresh_tokens");
+                let disable_pkce = Self::get_flexible_bool(settings, "oauth_disable_pkce");
+                let enable_dpop = Self::get_flexible_bool(settings, "oauth_enable_dpop");
+                let client_store_temporary_credential =
+                    Self::get_flexible_bool(settings, "client_store_temporary_credential");
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+                Ok(Self::OAuthAuthorizationCode(OAuthAuthorizationCodeConfig {
+                    username,
+                    client_id,
+                    client_secret: client_secret.into(),
+                    authorization_url,
+                    token_url,
+                    redirect_uri,
+                    scope,
+                    enable_single_use_refresh_tokens,
+                    disable_pkce,
+                    enable_dpop,
+                    client_store_temporary_credential,
+                    authentication_timeout_secs,
+                }))
+            }
+            "OAUTH_CLIENT_CREDENTIALS" => {
+                // CC is external-IdP only: Snowflake's GS does not issue
+                // tokens for `grant_type=client_credentials` (analysis §4),
+                // so client_id, client_secret and token_url are mandatory.
+                let username = Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?;
+                let client_id = Self::non_empty_string(settings, "oauth_client_id").context(
+                    MissingParameterSnafu {
+                        parameter: "oauth_client_id",
+                    },
+                )?;
+                let client_secret = Self::non_empty_string(settings, "oauth_client_secret")
+                    .context(MissingParameterSnafu {
+                        parameter: "oauth_client_secret",
+                    })?;
+                let token_url = Self::parse_required_url(settings, "oauth_token_request_url")?;
+                let scope = Self::non_empty_string(settings, "oauth_scope");
+                let enable_dpop = Self::get_flexible_bool(settings, "oauth_enable_dpop");
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+                Ok(Self::OAuthClientCredentials(OAuthClientCredentialsConfig {
+                    username,
+                    client_id,
+                    client_secret: client_secret.into(),
+                    token_url,
+                    scope,
+                    enable_dpop,
                     authentication_timeout_secs,
                 }))
             }

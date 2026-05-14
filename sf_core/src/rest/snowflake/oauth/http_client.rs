@@ -14,7 +14,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use http::header::HeaderValue;
 use http::{Request, Response};
@@ -27,36 +27,45 @@ use super::error::{OAuthError, TransportSnafu};
 
 /// Adapter that lets the `oauth2` crate drive token-endpoint requests
 /// through our shared `reqwest::Client`.
-pub(super) struct OAuthHttpClient<'a> {
-    inner: &'a reqwest::Client,
-    dpop: Option<DPoPContext<'a>>,
+///
+/// Owns its inputs (cheaply cloneable `reqwest::Client`, `Arc`-shared
+/// DPoP key + URL) so the resulting `AsyncHttpClient` impl is free of
+/// caller-supplied lifetime parameters. This matters because the wiring
+/// layer drives the OAuth flows from inside `async fn`s whose `Send`
+/// bounds require a higher-rank `for<'c> AsyncHttpClient<'c>` impl.
+pub(super) struct OAuthHttpClient {
+    inner: reqwest::Client,
+    dpop: Option<DPoPContext>,
 }
 
 /// Per-flow DPoP state: the key used to sign proofs, the token endpoint
 /// the proof's `htu` claim must point at, and a mutable slot for the
 /// most-recent server-supplied nonce.
-pub(super) struct DPoPContext<'a> {
-    key: &'a DPoPKey,
-    token_url: &'a Url,
+pub(super) struct DPoPContext {
+    key: Arc<DPoPKey>,
+    token_url: Arc<Url>,
     last_nonce: Mutex<Option<String>>,
 }
 
-impl<'a> DPoPContext<'a> {
-    pub(super) fn new(key: &'a DPoPKey, token_url: &'a Url) -> Self {
+impl DPoPContext {
+    pub(super) fn new(key: &DPoPKey, token_url: &Url) -> Self {
         Self {
-            key,
-            token_url,
+            key: Arc::new(key.clone()),
+            token_url: Arc::new(token_url.clone()),
             last_nonce: Mutex::new(None),
         }
     }
 }
 
-impl<'a> OAuthHttpClient<'a> {
-    pub(super) fn new(inner: &'a reqwest::Client) -> Self {
-        Self { inner, dpop: None }
+impl OAuthHttpClient {
+    pub(super) fn new(inner: &reqwest::Client) -> Self {
+        Self {
+            inner: inner.clone(),
+            dpop: None,
+        }
     }
 
-    pub(super) fn with_dpop(mut self, dpop: DPoPContext<'a>) -> Self {
+    pub(super) fn with_dpop(mut self, dpop: DPoPContext) -> Self {
         self.dpop = Some(dpop);
         self
     }
@@ -69,7 +78,7 @@ impl<'a> OAuthHttpClient<'a> {
         let Some(dpop) = self.dpop.as_ref() else {
             return Ok(());
         };
-        let proof = dpop::proof_jwt(dpop.key, request.method().as_str(), dpop.token_url, nonce)?;
+        let proof = dpop::proof_jwt(&dpop.key, request.method().as_str(), &dpop.token_url, nonce)?;
         // The proof JWT is base64url-encoded JWS by construction, so it's
         // ASCII and always a valid HTTP header value.
         let value = HeaderValue::from_str(proof.reveal())
@@ -104,7 +113,7 @@ impl<'a> OAuthHttpClient<'a> {
     }
 }
 
-impl<'c> AsyncHttpClient<'c> for OAuthHttpClient<'c> {
+impl<'c> AsyncHttpClient<'c> for OAuthHttpClient {
     type Error = OAuthError;
     type Future = Pin<Box<dyn Future<Output = Result<Response<Vec<u8>>, Self::Error>> + Send + 'c>>;
 

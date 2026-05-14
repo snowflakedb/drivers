@@ -97,6 +97,13 @@ pub struct AuthRequestData {
     pub provider: Option<String>,
     #[serde(rename = "SPCS_TOKEN", skip_serializing_if = "Option::is_none")]
     pub spcs_token: Option<String>,
+    /// Transient DPoP JWK JSON carried from the OAuth flow to
+    /// `send_login_request` when DPoP is enabled. Never serialized into
+    /// the login-request body — it is consumed by `send_login_request`
+    /// to sign the DPoP proof JWT attached as an HTTP header
+    /// (analysis_feature_oauth.md §5 / §14 #5).
+    #[serde(skip)]
+    pub dpop_jwk_json: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
