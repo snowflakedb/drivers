@@ -168,8 +168,10 @@ jobs:
               - 'python/hatch_build.py'
             nodejs:
               - 'nodejs/**'
+              - '.github/workflows/test-nodejs.yml'
             nodejs_e2e_integ:
               - 'nodejs/tests/e2e/**'
+              - '.github/workflows/test-nodejs.yml'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
