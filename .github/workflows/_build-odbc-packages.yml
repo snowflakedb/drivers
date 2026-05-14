@@ -1,0 +1,433 @@
+name: Build ODBC Packages
+
+# Reusable workflow that builds every distributable ODBC artifact (MSI on
+# Windows for x64/x86/arm64, RPM on Linux for x86_64/aarch64, DMG on macOS
+# universal). The Windows MSIs depend on a WiX toolchain that we build from
+# source as the first job here, so the whole graph lives together to keep
+# the build_wix → build_msi edge inside this file.
+
+on:
+  workflow_call:
+    inputs:
+      wix-ref:
+        description: >
+          WiX Toolset git ref to build the wix CLI from (e.g. "v7.0.0").
+          Threaded into the WIX_REF env var below so existing
+          env.WIX_REF references inside the jobs keep working.
+        type: string
+        required: true
+
+env:
+  # Re-publish the caller's input as an env var so existing
+  # ${{ env.WIX_REF }} references inside build_wix and build_msi resolve
+  # without per-step input plumbing.
+  WIX_REF: ${{ inputs.wix-ref }}
+
+jobs:
+  build_wix:
+    # Pinned to windows-2022 because WiX v7 sources reference the VS 2022 'v143'
+    # platform toolset. windows-latest is transitioning to VS 2026 which removes v143.
+    runs-on: windows-2022
+    name: build_wix (WiX Toolset from source)
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+      NUGET_XMLDOC_MODE: skip
+      NuGetAudit: 'false'
+    steps:
+      - name: Restore WiX build cache
+        id: wix-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: wix-artifacts
+          key: wix-v7-${{ env.WIX_REF }}-${{ runner.os }}-v1
+
+      - name: Checkout wixtoolset/wix @ ${{ env.WIX_REF }}
+        if: steps.wix-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: wixtoolset/wix
+          ref: ${{ env.WIX_REF }}
+          path: wix-src
+          fetch-depth: 0
+
+      - name: Disable NuGet audit in WiX Directory.Build.props
+        if: steps.wix-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $propsPath = Join-Path $PWD 'wix-src/src/Directory.Build.props'
+          if (-not (Test-Path $propsPath)) {
+              throw "WiX Directory.Build.props not found at $propsPath"
+          }
+          $content = Get-Content $propsPath -Raw
+          $patched = $content `
+              -replace '<NuGetAudit>true</NuGetAudit>',           '<NuGetAudit>false</NuGetAudit>' `
+              -replace '<NuGetAuditMode>all</NuGetAuditMode>',     '<NuGetAuditMode>direct</NuGetAuditMode>' `
+              -replace '<NuGetAuditLevel>low</NuGetAuditLevel>',   '<NuGetAuditLevel>critical</NuGetAuditLevel>'
+          if ($patched -eq $content) {
+              Write-Host "No NuGetAudit settings found to patch in $propsPath; continuing"
+          } else {
+              Set-Content -Path $propsPath -Value $patched -Encoding UTF8 -NoNewline
+              Write-Host "Patched $propsPath to disable NuGet audit"
+          }
+
+      - name: Build WiX from source
+        if: steps.wix-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        working-directory: wix-src
+        run: .\src\build_all.cmd Release
+
+      - name: Stage WiX nupkgs
+        if: steps.wix-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $source = Join-Path $PWD "wix-src\build\artifacts"
+          $dest = Join-Path $PWD "wix-artifacts"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Get-ChildItem -Path $source -Recurse -Include *.nupkg, *.snupkg | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination $dest -Force
+          }
+          $count = (Get-ChildItem $dest -Filter *.nupkg).Count
+          if ($count -eq 0) {
+              throw "No nupkgs found in $source after WiX build"
+          }
+          Write-Host "Staged $count nupkgs to $dest"
+          Get-ChildItem $dest -Filter *.nupkg | Select-Object Name | Format-Table -AutoSize
+
+      - name: Save WiX build cache
+        if: always() && steps.wix-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: wix-artifacts
+          key: wix-v7-${{ env.WIX_REF }}-${{ runner.os }}-v1
+
+      - name: Upload WiX artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wix-toolset-v7
+          path: wix-artifacts/
+          if-no-files-found: error
+
+  build_msi:
+    needs: build_wix
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 Release
+            os: windows-latest
+            arch: x64
+            config: release
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: "--release"
+            cargo_extra: ""
+          - name: Windows x64 Debug
+            os: windows-latest
+            arch: x64
+            config: debug
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: ""
+            cargo_extra: ""
+          - name: Windows x86 Release
+            os: windows-latest
+            arch: x86
+            config: release
+            cargo_target: i686-pc-windows-msvc
+            cargo_profile: "--release"
+            cargo_extra: "--no-default-features"
+          - name: Windows x86 Debug
+            os: windows-latest
+            arch: x86
+            config: debug
+            cargo_target: i686-pc-windows-msvc
+            cargo_profile: ""
+            cargo_extra: "--no-default-features"
+          - name: Windows ARM64 Release
+            os: windows-11-arm
+            arch: arm64
+            config: release
+            cargo_target: aarch64-pc-windows-msvc
+            cargo_profile: "--release"
+            cargo_extra: ""
+          - name: Windows ARM64 Debug
+            os: windows-11-arm
+            arch: arm64
+            config: debug
+            cargo_target: aarch64-pc-windows-msvc
+            cargo_profile: ""
+            cargo_extra: ""
+    runs-on: ${{ matrix.os }}
+    name: build_msi (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Cargo registry cache (MSI build)
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-
+
+      - name: Restore Rust target cache (MSI build)
+        # Cache restore failures never fail the job — fall back to clean build.
+        # No restore-keys: a stale target dir (from a different Cargo.lock) causes
+        # rust-lld linker failures on i686 debug due to cross-CGU symbol mismatches.
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-msi
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Prepare cache directories
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .cargo-cache/registry | Out-Null
+          New-Item -ItemType Directory -Force -Path .cargo-cache/git | Out-Null
+          New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
+
+      - name: Install Rust target
+        if: matrix.arch == 'x86'
+        run: rustup target add ${{ matrix.cargo_target }}
+
+      - name: Download self-built WiX
+        uses: actions/download-artifact@v4
+        with:
+          name: wix-toolset-v7
+          path: wix-artifacts
+
+      - name: Install WiX from local source
+        uses: ./.github/actions/install-wix-from-artifact
+        with:
+          wix-version: ${{ env.WIX_REF }}
+
+      - name: Build ODBC driver
+        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+        env:
+          RUSTFLAGS: "-C linker=rust-lld"
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-msi
+
+      - name: Save Cargo registry cache (MSI build)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (MSI build)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-msi
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Rename x86 driver DLL
+        if: matrix.arch == 'x86'
+        shell: pwsh
+        run: |
+          $dir = ".cargo-target-msi/${{ matrix.cargo_target }}/${{ matrix.config }}"
+          Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
+          if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
+
+      - name: Build MSI installer
+        shell: pwsh
+        run: |
+          .\odbc\installer\win\package.ps1 `
+            -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
+            -Arch ${{ matrix.arch }} `
+            -BuildConfig ${{ matrix.config }}
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-ud-${{ matrix.config }}-${{ matrix.arch }}
+          path: build/snowflake-odbc-ud-*.msi
+
+  build_rpm:
+    # RPM packaging is independent: it builds the driver from scratch in its own Docker image
+    # and does not consume artifacts from the test jobs.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64-glibc
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64-glibc
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    name: build_rpm (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Cargo registry cache (RPM build)
+        id: rpm-cargo-registry
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-
+
+      - name: Restore Rust target cache (RPM build)
+        id: rpm-cargo-target
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-rpm
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-
+
+      - name: Prepare cache directories
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-rpm
+
+      - name: Build Docker image
+        run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
+
+      - name: Build ODBC driver and package RPM
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -v ${{ github.workspace }}/.cargo-cache/registry:/root/.cargo/registry \
+            -v ${{ github.workspace }}/.cargo-cache/git:/root/.cargo/git \
+            -v ${{ github.workspace }}/.cargo-target-rpm:/workspace/target \
+            -w /workspace \
+            -e PLATFORM=${{ matrix.platform }} \
+            -e COMMIT_HASH=$(git rev-parse --short HEAD) \
+            -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
+            rpm-build \
+            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+
+      - name: Save Cargo registry cache (RPM build)
+        if: steps.rpm-cargo-registry.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (RPM build)
+        if: steps.rpm-cargo-target.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-rpm
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
+          path: build/snowflake-odbc-ud-*.rpm
+
+  build_dmg:
+    runs-on: macos-latest
+    name: build_dmg (macOS Universal)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Cargo registry cache (DMG build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-universal-cargo-registry-dmg-
+
+      - name: Restore Rust target cache (DMG build)
+        uses: actions/cache/restore@v5
+        with:
+          path: .cargo-target-dmg
+          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-universal-rust-dmg-release-target-
+
+      - name: Prepare cache directories
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-dmg
+
+      - name: Install Rust targets
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+
+      - name: Create ODBC stub libraries for linking
+        run: |
+          mkdir -p .odbc-stub
+          echo "void _odbc_stub(void) {}" | clang -x c -arch x86_64 -arch arm64 -dynamiclib \
+            -Wl,-install_name,libodbc.dylib -o .odbc-stub/libodbc.dylib -
+
+      - name: Build ODBC driver (x86_64)
+        run: cargo build --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
+
+      - name: Build ODBC driver (aarch64)
+        run: cargo build --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
+
+      - name: Save Cargo registry cache (DMG build)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save Rust target cache (DMG build)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 15
+        uses: actions/cache/save@v5
+        with:
+          path: .cargo-target-dmg
+          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Package DMG
+        run: ./odbc/installer/mac/package.sh
+        env:
+          DRIVER_X86_64: .cargo-target-dmg/x86_64-apple-darwin/release/libsfodbc.dylib
+          DRIVER_ARM64: .cargo-target-dmg/aarch64-apple-darwin/release/libsfodbc.dylib
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-ud-macos-universal
+          path: build/snowflake-odbc-ud-*.dmg
