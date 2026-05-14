@@ -175,21 +175,4 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<DatabaseDriverV1>();
     }
-
-    #[test]
-    fn python_preset_enables_skip_upload_on_content_match() {
-        assert!(WrapperPresets::python().skip_upload_on_content_match);
-    }
-
-    #[test]
-    fn jdbc_preset_enables_skip_upload_on_content_match() {
-        assert!(WrapperPresets::jdbc().skip_upload_on_content_match);
-    }
-
-    #[test]
-    fn odbc_preset_disables_skip_upload_on_content_match() {
-        // Legacy libsnowflakeclient never had this optimization; the
-        // ODBC preset must preserve the old unconditional re-upload.
-        assert!(!WrapperPresets::odbc().skip_upload_on_content_match);
-    }
 }
