@@ -179,6 +179,10 @@ pub enum InfoType {
     DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_PARAM_ARRAY_ROW_COUNTS` (153) — how row counts are available in array execution.
+    ParamArrayRowCounts = 153,
+    /// `SQL_PARAM_ARRAY_SELECTS` (147) — SELECT statement support in array execution.
+    ParamArraySelects = 147,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -191,6 +195,8 @@ impl TryFrom<u16> for InfoType {
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
+            147 => Ok(InfoType::ParamArraySelects),
+            153 => Ok(InfoType::ParamArrayRowCounts),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
                 Err(OdbcError::UnknownInfoType {
@@ -323,6 +329,18 @@ pub enum StmtAttr {
     UseBookmarks = 12,
     /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
     EnableAutoIpd = 15,
+    /// `SQL_ATTR_PARAM_BIND_OFFSET_PTR` (17) — maps to `SQL_DESC_BIND_OFFSET_PTR` on the APD.
+    ParamBindOffsetPtr = 17,
+    /// `SQL_ATTR_PARAM_BIND_TYPE` (18) — maps to `SQL_DESC_BIND_TYPE` on the APD.
+    ParamBindType = 18,
+    /// `SQL_ATTR_PARAM_OPERATION_PTR` (19) — maps to `SQL_DESC_ARRAY_STATUS_PTR` on the APD.
+    ParamOperationPtr = 19,
+    /// `SQL_ATTR_PARAM_STATUS_PTR` (20) — maps to `SQL_DESC_ARRAY_STATUS_PTR` on the IPD.
+    ParamStatusPtr = 20,
+    /// `SQL_ATTR_PARAMS_PROCESSED_PTR` (21) — maps to `SQL_DESC_ROWS_PROCESSED_PTR` on the IPD.
+    ParamsProcessedPtr = 21,
+    /// `SQL_ATTR_PARAMSET_SIZE` (22) — maps to `SQL_DESC_ARRAY_SIZE` on the APD.
+    ParamsetSize = 22,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
@@ -368,6 +386,12 @@ impl TryFrom<i32> for StmtAttr {
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
             15 => Ok(StmtAttr::EnableAutoIpd),
+            17 => Ok(StmtAttr::ParamBindOffsetPtr),
+            18 => Ok(StmtAttr::ParamBindType),
+            19 => Ok(StmtAttr::ParamOperationPtr),
+            20 => Ok(StmtAttr::ParamStatusPtr),
+            21 => Ok(StmtAttr::ParamsProcessedPtr),
+            22 => Ok(StmtAttr::ParamsetSize),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
@@ -824,6 +848,9 @@ pub struct ApdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` on APD — `SQL_ATTR_PARAM_OPERATION_PTR`. Default null.
+    /// Each element is `SQL_PARAM_PROCEED` (0) or `SQL_PARAM_IGNORE` (1).
+    pub array_status_ptr: *mut u16,
 }
 
 impl Default for ApdDescriptor {
@@ -842,6 +869,7 @@ impl ApdDescriptor {
             array_size: 1,
             bind_type: 0,
             bind_offset_ptr: std::ptr::null_mut(),
+            array_status_ptr: std::ptr::null_mut(),
         }
     }
 

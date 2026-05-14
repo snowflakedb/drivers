@@ -1256,6 +1256,28 @@ pub fn get_info<E: OdbcEncoding>(
             }
             Ok(())
         }
+        // SQL_PAS_BATCH (1): each SELECT in the array produces a result set;
+        // only the last one is available after the batch completes.
+        InfoType::ParamArraySelects => {
+            if !info_value_ptr.is_null() {
+                unsafe { *(info_value_ptr as *mut u32) = 1 };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt };
+            }
+            Ok(())
+        }
+        // SQL_PARC_BATCH (1): individual row counts are available per set via
+        // SQL_ATTR_PARAMS_PROCESSED_PTR.
+        InfoType::ParamArrayRowCounts => {
+            if !info_value_ptr.is_null() {
+                unsafe { *(info_value_ptr as *mut u32) = 1 };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt };
+            }
+            Ok(())
+        }
     }
 }
 

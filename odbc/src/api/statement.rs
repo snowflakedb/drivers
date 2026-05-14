@@ -14,7 +14,7 @@ use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::{
     ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord,
-    OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK, SQL_CONCUR_READ_ONLY,
+    OdbcError, OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK, SQL_CONCUR_READ_ONLY,
     SQL_CONCUR_VALUES, SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF, SQL_NOSCAN_ON,
     SQL_RD_OFF, SQL_RD_ON, SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner,
     StatementState, stmt_from_handle,
@@ -63,26 +63,31 @@ pub fn exec_direct<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     statement_text: *const E::Char,
     text_length: sql::Integer,
+    warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     let query = E::read_string(statement_text, text_length)?;
-    exec_direct_impl(statement_handle, &query)
+    exec_direct_impl(statement_handle, &query, warnings)
 }
 
-fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
+fn exec_direct_impl(
+    statement_handle: sql::Handle,
+    statement_text: &str,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
     let guard = stmt_from_handle(statement_handle)?;
     let dbc = guard.conn()?;
-    let mut conn = dbc.connection.lock();
-    let mut inner = guard.inner.lock();
-    tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
-
-    // Validate connection before committing to NeedData state.
-    let conn_handle = match &conn.state {
-        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => {
-            tracing::error!("exec_direct: connection is disconnected");
-            return DisconnectedSnafu.fail();
+    let conn_handle = {
+        let conn = dbc.connection.lock();
+        match &conn.state {
+            ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+            ConnectionState::Disconnected => {
+                tracing::error!("exec_direct: connection is disconnected");
+                return DisconnectedSnafu.fail();
+            }
         }
     };
+    let mut inner = guard.inner.lock();
+    tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
     if inner.state.as_ref().is_need_data() {
         return InvalidDuringDaeSnafu.fail();
@@ -114,72 +119,210 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         return DaeRequiredSnafu.fail();
     }
 
-    let (bindings, _json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
     let stmt_handle = guard.stmt_handle;
     let query_timeout = inner.query_timeout;
     let effective_query = statement_text.to_string();
     let multi_statement_count = inner.multi_statement_count;
 
-    let token = CancellationToken::new();
-    *guard.active_cancel.lock() = Some(token.clone());
+    let array_size = inner.apd.array_size.max(1);
+    let bind_offset = if inner.apd.bind_offset_ptr.is_null() {
+        0
+    } else {
+        unsafe { *inner.apd.bind_offset_ptr as isize }
+    };
+    let param_status_ptr = inner.ipd.array_status_ptr;
+    let rows_processed_ptr = inner.ipd.rows_processed_ptr;
+    let param_operation_ptr = inner.apd.array_status_ptr;
 
-    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
-            result = async {
-                if multi_statement_count >= 0 {
-                    let mut options = std::collections::HashMap::new();
-                    options.insert(
-                        "multi_statement_count".to_string(),
-                        ConfigSetting {
-                            value: Some(config_setting::Value::IntValue(
-                                multi_statement_count as i64,
-                            )),
-                        },
-                    );
-                    c.statement_set_options(StatementSetOptionsRequest {
+    if array_size == 1 {
+        // Honour SQL_PARAM_IGNORE for the single set (mirrors array-loop behaviour).
+        if !param_operation_ptr.is_null()
+            && unsafe { param_operation_ptr.read() } == SQL_PARAM_IGNORE
+        {
+            unsafe { write_param_status(param_status_ptr, 0, SQL_PARAM_UNUSED) };
+            if !rows_processed_ptr.is_null() {
+                unsafe { rows_processed_ptr.write(0) };
+            }
+            set_state(
+                &mut inner,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    schema: arrow::datatypes::Schema::empty().into(),
+                    origin: ExecutionOrigin::Direct,
+                },
+            );
+            inner.rows_returned = 0;
+            return Ok(());
+        }
+
+        let (bindings, _json_owner) =
+            apply_parameter_bindings(&inner.apd, &inner.ipd, false, None, 0, bind_offset)?;
+
+        let token = CancellationToken::new();
+        *guard.active_cancel.lock() = Some(token.clone());
+
+        let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = async {
+                    if multi_statement_count >= 0 {
+                        let mut options = std::collections::HashMap::new();
+                        options.insert(
+                            "multi_statement_count".to_string(),
+                            ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(
+                                    multi_statement_count as i64,
+                                )),
+                            },
+                        );
+                        c.statement_set_options(StatementSetOptionsRequest {
+                            stmt_handle: Some(stmt_handle),
+                            options,
+                        })
+                        .await?;
+                    }
+
+                    c.statement_set_sql_query(StatementSetSqlQueryRequest {
                         stmt_handle: Some(stmt_handle),
-                        options,
+                        query: effective_query,
                     })
                     .await?;
-                }
 
-                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                    c.statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
+                    })
+                    .await
+                } => result.map_err(Into::into),
+            }
+        });
+
+        *guard.active_cancel.lock() = None;
+
+        tracing::info!("exec_direct: response={:?}", response);
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                // write_param_status is null-safe; if the app set PARAM_STATUS_PTR
+                // it guaranteed an array of at least array_size (1) elements.
+                unsafe { write_param_status(param_status_ptr, 0, SQL_PARAM_ERROR) };
+                if !rows_processed_ptr.is_null() {
+                    unsafe { rows_processed_ptr.write(1) };
+                }
+                return Err(e);
+            }
+        };
+
+        update_numeric_settings(&conn_handle, &mut dbc.connection.lock().numeric_settings)?;
+        let apply_result =
+            apply_execute_response(&mut inner, conn_handle, response, ExecutionOrigin::Direct);
+        // write_param_status is null-safe; if the app set PARAM_STATUS_PTR
+        // it guaranteed an array of at least array_size (1) elements.
+        unsafe { write_param_status(param_status_ptr, 0, SQL_PARAM_SUCCESS) };
+        if !rows_processed_ptr.is_null() {
+            unsafe { rows_processed_ptr.write(1) };
+        }
+        // Re-propagate any error that is NOT NoMoreData (which just means a DML
+        // statement affected 0 rows — a valid outcome, not a failure).
+        match apply_result {
+            Ok(()) | Err(OdbcError::NoMoreData { .. }) => {}
+            Err(e) => return Err(e),
+        }
+    } else {
+        // Parameter array execution: send the query text once, then run one
+        // RPC per set via the shared helper.
+        let token = CancellationToken::new();
+        *guard.active_cancel.lock() = Some(token.clone());
+        let set_query_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     query: effective_query,
-                })
-                .await?;
-
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
-                    },
-                })
-                .await
-            } => result.map_err(Into::into),
-        }
-    });
-
-    *guard.active_cancel.lock() = None;
-
-    tracing::info!("exec_direct: response={:?}", response);
-    let response = match response {
-        Ok(r) => r,
-        Err(e) => {
-            if let Some(qid) = e.query_id() {
-                inner.last_query_id = Some(qid.to_owned());
+                }) => result.map_err(Into::into),
             }
-            return Err(e);
-        }
-    };
+        });
+        *guard.active_cancel.lock() = None;
+        set_query_result?;
 
-    update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
-    apply_execute_response(&mut inner, conn_handle, response, ExecutionOrigin::Direct)?;
+        let ArrayLoopResult {
+            last_response,
+            any_error,
+            total_rows_affected,
+        } = execute_param_array_loop(
+            &mut inner,
+            &guard.active_cancel,
+            stmt_handle,
+            array_size,
+            bind_offset,
+            param_status_ptr,
+            rows_processed_ptr,
+            param_operation_ptr,
+            false,
+            query_timeout,
+            multi_statement_count,
+        )?;
+
+        if let Some(response) = last_response {
+            update_numeric_settings(&conn_handle, &mut dbc.connection.lock().numeric_settings)?;
+            // NoMoreData from apply_execute_response means the last set was a
+            // DML statement that affected 0 rows — that is a valid outcome and
+            // must not override SQL_SUCCESS/SQL_SUCCESS_WITH_INFO for the batch.
+            match apply_execute_response(&mut inner, conn_handle, response, ExecutionOrigin::Direct)
+            {
+                Ok(()) | Err(OdbcError::NoMoreData { .. }) => {
+                    // Overwrite the single-set rows_affected with the batch total.
+                    inner
+                        .state
+                        .transition_or_err::<(), ()>(|s| {
+                            Ok((
+                                match s {
+                                    StatementState::DmlExecuted { schema, origin, .. } => {
+                                        StatementState::DmlExecuted {
+                                            rows_affected: total_rows_affected,
+                                            schema,
+                                            origin,
+                                        }
+                                    }
+                                    other => other,
+                                },
+                                (),
+                            ))
+                        })
+                        .ok();
+                }
+                Err(e) => return Err(e),
+            }
+            if any_error {
+                warnings.push(crate::conversion::warning::Warning::RowError);
+            }
+        } else if !any_error {
+            // All sets were SQL_PARAM_IGNORE — no RPC was ever sent. Transition
+            // the statement to DmlExecuted so it is not left in Created/Prepared.
+            set_state(
+                &mut inner,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    schema: arrow::datatypes::Schema::empty().into(),
+                    origin: ExecutionOrigin::Direct,
+                },
+            );
+            if !rows_processed_ptr.is_null() {
+                unsafe { rows_processed_ptr.write(0) };
+            }
+        }
+    }
+
     inner.rows_returned = 0;
     Ok(())
 }
@@ -484,7 +627,10 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 }
 
 /// Execute a prepared statement
-pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
+pub fn execute(
+    statement_handle: sql::Handle,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let guard = stmt_from_handle(statement_handle)?;
     let mut inner = guard.inner.lock();
@@ -544,70 +690,191 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             }
         }
     };
-    let (bindings, _json_owner) = apply_parameter_bindings(
-        &inner.apd,
-        &inner.ipd,
-        is_prepared,
-        inner.prepared_param_count,
-    )?;
 
     let stmt_handle = guard.stmt_handle;
     let query_timeout = inner.query_timeout;
     let multi_statement_count = inner.multi_statement_count;
 
-    let token = CancellationToken::new();
-    let _cancel_guard = ActiveCancelGuard::arm(&guard.active_cancel, token.clone());
-
-    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
-            result = async {
-                if multi_statement_count >= 0 {
-                    let mut options = std::collections::HashMap::new();
-                    options.insert(
-                        "multi_statement_count".to_string(),
-                        ConfigSetting {
-                            value: Some(config_setting::Value::IntValue(
-                                multi_statement_count as i64,
-                            )),
-                        },
-                    );
-                    c.statement_set_options(StatementSetOptionsRequest {
-                        stmt_handle: Some(stmt_handle),
-                        options,
-                    })
-                    .await?;
-                }
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                    timeout_seconds: if query_timeout > 0 {
-                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
-                    } else {
-                        None
-                    },
-                })
-                .await
-            } => result.map_err(Into::into),
-        }
-    });
-
-    let response = match response {
-        Ok(r) => r,
-        Err(e) => {
-            if let Some(qid) = e.query_id() {
-                inner.last_query_id = Some(qid.to_owned());
-            }
-            return Err(e);
-        }
+    let array_size = inner.apd.array_size.max(1);
+    let bind_offset = if inner.apd.bind_offset_ptr.is_null() {
+        0
+    } else {
+        unsafe { *inner.apd.bind_offset_ptr as isize }
     };
+    let param_status_ptr = inner.ipd.array_status_ptr;
+    let rows_processed_ptr = inner.ipd.rows_processed_ptr;
+    let param_operation_ptr = inner.apd.array_status_ptr;
 
-    tracing::info!("execute: Successfully executed statement");
-    let mut settings = dbc.connection.lock().numeric_settings;
-    update_numeric_settings(&conn_handle, &mut settings)?;
-    dbc.connection.lock().numeric_settings = settings;
-    apply_execute_response(&mut inner, conn_handle, response, origin)?;
+    if array_size == 1 {
+        // Honour SQL_PARAM_IGNORE for the single set (mirrors array-loop behaviour).
+        if !param_operation_ptr.is_null()
+            && unsafe { param_operation_ptr.read() } == SQL_PARAM_IGNORE
+        {
+            unsafe { write_param_status(param_status_ptr, 0, SQL_PARAM_UNUSED) };
+            if !rows_processed_ptr.is_null() {
+                unsafe { rows_processed_ptr.write(0) };
+            }
+            set_state(
+                &mut inner,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    schema: arrow::datatypes::Schema::empty().into(),
+                    origin,
+                },
+            );
+            inner.rows_returned = 0;
+            return Ok(());
+        }
+
+        let (bindings, _json_owner) = apply_parameter_bindings(
+            &inner.apd,
+            &inner.ipd,
+            is_prepared,
+            inner.prepared_param_count,
+            0,
+            bind_offset,
+        )?;
+
+        let token = CancellationToken::new();
+        let _cancel_guard = ActiveCancelGuard::arm(&guard.active_cancel, token.clone());
+
+        let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = async {
+                    if multi_statement_count >= 0 {
+                        let mut options = std::collections::HashMap::new();
+                        options.insert(
+                            "multi_statement_count".to_string(),
+                            ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(
+                                    multi_statement_count as i64,
+                                )),
+                            },
+                        );
+                        c.statement_set_options(StatementSetOptionsRequest {
+                            stmt_handle: Some(stmt_handle),
+                            options,
+                        })
+                        .await?;
+                    }
+                    c.statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
+                    })
+                    .await
+                } => result.map_err(Into::into),
+            }
+        });
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                // write_param_status is null-safe; if the app set PARAM_STATUS_PTR
+                // it guaranteed an array of at least array_size (1) elements.
+                unsafe { write_param_status(param_status_ptr, 0, SQL_PARAM_ERROR) };
+                if !rows_processed_ptr.is_null() {
+                    unsafe { rows_processed_ptr.write(1) };
+                }
+                return Err(e);
+            }
+        };
+
+        tracing::info!("execute: Successfully executed statement");
+        update_numeric_settings(&conn_handle, &mut dbc.connection.lock().numeric_settings)?;
+        let apply_result = apply_execute_response(&mut inner, conn_handle, response, origin);
+        // write_param_status is null-safe; if the app set PARAM_STATUS_PTR
+        // it guaranteed an array of at least array_size (1) elements.
+        unsafe { write_param_status(param_status_ptr, 0, SQL_PARAM_SUCCESS) };
+        if !rows_processed_ptr.is_null() {
+            unsafe { rows_processed_ptr.write(1) };
+        }
+        // Re-propagate any error that is NOT NoMoreData (which just means a DML
+        // statement affected 0 rows — a valid outcome, not a failure).
+        match apply_result {
+            Ok(()) | Err(OdbcError::NoMoreData { .. }) => {}
+            Err(e) => return Err(e),
+        }
+    } else {
+        let loop_result = execute_param_array_loop(
+            &mut inner,
+            &guard.active_cancel,
+            stmt_handle,
+            array_size,
+            bind_offset,
+            param_status_ptr,
+            rows_processed_ptr,
+            param_operation_ptr,
+            is_prepared,
+            query_timeout,
+            multi_statement_count,
+        );
+        inner.rows_returned = 0;
+        let ArrayLoopResult {
+            last_response,
+            any_error,
+            total_rows_affected,
+        } = loop_result?;
+
+        if let Some(response) = last_response {
+            tracing::info!("execute: Successfully executed statement (array mode)");
+            update_numeric_settings(&conn_handle, &mut dbc.connection.lock().numeric_settings)?;
+            // NoMoreData from apply_execute_response means the last set was a
+            // DML statement that affected 0 rows — that is a valid outcome and
+            // must not override SQL_SUCCESS/SQL_SUCCESS_WITH_INFO for the batch.
+            match apply_execute_response(&mut inner, conn_handle, response, origin) {
+                Ok(()) | Err(OdbcError::NoMoreData { .. }) => {
+                    // Overwrite the single-set rows_affected with the batch total.
+                    inner
+                        .state
+                        .transition_or_err::<(), ()>(|s| {
+                            Ok((
+                                match s {
+                                    StatementState::DmlExecuted { schema, origin, .. } => {
+                                        StatementState::DmlExecuted {
+                                            rows_affected: total_rows_affected,
+                                            schema,
+                                            origin,
+                                        }
+                                    }
+                                    other => other,
+                                },
+                                (),
+                            ))
+                        })
+                        .ok();
+                }
+                Err(e) => return Err(e),
+            }
+            if any_error {
+                warnings.push(crate::conversion::warning::Warning::RowError);
+            }
+        } else if !any_error {
+            // All sets were SQL_PARAM_IGNORE — no RPC was ever sent. Transition
+            // the statement to DmlExecuted so it is not left in Created/Prepared.
+            set_state(
+                &mut inner,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    schema: arrow::datatypes::Schema::empty().into(),
+                    origin,
+                },
+            );
+            if !rows_processed_ptr.is_null() {
+                unsafe { rows_processed_ptr.write(0) };
+            }
+        }
+    }
+
     inner.rows_returned = 0;
     Ok(())
 }
@@ -757,6 +1024,189 @@ fn release_result_set(rs_handle: ResultSetHandle) {
     }
 }
 
+/// Release any server-side result-set resources held by a response that will
+/// not be consumed (i.e. all but the last response in an array-parameter batch).
+fn discard_response(response: ExecuteQueryResponse) {
+    if let Some(execute_query_response::Result::Single(rs)) = response.result
+        && let Some(handle) = rs.result_set_handle
+    {
+        release_result_set(handle);
+    }
+    // Multi responses carry only query IDs (no live ResultSetHandle), so there
+    // is nothing to release for them.
+}
+
+/// Result of running the parameter-array execution loop.
+struct ArrayLoopResult {
+    /// Last successful response (apply as the statement's active result).
+    last_response: Option<ExecuteQueryResponse>,
+    /// True when at least one set failed.
+    any_error: bool,
+    /// Accumulated rows affected across all successful DML sets.
+    total_rows_affected: i64,
+}
+
+/// Execute the parameter-array loop (PARAMSET_SIZE > 1).
+///
+/// Iterates over `array_size` sets, skipping those marked `SQL_PARAM_IGNORE`,
+/// and calls `statement_execute_query` once per set.  Uses a single batch-wide
+/// `CancellationToken` so that `SQLCancel` reliably aborts the in-flight RPC
+/// regardless of which set is executing.
+///
+/// Intermediate responses (all but the last) are released immediately to avoid
+/// server-side resource leaks.  The `total_rows_affected` field accumulates DML
+/// row counts so `SQLRowCount` reflects the whole batch, not just the last set.
+#[allow(clippy::too_many_arguments)]
+fn execute_param_array_loop(
+    inner: &mut StatementInner,
+    active_cancel: &parking_lot::Mutex<Option<CancellationToken>>,
+    stmt_handle: StatementHandle,
+    array_size: usize,
+    bind_offset: isize,
+    param_status_ptr: *mut u16,
+    rows_processed_ptr: *mut sql::ULen,
+    param_operation_ptr: *const u16,
+    is_prepared: bool,
+    query_timeout: sql::ULen,
+    multi_statement_count: sql::SmallInt,
+) -> OdbcResult<ArrayLoopResult> {
+    let mut sets_processed: usize = 0;
+    let mut last_response: Option<ExecuteQueryResponse> = None;
+    let mut last_error: Option<OdbcError> = None;
+    let mut any_error = false;
+    let mut total_rows_affected: i64 = 0;
+
+    // A single token covers the entire batch so SQLCancel stops the in-flight
+    // RPC no matter which iteration is currently executing.
+    let batch_token = CancellationToken::new();
+    *active_cancel.lock() = Some(batch_token.clone());
+
+    for set_idx in 0..array_size {
+        // Honour SQL_PARAM_IGNORE on APD.array_status_ptr.
+        if !param_operation_ptr.is_null()
+            // SAFETY: null-checked above; app guarantees the array has array_size elements.
+            && unsafe { param_operation_ptr.add(set_idx).read() } == SQL_PARAM_IGNORE
+        {
+            // write_param_status is null-safe; app guarantees PARAM_STATUS_PTR
+            // array has at least array_size elements when non-null.
+            unsafe { write_param_status(param_status_ptr, set_idx, SQL_PARAM_UNUSED) };
+            continue;
+        }
+
+        let bindings_result = apply_parameter_bindings(
+            &inner.apd,
+            &inner.ipd,
+            is_prepared,
+            inner.prepared_param_count,
+            set_idx,
+            bind_offset,
+        );
+        let (bindings, _json_owner) = match bindings_result {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("array loop: set_idx={set_idx} parameter binding failed: {e}");
+                // write_param_status is null-safe; see comment above.
+                unsafe { write_param_status(param_status_ptr, set_idx, SQL_PARAM_ERROR) };
+                add_param_set_error_diag(inner, set_idx, &e);
+                last_error = Some(e);
+                sets_processed += 1;
+                if !rows_processed_ptr.is_null() {
+                    unsafe { rows_processed_ptr.write(sets_processed as sql::ULen) };
+                }
+                any_error = true;
+                continue;
+            }
+        };
+
+        let exec_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+            // Forward multi_statement_count when set (matches single-set path).
+            if multi_statement_count >= 0 {
+                let mut options = std::collections::HashMap::new();
+                options.insert(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting {
+                        value: Some(config_setting::Value::IntValue(
+                            multi_statement_count as i64,
+                        )),
+                    },
+                );
+                c.statement_set_options(StatementSetOptionsRequest {
+                    stmt_handle: Some(stmt_handle),
+                    options,
+                })
+                .await
+                .map_err(OdbcError::from)?;
+            }
+            tokio::select! {
+                biased;
+                _ = batch_token.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = c.statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings,
+                    timeout_seconds: if query_timeout > 0 {
+                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                    } else {
+                        None
+                    },
+                }) => result.map_err(Into::into),
+            }
+        });
+
+        sets_processed += 1;
+        // Write the running count after each set so a cancellation handler
+        // or diagnostic inspector can observe progress mid-batch.
+        if !rows_processed_ptr.is_null() {
+            unsafe { rows_processed_ptr.write(sets_processed as sql::ULen) };
+        }
+        match exec_result {
+            Ok(resp) => {
+                // Accumulate row counts so SQLRowCount reflects the whole batch.
+                if let Some(execute_query_response::Result::Single(ref rs)) = resp.result
+                    && let Some(ref d) = rs.result_descriptor
+                {
+                    total_rows_affected += d.rows_affected.unwrap_or(0);
+                }
+                // write_param_status is null-safe; see comment above.
+                unsafe { write_param_status(param_status_ptr, set_idx, SQL_PARAM_SUCCESS) };
+                // Release the previous response before replacing it to avoid leaking
+                // server-side result-set resources (e.g. SELECT in array mode).
+                if let Some(prev) = last_response.take() {
+                    discard_response(prev);
+                }
+                last_response = Some(resp);
+            }
+            Err(e) => {
+                tracing::error!("array loop: set_idx={set_idx} execution failed: {e}");
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                // write_param_status is null-safe; see comment above.
+                unsafe { write_param_status(param_status_ptr, set_idx, SQL_PARAM_ERROR) };
+                add_param_set_error_diag(inner, set_idx, &e);
+                last_error = Some(e);
+                any_error = true;
+            }
+        }
+    }
+
+    *active_cancel.lock() = None;
+
+    if any_error && last_response.is_none() {
+        return Err(last_error.ok_or_else(|| {
+            crate::api::error::InternalSnafu {
+                message: "array execution: any_error flag set but no error stored".to_string(),
+            }
+            .build()
+        })?);
+    }
+
+    Ok(ArrayLoopResult {
+        last_response,
+        any_error,
+        total_rows_affected,
+    })
+}
+
 fn create_execute_state_from_stream(
     stream: ArrowArrayStreamPtr,
     statement_type_id: Option<i64>,
@@ -782,7 +1232,7 @@ fn create_execute_state_from_stream(
     Ok(state)
 }
 
-/// Build JSON query bindings from ODBC parameter bindings.
+/// Build JSON query bindings from ODBC parameter bindings for a specific set index.
 ///
 /// When `prepared` is true (SQLPrepare+SQLExecute flow), the IPD has server-
 /// provided parameter count and we validate that the APD covers every marker.
@@ -792,11 +1242,16 @@ fn create_execute_state_from_stream(
 /// `prepared_param_count` caps how many parameters are serialized for prepared
 /// statements, preventing phantom bindings beyond the server-reported marker
 /// count from being dereferenced.
+///
+/// `set_idx` is 0-based (pass 0 for the single-set / non-array path).
+/// `bind_offset` is the dereferenced value of `APD.bind_offset_ptr` (pass 0 when null).
 fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
     prepared: bool,
     prepared_param_count: Option<u16>,
+    set_idx: usize,
+    bind_offset: isize,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     let effective_count: u16 = if prepared {
         prepared_param_count.ok_or_else(|| {
@@ -838,13 +1293,14 @@ fn apply_parameter_bindings(
         }
     }
     tracing::info!(
-        "apply_parameter_bindings: Found {} bound parameters (effective_count={})",
+        "apply_parameter_bindings: Found {} bound parameters (effective_count={}, set_idx={})",
         apd.records.len(),
         effective_count,
+        set_idx,
     );
 
-    let json_string =
-        odbc_bindings_to_json(apd, ipd, effective_count).context(JsonBindingSnafu {})?;
+    let json_string = odbc_bindings_to_json(apd, ipd, effective_count, set_idx, bind_offset)
+        .context(JsonBindingSnafu {})?;
 
     let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
     let json_data_len = json_string.len();
@@ -862,6 +1318,42 @@ fn apply_parameter_bindings(
 
     Ok((Some(bindings), Some(json_string)))
 }
+
+/// Write a per-set status code to `IPD.array_status_ptr`.
+///
+/// Does nothing when `ptr` is null (the app did not set `PARAM_STATUS_PTR`).
+///
+/// # Safety
+/// When `ptr` is non-null the caller must ensure it points to an array of at
+/// least `set_idx + 1` elements (guaranteed by the ODBC application which must
+/// size the array to at least `SQL_ATTR_PARAMSET_SIZE`).
+unsafe fn write_param_status(ptr: *mut u16, set_idx: usize, status: u16) {
+    if !ptr.is_null() {
+        unsafe { ptr.add(set_idx).write(status) };
+    }
+}
+
+/// Add a diagnostic record identifying the 1-based parameter-set row that
+/// failed during array execution (SQLSTATE 01S01 per ODBC §13.2).
+fn add_param_set_error_diag(stmt: &mut StatementInner, set_idx: usize, err: &OdbcError) {
+    use crate::api::diagnostic::{ClassOrigin, DiagnosticRecord};
+    stmt.diagnostic_info.add_record(DiagnosticRecord {
+        sql_state: err.to_sql_state(),
+        class_origin: ClassOrigin::Odbc3_0,
+        native_error: err.to_native_error(),
+        row_number: Some((set_idx + 1) as sql::Integer),
+        column_number: None,
+        connection_name: String::new(),
+        message_text: format!("Error in parameter set {}: {err}", set_idx + 1),
+    });
+}
+
+// SQL_PARAM_* status codes written to IPD.array_status_ptr.
+const SQL_PARAM_SUCCESS: u16 = 0;
+const SQL_PARAM_ERROR: u16 = 5;
+const SQL_PARAM_UNUSED: u16 = 7;
+// SQL_PARAM_IGNORE is the value placed in APD.array_status_ptr to skip a set.
+const SQL_PARAM_IGNORE: u16 = 1;
 
 /// Bind a parameter to a prepared statement
 #[allow(clippy::too_many_arguments)]
@@ -1309,6 +1801,57 @@ pub fn set_stmt_attr(
             inner.ard.bind_offset_ptr = ptr;
             Ok(())
         }
+        StmtAttr::ParamsetSize => {
+            let size = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamsetSize = {}", size);
+            // Reject values that would overflow a signed isize used in loop
+            // bounds and pointer arithmetic (e.g. (SQLULEN)-1 = 2^64-1).
+            if size > (isize::MAX as sql::ULen) {
+                return InvalidAttributeValueSnafu {
+                    attribute: 22i32, // SQL_ATTR_PARAMSET_SIZE
+                    value: size as i64,
+                }
+                .fail();
+            }
+            if size == 0 {
+                tracing::warn!("set_stmt_attr: ParamsetSize value 0 is invalid; coercing to 1");
+                inner.apd.array_size = 1;
+                warnings.push(Warning::OptionValueChanged);
+            } else {
+                inner.apd.array_size = size as usize;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindType => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamBindType = {}", val);
+            inner.apd.bind_type = val;
+            Ok(())
+        }
+        StmtAttr::ParamBindOffsetPtr => {
+            let ptr = value_ptr as *mut sql::Len;
+            tracing::debug!("set_stmt_attr: ParamBindOffsetPtr = {:?}", ptr);
+            inner.apd.bind_offset_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamOperationPtr = {:?}", ptr);
+            inner.apd.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamStatusPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamStatusPtr = {:?}", ptr);
+            inner.ipd.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamsProcessedPtr => {
+            let ptr = value_ptr as *mut sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamsProcessedPtr = {:?}", ptr);
+            inner.ipd.rows_processed_ptr = ptr;
+            Ok(())
+        }
         StmtAttr::MetadataId => {
             let val = value_ptr as sql::ULen;
             inner.metadata_id = val != 0;
@@ -1615,6 +2158,64 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::RowBindOffsetPtr => {
             unsafe {
                 *(value_ptr as *mut *mut sql::Len) = inner.ard.bind_offset_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamsetSize => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = inner.apd.array_size as sql::ULen;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindType => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = inner.apd.bind_type;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindOffsetPtr => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut *mut sql::Len) = inner.apd.bind_offset_ptr;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut *mut u16) = inner.apd.array_status_ptr;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamStatusPtr => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut *mut u16) = inner.ipd.array_status_ptr;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamsProcessedPtr => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut *mut sql::ULen) = inner.ipd.rows_processed_ptr;
+                }
             }
             Ok(())
         }
@@ -2145,6 +2746,8 @@ fn execute_dae(
         &inner.ipd,
         is_prepared,
         inner.prepared_param_count,
+        0,
+        0,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -2353,7 +2956,7 @@ mod tests {
     fn apply_bindings_prepared_without_param_count_errors() {
         let apd = ApdDescriptor::new();
         let ipd = IpdDescriptor::new();
-        let result = apply_parameter_bindings(&apd, &ipd, true, None);
+        let result = apply_parameter_bindings(&apd, &ipd, true, None, 0, 0);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.to_sql_state(), SqlState::CountFieldIncorrect);

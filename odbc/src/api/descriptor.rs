@@ -525,6 +525,12 @@ fn get_apd_field(
             }
             return Ok(());
         }
+        DescField::ArrayStatusPtr => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
+            }
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -620,6 +626,10 @@ fn set_apd_field(
             }
             DescField::BindOffsetPtr => {
                 desc.bind_offset_ptr = value_ptr as *mut sql::Len;
+                Ok(())
+            }
+            DescField::ArrayStatusPtr => {
+                desc.array_status_ptr = value_ptr as *mut u16;
                 Ok(())
             }
             _ => {

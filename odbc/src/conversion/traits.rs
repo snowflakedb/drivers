@@ -162,7 +162,7 @@ impl BindingStrides {
 /// ensuring the resulting address stays inside the bound allocation
 /// (the same guarantee the application makes via `SQLBindCol`).
 #[inline]
-fn advance_ptr<T>(
+pub(crate) fn advance_ptr<T>(
     ptr: *mut T,
     row_idx: usize,
     element_stride: usize,
@@ -174,6 +174,27 @@ fn advance_ptr<T>(
     let stride = row_idx.checked_mul(element_stride)?;
     let byte_ptr = ptr as *mut u8;
     Some(unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T })
+}
+
+/// Like [`advance_ptr`] but additionally guards against `stride > isize::MAX`
+/// and `bind_offset + stride` overflow. Used on the parameter-binding path
+/// where `set_idx` comes from a user-supplied `SQL_ATTR_PARAMSET_SIZE` value
+/// and could be large.
+#[inline]
+pub(crate) fn advance_ptr_checked<T>(
+    ptr: *mut T,
+    row_idx: usize,
+    element_stride: usize,
+    bind_offset: isize,
+) -> Option<*mut T> {
+    if ptr.is_null() {
+        return Some(std::ptr::null_mut());
+    }
+    let stride = row_idx.checked_mul(element_stride)?;
+    let stride_isize = isize::try_from(stride).ok()?;
+    let combined = bind_offset.checked_add(stride_isize)?;
+    let byte_ptr = ptr as *mut u8;
+    Some(unsafe { byte_ptr.offset(combined) as *mut T })
 }
 
 #[derive(Debug, Default, Clone, Copy)]

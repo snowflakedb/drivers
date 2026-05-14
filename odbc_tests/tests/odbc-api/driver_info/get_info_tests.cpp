@@ -538,7 +538,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ODBC_VER", "[odbc-api][g
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_PARAM_ARRAY_ROW_COUNTS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -547,13 +546,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_PARAM_ARRAY_ROW_COUNTS",
       SQLGetInfo(dbc_handle(), SQL_PARAM_ARRAY_ROW_COUNTS, &paramArrayRowCounts, sizeof(paramArrayRowCounts), nullptr);
 
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(paramArrayRowCounts == SQL_PARC_NO_BATCH);
+  // Old driver: SQL_PARC_NO_BATCH (0). New driver: SQL_PARC_BATCH (1) — each set
+  // has its own row count, accumulated into the total.
+  OLD_DRIVER_ONLY("row-counts") { REQUIRE(paramArrayRowCounts == SQL_PARC_NO_BATCH); }
+  NEW_DRIVER_ONLY("row-counts") { REQUIRE(paramArrayRowCounts == SQL_PARC_BATCH); }
 
   SQLDisconnect(dbc_handle());
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_PARAM_ARRAY_SELECTS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -561,7 +562,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_PARAM_ARRAY_SELECTS", "[
   ret = SQLGetInfo(dbc_handle(), SQL_PARAM_ARRAY_SELECTS, &paramArraySelects, sizeof(paramArraySelects), nullptr);
 
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(paramArraySelects == SQL_PAS_NO_BATCH);
+  // Old driver: SQL_PAS_NO_BATCH (0). New driver: SQL_PAS_BATCH (1) — each SELECT
+  // in the array is executed; only the last result set is accessible.
+  OLD_DRIVER_ONLY("selects") { REQUIRE(paramArraySelects == SQL_PAS_NO_BATCH); }
+  NEW_DRIVER_ONLY("selects") { REQUIRE(paramArraySelects == SQL_PAS_BATCH); }
 
   SQLDisconnect(dbc_handle());
 }

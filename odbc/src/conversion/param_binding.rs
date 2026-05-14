@@ -1,6 +1,7 @@
 use std::{
     ffi::{CStr, c_char},
-    mem, slice, str,
+    mem::{self, size_of},
+    slice, str,
 };
 
 use serde_json::{Map, Value};
@@ -29,7 +30,7 @@ use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
 use super::time::SnowflakeTime;
 use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz, SnowflakeTimestampTz};
-use super::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use super::traits::{ReadODBC, SnowflakeLogicalType, WriteJson, advance_ptr_checked};
 use super::varchar::SnowflakeVarchar;
 
 // =============================================================================
@@ -300,6 +301,12 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
 /// Convert ODBC parameter bindings (from APD + IPD descriptors) to JSON
 /// string format for server-side binding.
 ///
+/// `set_idx` selects which row of the parameter array to encode (0-based).
+/// `bind_offset` is the dereferenced value of `APD.bind_offset_ptr` (0 when null).
+///
+/// For `set_idx == 0` and `bind_offset == 0` this is identical to the original
+/// single-set behaviour.
+///
 /// # Safety contract
 /// The APD records' `data_ptr` pointers must remain valid for the duration
 /// of this call. If `str_len_or_ind_ptr` is non-null, it must also point to
@@ -316,6 +323,8 @@ pub fn odbc_bindings_to_json(
     apd: &ApdDescriptor,
     ipd: &IpdDescriptor,
     max_params: u16,
+    set_idx: usize,
+    bind_offset: isize,
 ) -> Result<String, JsonBindingError> {
     let mut json_bindings = Map::new();
 
@@ -335,7 +344,64 @@ pub fn odbc_bindings_to_json(
             InvalidParameterIndicesSnafu.build()
         })?;
 
-        let binding = ParameterBinding::from_apd_ipd(apd_rec, ipd_rec);
+        // Compute per-set buffer addresses via the same pointer arithmetic used
+        // by the ARD fetch path (BindingStrides::for_row / advance_ptr).
+        // Column-wise (bind_type==0): each parameter column has its own stride
+        // equal to buffer_length. Row-wise (bind_type>0): all columns share the
+        // struct stride stored in bind_type.
+        let (value_stride, ind_stride) = if apd.bind_type == 0 {
+            // For fixed-size C types the app may pass buffer_length=0; fall
+            // back to the known fixed size so pointer arithmetic is correct.
+            let stride = apd_rec
+                .value_type
+                .fixed_size()
+                .unwrap_or(apd_rec.buffer_length as usize);
+            // A stride of 0 means all sets would read the same address —
+            // refuse early with a clear error rather than silently corrupting.
+            if stride == 0 && set_idx > 0 {
+                return Err(InvalidParameterIndicesSnafu.build());
+            }
+            (stride, size_of::<sql::Len>())
+        } else {
+            (apd.bind_type, apd.bind_type)
+        };
+
+        // SAFETY: The application guarantees the bound buffers cover at least
+        // array_size elements. advance_ptr_checked guards against large set_idx
+        // (user-supplied SQL_ATTR_PARAMSET_SIZE) overflowing isize.
+        let effective_data_ptr = advance_ptr_checked(
+            apd_rec.data_ptr,
+            set_idx,
+            value_stride,
+            bind_offset,
+        )
+        .ok_or_else(|| {
+            tracing::error!(
+                "odbc_bindings_to_json: pointer overflow for param #{param_num} set_idx={set_idx}"
+            );
+            InvalidParameterIndicesSnafu.build()
+        })?;
+        let effective_ind_ptr = advance_ptr_checked(
+            apd_rec.str_len_or_ind_ptr,
+            set_idx,
+            ind_stride,
+            bind_offset,
+        )
+        .ok_or_else(|| {
+            tracing::error!(
+                "odbc_bindings_to_json: indicator pointer overflow for param #{param_num} set_idx={set_idx}"
+            );
+            InvalidParameterIndicesSnafu.build()
+        })?;
+
+        let binding = ParameterBinding {
+            sql_data_type: ipd_rec.sql_data_type,
+            value_type: apd_rec.value_type,
+            parameter_value_ptr: effective_data_ptr,
+            buffer_length: apd_rec.buffer_length,
+            str_len_or_ind_ptr: effective_ind_ptr,
+            sf_subtype: ipd_rec.sf_subtype,
+        };
 
         let (snowflake_type, json_value) = if is_null_indicator(&binding) {
             (SnowflakeLogicalType::Any, Value::Null)
@@ -1807,7 +1873,7 @@ mod tests {
             0,
             &mut ind,
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()))?;
+        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()), 0, 0)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "ANY");
         assert!(parsed["1"]["value"].is_null());
@@ -1824,7 +1890,10 @@ mod tests {
             0,
             std::ptr::null_mut(),
         )]);
-        assert!(odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).is_err());
+        assert!(
+            odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()), 0, 0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2019,7 +2088,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()))?;
+        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()), 0, 0)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "FIXED");
         assert_eq!(parsed["1"]["value"], "7");
@@ -2037,7 +2106,7 @@ mod tests {
             0,
             &mut ind,
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()))?;
+        let json = odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()), 0, 0)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "ANY");
         assert!(parsed["1"]["value"].is_null());
@@ -2071,7 +2140,10 @@ mod tests {
                 ..IpdRecord::default()
             },
         );
-        assert!(odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).is_err());
+        assert!(
+            odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count()), 0, 0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2090,7 +2162,7 @@ mod tests {
             0,
             &mut dae_ind,
         )]);
-        let json = odbc_bindings_to_json(&apd, &ipd, 0)?;
+        let json = odbc_bindings_to_json(&apd, &ipd, 0, 0, 0)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed, serde_json::json!({}));
         Ok(())
@@ -2123,7 +2195,7 @@ mod tests {
                 &mut dae_ind,
             ),
         ]);
-        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let json = odbc_bindings_to_json(&apd, &ipd, 1, 0, 0)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "FIXED");
         assert_eq!(parsed["1"]["value"], "42");
@@ -4862,6 +4934,64 @@ mod tests {
             .timestamp_nanos_opt()
             .unwrap();
         assert_eq!(v, Value::String(expected_nanos.to_string()));
+        Ok(())
+    }
+
+    // -- array parameter set_idx tests ----------------------------------------
+
+    #[test]
+    fn odbc_bindings_to_json_set_idx_selects_correct_element() -> TestResult {
+        // Verifies that set_idx > 0 reads from the correct offset in a
+        // column-wise array (stride = size_of::<i32>() for SQL_C_SLONG).
+        let values: [i32; 3] = [10, 20, 30];
+        let mut inds: [sql::Len; 3] = [0, 0, 0];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            values.as_ptr() as sql::Pointer,
+            mem::size_of::<i32>() as sql::Len,
+            inds.as_mut_ptr(),
+        )]);
+        apd.array_size = 3;
+
+        for (idx, expected) in [(0, "10"), (1, "20"), (2, "30")] {
+            let json = odbc_bindings_to_json(&apd, &ipd, 1, idx, 0)?;
+            let parsed: serde_json::Value = serde_json::from_str(&json)?;
+            assert_eq!(
+                parsed["1"]["value"],
+                serde_json::Value::String(expected.to_string()),
+                "set_idx={idx}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn odbc_bindings_to_json_set_idx_fixed_size_zero_buffer_length() -> TestResult {
+        // When buffer_length == 0 for a fixed-size type the M4 fix should fall
+        // back to the type's known fixed size, so set_idx > 0 still works.
+        let values: [i32; 3] = [100, 200, 300];
+        let mut inds: [sql::Len; 3] = [0, 0, 0];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            values.as_ptr() as sql::Pointer,
+            0, // deliberately zero
+            inds.as_mut_ptr(),
+        )]);
+        apd.array_size = 3;
+
+        for (idx, expected) in [(0, "100"), (1, "200"), (2, "300")] {
+            let json = odbc_bindings_to_json(&apd, &ipd, 1, idx, 0)?;
+            let parsed: serde_json::Value = serde_json::from_str(&json)?;
+            assert_eq!(
+                parsed["1"]["value"],
+                serde_json::Value::String(expected.to_string()),
+                "set_idx={idx}"
+            );
+        }
         Ok(())
     }
 }
