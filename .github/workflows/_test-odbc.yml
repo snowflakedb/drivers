@@ -7,13 +7,6 @@ name: ODBC Driver Tests
 on:
   workflow_call:
 
-env:
-  CARGO_TERM_COLOR: always
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_MAXSIZE: 1G
-  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite"
-
 jobs:
   load-odbc-matrix:
     runs-on: ubuntu-latest
@@ -62,6 +55,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
 
       - name: Cache Rust dependencies
         id: rust-cache
@@ -139,6 +135,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
 
       - name: Download pre-built ODBC driver
         uses: actions/download-artifact@v4
