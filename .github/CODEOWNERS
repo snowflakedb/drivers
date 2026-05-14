@@ -1,30 +1,13 @@
 # Owners of every file in the repo.
 #
-# The team alias @snowflakedb/snow-drivers-warsaw is kept so that
-# GitHub-native CODEOWNERS behaviour (e.g. branch protection rules
-# requiring code-owner approval, organization-wide policies) keeps
-# working against the team as a whole.
+# Only the team alias @snowflakedb/snow-drivers-warsaw is listed here so
+# that GitHub-native code-owner behaviour (branch protection rules
+# requiring code-owner approval, review-request on PR open) targets the
+# team as a whole — a single review request goes to the team, instead
+# of pinging every individual reviewer.
 #
-# The individual @sfc-gh-* logins are listed explicitly so that the PR
-# review bot (see .github/workflows/pr-review-bot.yml) can pick one at
-# random as the reviewer for new PRs. The bot ignores team references
-# on purpose so it does not need the read:org scope.
-#
-# Names for reference (handle -- person):
-#   sfc-gh-daniszewski    -- Dariusz Aniszewski
-#   sfc-gh-turbaszek      -- Tomasz Urbaszek
-#   sfc-gh-rsavenok       -- Ruslan Savenok
-#   sfc-gh-boler          -- Bartosz Oler
-#   sfc-gh-rkowalski      -- Rafal Kowalski
-#   sfc-gh-pbulawa        -- Piotr Bulawa
-#   sfc-gh-dheyman        -- Dawid Heyman
-#   sfc-gh-pfus           -- Piotr Fus
-#   sfc-gh-mhofman        -- Michal Hofman (maintainer)
-#   sfc-gh-pczajka        -- Patryk Czajka
-#   sfc-gh-jszczerbinski  -- Jakub Szczerbinski
-#   sfc-gh-fpawlowski     -- Filip Pawlowski
-#   sfc-gh-ddas           -- Devansh Das
-#   sfc-gh-makowalski     -- Maxymilian Kowalski
-#   sfc-gh-asolarski      -- Antoni Solarski
-#   sfc-gh-mcepiga        -- Michal Cepiga
-*  @snowflakedb/snow-drivers-warsaw @sfc-gh-daniszewski @sfc-gh-turbaszek @sfc-gh-rsavenok @sfc-gh-boler @sfc-gh-rkowalski @sfc-gh-pbulawa @sfc-gh-dheyman @sfc-gh-pfus @sfc-gh-mhofman @sfc-gh-pczajka @sfc-gh-jszczerbinski @sfc-gh-fpawlowski @sfc-gh-ddas @sfc-gh-makowalski @sfc-gh-asolarski @sfc-gh-mcepiga
+# The individual reviewer pool used by the PR review bot (see
+# .github/workflows/pr-review-bot.yml) lives in .github/reviewers. The
+# bot ignores team references on purpose so it does not need the
+# read:org scope.
+*  @snowflakedb/snow-drivers-warsaw

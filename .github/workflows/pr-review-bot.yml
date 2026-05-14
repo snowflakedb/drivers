@@ -30,9 +30,12 @@
 #       Channel name (no leading '#') or channel ID. Defaults to
 #       'drivers-review'.
 #
-# Reviewer pool comes from .github/CODEOWNERS — list each reviewer
-# explicitly as @login (team references like @org/team-slug are skipped,
-# so the bot does not need read:org).
+# Reviewer pool comes from .github/reviewers — list each reviewer
+# explicitly as @login, one per line. CODEOWNERS itself only references
+# the team alias so GitHub's native code-owner request fires once
+# against the team (no per-member ping). The bot keeps its own
+# individual pool so it does not need the read:org scope to resolve
+# team membership.
 #
 # Real <@U...> Slack mentions are resolved per-reviewer via
 # users.lookupByEmail using the email from commit.author of each
@@ -78,8 +81,6 @@ jobs:
       (github.event_name == 'pull_request_target' && github.event.pull_request.draft == false)
       || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'assign')
     runs-on: ubuntu-latest
-    env:
-      SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -101,6 +102,7 @@ jobs:
           # mention. Optional — falls back to plain @handle text if
           # unset or the lookup fails.
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
         run: python scripts/pr_review_bot.py assign
 
       - name: Post assignment notification to Slack
@@ -109,7 +111,7 @@ jobs:
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
-          payload-file-path: ${{ env.SLACK_PAYLOAD_FILE }}
+          payload-file-path: ${{ runner.temp }}/slack_payload.json
 
   remind-reviewers:
     name: Remind pending reviewers
@@ -117,8 +119,6 @@ jobs:
       github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'remind')
     runs-on: ubuntu-latest
-    env:
-      SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -137,6 +137,7 @@ jobs:
           # Used for users.lookupByEmail to mint <@U...> mentions; see
           # the assign-reviewer job for details.
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_PAYLOAD_FILE: ${{ runner.temp }}/slack_payload.json
         run: python scripts/pr_review_bot.py remind
 
       - name: Post reminder digest to Slack
@@ -145,4 +146,4 @@ jobs:
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
-          payload-file-path: ${{ env.SLACK_PAYLOAD_FILE }}
+          payload-file-path: ${{ runner.temp }}/slack_payload.json
