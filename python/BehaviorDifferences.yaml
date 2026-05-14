@@ -111,6 +111,20 @@ behavior_differences:
         `ProgrammingError("No results available (already consumed or not produced by this query)", errno=252009)` (`ER_NO_DATA_FOUND`).
       OLD driver: The same calls have no guard, so they raise `TypeError` because the cursor's internal result state is `None`.
 
+  24:
+    name: "validate_default_parameters skips client-side kwarg name/type warnings"
+    description: |
+      NEW driver: `validate_default_parameters` only controls server-side validation
+        (sends `CLIENT_VALIDATE_DEFAULT_PARAMETERS` session parameter so Snowflake
+        validates default database, schema, and warehouse at login). Client-side
+        parameter name and type checking is handled by the Rust core's param registry
+        for all connections regardless of this flag.
+      OLD driver: When `validate_default_parameters=True`, the connector also iterates
+        all connection kwargs and emits `UserWarning` for unknown parameter names or
+        type mismatches against `DEFAULT_CONFIGURATION`. This client-side validation
+        is not replicated because the Rust param registry already provides equivalent
+        coverage (unknown parameter warnings, type coercion) unconditionally.
+
   23:
     name: "Connection does not expose a public connect() method"
     description: |

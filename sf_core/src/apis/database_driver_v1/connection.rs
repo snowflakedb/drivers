@@ -184,13 +184,16 @@ impl DatabaseDriverV1 {
                     client_info.platforms = self.platforms().await.clone();
                     client_info.os_details = self.os_details().cloned();
                     let init_params = conn.init_session_parameters.clone();
+                    let validate_defaults = resolved
+                        .get_bool(param_names::VALIDATE_DEFAULT_PARAMETERS)
+                        .unwrap_or(false);
                     let resolved_snapshot = resolved.clone();
 
                     // Forward unrecognized settings as session parameters so
                     // drivers can set arbitrary Snowflake session params
                     // via regular connection options.
                     let unknown_settings = collect_unknown_settings(&conn.connection_seed);
-                    let init_params = match init_params {
+                    let mut init_params = match init_params {
                         Some(explicit) => {
                             // Normalize explicit keys to uppercase so precedence
                             // is case-insensitive (unknown settings are uppercased).
@@ -207,6 +210,15 @@ impl DatabaseDriverV1 {
                         None if !unknown_settings.is_empty() => Some(unknown_settings),
                         None => None,
                     };
+
+                    // When validate_default_parameters is enabled, tell the
+                    // server to validate default database/schema/warehouse.
+                    if validate_defaults {
+                        init_params
+                            .get_or_insert_with(HashMap::new)
+                            .entry("CLIENT_VALIDATE_DEFAULT_PARAMETERS".to_string())
+                            .or_insert_with(|| "true".to_string());
+                    }
 
                     (
                         config,

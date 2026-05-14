@@ -102,6 +102,8 @@ pub mod param_names {
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
     pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
+    // Validation
+    pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -872,6 +874,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         scope: ParamScope::Session,
         used_at_connect: false,
         mutable_after_connect: true,
+    },
+    // ── Validation ────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::VALIDATE_DEFAULT_PARAMETERS.as_str(),
+        aliases: &["VALIDATE_DEFAULT_PARAMETERS"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Ask the server to validate default database, schema, and warehouse at login",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
 ];
 

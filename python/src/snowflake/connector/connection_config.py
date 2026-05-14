@@ -152,6 +152,9 @@ class ConnectionConfig:
     user: str | None = None
     """Login username. Required"""
 
+    validate_default_parameters: bool | None = False
+    """Ask the server to validate default database, schema, and warehouse at login. Default: False"""
+
     verify_certificates: bool | None = True
     """Whether to verify TLS certificates. Default: True"""
 
@@ -327,6 +330,7 @@ class ConnectionConfig:
             "session_parameters",
             "token",
             "user",
+            "validate_default_parameters",
             "verify_certificates",
             "verify_hostname",
             "warehouse",
