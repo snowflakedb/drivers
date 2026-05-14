@@ -34,7 +34,8 @@ CI runs both via `.github/workflows/test-nodejs.yml`.
 ### Phase 1 — E2E test migration
 
 1. Triage each test file to determine if it should become an E2E test.
-2. Migrate using the rules in [MIGRATION_RULES.md](MIGRATION_RULES.md).
+2. Migrate using the `/migrate-nodejs-test @<file>` command, defined at
+   [`.cursor/commands/migrate-nodejs-test.md`](../../../.cursor/commands/migrate-nodejs-test.md).
 3. Verify the migrated test passes against both drivers.
 4. Delete the original test file from this folder.
 
