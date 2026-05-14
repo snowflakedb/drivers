@@ -300,7 +300,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: None,
         sensitive: false,
-        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)",
+        description: "Authenticator type for the connection",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,

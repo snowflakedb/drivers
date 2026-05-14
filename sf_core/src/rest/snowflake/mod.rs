@@ -2,6 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+mod external_browser;
 pub mod heartbeat;
 pub mod logout;
 mod native_okta;
@@ -16,17 +17,21 @@ use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
+use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
     AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::external_browser::{
+    DefaultBrowserOpener, external_browser_authenticate,
+};
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use crate::token_cache::{TokenCache, TokenType};
-use reqwest::{self, Method, header};
+use reqwest::{self, Method, StatusCode, header};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
@@ -38,6 +43,25 @@ use uuid::Uuid;
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
+
+/// Send an HTTP request with retry and return `(StatusCode, body_text)`.
+///
+/// Shared by `native_okta` and `external_browser` authentication flows.
+async fn request_text_with_retry(
+    build: impl Fn() -> reqwest::RequestBuilder,
+    ctx: &HttpContext,
+    policy: &RetryPolicy,
+) -> Result<(StatusCode, String), HttpError> {
+    execute_with_retry(build, ctx, policy, |resp| async move {
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| HttpError::Transport {
+            source: e,
+            location: Location::new(file!(), line!(), column!()),
+        })?;
+        Ok((status, text))
+    })
+    .await
+}
 
 // ─── Snowflake GS protocol error codes ───────────────────────────────────────
 /// GS error code returned when a session no longer exists on the server.
@@ -388,6 +412,26 @@ pub async fn auth_request_data(
             data.authenticator = Some(okta_config.okta_url.to_string());
             data.raw_saml_response = Some(saml_html.into());
         }
+        LoginMethod::ExternalBrowser {
+            username,
+            authentication_timeout_secs,
+        } => {
+            // TODO: cache SSO tokens (same approach as MFA tokens)
+            let result = external_browser_authenticate(
+                client,
+                login_parameters,
+                username,
+                *authentication_timeout_secs,
+                &DefaultBrowserOpener,
+            )
+            .await
+            .context(ExternalBrowserSnafu)?;
+
+            data.login_name = Some(username.clone());
+            data.authenticator = Some("EXTERNALBROWSER".to_string());
+            data.token = Some(result.token);
+            data.proof_key = Some(result.proof_key);
+        }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
             Credentials::Password { username, password } => {
                 data.login_name = Some(username);
@@ -560,6 +604,7 @@ pub async fn snowflake_login_with_client(
 
     let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
 
+    // TODO: cache SSO tokens (same approach as MFA tokens)
     // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
     // via the normal DUO push/passcode flow.
     if !auth_response.success && used_cached_mfa_token {
@@ -609,6 +654,7 @@ pub async fn snowflake_login_with_client(
 
     tracing::debug!("Login successful, extracting session tokens");
 
+    // TODO: cache SSO tokens (same approach as MFA tokens)
     // Cache MFA token from response if caching is enabled
     if let LoginMethod::UserPasswordMfa {
         username,
@@ -1570,6 +1616,12 @@ pub enum RestError {
     #[snafu(display("Native Okta SSO failed"))]
     NativeOkta {
         source: native_okta::NativeOktaError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("External browser SSO failed"))]
+    ExternalBrowser {
+        source: external_browser::ExternalBrowserError,
         #[snafu(implicit)]
         location: Location,
     },

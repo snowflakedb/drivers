@@ -268,6 +268,10 @@ pub enum LoginMethod {
         passcode: Option<SensitiveString>,
         client_store_temporary_credential: bool,
     },
+    ExternalBrowser {
+        username: String,
+        authentication_timeout_secs: u64,
+    },
 }
 
 impl LoginMethod {
@@ -402,7 +406,9 @@ impl LoginMethod {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 password: Self::non_empty_string(settings, "password")
-                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .context(MissingParameterSnafu {
+                        parameter: "password",
+                    })?
                     .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
@@ -457,7 +463,9 @@ impl LoginMethod {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 password: Self::non_empty_string(settings, "password")
-                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .context(MissingParameterSnafu {
+                        parameter: "password",
+                    })?
                     .into(),
                 passcode_in_password: settings
                     .get_bool("passcodeInPassword")
@@ -483,10 +491,21 @@ impl LoginMethod {
                     })
                     .unwrap_or(false),
             }),
+            "EXTERNALBROWSER" => {
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+                Ok(Self::ExternalBrowser {
+                    username: Self::non_empty_string(settings, "user")
+                        .context(MissingParameterSnafu { parameter: "user" })?,
+                    authentication_timeout_secs,
+                })
+            }
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)",
+                explanation: crate::config::AUTHENTICATOR_ALLOWED_VALUES,
             }
             .fail()?,
         }
@@ -873,6 +892,79 @@ mod tests {
     fn test_detect_os_version_not_empty() {
         let version = crate::telemetry::environment::detect_os_version();
         assert!(!version.is_empty());
+    }
+
+    // ─── External Browser config tests ───────────────────────────────────
+
+    fn external_browser_config(extras: Vec<(&str, Setting)>) -> (String, u64) {
+        let mut base = vec![
+            ("user", Setting::String("browser_user".to_string())),
+            (
+                "host",
+                Setting::String("account.snowflakecomputing.com".to_string()),
+            ),
+            ("account", Setting::String("account".to_string())),
+            (
+                "authenticator",
+                Setting::String("EXTERNALBROWSER".to_string()),
+            ),
+        ];
+        base.extend(extras);
+        let settings = create_test_settings(base);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::ExternalBrowser {
+                username,
+                authentication_timeout_secs,
+            } => (username, authentication_timeout_secs),
+            other => panic!("Expected ExternalBrowser, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_external_browser_happy_path() {
+        let (user, timeout) = external_browser_config(vec![]);
+        assert_eq!(user, "browser_user");
+        assert_eq!(timeout, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn test_external_browser_custom_timeout() {
+        let (_, timeout) = external_browser_config(vec![(
+            "authentication_timeout",
+            Setting::String("30".to_string()),
+        )]);
+        assert_eq!(timeout, 30);
+    }
+
+    #[test]
+    fn test_external_browser_invalid_timeout_uses_default() {
+        let (_, timeout) = external_browser_config(vec![(
+            "authentication_timeout",
+            Setting::String("abc".to_string()),
+        )]);
+        assert_eq!(timeout, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn test_external_browser_missing_user_fails() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("account.snowflakecomputing.com".to_string()),
+            ),
+            ("account", Setting::String("account".to_string())),
+            (
+                "authenticator",
+                Setting::String("EXTERNALBROWSER".to_string()),
+            ),
+        ]);
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("user"),
+            "Expected error about missing user, got: {err_msg}"
+        );
     }
 
     // ── log_query_text / log_query_parameters resolvers ──────────────

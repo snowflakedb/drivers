@@ -42,7 +42,7 @@ class ConnectionConfig:
     """Timeout in seconds for native Okta SSO authentication. Default: 120"""
 
     authenticator: str | None = None
-    """Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)"""
+    """Authenticator type for the connection"""
 
     client_app_id: str | None = None
     """Application identifier sent by the client wrapper (e.g. PythonConnector)"""

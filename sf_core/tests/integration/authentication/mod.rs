@@ -1,3 +1,4 @@
+pub mod external_browser;
 pub mod native_okta;
 pub mod os_details;
 pub mod private_key_auth;

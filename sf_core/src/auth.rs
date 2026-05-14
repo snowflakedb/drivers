@@ -127,11 +127,16 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             username: username.clone(),
             password: password.clone(),
         }),
-        // NativeOkta performs its own multi-step SAML flow in auth_request_data()
-        // and never reaches create_credentials(). Return an error rather than panicking
-        // to avoid a footgun if a future caller invokes this function directly.
+        // NativeOkta and ExternalBrowser perform their own multi-step flows in
+        // auth_request_data() and never reach create_credentials(). Return an error
+        // rather than panicking to avoid a footgun if a future caller invokes this
+        // function directly.
         LoginMethod::NativeOkta(_) => UnsupportedLoginMethodSnafu {
             method: "NativeOkta",
+        }
+        .fail(),
+        LoginMethod::ExternalBrowser { .. } => UnsupportedLoginMethodSnafu {
+            method: "ExternalBrowser",
         }
         .fail(),
         LoginMethod::PrivateKey {
