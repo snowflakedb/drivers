@@ -12,7 +12,7 @@ Subcommands
 -----------
 ``assign``
     Pick a random reviewer from the candidates listed in
-    ``.github/CODEOWNERS`` (or another path via ``CODEOWNERS_PATH``),
+    ``.github/reviewers`` (or another path via ``REVIEWERS_PATH``),
     excluding the PR author and any user already requested for review.
     Requests review and adds the user as an assignee via the REST
     endpoints ``POST /pulls/:n/requested_reviewers`` and
@@ -25,9 +25,11 @@ Subcommands
     Designed to be run from a ``pull_request_target`` workflow on the
     ``opened`` and ``ready_for_review`` activity types. Drafts are skipped.
 
-    The candidate pool is the union of all individual ``@login`` entries in
-    CODEOWNERS — team references (``@org/team-slug``) are ignored on
-    purpose so the bot does not need ``read:org`` to resolve membership.
+    The candidate pool is the list of individual ``@login`` entries in
+    ``.github/reviewers``. CODEOWNERS itself references only the team
+    alias so GitHub's native code-owner request fires once against the
+    team; the bot keeps its own individual pool here to avoid needing
+    ``read:org`` to resolve team membership.
 
 ``remind``
     Iterate every open non-draft PR in the repository (via ``gh``) and
@@ -80,9 +82,9 @@ Assign-only environment variables
 ``PR_NUMBER``
     Pull request number to operate on.
 
-``CODEOWNERS_PATH`` (optional)
-    Path to the CODEOWNERS file to parse. Defaults to
-    ``.github/CODEOWNERS``.
+``REVIEWERS_PATH`` (optional)
+    Path to the reviewer-pool file to parse. Defaults to
+    ``.github/reviewers``.
 
 Reviewer display names
 ----------------------
@@ -125,7 +127,7 @@ from typing import Any, Iterable
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("pr-review-bot")
 
-DEFAULT_CODEOWNERS_PATH = Path(".github/CODEOWNERS")
+DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
 
 # Review states that mean the reviewer has taken action on the PR.
 ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED"}
@@ -291,47 +293,40 @@ def github_commit_author(repo: str, login: str) -> tuple[str | None, str | None]
 
 
 # ---------------------------------------------------------------------------
-# CODEOWNERS parsing
+# Reviewer pool parsing
 # ---------------------------------------------------------------------------
 
 
-def parse_codeowners(path: Path = DEFAULT_CODEOWNERS_PATH) -> list[str]:
-    """Return the unique individual ``@login`` owners listed in *path*.
+def parse_reviewers(path: Path = DEFAULT_REVIEWERS_PATH) -> list[str]:
+    """Return the unique individual ``@login`` reviewers listed in *path*.
 
-    Team references (``@org/team-slug``) and email addresses are skipped.
+    One handle per line, ``#`` comments and blank lines are ignored.
+    Team references (``@org/team-slug``) are rejected — this file is the
+    bot's individual-pool source of truth; resolving teams would require
+    ``read:org``.
     """
     if not path.exists():
-        raise FileNotFoundError(f"CODEOWNERS file not found at {path}")
+        raise FileNotFoundError(f"Reviewers file not found at {path}")
 
     individuals: set[str] = set()
-    skipped_teams: set[str] = set()
 
     for raw_line in path.read_text().splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line:
             continue
-        tokens = line.split()
-        if len(tokens) < 2:
+        if not line.startswith("@"):
+            log.warning("Ignoring malformed line in %s: %r", path, raw_line)
             continue
-        for token in tokens[1:]:
-            if not token.startswith("@"):
-                continue
-            handle = token[1:]
-            if "/" in handle:
-                skipped_teams.add(token)
-                continue
-            individuals.add(handle)
-
-    if skipped_teams:
-        # The bot intentionally does not resolve team membership (no
-        # read:org needed). Teams are commonly kept alongside individuals
-        # for native CODEOWNERS purposes, so this is INFO, not a warning.
-        log.info(
-            "Skipped team reference(s) in %s: %s (individuals are used "
-            "for random reviewer selection).",
-            path,
-            ", ".join(sorted(skipped_teams)),
-        )
+        handle = line[1:]
+        if "/" in handle:
+            log.warning(
+                "Ignoring team reference %r in %s; list individual "
+                "@logins only.",
+                line,
+                path,
+            )
+            continue
+        individuals.add(handle)
 
     return sorted(individuals)
 
@@ -596,8 +591,8 @@ def cmd_assign(args: argparse.Namespace) -> int:
         log.error("PR_NUMBER is required for assign mode")
         return 2
     pr_number = int(pr_number_env)
-    codeowners_path = Path(
-        os.environ.get("CODEOWNERS_PATH") or DEFAULT_CODEOWNERS_PATH
+    reviewers_path = Path(
+        os.environ.get("REVIEWERS_PATH") or DEFAULT_REVIEWERS_PATH
     )
     channel, payload_file = _slack_runtime()
 
@@ -620,19 +615,19 @@ def cmd_assign(args: argparse.Namespace) -> int:
             f"({', '.join(already_requested)}); skipping auto-assign."
         )
 
-    log.info("Reading reviewer pool from %s ...", codeowners_path)
+    log.info("Reading reviewer pool from %s ...", reviewers_path)
     try:
-        candidates = parse_codeowners(codeowners_path)
+        candidates = parse_reviewers(reviewers_path)
     except FileNotFoundError as e:
         log.error("%s. Aborting assign.", e)
         return 1
 
-    log.info("CODEOWNERS lists %d individual reviewer(s).", len(candidates))
+    log.info("%s lists %d individual reviewer(s).", reviewers_path, len(candidates))
     if not candidates:
         log.warning(
             "No individual @logins found in %s. Add reviewers explicitly to "
             "enable auto-assign.",
-            codeowners_path,
+            reviewers_path,
         )
         set_gh_output("skip", "true")
         return 0

@@ -1,0 +1,32 @@
+# Reviewer pool for the PR review bot (see .github/workflows/pr-review-bot.yml
+# and scripts/pr_review_bot.py).
+#
+# One `@login` per line. Blank lines and `#` comments are ignored. Team
+# references (`@org/team-slug`) are not supported — list individual
+# members. The bot picks one of these at random when a PR is opened or
+# marked ready-for-review.
+#
+# CODEOWNERS (`.github/CODEOWNERS`) intentionally references only the
+# team `@snowflakedb/snow-drivers-warsaw` so GitHub's native code-owner
+# review-request sends a single team ping instead of pinging everyone.
+# This file is the bot's separate source of truth for the individual
+# members of that team.
+#
+# Keep this list in sync with the team roster.
+
+@sfc-gh-daniszewski
+@sfc-gh-turbaszek
+@sfc-gh-rsavenok
+@sfc-gh-boler
+@sfc-gh-rkowalski
+@sfc-gh-pbulawa
+@sfc-gh-dheyman
+@sfc-gh-pfus
+@sfc-gh-mhofman
+@sfc-gh-pczajka
+@sfc-gh-jszczerbinski
+@sfc-gh-fpawlowski
+@sfc-gh-ddas
+@sfc-gh-makowalski
+@sfc-gh-asolarski
+@sfc-gh-mcepiga
