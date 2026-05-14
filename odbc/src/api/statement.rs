@@ -168,7 +168,15 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     *guard.active_cancel.lock() = None;
 
     tracing::info!("exec_direct: response={:?}", response);
-    let response = response?;
+    let response = match response {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(qid) = e.query_id() {
+                inner.last_query_id = Some(qid.to_owned());
+            }
+            return Err(e);
+        }
+    };
 
     update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
     apply_execute_response(&mut inner, stmt_handle, response, ExecutionOrigin::Direct)?;
@@ -613,7 +621,15 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     });
 
     *guard.active_cancel.lock() = None;
-    let response = response?;
+    let response = match response {
+        Ok(r) => r,
+        Err(e) => {
+            if let Some(qid) = e.query_id() {
+                inner.last_query_id = Some(qid.to_owned());
+            }
+            return Err(e);
+        }
+    };
 
     tracing::info!("execute: Successfully executed statement");
     let mut settings = dbc.connection.lock().numeric_settings;
