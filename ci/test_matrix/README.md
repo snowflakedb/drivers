@@ -234,15 +234,26 @@ python ci/test_matrix/generate_matrix.py [--driver odbc|python|core | --all]
 python ci/test_matrix/generate_matrix.py --driver <D> --event <NAME> --emit-active
 ```
 
-| Flag             | Description                                                                |
-|------------------|----------------------------------------------------------------------------|
-| `--driver <D>`   | Generate `<D>-gha.json` for one driver.                                    |
-| `--all`          | Regenerate every driver in one shot.                                       |
-| `--event <NAME>` | GHA event name for `--emit-active`.                                        |
-| `--emit-active`  | Print `matrix=<json>` for rows active at the level implied by `--event`.   |
+| Flag                    | Description                                                                |
+|-------------------------|----------------------------------------------------------------------------|
+| `--driver <D>`          | Generate `<D>-gha.json` for one driver.                                    |
+| `--all`                 | Regenerate every driver in one shot.                                       |
+| `--event <NAME>`        | GHA event name for `--emit-active` / `--emit-build-targets`.               |
+| `--emit-active`         | Print `matrix=<json>` for rows active at the level implied by `--event`.   |
+| `--emit-build-targets`  | Print `targets=<json>` for wheel-build targets active at the level implied by `--event`. Python only. |
 
-`--driver` and `--all` are mutually exclusive; `--emit-active` requires both
-`--driver` and `--event`.
+`--driver` and `--all` are mutually exclusive. `--emit-active` and
+`--emit-build-targets` each require both `--driver` and `--event`, and
+are mutually exclusive with each other.
+
+The `--emit-build-targets` mode walks the active test matrix, finds rows
+with a `wheel_artifact`, and emits the JSON shape consumed by
+`_build-python-wheels.yml`'s `targets:` input
+(`{"linux_x86": ["3.13"], "macos_arm": ["3.12"], …}`). Sdist-only py
+versions (`SDIST_PY`) are skipped because their rows carry no
+`wheel_artifact`. The translation `(OS, Arch) → cibw_key` lives in
+`PYTHON_PLATFORM`'s `cibw_key` field; `validate_mappings` enforces every
+row declares it.
 
 ## Row schema
 

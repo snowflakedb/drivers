@@ -46,24 +46,32 @@ jobs:
     needs: scope-label-gate
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.read.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      build-targets: ${{ steps.targets.outputs.targets }}
     steps:
       - uses: actions/checkout@v4
-      - id: read
+      - id: matrix
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           python ci/test_matrix/generate_matrix.py \
             --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
             >> "$GITHUB_OUTPUT"
+      - id: targets
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          python ci/test_matrix/generate_matrix.py \
+            --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-targets \
+            >> "$GITHUB_OUTPUT"
 
   # ── Build all wheels via shared reusable workflow ────────────────────
   build_wheels:
-    needs: detect-changes
+    needs: [detect-changes, load-python-matrix]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
-      targets: '{"linux_x86": ["3.13"], "linux_aarch": ["3.11","3.14"], "macos_arm": ["3.12","3.14"], "macos_x86": ["3.11","3.12","3.13","3.14"], "windows_x86": ["3.11","3.12","3.14"], "windows_arm": ["3.11","3.12"]}'
+      targets: ${{ needs.load-python-matrix.outputs.build-targets }}
 
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
@@ -487,19 +495,18 @@ jobs:
       matrix:
         # Reference tests must NOT run on Azure: snowflake-connector-python
         # against an Azure deployment is flaky here and destabilises every
-        # PR. Pick PR_CELLS rows whose Cloud is aws/gcp. Both rows below
+        # PR. Pick PR_CELLS rows whose Cloud is aws/gcp. Each row below
         # must also exactly match an entry in ci/test_matrix/models/python.py
         # PR_CELLS (same os/py/cloud_provider/hatch_env) so the artifact
         # downloads in python_compare_results line up with python_tests.
+        # macOS reference comparison was removed when the macOS PR cell
+        # was deferred to merge-queue scope (limited macOS runner
+        # availability). Pandas reference coverage runs only on Ubuntu now.
         include:
           - hatch_env: reference
             os: ubuntu-latest
             py: "3.13"
             cloud_provider: aws
-          - hatch_env: reference-pandas
-            os: macos-latest
-            py: "3.10"
-            cloud_provider: gcp
     runs-on: ${{ matrix.os }}
     name: python_tests_reference (${{ matrix.hatch_env }})
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
@@ -670,18 +677,16 @@ jobs:
         # Each row must mirror a python_tests_reference row's
         # (os, py, cloud_provider) so artifact downloads pair up; keep this
         # block in sync with the matrix above. Cloud is constrained to
-        # aws/gcp — Azure is excluded for reference stability.
+        # aws/gcp — Azure is excluded for reference stability. The macOS
+        # comparison row was removed when the macOS PR cell was deferred
+        # to merge-queue scope; pandas reference coverage now runs only
+        # on Ubuntu.
         include:
           - hatch_env: test
             ref_hatch_env: reference
             os: ubuntu-latest
             py: "3.13"
             cloud_provider: aws
-          - hatch_env: test-pandas
-            ref_hatch_env: reference-pandas
-            os: macos-latest
-            py: "3.10"
-            cloud_provider: gcp
     runs-on: ubuntu-latest
     name: python_compare_results (${{ matrix.hatch_env }})
     env:
