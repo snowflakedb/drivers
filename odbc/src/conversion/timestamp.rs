@@ -14,7 +14,8 @@ use crate::conversion::error::{
     UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ConversionError, DatetimeOutOfSqlRangeSnafu, InvalidArrowValueSnafu, ReadArrowError,
+    SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
     read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
@@ -201,6 +202,24 @@ pub(crate) struct TzInstant {
 // =============================================================================
 // Arrow reading helpers
 // =============================================================================
+
+/// Reject datetimes whose year falls outside [`SQL_DATETIME_YEAR_RANGE`].
+/// Called from the `validate_value` impls on the timestamp types — the
+/// SQL-range check is a policy concern (not a decode concern), so it
+/// runs after `read_arrow_type` succeeds and surfaces as
+/// `ConversionError::DatetimeOutOfSqlRange` (SQLSTATE 22008).
+fn check_sql_year(dt: &NaiveDateTime) -> Result<(), ConversionError> {
+    if !SQL_DATETIME_YEAR_RANGE.contains(&dt.year()) {
+        return DatetimeOutOfSqlRangeSnafu {
+            reason: format!(
+                "TIMESTAMP year {} is outside SQL range 0001..9999",
+                dt.year()
+            ),
+        }
+        .fail();
+    }
+    Ok(())
+}
 
 /// Split a raw scaled epoch value into (epoch_seconds, nanoseconds).
 ///
@@ -1009,6 +1028,10 @@ macro_rules! impl_snowflake_timestamp {
     (@common $name:ident) => {
         impl SnowflakeType for $name {
             type Representation<'a> = NaiveDateTime;
+
+            fn validate_value(&self, value: &NaiveDateTime) -> Result<(), ConversionError> {
+                check_sql_year(value)
+            }
         }
 
         impl ReadArrowType<PrimitiveArray<Int64Type>> for $name {
@@ -1137,6 +1160,10 @@ pub(crate) struct SnowflakeTimestampTz {
 
 impl SnowflakeType for SnowflakeTimestampTz {
     type Representation<'a> = TzInstant;
+
+    fn validate_value(&self, value: &TzInstant) -> Result<(), ConversionError> {
+        check_sql_year(&value.utc)
+    }
 }
 
 impl ReadArrowType<StructArray> for SnowflakeTimestampTz {

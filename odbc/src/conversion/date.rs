@@ -13,7 +13,8 @@ use crate::conversion::error::{
     JsonBindingError, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    ConversionError, DatetimeOutOfSqlRangeSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
     read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
@@ -49,6 +50,16 @@ const UNIX_EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(1970, 1, 1) {
 
 impl SnowflakeType for SnowflakeDate {
     type Representation<'a> = NaiveDate;
+
+    fn validate_value(&self, value: &NaiveDate) -> Result<(), ConversionError> {
+        if !SQL_DATETIME_YEAR_RANGE.contains(&value.year()) {
+            return DatetimeOutOfSqlRangeSnafu {
+                reason: format!("DATE year {} is outside SQL range 0001..9999", value.year()),
+            }
+            .fail();
+        }
+        Ok(())
+    }
 }
 
 impl ReadArrowType<PrimitiveArray<Date32Type>> for SnowflakeDate {
@@ -322,5 +333,54 @@ mod format_date_ascii_tests {
         let mut buf = [0u8; 32];
         let d = NaiveDate::from_ymd_opt(-44, 3, 15).unwrap();
         assert_eq!(format_date_ascii(&d, &mut buf), "-044-03-15");
+    }
+}
+
+#[cfg(test)]
+mod read_arrow_type_tests {
+    use super::*;
+    use arrow::array::PrimitiveArray;
+
+    fn days_since_epoch(year: i32, month: u32, day: u32) -> i32 {
+        let target = NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        (target - UNIX_EPOCH).num_days() as i32
+    }
+
+    #[test]
+    fn reads_year_1_boundary() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(days_since_epoch(1, 1, 1))]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveDate::from_ymd_opt(1, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn reads_year_9999_boundary() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(days_since_epoch(9999, 12, 31))]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveDate::from_ymd_opt(9999, 12, 31).unwrap());
+    }
+
+    #[test]
+    fn rejects_year_before_1() {
+        let day_count = days_since_epoch(1, 1, 1) - 1;
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(day_count)]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        let err = SnowflakeDate.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_year_after_9999() {
+        let day_count = days_since_epoch(9999, 12, 31) + 1;
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(day_count)]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        let err = SnowflakeDate.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
     }
 }
