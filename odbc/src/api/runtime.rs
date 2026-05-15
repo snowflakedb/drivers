@@ -20,6 +20,12 @@ use crate::api::telemetry::{
 /// Without this, `env_freed` can release `STATE`'s write lock and then spend a long time in Tokio
 /// teardown while `globals` is already `None`, letting another thread run `env_allocated` and
 /// create a second runtime + client while the first is still shutting down.
+///
+/// **Lock order:** [`env_allocated`] must take this mutex **before** any `STATE` write lock.
+/// [`env_freed`] takes `STATE` first, then this mutex only on the last-env path—so the slow path
+/// of `env_allocated` must never do `STATE` → release → `GLOBALS_TEARDOWN_LOCK`, which would
+/// invert the order relative to `env_freed` and can deadlock (seen as ODBC CI failures under
+/// parallel load, e.g. macOS matrix).
 static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 
 /// Capacity of the in-process telemetry channel. At ~32 B per event, the
@@ -184,56 +190,52 @@ pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
 }
 
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
+    // Take the teardown mutex before `STATE`'s write lock so we never invert lock order relative
+    // to `env_freed` (which does `STATE` then teardown on the last-env path).
+    let _teardown = GLOBALS_TEARDOWN_LOCK.lock();
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     if guard.globals.is_some() {
         guard.env_count += 1;
         return Ok(());
     }
-    drop(guard);
-
-    let _teardown = GLOBALS_TEARDOWN_LOCK.lock();
-
-    let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
-    if guard.globals.is_none() {
-        let log_manager = sf_core::logging::LogManager::for_odbc();
-        if let Some(lm) = &log_manager {
-            crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());
-        }
-        let providers = DriverProviders {
-            log_manager,
-            wrapper_presets: WrapperPresets::odbc(),
-            ..Default::default()
-        };
-
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .context(RuntimeCreationSnafu)?;
-        // Single-worker runtime dedicated to the telemetry drainer task
-        // (see the `OdbcGlobals` doc-comment for why the split).
-        let telemetry_runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .thread_name("odbc-telemetry")
-            .enable_all()
-            .build()
-            .context(RuntimeCreationSnafu)?;
-        let client = Arc::new(database_driver_client_with(providers));
-        let (telemetry_tx, telemetry_rx) = mpsc::channel(TELEMETRY_QUEUE_CAPACITY);
-        // Long-lived drainer: returns when `telemetry_tx` is dropped at
-        // env teardown (the only `Sender` lives in `OdbcGlobals`).
-        let drain_client = Arc::clone(&client);
-        telemetry_runtime.spawn(drain_telemetry(telemetry_rx, drain_client));
-        guard.globals = Some(Arc::new(OdbcGlobals {
-            runtime,
-            telemetry_runtime: Some(telemetry_runtime),
-            client,
-            telemetry_tx,
-            env_registry: HandleManager::new(),
-            dbc_registry: HandleManager::new(),
-            stmt_registry: HandleManager::new(),
-        }));
-        tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
+    let log_manager = sf_core::logging::LogManager::for_odbc();
+    if let Some(lm) = &log_manager {
+        crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());
     }
+    let providers = DriverProviders {
+        log_manager,
+        wrapper_presets: WrapperPresets::odbc(),
+        ..Default::default()
+    };
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context(RuntimeCreationSnafu)?;
+    // Single-worker runtime dedicated to the telemetry drainer task
+    // (see the `OdbcGlobals` doc-comment for why the split).
+    let telemetry_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("odbc-telemetry")
+        .enable_all()
+        .build()
+        .context(RuntimeCreationSnafu)?;
+    let client = Arc::new(database_driver_client_with(providers));
+    let (telemetry_tx, telemetry_rx) = mpsc::channel(TELEMETRY_QUEUE_CAPACITY);
+    // Long-lived drainer: returns when `telemetry_tx` is dropped at
+    // env teardown (the only `Sender` lives in `OdbcGlobals`).
+    let drain_client = Arc::clone(&client);
+    telemetry_runtime.spawn(drain_telemetry(telemetry_rx, drain_client));
+    guard.globals = Some(Arc::new(OdbcGlobals {
+        runtime,
+        telemetry_runtime: Some(telemetry_runtime),
+        client,
+        telemetry_tx,
+        env_registry: HandleManager::new(),
+        dbc_registry: HandleManager::new(),
+        stmt_registry: HandleManager::new(),
+    }));
+    tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
     guard.env_count += 1;
     Ok(())
 }
