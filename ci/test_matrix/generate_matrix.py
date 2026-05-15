@@ -363,6 +363,18 @@ def _build_gha_row(
             pass  # workflow takes the sdist path when wheel_artifact is unset
         elif py and platform is not None and py in platform["wheels"]:
             row["wheel_artifact"] = platform["wheel_artifact"]
+            # Propagate colocation routing flag + build-time fields. Native
+            # lanes (cross_compile not set / False) carry cibw_arch +
+            # cargo_extra_args + lib_name so python_checks can build the
+            # wheel inline. cross_compile=True lanes (linux_x86, linux_aarch,
+            # windows_arm) keep the artifact-download path and don't need
+            # build fields on the test row.
+            if platform.get("cross_compile"):
+                row["cross_compile"] = True
+            else:
+                for key in ("cibw_arch", "cargo_extra_args", "lib_name"):
+                    if key in platform:
+                        row[key] = platform[key]
         else:
             return None
         row["hatch_env"] = hatch_env or "test"
@@ -372,9 +384,14 @@ def _build_gha_row(
             return None
         row["driver_artifact"] = platform["driver_artifact"]
         row["driver_lib"] = platform["driver_lib"]
-        # Windows-x86 needs the explicit msvc_arch and vcpkg_triplet that the
-        # workflow's defaults (amd64/x64-windows) would otherwise hide.
-        for key in ("msvc_arch", "vcpkg_triplet"):
+        # Inline-colocated odbc_checks runs `cargo build --package odbc` on
+        # the test runner before tests, so each row needs the build-time
+        # fields previously consumed by the (now-removed) build_odbc_driver
+        # job: cache_key for cargo cache, cargo_extra for feature flags
+        # (e.g. --features vendored-openssl on Windows), cargo_target for
+        # cross-compile lanes (e.g. i686-pc-windows-msvc on Windows x86).
+        row["cache_key"] = platform["cache_key"]
+        for key in ("cargo_extra", "cargo_target", "msvc_arch", "vcpkg_triplet"):
             if key in platform:
                 row[key] = platform[key]
 
@@ -677,6 +694,13 @@ def build_targets(driver: str, event: str | None, labels: list[str] | None = Non
         if not artifact:
             # py3.10 sdist rows and any other no-wheel rows are skipped: the
             # build workflow doesn't need to produce a wheel for them.
+            continue
+        if not row.get("cross_compile"):
+            # Native lanes (macos_arm, macos_x86, windows_x64) build the
+            # wheel inline inside python_checks — no separate build_wheels
+            # job needed for them. Only cross_compile=True lanes
+            # (linux_x86 container build, linux_aarch QEMU cross-compile,
+            # windows_arm manual path) still feed `targets:` here.
             continue
         pair = artifact_to_pair[artifact]
         cibw_key = PYTHON_PLATFORM[pair]["cibw_key"]

@@ -1010,10 +1010,15 @@ class BuildTargetsTests(unittest.TestCase):
             if r.get("wheel_artifact")
         ]
 
+    def _active_cross_compile_wheel_rows(self, level: str) -> list:
+        # Only cross_compile lanes still need an out-of-band wheel build via
+        # build_wheels — native lanes self-build inline in python_checks.
+        return [r for r in self._active_wheel_rows(level) if r.get("cross_compile")]
+
     def _expected_targets(self, level: str) -> dict[str, set[str]]:
         artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
         out: dict[str, set[str]] = {}
-        for r in self._active_wheel_rows(level):
+        for r in self._active_cross_compile_wheel_rows(level):
             pair = artifact_to_pair[r["wheel_artifact"]]
             out.setdefault(gm.PYTHON_PLATFORM[pair]["cibw_key"], set()).add(r["py"])
         return out
@@ -1085,26 +1090,28 @@ class BuildTargetsTests(unittest.TestCase):
                     )
 
     def test_no_underbuild(self) -> None:
-        # Every active test row with a wheel_artifact has a (cibw_key, py)
-        # entry in build_targets. Catches "test row references a wheel that
-        # won't be built", which would 404 actions/download-artifact at runtime.
+        # Every active CROSS_COMPILE wheel row has a (cibw_key, py) entry in
+        # build_targets. Native-lane rows self-build inline in python_checks
+        # and don't need a build_wheels artifact, so they're excluded from
+        # this check. Catches "cross-compile test row references a wheel
+        # that won't be built", which would 404 actions/download-artifact.
         artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
         for level, targets in [
             ("pr", self.targets_pr),
             ("merge", self.targets_merge),
             ("nightly", self.targets_nightly),
         ]:
-            for r in self._active_wheel_rows(level):
+            for r in self._active_cross_compile_wheel_rows(level):
                 pair = artifact_to_pair[r["wheel_artifact"]]
                 cibw_key = gm.PYTHON_PLATFORM[pair]["cibw_key"]
                 self.assertIn(
                     cibw_key, targets,
-                    f"[{level}] test row {r['name']} needs wheel for {cibw_key} "
+                    f"[{level}] cross_compile test row {r['name']} needs wheel for {cibw_key} "
                     f"but build_targets has no entry for that platform",
                 )
                 self.assertIn(
                     r["py"], targets[cibw_key],
-                    f"[{level}] test row {r['name']} needs py{r['py']} on {cibw_key} "
+                    f"[{level}] cross_compile test row {r['name']} needs py{r['py']} on {cibw_key} "
                     f"but build_targets[{cibw_key}] = {targets[cibw_key]}",
                 )
 
@@ -1125,24 +1132,54 @@ class BuildTargetsTests(unittest.TestCase):
 
     def test_nightly_targets_match_legacy_hardcoded_json(self) -> None:
         # Regression guard: at nightly scope the generator output must match
-        # the JSON literal previously hardcoded in test-python.yml. Pins the
-        # migration so a future PR can't silently shrink wheel coverage at
-        # nightly without a corresponding model edit.
-        legacy = {
+        # the cross-compile-only set after Python colocation. Native lanes
+        # (macos arm/x64, windows x64) self-build inline in python_checks
+        # and are no longer in build_targets — only cross_compile lanes
+        # (linux_x86 container, linux_aarch QEMU, windows_arm manual) remain.
+        # Pins the migration so a future PR can't silently shrink wheel
+        # coverage at nightly without a corresponding model edit.
+        legacy_cross_compile = {
             "linux_x86":   {"3.13"},
             "linux_aarch": {"3.11", "3.14"},
-            "macos_arm":   {"3.12", "3.14"},
-            "macos_x86":   {"3.11", "3.12", "3.13", "3.14"},
-            "windows_x86": {"3.11", "3.12", "3.14"},
             "windows_arm": {"3.11", "3.12"},
         }
         actual = {k: set(v) for k, v in self.targets_nightly.items()}
         self.assertEqual(
-            actual, legacy,
-            "nightly build_targets diverged from the legacy test-python.yml "
-            "hardcoded targets JSON. If this is intentional (e.g. a PARAMS edit), "
-            "update the `legacy` dict in this test to match.",
+            actual, legacy_cross_compile,
+            "nightly build_targets diverged from the expected cross-compile-only "
+            "set. After Python colocation, native lanes (macos_arm, macos_x86, "
+            "windows_x86) build inline in python_checks and must NOT appear "
+            "here. If this divergence is intentional (e.g. a PARAMS edit or a "
+            "lane changing cross_compile flag), update this test to match.",
         )
+
+    def test_native_lane_rows_carry_inline_build_fields(self) -> None:
+        # After Python colocation, native-lane test rows (macos arm/x64,
+        # windows x64) carry the cibw_arch + cargo_extra_args + lib_name
+        # build-time fields needed by the inline cargo + cibuildwheel steps
+        # in python_checks. cross_compile=True rows (linux_x86, linux_aarch,
+        # windows_arm) do NOT carry these fields — they download the wheel
+        # via build_wheels artifact.
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        for r in self.gha:
+            if not r.get("wheel_artifact"):
+                continue
+            pair = artifact_to_pair[r["wheel_artifact"]]
+            platform_meta = gm.PYTHON_PLATFORM[pair]
+            if platform_meta.get("cross_compile"):
+                # Cross-compile row: carries cross_compile flag, no build fields
+                self.assertTrue(r.get("cross_compile"),
+                    f"row {r['name']} should carry cross_compile=True (lane {pair})")
+                for field in ("cibw_arch", "cargo_extra_args", "lib_name"):
+                    self.assertNotIn(field, r,
+                        f"cross_compile row {r['name']} should not carry {field}")
+            else:
+                # Native row: must carry inline-build fields
+                self.assertNotIn("cross_compile", r,
+                    f"native row {r['name']} should not carry cross_compile flag")
+                for field in ("cibw_arch", "cargo_extra_args", "lib_name"):
+                    self.assertIn(field, r,
+                        f"native row {r['name']} missing {field} required for inline build")
 
     def test_emit_build_targets_cli_format(self) -> None:
         # CLI emits exactly one line of the form `targets=<json>`.

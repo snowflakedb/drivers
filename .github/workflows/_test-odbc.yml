@@ -30,18 +30,19 @@ jobs:
             --driver odbc --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-matrix \
             >> "$GITHUB_OUTPUT"
 
-  # Build ODBC driver once per platform and share via artifact.
-  # Matrix is generated from ci/test_matrix/mappings/odbc.py via
-  # `--emit-build-matrix`; only platforms whose test rows are active at the
-  # current trigger level appear here.
-  build_odbc_driver:
+  odbc_checks:
+    # Combined integration tests + inline ODBC driver build. Each row runs
+    # `cargo build --package odbc` with its matrix-supplied flags, then runs
+    # the test suite against the just-built libsfodbc.* / sfodbc.dll. The
+    # _build-odbc-packages.yml workflow keeps its own build path for
+    # distribution installers (.msi / .rpm / .dmg).
     needs: load-odbc-matrix
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.load-odbc-matrix.outputs.build-matrix) }}
+        include: ${{ fromJSON(needs.load-odbc-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    name: build_odbc_driver (${{ matrix.name }})
+    name: odbc_checks (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,6 +50,7 @@ jobs:
       - name: Setup ODBC build environment
         uses: ./.github/actions/setup-odbc-build-env
 
+      # ── Inline ODBC driver build (replaces artifact download) ──
       - name: Cache Rust dependencies
         id: rust-cache
         continue-on-error: true
@@ -57,17 +59,17 @@ jobs:
           mode: restore
           shared-key: ${{ matrix.cache_key }}
 
-      - name: Install dependencies (Linux)
+      - name: Install dependencies for ODBC build (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y unixodbc-dev
 
-      - name: Install dependencies (macOS)
+      - name: Install dependencies for ODBC build (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install unixodbc go
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
-      - name: Install Rust target
+      - name: Install Rust target (cross-compile lanes)
         if: matrix.cargo_target
         run: rustup target add ${{ matrix.cargo_target }}
 
@@ -95,10 +97,15 @@ jobs:
           Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
           if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
 
+      - name: Place driver in target/debug for tests (cross-compile lanes)
+        if: matrix.cargo_target
+        shell: bash
+        run: |
+          mkdir -p target/debug
+          cp "target/${{ matrix.cargo_target }}/debug/${{ matrix.driver_lib }}" "target/debug/${{ matrix.driver_lib }}"
+
       - name: Save Rust cache
         if: always()
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
@@ -107,33 +114,6 @@ jobs:
           shared-key: ${{ matrix.cache_key }}
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
-
-      - name: Upload ODBC driver
-        uses: actions/upload-artifact@v4
-        with:
-          name: odbc-driver-${{ matrix.name }}
-          path: ${{ matrix.cargo_target && format('target/{0}/debug', matrix.cargo_target) || 'target/debug' }}/${{ matrix.driver_lib }}
-
-  odbc_tests:
-    needs: [build_odbc_driver, load-odbc-matrix]
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.load-odbc-matrix.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
-    name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup ODBC build environment
-        uses: ./.github/actions/setup-odbc-build-env
-
-      - name: Download pre-built ODBC driver
-        uses: actions/download-artifact@v4
-        with:
-          name: odbc-driver-${{ matrix.driver_artifact }}
-          path: target/debug
 
       - name: Make driver executable (Unix)
         if: runner.os != 'Windows'
@@ -359,10 +339,10 @@ jobs:
           cache-hit: ${{ steps.brew-cache.outputs.cache-hit }}
 
   cleanup_odbc:
-    needs: odbc_tests
+    needs: odbc_checks
     # The parent already gates the entire reusable-workflow call on
     # detect-changes; whenever this workflow runs at all we want cleanup
-    # to follow odbc_tests regardless of pass/fail/cancel.
+    # to follow odbc_checks regardless of pass/fail/cancel.
     if: always()
     strategy:
       fail-fast: false

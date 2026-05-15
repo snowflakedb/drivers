@@ -47,6 +47,11 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       build-targets: ${{ steps.targets.outputs.targets }}
+      # Split outputs feed two parallel python_checks calls so native rows
+      # (which self-build sf_core + cibuildwheel inline) don't have to wait
+      # for build_wheels to produce cross-compile / sdist artifacts.
+      matrix-native: ${{ steps.split.outputs.matrix-native }}
+      matrix-artifact: ${{ steps.split.outputs.matrix-artifact }}
     steps:
       - uses: actions/checkout@v4
       - id: matrix
@@ -63,6 +68,19 @@ jobs:
           python ci/test_matrix/generate_matrix.py \
             --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-targets \
             >> "$GITHUB_OUTPUT"
+      - id: split
+        # native    = wheel_artifact set AND cross_compile not set/false
+        #             (macos arm/x64, windows x64) — inline cargo+cibuildwheel
+        # artifact  = cross_compile=true OR no wheel_artifact (sdist py3.10)
+        #             — needs build_wheels artifacts
+        env:
+          MATRIX_JSON: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          set -euo pipefail
+          NATIVE=$(printf '%s' "$MATRIX_JSON" | jq -c '[.[] | select(.wheel_artifact != null and (.cross_compile // false) == false)]')
+          ARTIFACT=$(printf '%s' "$MATRIX_JSON" | jq -c '[.[] | select((.cross_compile // false) == true or .wheel_artifact == null)]')
+          echo "matrix-native=$NATIVE" >> "$GITHUB_OUTPUT"
+          echo "matrix-artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
   # ── Build all wheels via shared reusable workflow ────────────────────
   build_wheels:
@@ -172,290 +190,32 @@ jobs:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
 
-  # Combined unit + integration tests with universal connector
-  python_tests:
+  # ── Combined unit + integration tests with universal connector ──
+  # Split into two parallel callers of the _python-checks.yml reusable
+  # workflow so native rows (which build sf_core + cibuildwheel inline on
+  # the test runner) don't have to wait for build_wheels to finish — they
+  # depend only on detect-changes + load-python-matrix. Artifact rows
+  # (cross-compile lanes + py3.10 sdist) still need build_wheels for the
+  # wheel / sdist they download, so they retain that dependency.
+  python_checks_native:
+    needs: [detect-changes, load-python-matrix]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    uses: ./.github/workflows/_python-checks.yml
+    with:
+      matrix-json: ${{ needs.load-python-matrix.outputs.matrix-native }}
+    secrets: inherit
+
+  python_checks:
     needs: [detect-changes, build_wheels, load-python-matrix]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.load-python-matrix.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
-    name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
-    env:
-      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
-    steps:
-      - name: Set UV cache dir
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            echo "UV_CACHE_DIR=$RUNNER_TEMP/.uv-cache" >> $GITHUB_ENV
-          else
-            echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
-          fi
-
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7.2.1
-        with:
-          version: "0.9.28"
-
-      # UV cache key intentionally omits matrix.cloud_provider: uv installs the same wheel +
-      # dependencies regardless of which cloud provider the E2E tests target, so sharing one
-      # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
-      # and improves hit rates.
-      # Restore uv cache for Linux + macOS (Unix runners). The id `uv-cache-unix`
-      # is referenced by the matching save step below — if you rename it here,
-      # rename it there too.
-      - name: Restore uv cache (Linux/macOS)
-        id: uv-cache-unix
-        if: runner.os != 'Windows'
-        # Cache restore failures never fail the job — fall back to clean install.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: /tmp/.uv-cache
-          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-          restore-keys: |
-            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-
-            uv-${{ matrix.os }}-${{ matrix.py }}-
-            uv-${{ matrix.os }}-
-
-      - name: Restore uv cache (Windows)
-        id: uv-cache-windows
-        if: runner.os == 'Windows'
-        # Cache restore failures never fail the job — fall back to clean install.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: ${{ runner.temp }}\.uv-cache
-          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-          restore-keys: |
-            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-
-            uv-${{ matrix.os }}-${{ matrix.py }}-
-            uv-${{ matrix.os }}-
-
-      - name: Set up Python ${{ matrix.py }}
-        # See comment in build_wheel job — ARM64 Windows needs explicit arch request
-        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
-
-      - name: Download wheel
-        if: matrix.wheel_artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.wheel_artifact }}_py${{ matrix.py }}
-          path: python/dist
-
-      - name: Download sdist
-        if: matrix.py == '3.10'
-        uses: actions/download-artifact@v4
-        with:
-          name: python-sdist
-          path: python/dist
-
-      # sdist installs build sf_core from source, so Rust is needed
-      - name: Restore Rust cache (sdist)
-        if: matrix.py == '3.10'
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: sdist-test
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-        shell: bash
-
-      - name: Setup OpenSSL (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        uses: ./.github/actions/setup-windows-openssl
-        with:
-          arch: arm64
-
-      - name: Configure ARM64 build environment
-        if: matrix.os == 'windows-11-arm'
-        shell: pwsh
-        run: |
-          echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
-          echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
-
-      - name: Setup OpenSSL (Windows x86_64)
-        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
-        uses: ./.github/actions/setup-windows-openssl
-        with:
-          arch: x86_64
-
-      - name: Install Hatch
-        run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
-
-      - name: Install snowflake ud driver from wheel (Linux/macOS)
-        if: runner.os != 'Windows' && matrix.wheel_artifact
-        working-directory: python
-        run: |
-          WHEELS=(dist/*.whl)
-          if [[ ${#WHEELS[@]} -ne 1 ]]; then
-            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
-          fi
-          export WHEEL_PATH="${WHEELS[0]}"
-          echo "Installing wheel: $WHEEL_PATH"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-
-      - name: Install snowflake ud driver from sdist (Linux/macOS)
-        if: runner.os != 'Windows' && !matrix.wheel_artifact
-        working-directory: python
-        run: |
-          SDISTS=(dist/*.tar.gz)
-          if [[ ${#SDISTS[@]} -ne 1 ]]; then
-            echo "::error::Expected exactly 1 sdist, found ${#SDISTS[@]}"; ls -la dist/; exit 1
-          fi
-          export WHEEL_PATH="${SDISTS[0]}"
-          echo "Installing sdist: $WHEEL_PATH"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-        env:
-          SKIP_CORE_BUILD: "false"
-
-      - name: Install snowflake ud driver from wheel (Windows)
-        if: runner.os == 'Windows' && matrix.wheel_artifact
-        working-directory: python
-        shell: pwsh
-        run: |
-          $wheels = @(Get-ChildItem dist/*.whl)
-          if ($wheels.Count -ne 1) {
-            Write-Error "Expected exactly 1 wheel, found $($wheels.Count)"; Get-ChildItem dist/; exit 1
-          }
-          $env:WHEEL_PATH = $wheels[0].FullName
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-
-      - name: Install snowflake ud driver from sdist (Windows)
-        if: runner.os == 'Windows' && !matrix.wheel_artifact
-        working-directory: python
-        shell: pwsh
-        run: |
-          $sdists = @(Get-ChildItem dist/*.tar.gz)
-          if ($sdists.Count -ne 1) {
-            Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
-          }
-          $env:WHEEL_PATH = $sdists[0].FullName
-          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
-        env:
-          SKIP_CORE_BUILD: "false"
-
-      - name: Run tests with coverage (Linux/macOS)
-        if: runner.os != 'Windows'
-        id: run_python_tests_unix
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        working-directory: python
-        run: |
-          mkdir -p reports
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
-            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json \
-            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Rerun failed Python tests (Linux/macOS)
-        if: steps.run_python_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
-        working-directory: python
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Run tests with coverage (Windows)
-        if: runner.os == 'Windows'
-        id: run_python_tests_windows
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        working-directory: python
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path reports
-          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov `
-            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json `
-            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml `
-            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml `
-            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-
-
-      - name: Rerun failed Python tests (Windows)
-        if: steps.run_python_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
-        working-directory: python
-        shell: pwsh
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-
-
-      - name: Upload test results as GitHub artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-universal-${{ env.MATRIX_KEY }}
-          path: python/reports/*-${{ env.MATRIX_KEY }}.*
-
-      # Prune unreachable entries (stale wheels, orphan metadata, old builds) before the cache
-      # save. Typically trims 30-50% of the cache, which directly reduces the post-job save time
-      # — particularly noticeable on Windows where tar/compression of many small files is slow.
-      # Python interpreters live in a separate uv "data" dir, not UV_CACHE_DIR, so pruning does
-      # not affect interpreter caching.
-      - name: Prune uv cache
-        if: always()
-        shell: bash
-        run: uv cache prune --ci
-
-      - name: Save uv cache (Linux/macOS)
-        if: always() && runner.os != 'Windows' && steps.uv-cache-unix.outputs.cache-hit != 'true'
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: /tmp/.uv-cache
-          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-
-      - name: Save uv cache (Windows)
-        # Skip when the exact key was already restored.
-        if: always() && runner.os == 'Windows' && steps.uv-cache-windows.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: ${{ runner.temp }}\.uv-cache
-          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-
-      - name: Save Rust cache (sdist)
-        if: always() && matrix.py == '3.10'
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps. Bounds slim + registry save + target save.
-        timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          shared-key: sdist-test
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+    uses: ./.github/workflows/_python-checks.yml
+    with:
+      matrix-json: ${{ needs.load-python-matrix.outputs.matrix-artifact }}
+    secrets: inherit
 
   cleanup_python:
-    needs: [detect-changes, python_tests]
-    if: always() && needs.python_tests.result != 'skipped'
+    needs: [detect-changes, python_checks, python_checks_native]
+    if: always() && (needs.python_checks.result != 'skipped' || needs.python_checks_native.result != 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -481,7 +241,7 @@ jobs:
   # Integration tests only with reference connector (for comparison).
   #
   # Each variant's (os, py, cloud_provider) must match a cell that
-  # python_tests emits at PR scope so python_compare_results can pair
+  # python_checks emits at PR scope so python_compare_results can pair
   # the reference and universal artifacts. See ci/test_matrix/models/python.py
   # PR_CELLS. Reference hatch envs install snowflake-connector-python from
   # PyPI (python/pyproject.toml reference / reference-pandas) and inherit
@@ -497,7 +257,7 @@ jobs:
         # PR. Pick PR_CELLS rows whose Cloud is aws/gcp. Each row below
         # must also exactly match an entry in ci/test_matrix/models/python.py
         # PR_CELLS (same os/py/cloud_provider/hatch_env) so the artifact
-        # downloads in python_compare_results line up with python_tests.
+        # downloads in python_compare_results line up with python_checks.
         # macOS reference comparison was removed when the macOS PR cell
         # was deferred to merge-queue scope (limited macOS runner
         # availability). Pandas reference coverage runs only on Ubuntu now.
@@ -529,7 +289,7 @@ jobs:
         shell: bash
 
       - name: Install Hatch
-        run: *setup_env
+        run: uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Run reference integration tests
         working-directory: python
@@ -659,16 +419,16 @@ jobs:
 
   # Compare results between connectors.
   #
-  # Each matrix row pairs a python_tests cell (os, py, cloud_provider, hatch_env)
+  # Each matrix row pairs a python_checks cell (os, py, cloud_provider, hatch_env)
   # with a python_tests_reference cell (same os, py, cloud_provider, paired
   # ref_hatch_env). Keep these in sync with python_tests_reference above and
   # with PR_CELLS in ci/test_matrix/models/python.py — otherwise the
   # artifact downloads below 404.
   python_compare_results:
-    needs: [detect-changes, python_tests, python_tests_reference]
+    needs: [detect-changes, python_checks, python_checks_native, python_tests_reference]
     if: |
       always() &&
-      needs.python_tests.result != 'skipped' &&
+      (needs.python_checks.result != 'skipped' || needs.python_checks_native.result != 'skipped') &&
       needs.python_tests_reference.result != 'skipped'
     strategy:
       fail-fast: false
@@ -712,7 +472,7 @@ jobs:
           path: ${{ github.workspace }}/reference-results
 
       - name: Install Hatch
-        run: *setup_env
+        run: uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Compare integration test results
         working-directory: python
@@ -726,7 +486,7 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [detect-changes, build_wheels, packaging_tests, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheels, packaging_tests, load-python-matrix, python_checks, python_checks_native, cleanup_python, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -734,8 +494,9 @@ jobs:
         run: |
           echo "=== Python CI Status ==="
 
-          # Check if tests were skipped
-          if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
+          # Check if tests were skipped (both python_checks legs skipped means
+          # detect-changes filtered Python out entirely)
+          if [[ "${{ needs.python_checks.result }}" == "skipped" && "${{ needs.python_checks_native.result }}" == "skipped" ]]; then
             echo "✓ Python tests were SKIPPED (no relevant changes detected)"
             echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
             exit 0
@@ -745,12 +506,14 @@ jobs:
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.python_checks.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.python_checks_native.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_wheels: ${{ needs.build_wheels.result }}"
             echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
-            echo "  - python_tests: ${{ needs.python_tests.result }}"
+            echo "  - python_checks: ${{ needs.python_checks.result }}"
+            echo "  - python_checks_native: ${{ needs.python_checks_native.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
             exit 1
@@ -760,7 +523,8 @@ jobs:
           echo "✓ Python CI PASSED"
           echo "  - build_wheels: ${{ needs.build_wheels.result }}"
           echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
-          echo "  - python_tests: ${{ needs.python_tests.result }}"
+          echo "  - python_checks: ${{ needs.python_checks.result }}"
+          echo "  - python_checks_native: ${{ needs.python_checks_native.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
           exit 0

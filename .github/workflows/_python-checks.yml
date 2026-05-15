@@ -1,0 +1,345 @@
+name: _python-checks
+
+# Reusable workflow that runs the colocated build+test job for Python.
+# Called twice from test-python.yml so native rows (no wheel-artifact
+# dependency) and artifact rows (cross-compile + sdist, need build_wheels)
+# can run with different `needs:` lists at the caller level — native rows
+# don't wait for build_wheels, artifact rows do.
+#
+# Each row's behaviour is gated by matrix flags:
+#   matrix.cross_compile=true      → download wheel produced by build_wheels
+#   matrix.wheel_artifact + !cross_compile → inline cargo + cibuildwheel build
+#   matrix.py == '3.10'            → download sdist produced by build_wheels
+#
+# Both invocations share this body to avoid drift; the only difference is
+# which slice of the load-python-matrix output is fed in via `matrix-json`.
+on:
+  workflow_call:
+    inputs:
+      matrix-json:
+        description: 'Matrix include array (JSON string) emitted by load-python-matrix'
+        type: string
+        required: true
+
+jobs:
+  python_checks:
+    # Skip cleanly when the caller passes an empty matrix slice (e.g. a
+    # PR-scope native subset that is empty for some PR).
+    if: inputs.matrix-json != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.matrix-json) }}
+    runs-on: ${{ matrix.os }}
+    name: python_checks ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
+    env:
+      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
+    steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "UV_CACHE_DIR=$RUNNER_TEMP/.uv-cache" >> $GITHUB_ENV
+          else
+            echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      # UV cache key intentionally omits matrix.cloud_provider: uv installs the same wheel +
+      # dependencies regardless of which cloud provider the E2E tests target, so sharing one
+      # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
+      # and improves hit rates.
+      - name: Restore uv cache (Linux/macOS)
+        id: uv-cache-unix
+        if: runner.os != 'Windows'
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-
+            uv-${{ matrix.os }}-${{ matrix.py }}-
+            uv-${{ matrix.os }}-
+
+      - name: Restore uv cache (Windows)
+        id: uv-cache-windows
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}\.uv-cache
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-
+            uv-${{ matrix.os }}-${{ matrix.py }}-
+            uv-${{ matrix.os }}-
+
+      - name: Set up Python ${{ matrix.py }}
+        # See comment in build_wheel job — ARM64 Windows needs explicit arch request
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
+
+      - name: Download wheel (cross-compile lanes only)
+        if: matrix.wheel_artifact && matrix.cross_compile
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.wheel_artifact }}_py${{ matrix.py }}
+          path: python/dist
+
+      # ── Inline native-lane build: cargo + cibuildwheel on the test runner ──
+      # Native lanes (macos arm/x64, windows x64) build sf_core and the wheel
+      # inline via cibuildwheel, then run tests against the just-built wheel.
+      # cross_compile=True lanes (linux_x86, linux_aarch, windows_arm) use the
+      # Download wheel step above and do NOT run these inline steps.
+      - name: Restore Rust cache (native wheel build)
+        id: rust-cache-native
+        if: matrix.wheel_artifact && !matrix.cross_compile
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: python-native-${{ matrix.os }}-${{ matrix.py }}
+
+      - name: Build sf_core (Linux/macOS, native lanes)
+        if: matrix.wheel_artifact && !matrix.cross_compile && runner.os != 'Windows'
+        shell: bash
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.os == 'macos-15-intel' && '10.14' || '11.0' }}
+
+      # NOTE: Do NOT set `shell: bash` here. On windows-latest the
+      # vendored-openssl-sys build script invokes `perl` to configure
+      # OpenSSL; git-bash's bundled Perl is missing required modules
+      # (Params::Check, IPC::Cmd) and the build fails. The default
+      # PowerShell shell picks up Strawberry Perl from PATH, which has
+      # those modules. _build-python-wheels.yml uses the same pattern.
+      - name: Build sf_core (Windows, native lanes)
+        if: matrix.wheel_artifact && !matrix.cross_compile && runner.os == 'Windows'
+        run: cargo build --release --package sf_core ${{ matrix.cargo_extra_args }}
+
+      - name: Place sf_core in python package (native lanes)
+        if: matrix.wheel_artifact && !matrix.cross_compile
+        shell: bash
+        run: |
+          mkdir -p python/src/snowflake/connector/_core
+          cp "target/release/${{ matrix.lib_name }}" "python/src/snowflake/connector/_core/${{ matrix.lib_name }}"
+
+      - name: Build wheel via cibuildwheel (native lanes)
+        if: matrix.wheel_artifact && !matrix.cross_compile
+        uses: pypa/cibuildwheel@v3.4
+        env:
+          # CIBW_BUILD selects exactly the py × arch wheel this test row needs.
+          CIBW_BUILD: cp${{ matrix.py == '3.10' && '310' || matrix.py == '3.11' && '311' || matrix.py == '3.12' && '312' || matrix.py == '3.13' && '313' || matrix.py == '3.14' && '314' }}-${{ matrix.cibw_arch }}
+          CIBW_ENVIRONMENT: SKIP_CORE_BUILD=true
+          MACOSX_DEPLOYMENT_TARGET: ${{ contains(matrix.cibw_arch, 'x86_64') && '10.14' || '11.0' }}
+        with:
+          package-dir: python
+          output-dir: python/dist
+
+      - name: Save Rust cache (native wheel build)
+        if: matrix.wheel_artifact && !matrix.cross_compile
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: python-native-${{ matrix.os }}-${{ matrix.py }}
+          registry-cache-hit: ${{ steps.rust-cache-native.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache-native.outputs.target-cache-hit }}
+
+      - name: Download sdist
+        if: matrix.py == '3.10'
+        uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: python/dist
+
+      # sdist installs build sf_core from source, so Rust is needed
+      - name: Restore Rust cache (sdist)
+        if: matrix.py == '3.10'
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sdist-test
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Setup OpenSSL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: arm64
+
+      - name: Configure ARM64 build environment
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
+          echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
+
+      - name: Setup OpenSSL (Windows x86_64)
+        if: matrix.os == 'windows-latest' && matrix.py == '3.10'
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: x86_64
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Install snowflake ud driver from wheel (Linux/macOS)
+        if: runner.os != 'Windows' && matrix.wheel_artifact
+        working-directory: python
+        run: |
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
+          echo "Installing wheel: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from sdist (Linux/macOS)
+        if: runner.os != 'Windows' && !matrix.wheel_artifact
+        working-directory: python
+        run: |
+          SDISTS=(dist/*.tar.gz)
+          if [[ ${#SDISTS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 sdist, found ${#SDISTS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${SDISTS[0]}"
+          echo "Installing sdist: $WHEEL_PATH"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        env:
+          SKIP_CORE_BUILD: "false"
+
+      - name: Install snowflake ud driver from wheel (Windows)
+        if: runner.os == 'Windows' && matrix.wheel_artifact
+        working-directory: python
+        shell: pwsh
+        run: |
+          $wheels = @(Get-ChildItem dist/*.whl)
+          if ($wheels.Count -ne 1) {
+            Write-Error "Expected exactly 1 wheel, found $($wheels.Count)"; Get-ChildItem dist/; exit 1
+          }
+          $env:WHEEL_PATH = $wheels[0].FullName
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from sdist (Windows)
+        if: runner.os == 'Windows' && !matrix.wheel_artifact
+        working-directory: python
+        shell: pwsh
+        run: |
+          $sdists = @(Get-ChildItem dist/*.tar.gz)
+          if ($sdists.Count -ne 1) {
+            Write-Error "Expected exactly 1 sdist, found $($sdists.Count)"; Get-ChildItem dist/; exit 1
+          }
+          $env:WHEEL_PATH = $sdists[0].FullName
+          Write-Host "Installing sdist: $($env:WHEEL_PATH)"
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
+        env:
+          SKIP_CORE_BUILD: "false"
+
+      - name: Run tests with coverage (Linux/macOS)
+        if: runner.os != 'Windows'
+        id: run_python_checks_unix
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
+        working-directory: python
+        run: |
+          mkdir -p reports
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
+            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json \
+            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml \
+            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
+            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+
+      - name: Rerun failed Python tests (Linux/macOS)
+        if: steps.run_python_checks_unix.outcome == 'failure' && github.event_name == 'merge_group'
+        working-directory: python
+        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+
+      - name: Run tests with coverage (Windows)
+        if: runner.os == 'Windows'
+        id: run_python_checks_windows
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
+        working-directory: python
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path reports
+          hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov `
+            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json `
+            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml `
+            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml `
+            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+
+      - name: Rerun failed Python tests (Windows)
+        if: steps.run_python_checks_windows.outcome == 'failure' && github.event_name == 'merge_group'
+        working-directory: python
+        shell: pwsh
+        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+
+      - name: Upload test results as GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-universal-${{ env.MATRIX_KEY }}
+          path: python/reports/*-${{ env.MATRIX_KEY }}.*
+
+      # Prune unreachable entries before the cache save.
+      - name: Prune uv cache
+        if: always()
+        shell: bash
+        run: uv cache prune --ci
+
+      - name: Save uv cache (Linux/macOS)
+        if: always() && runner.os != 'Windows' && steps.uv-cache-unix.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+
+      - name: Save uv cache (Windows)
+        if: always() && runner.os == 'Windows' && steps.uv-cache-windows.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}\.uv-cache
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+
+      - name: Save Rust cache (sdist)
+        if: always() && matrix.py == '3.10'
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sdist-test
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
