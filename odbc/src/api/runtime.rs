@@ -225,7 +225,9 @@ pub fn env_freed() -> Result<(), OdbcRuntimeError> {
     guard.env_count = guard.env_count.saturating_sub(1);
     if guard.env_count == 0 {
         tracing::info!("Last ODBC environment freed, tearing down global state");
-        guard.globals = None;
+        let globals = guard.globals.take();
+        drop(guard);
+        drop(globals);
     }
     Ok(())
 }
