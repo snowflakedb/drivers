@@ -42,6 +42,13 @@ impl CipherSuite {
 }
 
 /// Encrypts file data using AES-CBC with PKCS#7 padding.
+///
+/// The returned `PreparedUpload.digest` is the SHA-256 of the
+/// **pre-encryption** payload (matching the Python and JDBC drivers'
+/// `sfc-digest` semantics). Using the plaintext digest is what makes
+/// the content-match skip optimization usable: a fresh IV is generated
+/// per upload, so the ciphertext digest changes every call and could
+/// never match across two PUTs of the same file.
 pub fn encrypt_file_data(
     file_data: &[u8],
     encryption_material: &EncryptionMaterial,
@@ -62,28 +69,30 @@ pub fn encrypt_file_data(
         operation: "generating initialization vector",
     })?;
 
-    // 3. Encrypt the file data using the file key and IV with AES-CBC.
+    // 3. Compute SHA-256 of the plaintext payload BEFORE encryption.
+    //    See doc comment above.
+    let digest = compute_sha256_digest(file_data).context(OpenSSLSnafu {
+        operation: "calculating SHA-256 digest",
+    })?;
+
+    // 4. Encrypt the file data using the file key and IV with AES-CBC.
     let encrypted_data =
         encrypt(cipher_suite.cbc, &file_key, Some(&iv), file_data).context(OpenSSLSnafu {
             operation: "encrypting file data with AES-CBC",
         })?;
 
-    // 4. Encrypt the file key using the master key with AES-ECB.
+    // 5. Encrypt the file key using the master key with AES-ECB.
     let encrypted_file_key =
         encrypt(cipher_suite.ecb, &master_key, None, &file_key).context(OpenSSLSnafu {
             operation: "encrypting file key with AES-ECB",
         })?;
 
-    // 5. Prepare the metadata for the encrypted file.
+    // 6. Prepare the metadata for the encrypted file.
     let material_desc = MaterialDescription {
         query_id: encryption_material.query_id.clone(),
         smk_id: encryption_material.smk_id.clone(),
         key_size: (cipher_suite.key_len * 8).to_string(),
     };
-
-    let digest = compute_sha256_digest(&encrypted_data).context(OpenSSLSnafu {
-        operation: "calculating SHA-256 digest",
-    })?;
 
     let metadata = EncryptedFileMetadata {
         encrypted_key: BASE64_ENGINE.encode(&encrypted_file_key),
@@ -126,26 +135,28 @@ pub fn decrypt_file_data(
             context: "initialization vector",
         })?;
 
-    // 3. Verify the digest of encrypted data.
-    let calculated_digest = compute_sha256_digest(encrypted_data).context(OpenSSLSnafu {
-        operation: "calculating SHA-256 digest for verification",
-    })?;
-    if calculated_digest != digest {
-        return DigestMismatchSnafu.fail();
-    }
-
-    // 4. Decrypt the file key using the master key with AES-ECB.
+    // 3. Decrypt the file key using the master key with AES-ECB.
     let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key).context(
         OpenSSLSnafu {
             operation: "decrypting file key with AES-ECB",
         },
     )?;
 
-    // 5. Decrypt the file data using the file key and IV with AES-CBC.
+    // 4. Decrypt the file data using the file key and IV with AES-CBC.
     let decrypted_data =
         decrypt(cipher_suite.cbc, &file_key, Some(&iv), encrypted_data).context(OpenSSLSnafu {
             operation: "decrypting file data with AES-CBC",
         })?;
+
+    // 5. Verify the digest of the **decrypted** data (the `sfc-digest`
+    //    on the stored object is the SHA-256 of the pre-encryption
+    //    payload — see `encrypt_file_data`).
+    let calculated_digest = compute_sha256_digest(&decrypted_data).context(OpenSSLSnafu {
+        operation: "calculating SHA-256 digest for verification",
+    })?;
+    if calculated_digest != digest {
+        return DigestMismatchSnafu.fail();
+    }
 
     Ok(decrypted_data)
 }
