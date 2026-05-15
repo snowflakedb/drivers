@@ -1,7 +1,7 @@
 behavior_differences:
   1:
     name: "Header of a gzip-compressed file does not contain filename"
-    status: allowed
+    status: fixed
     type: bug
     reviewed: false
 

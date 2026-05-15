@@ -52,13 +52,24 @@ TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS
   REQUIRE(!fs::exists(download_dir.path() / filename));
 
   // And Have correct content
-  std::ifstream dl(download_dir.path() / compressed, std::ios::binary);
-  std::string downloaded_bytes((std::istreambuf_iterator<char>(dl)), std::istreambuf_iterator<char>());
-  std::ifstream ref(file_gz, std::ios::binary);
-  std::string reference_bytes((std::istreambuf_iterator<char>(ref)), std::istreambuf_iterator<char>());
-
-  OLD_DRIVER_ONLY("BD#5") { CHECK(downloaded_bytes != reference_bytes); }
-  NEW_DRIVER_ONLY("BD#5") { CHECK(downloaded_bytes == reference_bytes); }
+  //
+  // The gzip wire bytes faithfully reproduce legacy ODBC's
+  // `compressWithGzip` shape (which never calls `deflateSetHeader`):
+  //   FLG = 0x00 (no FNAME field)
+  //   MTIME = 0
+  //   XFL = 0 (derived from level 6 = Z_DEFAULT_COMPRESSION)
+  //   OS = build target's zlib OS_CODE (Unix=3, macOS=19, Windows=10)
+  // UD-ODBC and legacy ODBC produce byte-identical headers on every
+  // supported platform, so no OLD/NEW split is needed. The reference
+  // .gz fixture is a 26-byte XFL=2/OS=255 flate2-default blob — not
+  // the spec for this assertion — so we only use it for content equality
+  // after decompression.
+  const auto downloaded_bytes = read_file_bytes(download_dir.path() / compressed);
+  CHECK(gzip_flg(downloaded_bytes) == 0x00);
+  CHECK(gzip_mtime(downloaded_bytes) == 0);
+  CHECK(gzip_xfl(downloaded_bytes) == 0);
+  CHECK(gzip_os(downloaded_bytes) == expected_zlib_os_code());
+  CHECK(decompress_gzip_file(download_dir.path() / compressed) == decompress_gzip_file(file_gz));
 }
 
 TEST_CASE("should not compress the file before uploading to stage when AUTO_COMPRESS set to false", "[put_get]") {

@@ -75,8 +75,8 @@ behavior_differences:
       Applications that compare the reported GET size against the on-stage encrypted object length will see a smaller value. Applications that compare against the file written to disk will see a matching value.
 
   5:
-    name: "Header of a gzip-compressed file does not contain filename"
-    status: todo
+    name: "Gzip header XFL byte and OS byte do not match legacy compressWithGzip metadata (XFL=0 from level 6, OS = platform zlib OS_CODE)"
+    status: fixed
     type: bug
     reviewed: true
     status_rationale: |

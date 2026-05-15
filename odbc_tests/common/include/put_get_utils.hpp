@@ -154,6 +154,58 @@ inline std::string as_file_uri(const std::filesystem::path& p) {
   return s;
 }
 
+// Read a file's full contents as raw bytes. Used to feed the gzip header
+// byte-readers below.
+inline std::vector<unsigned char> read_file_bytes(const std::filesystem::path& path) {
+  std::ifstream ifs(path, std::ios::binary);
+  REQUIRE(ifs.good());
+  return std::vector<unsigned char>((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+}
+
+// Direct accessors for the bytes inside a gzip stream's fixed 10-byte
+// header preamble (RFC 1952 §2.3): ID1, ID2, CM, FLG, MTIME[4], XFL, OS.
+// Every helper REQUIREs the magic / size invariants, so callers can assert
+// against the returned value directly.
+inline std::uint8_t gzip_flg(const std::vector<unsigned char>& bytes) {
+  REQUIRE(bytes.size() >= 10);
+  REQUIRE(bytes[0] == 0x1f);
+  REQUIRE(bytes[1] == 0x8b);
+  return bytes[3];
+}
+
+inline std::uint32_t gzip_mtime(const std::vector<unsigned char>& bytes) {
+  REQUIRE(bytes.size() >= 10);
+  // Little-endian per RFC 1952 §2.3.1.4.
+  return static_cast<std::uint32_t>(bytes[4]) | static_cast<std::uint32_t>(bytes[5]) << 8 |
+         static_cast<std::uint32_t>(bytes[6]) << 16 | static_cast<std::uint32_t>(bytes[7]) << 24;
+}
+
+inline std::uint8_t gzip_xfl(const std::vector<unsigned char>& bytes) {
+  REQUIRE(bytes.size() >= 10);
+  return bytes[8];
+}
+
+inline std::uint8_t gzip_os(const std::vector<unsigned char>& bytes) {
+  REQUIRE(bytes.size() >= 10);
+  return bytes[9];
+}
+
+// Mirrors libsnowflakeclient/deps/zlib-1.3.1/zutil.h::OS_CODE so the
+// test side and the Rust `ZLIB_OS_CODE` constant in
+// `sf_core::compression` resolve to the same value on every supported
+// build target. When asserting against UD-ODBC and legacy ODBC gzip
+// output, the OS byte must equal this value (the legacy driver's libz
+// picks up the same macro at compile time).
+inline std::uint8_t expected_zlib_os_code() {
+#if defined(__APPLE__)
+  return 19;
+#elif defined(_WIN32) && !defined(__CYGWIN__)
+  return 10;
+#else
+  return 3;  // Unix-like default
+#endif
+}
+
 // Simple gzip decompression utility used by tests to verify content
 inline std::string decompress_gzip_file(const std::filesystem::path& gz_path) {
   std::ifstream ifs(gz_path, std::ios::binary);

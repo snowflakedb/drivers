@@ -3,7 +3,6 @@ import tempfile
 
 from pathlib import Path
 
-from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
     as_file_uri,
     create_temporary_stage,
@@ -101,10 +100,13 @@ def test_should_return_correct_rowset_for_put(connection):
         assert upload_result[0] == "test_data.csv"
         assert upload_result[1] == "test_data.csv.gz"
         assert upload_result[2] == 6
-        if OLD_DRIVER_ONLY("BD#1"):
-            assert upload_result[3] == 48
-        elif NEW_DRIVER_ONLY("BD#1"):
-            assert upload_result[3] == 32
+        # 6-byte CSV → 42-byte gzip (Python file-PUT shape: 10-byte fixed
+        # header with FLG=0x08 / XFL=2 / OS=0xff, 16-byte FNAME field
+        # (`len("test_data.csv") + 2` = 15 0x20 spaces + NUL), 8-byte deflate
+        # stream, 8-byte trailer) → 48-byte ciphertext (next AES-CBC PKCS#7
+        # 16-byte boundary; 42 + 6 padding = 48). Matches legacy
+        # compress_file_with_gzip + normalize_gzip_header byte-for-byte.
+        assert upload_result[3] == 48
         assert upload_result[4] == "NONE"
         assert upload_result[5] == "GZIP"
         assert upload_result[6] == "UPLOADED"
@@ -131,10 +133,11 @@ def test_should_return_correct_rowset_for_get(connection):
 
             # Then Rowset for GET command should be correct
             assert get_result[0] == "test_data.csv.gz"
-            if OLD_DRIVER_ONLY("BD#1"):
-                assert get_result[1] == 42
-            elif NEW_DRIVER_ONLY("BD#1"):
-                assert get_result[1] == 26
+            # 42-byte gzip (Python file-PUT shape: FLG=0x08, FNAME = 15
+            # 0x20 spaces + NUL, MTIME=0, XFL=2, OS=0xff). Python returns
+            # the post-decryption gzip byte count here, not the cloud
+            # (encrypted) size.
+            assert get_result[1] == 42
             assert get_result[2] == "DOWNLOADED"
             assert get_result[3] == ""
 

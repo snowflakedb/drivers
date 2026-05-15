@@ -207,7 +207,8 @@ fn preprocess_file_before_upload(
     let mut target = data.filename.clone();
 
     let target_compression = if data.auto_compress && source_compression == CompressionType::None {
-        file_buffer = compress_data(file_buffer).context(CompressionSnafu)?;
+        file_buffer =
+            compress_data(file_buffer, &data.flavor, &data.filename).context(CompressionSnafu)?;
         target = format!("{}.gz", data.filename);
         CompressionType::Gzip
     } else {

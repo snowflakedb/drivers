@@ -93,7 +93,13 @@ fn should_return_correct_rowset_for_put() {
     assert_eq!(put_result.source, "test_data.csv");
     assert_eq!(put_result.target, "test_data.csv.gz");
     assert_eq!(put_result.source_size, 6);
-    assert_eq!(put_result.target_size, 32);
+    // 6-byte CSV → 42-byte gzip (Python file-PUT shape: 10-byte fixed
+    // header with FLG=0x08 / XFL=2 / OS=0xff, 16-byte FNAME field
+    // (`len("test_data.csv") + 2` = 15 0x20 spaces + NUL), 8-byte deflate
+    // stream, 8-byte trailer) → 48-byte ciphertext (next AES-CBC PKCS#7
+    // 16-byte boundary; 42 + 6 padding = 48). Matches legacy
+    // compress_file_with_gzip + normalize_gzip_header byte-for-byte.
+    assert_eq!(put_result.target_size, 48);
     assert_eq!(put_result.source_compression, "NONE");
     assert_eq!(put_result.target_compression, "GZIP");
     assert_eq!(put_result.status, "UPLOADED");
@@ -118,7 +124,10 @@ fn should_return_correct_rowset_for_get() {
         .expect("Failed to fetch GET result");
 
     assert_eq!(get_result.file, "test_data.csv.gz");
-    assert_eq!(get_result.size, 26);
+    // 42-byte gzip (Python file-PUT shape: FLG=0x08, FNAME = 15 0x20 spaces
+    // + NUL, MTIME=0, XFL=2, OS=0xff). Python returns the post-decryption
+    // gzip byte count here, not the cloud (encrypted) size.
+    assert_eq!(get_result.size, 42);
     assert_eq!(get_result.status, "DOWNLOADED");
     assert_eq!(get_result.message, "");
 }
