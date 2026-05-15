@@ -1,10 +1,12 @@
 # Automate PR review pings.
 #
 # On a new (or freshly-undrafted) PR, pick a random reviewer from
-# .github/CODEOWNERS, request review + add as assignee via the GitHub
+# .github/reviewers, request review + add as assignee via the GitHub
 # REST API, and ping #drivers-review via slackapi/slack-github-action.
-# Every 2h, post a digest of open non-draft PRs that have no APPROVED /
-# CHANGES_REQUESTED review yet.
+# On the schedule below, post a digest of open non-draft PRs that have
+# no APPROVED / CHANGES_REQUESTED review yet; the digest pass also
+# re-assigns PRs whose every requested reviewer is OOO (Slack status)
+# to a non-OOO substitute drawn from the same label pool.
 #
 # All GitHub I/O goes through the `gh` CLI (with GITHUB_TOKEN) and all
 # Slack writes go through slackapi/slack-github-action. The Python

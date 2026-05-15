@@ -58,6 +58,17 @@ Subcommands
     review. Each entry includes the time elapsed since the *initial*
     ``review_requested`` event.
 
+    For each PR in the digest the bot also runs an OOO substitution
+    pass (see :func:`_swap_ooo_reviewers`): if a requested reviewer's
+    Slack status signals OOO and at least one other human is still
+    on the hook, the OOO reviewer is hidden from the post; if *every*
+    requested reviewer is OOO, the bot picks a non-OOO substitute
+    from the same label-keyed pool the assign path uses, requests
+    their review via the GitHub REST API, and retracts the OOO
+    requests so they don't keep cluttering the queue when they
+    return. PRs where every "actionable" person turned out to be
+    OOO and no substitute could be found drop out of the digest.
+
     Scheduled posts (``GH_EVENT_NAME=schedule``) are suppressed during
     Warsaw quiet hours (``QUIET_HOURS_START``..``QUIET_HOURS_END``,
     i.e. 17:00–07:59 ``Europe/Warsaw``) because nobody on the team
@@ -247,6 +258,29 @@ def gh_api_json(path: str, *, paginate: bool = False) -> Any:
     if not out:
         return None
     return json.loads(out)
+
+
+def gh_pr_remove_reviewer(repo: str, pr_number: int, login: str) -> None:
+    """Retract a review request from *login* on a PR.
+
+    Used by the reminder pass when it swaps an OOO reviewer for an
+    available one — without retracting the original request, GitHub
+    would keep showing the OOO person as a pending reviewer and
+    Slack would still surface them on the next reminder run.
+
+    Failure is the caller's problem to handle gracefully; the
+    typical response is to log and move on (the worst case is a
+    benign over-assignment where both the OOO and the substitute
+    are requested).
+    """
+    _gh(
+        "api",
+        "--method",
+        "DELETE",
+        f"/repos/{repo}/pulls/{pr_number}/requested_reviewers",
+        "-f",
+        f"reviewers[]={login}",
+    )
 
 
 def gh_pr_assign(repo: str, pr_number: int, login: str) -> None:
@@ -1340,6 +1374,165 @@ def _is_warsaw_quiet_hours(now: datetime | None = None) -> bool:
     return warsaw_hour >= QUIET_HOURS_START or warsaw_hour < QUIET_HOURS_END
 
 
+def _swap_ooo_reviewers(
+    repo: str,
+    pr: dict,
+    entry: dict,
+    names: ReviewerDisplay,
+    rules: ReviewerRules,
+) -> None:
+    """Replace OOO requested reviewers with a fresh non-OOO pick.
+
+    Run during the reminder pass after :func:`_classify_pr_for_reminder`
+    has produced *entry*. Mutates ``entry["requested"]`` (and
+    ``entry["commented_only"]``) so the Slack digest reflects the
+    post-swap state. Three branches:
+
+    1. No requested reviewer is OOO — nothing to do.
+    2. *Some* requested reviewers are OOO but at least one is not —
+       the PR is already covered by an available human, so we only
+       hide the OOO ones from the displayed list. No GitHub state
+       change; the OOO reviewer will see the request when they
+       return.
+    3. *All* requested reviewers are OOO — pick a non-OOO substitute
+       from the same domain pool (labels + ``all`` fallback, same as
+       the assign path) excluding the author and anyone already
+       requested. Add them via ``gh_pr_assign`` and retract the OOO
+       requests via ``gh_pr_remove_reviewer``. The Slack digest then
+       shows only the substitute.
+
+    If no non-OOO substitute exists in case (3) the OOO reviewers are
+    left as-is and the digest falls back to displaying them with OOO
+    markers (so the channel can manually triage).
+
+    Sequencing of API calls is "ADD then DELETE" so a partial failure
+    leaves the PR over-assigned rather than under-assigned.
+    """
+    requested = list(entry.get("requested") or [])
+    if not requested:
+        # Filter OOO commenters too — they can't formal-review either.
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    ooo = [u for u in requested if names.is_ooo(u)]
+    if not ooo:
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    available = [u for u in requested if not names.is_ooo(u)]
+    if available:
+        # PR is already covered by a non-OOO human. Just hide the
+        # OOO reviewers from the displayed list — no need to touch
+        # GitHub state.
+        log.info(
+            "PR #%d: %d/%d requested reviewer(s) OOO (%s); hiding from digest, "
+            "%s already on the hook.",
+            pr["number"],
+            len(ooo),
+            len(requested),
+            ", ".join(ooo),
+            ", ".join(available),
+        )
+        entry["requested"] = available
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    # Every requested human is OOO. Find a substitute via the same
+    # label-keyed selection cmd_assign uses, but with a wider safety
+    # net: if every domain expert is also OOO, widen to the full
+    # reviewer roster so the PR can at least get a generalist
+    # reviewing it instead of waiting for the OOO domain experts to
+    # return. This is *strict* OOO filtering — unlike the assign
+    # path's :func:`_filter_ooo` we never fall back to OOO candidates,
+    # because swapping one OOO reviewer for another is pointless.
+    pr_labels = [
+        (lbl.get("name") or "").strip()
+        for lbl in pr.get("labels") or []
+        if isinstance(lbl, dict)
+    ]
+    pr_labels = [lbl for lbl in pr_labels if lbl]
+    author = (pr.get("user") or {}).get("login") or ""
+    excluded = {u.lower() for u in requested} | {author.lower()}
+
+    def _available(candidates: list[str]) -> list[str]:
+        return [
+            c for c in candidates
+            if c.lower() not in excluded and not names.is_ooo(c)
+        ]
+
+    pool = _available(select_candidates(rules, pr_labels) or all_reviewers(rules))
+    widened = False
+    if not pool:
+        # Domain pool exhausted; widen to every listed reviewer.
+        wider = all_reviewers(rules)
+        pool = _available(wider)
+        widened = bool(pool)
+
+    if not pool:
+        log.info(
+            "PR #%d: all %d requested reviewer(s) OOO (%s) and no non-OOO "
+            "substitute anywhere in the roster; leaving as-is.",
+            pr["number"],
+            len(requested),
+            ", ".join(requested),
+        )
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    if widened:
+        log.info(
+            "PR #%d: every domain expert for labels %s is OOO; widening to "
+            "the full reviewer roster for the substitute pick.",
+            pr["number"],
+            pr_labels or "(none)",
+        )
+
+    replacement = random.choice(pool)
+
+    # ADD first so a partial failure (DELETE fails) leaves an
+    # over-assigned PR rather than an unreviewed one.
+    try:
+        gh_pr_assign(repo, pr["number"], replacement)
+    except RuntimeError as e:
+        log.warning(
+            "PR #%d: failed to assign OOO-substitute %s: %s",
+            pr["number"],
+            replacement,
+            e,
+        )
+        return
+    log.info(
+        "PR #%d: assigned %s in place of OOO reviewer(s) %s.",
+        pr["number"],
+        replacement,
+        ", ".join(ooo),
+    )
+    for ooo_login in ooo:
+        try:
+            gh_pr_remove_reviewer(repo, pr["number"], ooo_login)
+        except RuntimeError as e:
+            log.warning(
+                "PR #%d: failed to retract OOO reviewer %s (benign — both will "
+                "show as requested on GH): %s",
+                pr["number"],
+                ooo_login,
+                e,
+            )
+
+    entry["requested"] = [replacement]
+    entry["commented_only"] = [
+        u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+    ]
+
+
 def _decorate_reviewer(names: ReviewerDisplay, login: str) -> str:
     """Render a reviewer mention, appending an OOO marker when applicable.
 
@@ -1426,12 +1619,32 @@ def cmd_remind(args: argparse.Namespace) -> int:
         set_gh_output("skip", "true")
         return 0
 
+    # Load the reviewer rules early so the OOO-swap pass below can
+    # consult them. Missing/empty file disables swapping (we still
+    # post the reminder; OOO reviewers just stay in the digest with
+    # their markers).
+    reviewers_path = Path(
+        os.environ.get("REVIEWERS_PATH") or DEFAULT_REVIEWERS_PATH
+    )
+    try:
+        rules = parse_reviewers(reviewers_path)
+    except FileNotFoundError:
+        log.warning(
+            "Reviewers file not found at %s; OOO substitution disabled.",
+            reviewers_path,
+        )
+        rules = []
+
     log.info("Listing open PRs in %s ...", repo)
     prs = list_open_prs(repo)
     log.info("Found %d open PR(s).", len(prs))
 
     now = datetime.now(timezone.utc)
     awaiting: list[dict] = []
+    # We hold on to the raw PR payload alongside each classified entry
+    # so the OOO-swap pass can read labels / author without a second
+    # /pulls/:n round trip.
+    pr_by_number: dict[int, dict] = {}
     for pr in prs:
         if pr.get("draft"):
             continue
@@ -1440,6 +1653,7 @@ def cmd_remind(args: argparse.Namespace) -> int:
         entry = _classify_pr_for_reminder(pr, reviews, first_request, now=now)
         if entry is not None:
             awaiting.append(entry)
+            pr_by_number[entry["number"]] = pr
 
     if not awaiting:
         log.info("No PRs need a reminder; not writing Slack payload.")
@@ -1453,6 +1667,28 @@ def cmd_remind(args: argparse.Namespace) -> int:
         repo=repo,
         slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
     )
+
+    # For every PR in the digest, try to replace OOO requested
+    # reviewers with an available substitute. Mutates each entry's
+    # ``requested`` / ``commented_only`` so the Slack message reflects
+    # the post-swap state. Disabled when the rules file is empty.
+    if rules:
+        for entry in awaiting:
+            _swap_ooo_reviewers(
+                repo, pr_by_number[entry["number"]], entry, names, rules
+            )
+        # Re-filter: an entry whose only humans were OOO and that the
+        # swap couldn't find a substitute for may now have no one left
+        # to remind. Drop those.
+        awaiting = [e for e in awaiting if e.get("requested") or e.get("commented_only")]
+        if not awaiting:
+            log.info(
+                "All PRs were covered after the OOO-swap pass (nothing actionable "
+                "left for humans); not writing Slack payload."
+            )
+            set_gh_output("skip", "true")
+            return 0
+
     fallback = _reminder_fallback_text(awaiting)
     blocks = _build_reminder_blocks(awaiting, names)
     write_slack_payload(payload_file, channel, fallback, blocks=blocks)
