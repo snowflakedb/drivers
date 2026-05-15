@@ -58,6 +58,13 @@ Subcommands
     review. Each entry includes the time elapsed since the *initial*
     ``review_requested`` event.
 
+    PRs whose waiting time is below :data:`MIN_WAITING_HOURS` are
+    dropped from the digest so freshly-opened or freshly-requested
+    PRs don't get pinged before the assignee has a chance to look at
+    them. PRs whose waiting timestamp can't be recovered at all are
+    always surfaced — better to nudge once than to silently swallow
+    a stale PR.
+
     For each PR in the digest the bot also runs an OOO substitution
     pass (see :func:`_swap_ooo_reviewers`): if a requested reviewer's
     Slack status signals OOO and at least one other human is still
@@ -173,6 +180,16 @@ DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
 
 # Review states that mean the reviewer has taken action on the PR.
 ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED"}
+
+# Minimum age (hours since the first ``review_requested`` event, or
+# since ``created_at`` when no review was requested yet) before a PR
+# is allowed into the reminder digest. Freshly-opened PRs need a
+# moment to be looked at by the assignee before the bot starts
+# pestering the channel about them. PRs whose waiting timestamp can't
+# be recovered at all (``waiting_hours is None``) are *not* filtered
+# by this threshold — we'd rather surface them than silently swallow
+# them.
+MIN_WAITING_HOURS = 2.0
 
 # Scheduled reminder posts are suppressed outside of Warsaw working hours.
 # The team is in Europe/Warsaw; nobody reads pings between 17:00 and the
@@ -1301,6 +1318,15 @@ def _classify_pr_for_reminder(
         waiting_hours = max(
             0.0, (now - waiting_since).total_seconds() / 3600.0
         )
+
+    # Suppress fresh-PR noise: a PR that was just opened or just had a
+    # reviewer requested doesn't need a Slack ping yet — the assignee
+    # has not had a chance to even look at it. PRs whose waiting
+    # timestamp couldn't be recovered (None) fall through deliberately
+    # so we never accidentally swallow a stale PR just because its
+    # history was malformed.
+    if waiting_hours is not None and waiting_hours < MIN_WAITING_HOURS:
+        return None
 
     return {
         "number": pr["number"],
