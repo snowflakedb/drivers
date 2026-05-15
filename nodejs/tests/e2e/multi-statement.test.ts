@@ -1,18 +1,24 @@
 import type { Connection } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { createConnection, connectAsync, destroyAsync, executeAsync } from './utils';
+import {
+  createTestConnection,
+  destroyConnectionAsync,
+  executeAsync,
+  getSnowflakeSDK,
+} from './utils';
 
 describe('Multi Statement', () => {
+  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createConnection();
-    await connectAsync(connection);
+    connection = createTestConnection(snowflake);
+    await connection.connectAsync();
     await executeAsync(connection, 'alter session set MULTI_STATEMENT_COUNT=0');
   });
 
   afterAll(async () => {
-    await destroyAsync(connection);
+    await destroyConnectionAsync(connection);
   });
 
   it('executes a parameterised multi-statement query and streams rows from every sub-result', async () => {

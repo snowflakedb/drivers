@@ -1,17 +1,18 @@
 import type { Connection } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll } from 'vitest';
-import { createConnection, connectAsync, destroyAsync, sleepAsync } from './utils';
+import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK, sleepAsync } from './utils';
 
 describe('Query Cancellation', () => {
+  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createConnection();
-    await connectAsync(connection);
+    connection = createTestConnection(snowflake);
+    await connection.connectAsync();
   });
 
   afterAll(async () => {
-    await destroyAsync(connection);
+    await destroyConnectionAsync(connection);
   });
 
   it('cancels a running query', async () => {

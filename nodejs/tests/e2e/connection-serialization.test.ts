@@ -1,18 +1,19 @@
 import type { Connection } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { createConnection, connectAsync, destroyAsync, getSnowflakeSDK } from './utils';
+import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK } from './utils';
 import getTestParameter from './utils/getTestParameter';
 
 describe('Connection Serialization', () => {
+  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createConnection();
-    await connectAsync(connection);
+    connection = createTestConnection(snowflake);
+    await connection.connectAsync();
   });
 
   afterAll(async () => {
-    await destroyAsync(connection);
+    await destroyConnectionAsync(connection);
   });
 
   it('connection.serialize() returns a JSON string with services.sf.tokenInfo', () => {
@@ -49,7 +50,7 @@ describe('Connection Serialization', () => {
     try {
       expect(connection2.isUp()).toBe(true);
     } finally {
-      await destroyAsync(connection2);
+      await destroyConnectionAsync(connection2);
     }
   });
 });
