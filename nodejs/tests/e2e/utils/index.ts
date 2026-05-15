@@ -22,18 +22,22 @@ export function getSnowflakeSDK() {
   }
 }
 
+export const TEST_CONNECTION_OPTIONS: ConnectionOptions = {
+  account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
+  username: getTestParameter('SNOWFLAKE_TEST_USER'),
+  password: getTestParameter('SNOWFLAKE_TEST_PASSWORD'),
+  warehouse: getTestParameter('SNOWFLAKE_TEST_WAREHOUSE'),
+  database: getTestParameter('SNOWFLAKE_TEST_DATABASE'),
+  schema: getTestParameter('SNOWFLAKE_TEST_SCHEMA'),
+  role: getTestParameter('SNOWFLAKE_TEST_ROLE'),
+};
+
 export function createTestConnection(
   snowflake: typeof oldSnowflakeSDK,
   overrides: Partial<ConnectionOptions> = {},
 ): Connection {
   return snowflake.createConnection({
-    account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
-    username: getTestParameter('SNOWFLAKE_TEST_USER'),
-    password: getTestParameter('SNOWFLAKE_TEST_PASSWORD'),
-    warehouse: getTestParameter('SNOWFLAKE_TEST_WAREHOUSE'),
-    database: getTestParameter('SNOWFLAKE_TEST_DATABASE'),
-    schema: getTestParameter('SNOWFLAKE_TEST_SCHEMA'),
-    role: getTestParameter('SNOWFLAKE_TEST_ROLE'),
+    ...TEST_CONNECTION_OPTIONS,
     ...overrides,
   });
 }
