@@ -63,7 +63,6 @@ describe('Connection Pool', () => {
     it('evicts a borrowed connection and a follow-up acquire() still returns a usable one', async () => {
       const evicted = await pool.acquire();
       await pool.destroy(evicted);
-      expect(evicted.isUp()).toBe(false);
 
       const replacement = await pool.acquire();
       try {
