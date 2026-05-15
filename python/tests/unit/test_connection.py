@@ -241,13 +241,12 @@ class TestClientSessionKeepAliveKwargUnit:
     def test_keep_alive_kwargs_forwarded_to_set_options(self, mock_db_api):
         from snowflake.connector.connection import Connection
 
-        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            Connection(
-                user="u",
-                account="a",
-                client_session_keep_alive=True,
-                client_session_keep_alive_heartbeat_frequency=1500,
-            )
+        Connection(
+            user="u",
+            account="a",
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=1500,
+        )
 
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["CLIENT_SESSION_KEEP_ALIVE"] == ConfigSetting(bool_value=True)
@@ -256,24 +255,22 @@ class TestClientSessionKeepAliveKwargUnit:
     def test_keep_alive_properties_read_from_config(self, mock_db_api):
         from snowflake.connector.connection import Connection
 
-        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(
-                user="u",
-                account="a",
-                client_session_keep_alive=True,
-                client_session_keep_alive_heartbeat_frequency=900,
-            )
+        conn = Connection(
+            user="u",
+            account="a",
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=900,
+        )
 
         assert conn.client_session_keep_alive is True
         assert conn.client_session_keep_alive_heartbeat_frequency == 900
 
-    def test_keep_alive_properties_default_none(self, mock_db_api):
+    def test_keep_alive_properties_defaults(self, mock_db_api):
         from snowflake.connector.connection import Connection
 
-        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(user="u", account="a")
+        conn = Connection(user="u", account="a")
 
-        assert conn.client_session_keep_alive is None
+        assert conn.client_session_keep_alive is False
         assert conn.client_session_keep_alive_heartbeat_frequency is None
 
 
