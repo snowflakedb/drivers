@@ -287,6 +287,39 @@ class TestApiTelemetryResetBehavior:
         assert "Connection.close" in methods
 
 
+class TestTelemetryEnabledFlag:
+    """Tests that telemetry_enabled controls both decorator and public telemetry."""
+
+    def test_disabling_telemetry_stops_api_usage(self, connection, mock_db_api):
+        """Setting telemetry_enabled=False prevents api_telemetry decorator from sending."""
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.telemetry_enabled = False
+
+        connection.cursor()
+
+        assert mock_db_api.telemetry_send_api_usage.call_count == 0
+
+    def test_disabling_telemetry_stops_user_logs(self, connection, mock_db_api):
+        """Setting telemetry_enabled=False prevents user log submission."""
+        from snowflake.connector.telemetry import TelemetryData
+
+        connection.telemetry_enabled = False
+        connection._telemetry.add_log_to_batch(TelemetryData(message={"type": "test"}, timestamp=123))
+
+        assert mock_db_api.telemetry_send_json.call_count == 0
+
+    def test_reenabling_telemetry_resumes_tracking(self, connection, mock_db_api):
+        """Re-enabling telemetry resumes api_telemetry decorator calls."""
+        connection.telemetry_enabled = False
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+
+        connection.telemetry_enabled = True
+        connection.cursor()
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.cursor" in methods
+
+
 class TestApiTelemetryFailureIsolation:
     """Tests that telemetry failures don't break the actual method."""
 

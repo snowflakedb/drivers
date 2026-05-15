@@ -159,6 +159,110 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
     assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
 
 
+def test_user_telemetry_sent_via_public_api(int_test_connection_factory, wiremock):
+    """Verify that user telemetry submitted via connection._telemetry.add_log_to_batch
+    arrives at /telemetry/send with the expected envelope structure.
+
+    Runs on BOTH old and new drivers to confirm wire-format compatibility.
+    The payload must arrive as: {"logs": [{"message": {"type": ..., "value": ...}, "timestamp": "..."}]}
+    """
+    from snowflake.connector.telemetry import TelemetryData, TelemetryField
+
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    try:
+        telemetry_client = connection._telemetry
+        telemetry_client.add_log_to_batch(
+            TelemetryData.from_telemetry_data_dict(
+                from_dict={
+                    TelemetryField.KEY_TYPE.value: "test_user_event",
+                    TelemetryField.KEY_VALUE.value: "hello",
+                },
+                timestamp=1700000000000,
+            )
+        )
+        telemetry_client.send_batch()
+    finally:
+        connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    user_entries = [entry for entry in log_entries if entry["message"].get("type") == "test_user_event"]
+    assert len(user_entries) == 1, (
+        f"Expected exactly one user telemetry entry with type='test_user_event'. Got: {log_entries}"
+    )
+
+    entry = user_entries[0]
+    assert entry["message"]["value"] == "hello"
+    assert entry["timestamp"] == "1700000000000"
+
+
+@pytest.mark.skip_reference(reason="user telemetry via connection._telemetry is universal-driver only")
+def test_user_telemetry_flushed_on_connection_close(int_test_connection_factory, wiremock):
+    """Verify that buffered user telemetry is flushed when the connection is closed,
+    even without an explicit send_batch() call.
+    """
+    from snowflake.connector.telemetry import TelemetryData, TelemetryField
+
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    telemetry_client = connection._telemetry
+    telemetry_client.add_log_to_batch(
+        TelemetryData.from_telemetry_data_dict(
+            from_dict={TelemetryField.KEY_TYPE.value: "close_flush_event"},
+            timestamp=1700000001000,
+        )
+    )
+    connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    close_entries = [entry for entry in log_entries if entry["message"].get("type") == "close_flush_event"]
+    assert len(close_entries) == 1, f"Expected user telemetry to be flushed on close. Got: {log_entries}"
+    assert close_entries[0]["timestamp"] == "1700000001000"
+
+
+@pytest.mark.skip_reference(reason="TelemetryData.from_telemetry_data_dict contract validation")
+def test_telemetry_data_from_dict_compatibility(int_test_connection_factory, wiremock):
+    """Verify TelemetryData.from_telemetry_data_dict produces correct structure
+    when called with the same kwargs pattern used by snowflake-cli and snowflake-sqlalchemy.
+    """
+    from snowflake.connector.telemetry import TelemetryData, TelemetryField
+
+    wiremock.add_mapping("auth/login_success_jwt.json")
+    wiremock.add_mapping("telemetry/telemetry_send_success.json")
+
+    connection = int_test_connection_factory(server_url=wiremock.http_url(), **_jwt_private_key_params())
+    try:
+        # snowflake-sqlalchemy pattern: from_dict + timestamp + connection
+        td = TelemetryData.from_telemetry_data_dict(
+            from_dict={
+                TelemetryField.KEY_TYPE.value: "compat_test",
+                TelemetryField.KEY_VALUE.value: "sqlalchemy_pattern",
+            },
+            timestamp=1700000002000,
+            connection=connection,
+        )
+        connection._telemetry.add_log_to_batch(td)
+        connection._telemetry.send_batch()
+    finally:
+        connection.close()
+
+    telemetry_requests = wiremock.wait_for_requests("/telemetry/send", min_count=1, timeout=5.0)
+    log_entries = _collect_log_entries(telemetry_requests)
+
+    compat_entries = [entry for entry in log_entries if entry["message"].get("type") == "compat_test"]
+    assert len(compat_entries) == 1, f"Expected from_telemetry_data_dict entry. Got: {log_entries}"
+    assert compat_entries[0]["message"]["value"] == "sqlalchemy_pattern"
+    assert compat_entries[0]["timestamp"] == "1700000002000"
+
+
 def _jwt_private_key_params() -> dict:
     """Return connection overrides needed for JWT auth against Wiremock.
 

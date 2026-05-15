@@ -50,6 +50,28 @@ impl SnowflakeInBandExporter {
     pub fn new(sessions: SessionRegistry) -> Self {
         Self { sessions }
     }
+
+    /// POST a pre-formatted Snowflake telemetry payload for a specific session.
+    ///
+    /// Used by [`super::snowflake_processor::SessionFlushHandle`] which already
+    /// knows the session_id and has a combined (spans + user_logs) payload.
+    pub async fn send_for_session(
+        &self,
+        session_id: i64,
+        payload: &serde_json::Value,
+    ) -> OTelSdkResult {
+        let session = {
+            let guard = self.sessions.read().unwrap_or_else(|e| e.into_inner());
+            guard.get(&session_id).cloned()
+        };
+        match session {
+            Some(s) => send_with_token(&s, payload).await,
+            None => {
+                tracing::debug!(session_id, "No registered session for telemetry, dropping");
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Clone the session token under a short-lived read guard, then send

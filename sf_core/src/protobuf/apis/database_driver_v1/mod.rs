@@ -940,6 +940,43 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         Ok(TelemetrySendResponse {})
     }
+
+    #[instrument(name = "DatabaseDriverV1::telemetry_send_json", skip(self, input))]
+    async fn telemetry_send_json(
+        &self,
+        input: TelemetrySendJsonRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+        let entry: serde_json::Value = match serde_json::from_str(&input.entry_json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(error = %e, "Invalid entry_json in telemetry_send_json");
+                return Ok(TelemetrySendResponse {});
+            }
+        };
+
+        if let Some(session_id) = self.driver.session_id(handle).await {
+            self.driver.add_user_telemetry_log(session_id, entry);
+        }
+
+        Ok(TelemetrySendResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::telemetry_flush", skip(self, input))]
+    async fn telemetry_flush(
+        &self,
+        input: TelemetryFlushRequest,
+    ) -> Result<TelemetrySendResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+
+        if let Some(session_id) = self.driver.session_id(handle).await {
+            self.driver.flush_telemetry_session(session_id).await;
+        }
+
+        Ok(TelemetrySendResponse {})
+    }
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}

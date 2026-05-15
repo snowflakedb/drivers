@@ -42,12 +42,13 @@ from ._internal.protobuf_gen.database_driver_v1_services import (
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.sqlstate import SQLSTATE_CONNECTION_NOT_EXISTS
+from ._internal.telemetry import CoreTelemetryClient
 from ._internal.text_utils import split_statements
 from .connection_config import ConnectionConfig
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import DatabaseError, Error, ErrorValue, InterfaceError, ProgrammingError
-from .telemetry import TelemetryClient as _BackwardCompatTelemetryClient
+from .telemetry import TelemetryClient as _PublicTelemetryClient
 from .version import __version__
 
 
@@ -192,6 +193,9 @@ class Connection(ErrorHandlerMixin):
         self._closed = False
         self._close_lock = threading.Lock()
 
+        self._core_telemetry = CoreTelemetryClient(self.conn_handle)
+        self._public_telemetry = _PublicTelemetryClient(self._core_telemetry)
+
         self._connect()
 
         self._session_parameters = SessionParametersProxy(self.conn_handle)
@@ -209,11 +213,6 @@ class Connection(ErrorHandlerMixin):
                 language_version=platform.python_version(),
                 language_compiler=platform.python_compiler(),
             ),
-        )
-        from ._internal.telemetry import TelemetryClient
-
-        self._telemetry_client = TelemetryClient(
-            conn_handle=cast(ConnectionHandle, self.conn_handle),
         )
 
         if self._should_auto_cleanup():
@@ -243,6 +242,9 @@ class Connection(ErrorHandlerMixin):
 
         self._session_parameters.freeze()
         self._connection_info.freeze()
+
+        # Telemetry flush is handled by the Rust core during connection_close
+        # (bounded-timeout POST before session tokens are cleared).
 
         # Lock guards ONLY the handle swap — prevents concurrent double-release.
         with self._close_lock:
@@ -572,10 +574,14 @@ class Connection(ErrorHandlerMixin):
             include_master_token=include_master_token,
         )
 
+    @property
+    def _telemetry(self) -> _PublicTelemetryClient:
+        return self._public_telemetry
+
     @internal_api
-    @backward_compatibility
-    def _telemetry(self) -> _BackwardCompatTelemetryClient:
-        return _BackwardCompatTelemetryClient()
+    def _log_telemetry(self, telemetry_data: Any) -> None:
+        if self.telemetry_enabled:
+            self._public_telemetry.try_add_log_to_batch(telemetry_data)
 
     @property
     def role(self) -> str | None:
@@ -690,11 +696,11 @@ class Connection(ErrorHandlerMixin):
     @property
     def telemetry_enabled(self) -> bool:
         """Whether client-side telemetry collection is enabled."""
-        raise NotImplementedError("telemetry_enabled is not yet implemented")
+        return self._core_telemetry.enabled
 
     @telemetry_enabled.setter
     def telemetry_enabled(self, value: bool) -> None:
-        raise NotImplementedError("telemetry_enabled is not yet implemented")
+        self._core_telemetry.enabled = value
 
     @property
     def service_name(self) -> str | None:

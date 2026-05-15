@@ -58,6 +58,13 @@ impl LogManager {
         }
     }
 
+    /// Add a pre-formatted user telemetry log entry to the session's buffer.
+    pub fn add_user_log(&self, session_id: i64, entry: serde_json::Value) {
+        if let Some(ref flusher) = self.session_flusher {
+            flusher.add_user_log(session_id, entry);
+        }
+    }
+
     /// Lazily detects and caches OS details (e.g. `/etc/os-release` on Linux).
     pub fn os_details(&self) -> &Option<HashMap<String, String>> {
         self.os_details

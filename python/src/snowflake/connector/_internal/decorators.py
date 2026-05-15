@@ -96,9 +96,9 @@ def api_telemetry(func: F) -> F:
 
             api_name = f"{type(self).__name__}.{func.__name__}"
             if isinstance(self, Connection):
-                self._telemetry_client.send_api_usage(api_name)
+                self._core_telemetry.send_api_usage(api_name)
             elif isinstance(self, SnowflakeCursorBase):
-                self._connection._telemetry_client.send_api_usage(api_name)
+                self._connection._core_telemetry.send_api_usage(api_name)
 
             _TRACKING.set(False)
             try:

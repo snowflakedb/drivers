@@ -144,10 +144,25 @@ impl DatabaseDriverV1 {
         conn.session_id
     }
 
+    /// Resolve the Snowflake session_id for a connection handle.
+    pub(crate) async fn session_id(&self, handle: Handle) -> Option<i64> {
+        let conn_ptr = self.connections.get_obj(handle)?;
+        let conn = conn_ptr.lock().await;
+        let tokens = conn.tokens.read().await;
+        tokens.as_ref().map(|t| t.session_id)
+    }
+
     /// Flush buffered telemetry spans for a specific session.
-    pub(super) async fn flush_telemetry_session(&self, session_id: i64) {
+    pub(crate) async fn flush_telemetry_session(&self, session_id: i64) {
         if let Some(ref lm) = self.log_manager {
             lm.flush_session(session_id).await;
+        }
+    }
+
+    /// Add a pre-formatted user telemetry log entry to the session's buffer.
+    pub(crate) fn add_user_telemetry_log(&self, session_id: i64, entry: serde_json::Value) {
+        if let Some(ref lm) = self.log_manager {
+            lm.add_user_log(session_id, entry);
         }
     }
 

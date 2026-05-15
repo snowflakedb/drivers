@@ -776,6 +776,16 @@ message TelemetrySendWrapperErrorRequest {
   string error_source = 3;
 }
 
+message TelemetrySendJsonRequest {
+  ConnectionHandle conn_handle = 1;
+  // JSON-encoded log entry: {"message": {...}, "timestamp": "<epoch_ms>"}
+  string entry_json = 2;
+}
+
+message TelemetryFlushRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
 message TelemetrySendResponse {
 }
 
@@ -852,4 +862,6 @@ service DatabaseDriver {
   // Telemetry operations
   rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
   rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendResponse);
+  rpc TelemetrySendJson(TelemetrySendJsonRequest) returns (TelemetrySendResponse);
+  rpc TelemetryFlush(TelemetryFlushRequest) returns (TelemetrySendResponse);
 }

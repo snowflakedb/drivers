@@ -5,13 +5,25 @@ use std::time::Duration;
 use opentelemetry::Context;
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{Span, SpanData, SpanProcessor};
+use serde_json::Value;
 
+use super::serialization;
 use super::snowflake_exporter::{SnowflakeInBandExporter, extract_session_id};
 
-/// Number of buffered spans per session before an automatic flush.
+/// Number of buffered entries per session before an automatic flush.
 const FLUSH_THRESHOLD: usize = 50;
 
-type SharedBuffers = Arc<Mutex<HashMap<i64, Vec<SpanData>>>>;
+/// A single buffered telemetry entry — either an OTel span or a pre-formatted
+/// user log that bypasses the OTel pipeline entirely.
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+enum TelemetryEntry {
+    Span(SpanData),
+    /// Ready-to-send `{"message": {...}, "timestamp": "..."}` from the wrapper's public telemetry API.
+    UserLog(Value),
+}
+
+type SharedBuffers = Arc<Mutex<HashMap<i64, Vec<TelemetryEntry>>>>;
 
 /// Custom [`SpanProcessor`] that buffers spans per session and flushes
 /// when a threshold is reached or when explicitly requested on connection
@@ -46,41 +58,67 @@ pub struct SessionFlushHandle {
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl SessionFlushHandle {
-    /// Drain and export all buffered spans for the given session.
+    /// Drain and export all buffered entries for the given session.
     /// Called during connection release, before session tokens are cleared
     /// and before the connection span is dropped.
     ///
     /// Awaits the HTTP POST so the export completes while session tokens are
     /// still alive for authentication. If the exporter exceeds
     /// [`FLUSH_TIMEOUT`], the in-flight export future is cancelled and the
-    /// buffered spans for this session are dropped — telemetry is best-effort
-    /// and we prefer losing a batch to stalling `connection_close`. A detached
-    /// spawn retry is intentionally not used because the `Vec<SpanData>` has
-    /// already been moved into the cancelled future.
+    /// buffered entries are dropped — telemetry is best-effort and we prefer
+    /// losing a batch to stalling `connection_close`.
     pub async fn flush_session(&self, session_id: i64) {
-        let spans = {
+        let entries = {
             let mut bufs = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
             bufs.remove(&session_id).unwrap_or_default()
         };
-        if spans.is_empty() {
+        if entries.is_empty() {
             return;
         }
-        do_export_await(&self.exporter, spans).await;
+        do_export_await(&self.exporter, session_id, entries).await;
+    }
+
+    /// Add a pre-formatted user telemetry log entry to the session's buffer.
+    ///
+    /// If the buffer reaches the flush threshold, it is drained and exported
+    /// automatically (fire-and-forget).
+    pub fn add_user_log(&self, session_id: i64, entry: Value) {
+        let flush = {
+            let mut bufs = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
+            let buf = bufs.entry(session_id).or_default();
+            buf.push(TelemetryEntry::UserLog(entry));
+            buf.len() >= FLUSH_THRESHOLD
+        };
+
+        if flush {
+            let entries = {
+                let mut bufs = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
+                bufs.remove(&session_id).unwrap_or_default()
+            };
+            if !entries.is_empty() {
+                do_export_spawn(&self.exporter, session_id, entries);
+            }
+        }
     }
 }
-
-use opentelemetry_sdk::trace::SpanExporter;
 
 /// Spawn the exporter on the tokio runtime and return immediately.
 ///
 /// Used from [`SnowflakeSpanProcessor::on_end`], which is called synchronously
 /// from within `Span::end`. We must not block the span-end hot path, so this
 /// path is fire-and-forget and telemetry export is best-effort.
-fn do_export_spawn(exporter: &SnowflakeInBandExporter, spans: Vec<SpanData>) {
+fn do_export_spawn(
+    exporter: &SnowflakeInBandExporter,
+    session_id: i64,
+    entries: Vec<TelemetryEntry>,
+) {
+    let Some(payload) = build_payload(entries) else {
+        return;
+    };
     let exporter_clone = exporter.clone();
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn(async move {
-            if let Err(e) = SpanExporter::export(&exporter_clone, spans).await {
+            if let Err(e) = exporter_clone.send_for_session(session_id, &payload).await {
                 tracing::debug!(error = %e, "Snowflake telemetry export failed");
             }
         });
@@ -90,12 +128,21 @@ fn do_export_spawn(exporter: &SnowflakeInBandExporter, spans: Vec<SpanData>) {
 /// Await the exporter with [`FLUSH_TIMEOUT`] bound. Used by
 /// [`SessionFlushHandle::flush_session`] on connection release so the POST
 /// completes while session tokens are still alive. On timeout the in-flight
-/// export future is cancelled and the spans are dropped (the `Vec<SpanData>`
-/// was moved into that future). A slow/hung endpoint therefore cannot stall
-/// `connection_close`; the trade-off is losing at most one per-session batch.
-async fn do_export_await(exporter: &SnowflakeInBandExporter, spans: Vec<SpanData>) {
-    let exporter_clone = exporter.clone();
-    match tokio::time::timeout(FLUSH_TIMEOUT, SpanExporter::export(&exporter_clone, spans)).await {
+/// export future is cancelled and the entries are dropped.
+async fn do_export_await(
+    exporter: &SnowflakeInBandExporter,
+    session_id: i64,
+    entries: Vec<TelemetryEntry>,
+) {
+    let Some(payload) = build_payload(entries) else {
+        return;
+    };
+    match tokio::time::timeout(
+        FLUSH_TIMEOUT,
+        exporter.send_for_session(session_id, &payload),
+    )
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
             tracing::debug!(error = %e, "Snowflake telemetry export failed");
@@ -107,6 +154,33 @@ async fn do_export_await(exporter: &SnowflakeInBandExporter, spans: Vec<SpanData
             );
         }
     }
+}
+
+/// Convert buffered entries into the Snowflake `/telemetry/send` JSON payload.
+fn build_payload(entries: Vec<TelemetryEntry>) -> Option<Value> {
+    let mut spans: Vec<SpanData> = Vec::new();
+    let mut user_logs: Vec<Value> = Vec::new();
+
+    for entry in entries {
+        match entry {
+            TelemetryEntry::Span(s) => spans.push(s),
+            TelemetryEntry::UserLog(v) => user_logs.push(v),
+        }
+    }
+
+    let mut logs: Vec<Value> = Vec::new();
+    if !spans.is_empty() {
+        let span_payload = serialization::spans_to_snowflake_payload(&spans);
+        if let Some(arr) = span_payload["logs"].as_array() {
+            logs.extend(arr.iter().cloned());
+        }
+    }
+    logs.extend(user_logs);
+
+    if logs.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "logs": logs }))
 }
 
 impl SnowflakeSpanProcessor {
@@ -144,19 +218,20 @@ impl SpanProcessor for SnowflakeSpanProcessor {
         let flush = {
             let mut bufs = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
             let buf = bufs.entry(session_id).or_default();
-            buf.push(span);
+            buf.push(TelemetryEntry::Span(span));
             buf.len() >= FLUSH_THRESHOLD
         };
 
         if flush {
-            let spans = {
+            let entries = {
                 let mut bufs = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
                 bufs.remove(&session_id).unwrap_or_default()
             };
-            if !spans.is_empty() {
+            if !entries.is_empty() {
                 do_export_spawn(
                     &self.exporter.lock().unwrap_or_else(|e| e.into_inner()),
-                    spans,
+                    session_id,
+                    entries,
                 );
             }
         }
@@ -170,14 +245,14 @@ impl SpanProcessor for SnowflakeSpanProcessor {
     /// [`SessionFlushHandle::flush_session`], called from
     /// `flush_connection_telemetry` on connection release.
     fn force_flush(&self) -> OTelSdkResult {
-        let all_spans: Vec<(i64, Vec<SpanData>)> = {
+        let all: Vec<(i64, Vec<TelemetryEntry>)> = {
             let mut bufs = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
             bufs.drain().collect()
         };
         let exporter = self.exporter.lock().unwrap_or_else(|e| e.into_inner());
-        for (_session_id, spans) in all_spans {
-            if !spans.is_empty() {
-                do_export_spawn(&exporter, spans);
+        for (session_id, entries) in all {
+            if !entries.is_empty() {
+                do_export_spawn(&exporter, session_id, entries);
             }
         }
         Ok(())
@@ -196,6 +271,7 @@ mod tests {
     use opentelemetry::trace::{
         SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
     };
+    use serde_json::json;
     use std::sync::RwLock;
     use std::time::UNIX_EPOCH;
 
@@ -395,5 +471,60 @@ mod tests {
 
         let bufs = processor.buffers.lock().unwrap();
         assert!(bufs.is_empty(), "unsampled span should be ignored");
+    }
+
+    #[test]
+    fn user_log_is_buffered() {
+        let (_processor, flush_handle) = make_processor();
+        let entry = json!({"message": {"type": "test"}, "timestamp": "1000"});
+        flush_handle.add_user_log(1, entry);
+
+        let bufs = flush_handle.buffers.lock().unwrap();
+        assert_eq!(bufs.get(&1).map(|v| v.len()), Some(1));
+    }
+
+    #[test]
+    fn user_log_counts_toward_flush_threshold() {
+        let (processor, flush_handle) = make_processor();
+
+        for _ in 0..(FLUSH_THRESHOLD - 1) {
+            processor.on_end(make_test_span(Some(1), "0102030405060708090a0b0c0d0e0f10"));
+        }
+        {
+            let bufs = processor.buffers.lock().unwrap();
+            assert_eq!(bufs.get(&1).map(|v| v.len()), Some(FLUSH_THRESHOLD - 1));
+        }
+
+        flush_handle.add_user_log(
+            1,
+            json!({"message": {"type": "trigger"}, "timestamp": "1000"}),
+        );
+
+        let bufs = processor.buffers.lock().unwrap();
+        assert!(
+            bufs.get(&1).map(|v| v.len()).unwrap_or(0) == 0,
+            "buffer should be drained when user_log pushes total to threshold"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_session_drains_both_spans_and_user_logs() {
+        let (processor, flush_handle) = make_processor();
+
+        processor.on_end(make_test_span(Some(1), "0102030405060708090a0b0c0d0e0f10"));
+        flush_handle.add_user_log(
+            1,
+            json!({"message": {"type": "custom"}, "timestamp": "2000"}),
+        );
+
+        {
+            let bufs = processor.buffers.lock().unwrap();
+            assert_eq!(bufs.get(&1).map(|v| v.len()), Some(2));
+        }
+
+        flush_handle.flush_session(1).await;
+
+        let bufs = processor.buffers.lock().unwrap();
+        assert!(bufs.get(&1).is_none(), "all entries should be drained");
     }
 }

@@ -91,7 +91,9 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     StatementSetOptionsResponse,
     StatementSetSqlQueryRequest,
     StatementSetSqlQueryResponse,
+    TelemetryFlushRequest,
     TelemetrySendApiUsageRequest,
+    TelemetrySendJsonRequest,
     TelemetrySendResponse,
     TelemetrySendWrapperErrorRequest,
     TokenRequestType,
@@ -535,6 +537,14 @@ class CoreDriver:
             error_source=error_source,
         )
         return self.client.telemetry_send_wrapper_error(request)
+
+    def telemetry_send_json(self, conn_handle: ConnectionHandle, entry_json: str) -> TelemetrySendResponse:
+        request = TelemetrySendJsonRequest(conn_handle=conn_handle, entry_json=entry_json)
+        return self.client.telemetry_send_json(request)
+
+    def telemetry_flush(self, conn_handle: ConnectionHandle) -> TelemetrySendResponse:
+        request = TelemetryFlushRequest(conn_handle=conn_handle)
+        return self.client.telemetry_flush(request)
 
     # =====================================================================
     # Config
