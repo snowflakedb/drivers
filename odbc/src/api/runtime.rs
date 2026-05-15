@@ -1,7 +1,7 @@
 use std::ops::Deref;
-use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
+use parking_lot::Mutex;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DriverProviders, WrapperPresets, database_driver_client_with,
 };
@@ -13,6 +13,14 @@ use crate::api::handle_registry::HandleManager;
 use crate::api::telemetry::{
     TelemetryEvent, debug_log_telemetry_dropped_queue_full, drain_telemetry,
 };
+
+/// Serializes "last environment freed → `OdbcGlobals` destroyed" vs "first environment of the
+/// next epoch allocates a new `OdbcGlobals`".
+///
+/// Without this, `env_freed` can release `STATE`'s write lock and then spend a long time in Tokio
+/// teardown while `globals` is already `None`, letting another thread run `env_allocated` and
+/// create a second runtime + client while the first is still shutting down.
+static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 
 /// Capacity of the in-process telemetry channel. At ~32 B per event, the
 /// queue tops out at ~256 KiB. Sized to absorb the largest realistic
@@ -104,7 +112,7 @@ impl OdbcGlobals {
     /// fire-and-forget contract, and [`tracing::debug`] metadata is recorded
     /// (target `odbc::telemetry`; see `debug_log_telemetry_dropped_queue_full`). Holds
     /// only the brief channel-internal critical section, so it is safe to
-    /// call while holding the [`global()`] read guard.
+    /// call while holding a [`GlobalsGuard`] from [`global()`].
     pub fn record_telemetry(&self, event: TelemetryEvent) {
         match self.telemetry_tx.try_send(event) {
             Ok(()) => {}
@@ -124,7 +132,7 @@ impl OdbcGlobals {
 
 struct GlobalState {
     env_count: usize,
-    globals: Option<OdbcGlobals>,
+    globals: Option<Arc<OdbcGlobals>>,
 }
 
 static STATE: RwLock<GlobalState> = RwLock::new(GlobalState {
@@ -132,15 +140,14 @@ static STATE: RwLock<GlobalState> = RwLock::new(GlobalState {
     globals: None,
 });
 
-pub struct GlobalsGuard(std::sync::RwLockReadGuard<'static, GlobalState>);
+/// [`Arc::clone`] of the process-wide ODBC globals; [`global()`] does not keep `STATE`'s read
+/// lock for the whole duration of [`OdbcGlobals::block_on`].
+pub struct GlobalsGuard(Arc<OdbcGlobals>);
 
 impl Deref for GlobalsGuard {
     type Target = OdbcGlobals;
     fn deref(&self) -> &OdbcGlobals {
-        self.0
-            .globals
-            .as_ref()
-            .expect("GlobalsGuard created while globals are None (bug in global())")
+        self.0.as_ref()
     }
 }
 
@@ -168,13 +175,24 @@ pub enum OdbcRuntimeError {
 
 pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
     let guard = STATE.read().map_err(|_| LockPoisonedSnafu.build())?;
-    if guard.globals.is_none() {
+    let Some(arc) = guard.globals.as_ref() else {
         return NotInitializedSnafu.fail();
-    }
-    Ok(GlobalsGuard(guard))
+    };
+    let arc = Arc::clone(arc);
+    drop(guard);
+    Ok(GlobalsGuard(arc))
 }
 
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
+    let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
+    if guard.globals.is_some() {
+        guard.env_count += 1;
+        return Ok(());
+    }
+    drop(guard);
+
+    let _teardown = GLOBALS_TEARDOWN_LOCK.lock();
+
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     if guard.globals.is_none() {
         let log_manager = sf_core::logging::LogManager::for_odbc();
@@ -205,7 +223,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         // env teardown (the only `Sender` lives in `OdbcGlobals`).
         let drain_client = Arc::clone(&client);
         telemetry_runtime.spawn(drain_telemetry(telemetry_rx, drain_client));
-        guard.globals = Some(OdbcGlobals {
+        guard.globals = Some(Arc::new(OdbcGlobals {
             runtime,
             telemetry_runtime: Some(telemetry_runtime),
             client,
@@ -213,7 +231,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
             env_registry: HandleManager::new(),
             dbc_registry: HandleManager::new(),
             stmt_registry: HandleManager::new(),
-        });
+        }));
         tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
     }
     guard.env_count += 1;
@@ -227,7 +245,13 @@ pub fn env_freed() -> Result<(), OdbcRuntimeError> {
         tracing::info!("Last ODBC environment freed, tearing down global state");
         let globals = guard.globals.take();
         drop(guard);
-        drop(globals);
+        if let Some(arc) = globals {
+            let _teardown = GLOBALS_TEARDOWN_LOCK.lock();
+            while Arc::strong_count(&arc) > 1 {
+                std::thread::yield_now();
+            }
+            drop(arc);
+        }
     }
     Ok(())
 }
