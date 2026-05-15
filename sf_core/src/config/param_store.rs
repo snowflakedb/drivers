@@ -65,11 +65,11 @@ impl ParamStore {
     /// Extract a boolean value for `key`.
     ///
     /// Checks `Setting::Bool` first, then falls back to `Setting::String` with
-    /// `"true"` / `"1"` / `"false"` / `"0"` parsing for backward compatibility
-    /// with TOML-loaded values and ODBC connection-string encodings. Non-zero
-    /// `Setting::Int` values are also accepted. Unrecognised strings return
-    /// `None` so the caller falls through to its default rather than silently
-    /// degrading to `false`.
+    /// `"true"` / `"1"` / `"on"` / `"false"` / `"0"` / `"off"` parsing for
+    /// backward compatibility with TOML-loaded values and ODBC connection-string
+    /// encodings (e.g. `SSL=on`). Non-zero `Setting::Int` values are also
+    /// accepted. Unrecognised strings return `None` so the caller falls through
+    /// to its default rather than silently degrading to `false`.
     pub fn get_bool(&self, key: ParamKey) -> Option<bool> {
         match self.get(key)? {
             Setting::Bool(b) => Some(*b),

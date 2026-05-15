@@ -92,16 +92,19 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
 
   // And All close calls return successfully
   int success_count = 0;
-  int expected_error_count = 0;
+  int error_count = 0;
   for (auto r : results) {
-    if (r == SQL_SUCCESS) {
+    if (r == SQL_SUCCESS)
       success_count++;
-    } else if (r == SQL_ERROR) {
-      expected_error_count++;
-    }
+    else if (r == SQL_ERROR)
+      error_count++;
   }
-  CHECK(success_count + expected_error_count == num_threads);
   CHECK(success_count == 1);
+  CHECK(error_count == num_threads - 1);
+
+  // Verify a subsequent disconnect still reports 08003
+  SQLRETURN after = SQLDisconnect(dbc.getHandle());
+  CHECK_THAT(OdbcResult(after, dbc), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("08003"));
 }
 
 TEST_CASE("should succeed even when server returns error during logout", "[session][logout]") {
