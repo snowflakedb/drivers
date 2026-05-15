@@ -265,6 +265,14 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
                 f"entry to build_odbc_driver in .github/workflows/test-odbc.yml first, "
                 f"then set 'driver_artifact' on the row in mappings/odbc.py."
             )
+        if driver == "odbc" and "driver_artifact" in ODBC_PLATFORM[pair] and "cache_key" not in ODBC_PLATFORM[pair]:
+            raise RuntimeError(
+                f"({pair[0]}, {pair[1]}) is in ODBC_PLATFORM with a driver_artifact "
+                f"but missing 'cache_key'. This field is required by "
+                f"--emit-build-matrix to generate the build_odbc_driver job's "
+                f"include array — set it to the cargo-cache shared-key value "
+                f"used by that lane (e.g. 'odbc', 'odbc-x64', 'odbc-arm64')."
+            )
         # PYTHON_PLATFORM is required on every Python lane: _build_gha_row reads
         # wheel_artifact + wheels from it. Missing rows silently drop py3.11+ cells
         # (and emit py3.10 as sdist), so fail loud here instead.
@@ -687,6 +695,89 @@ def emit_build_targets(driver: str, event: str | None, labels: list[str] | None 
     print(f"targets={json.dumps(build_targets(driver, event, labels))}")
 
 
+def build_matrix(driver: str, event: str | None, labels: list[str] | None = None) -> list[dict]:
+    """
+    Return the GHA `include:` array for the driver-build job at the trigger
+    level implied by `event`. Currently only supported for the odbc driver.
+
+    Each entry carries the build-relevant fields the build_odbc_driver job
+    in test-odbc.yml needs:
+        {
+            "name":            <driver_artifact value, used as both display
+                                name and uploaded artifact suffix>,
+            "os":              <GHA runner label>,
+            "driver_lib":      <library file name, e.g. libsfodbc.so>,
+            "driver_artifact": <same as name; kept for symmetry with test rows>,
+            "cache_key":       <actions/cargo-cache shared-key value>,
+            "cargo_extra":     <optional extra cargo flags; absent on lanes
+                                that don't set them>,
+            "cargo_target":    <optional cross-compile target>,
+            "msvc_arch":       <optional, Windows non-x64 only>,
+            "vcpkg_triplet":   <optional, Windows only>,
+        }
+
+    A platform appears at most once per call: lanes are deduplicated by
+    (OS, Arch). The same lane is included regardless of how many active
+    test rows reference its driver — one build per lane covers all rows.
+    """
+    if driver != "odbc":
+        raise ValueError(
+            f"--emit-build-matrix is only supported for the odbc driver; got {driver!r}"
+        )
+    model_path = MODELS_DIR / f"{driver}.py"
+    gha_rows = generate(model_path, driver)
+    level = level_for_event_and_labels(event, labels)
+    active = filter_active(gha_rows, level)
+
+    # Reverse-lookup driver_artifact -> (os, arch) so we can fetch full
+    # ODBC_PLATFORM metadata. Only pairs that have a driver_artifact set
+    # are eligible — Linux ARM lanes (driver_artifact absent) are skipped.
+    artifact_to_pair: dict[str, tuple[str, str]] = {
+        meta["driver_artifact"]: pair
+        for pair, meta in ODBC_PLATFORM.items()
+        if "driver_artifact" in meta
+    }
+
+    seen_pairs: set[tuple[str, str]] = set()
+    matrix: list[dict] = []
+    for row in active:
+        artifact = row.get("driver_artifact")
+        if not artifact:
+            # Unbuilt lanes (Linux ARM) — no build job needed.
+            continue
+        pair = artifact_to_pair[artifact]
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        meta = ODBC_PLATFORM[pair]
+        entry: dict = {
+            "name":            meta["driver_artifact"],
+            "os":              GHA_RUNNER[pair],
+            "driver_lib":      meta["driver_lib"],
+            "driver_artifact": meta["driver_artifact"],
+            "cache_key":       meta["cache_key"],
+        }
+        for optional_key in ("cargo_extra", "cargo_target", "msvc_arch", "vcpkg_triplet"):
+            if optional_key in meta:
+                entry[optional_key] = meta[optional_key]
+        matrix.append(entry)
+
+    # Stable order: by name. Reproducible output regardless of which test row
+    # happened to introduce a lane first.
+    matrix.sort(key=lambda r: r["name"])
+    return matrix
+
+
+def emit_build_matrix(driver: str, event: str | None, labels: list[str] | None = None) -> None:
+    """
+    Print `matrix=<json>` for the driver-build matrix active at the level
+    implied by `event`, optionally upgraded by scope-up PR labels (see
+    LABEL_TO_LEVEL). Suitable for appending to $GITHUB_OUTPUT inside a
+    workflow step. Currently only supported for the odbc driver.
+    """
+    print(f"matrix={json.dumps(build_matrix(driver, event, labels))}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pairwise CI matrix generator")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -718,13 +809,21 @@ def main() -> None:
              "supported for the python driver — feeds _build-python-wheels.yml's "
              "`targets:` input.",
     )
+    parser.add_argument(
+        "--emit-build-matrix",
+        action="store_true",
+        help="Print 'matrix=<json>' for the driver-build matrix active at the trigger "
+             "level implied by --event (requires --driver and --event). Currently only "
+             "supported for the odbc driver — feeds build_odbc_driver's matrix.include "
+             "in test-odbc.yml.",
+    )
     args = parser.parse_args()
 
     if args.emit_active:
         if args.all or not args.driver:
             parser.error("--emit-active requires --driver and is incompatible with --all")
-        if args.emit_build_targets:
-            parser.error("--emit-active and --emit-build-targets are mutually exclusive")
+        if args.emit_build_targets or args.emit_build_matrix:
+            parser.error("--emit-active is mutually exclusive with --emit-build-targets and --emit-build-matrix")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
         emit_active(args.driver, args.event, labels)
         return
@@ -732,8 +831,17 @@ def main() -> None:
     if args.emit_build_targets:
         if args.all or not args.driver:
             parser.error("--emit-build-targets requires --driver and is incompatible with --all")
+        if args.emit_build_matrix:
+            parser.error("--emit-build-targets and --emit-build-matrix are mutually exclusive")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
         emit_build_targets(args.driver, args.event, labels)
+        return
+
+    if args.emit_build_matrix:
+        if args.all or not args.driver:
+            parser.error("--emit-build-matrix requires --driver and is incompatible with --all")
+        labels = [l.strip() for l in args.labels.split(",") if l.strip()]
+        emit_build_matrix(args.driver, args.event, labels)
         return
 
     drivers = ["odbc", "python", "core"] if args.all else [args.driver]

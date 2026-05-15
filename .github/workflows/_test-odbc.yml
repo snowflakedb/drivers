@@ -11,45 +11,35 @@ jobs:
   load-odbc-matrix:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.read.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      build-matrix: ${{ steps.build.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-      - id: read
+      - id: matrix
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           python ci/test_matrix/generate_matrix.py \
-            --driver odbc --event "$GITHUB_EVENT_NAME" --emit-active \
+            --driver odbc --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
+            >> "$GITHUB_OUTPUT"
+      - id: build
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          python ci/test_matrix/generate_matrix.py \
+            --driver odbc --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-matrix \
             >> "$GITHUB_OUTPUT"
 
   # Build ODBC driver once per platform and share via artifact.
+  # Matrix is generated from ci/test_matrix/mappings/odbc.py via
+  # `--emit-build-matrix`; only platforms whose test rows are active at the
+  # current trigger level appear here.
   build_odbc_driver:
+    needs: load-odbc-matrix
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            cache_key: odbc
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            cache_key: odbc
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            cargo_extra: "--features vendored-openssl"
-            cache_key: odbc-x64
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            cargo_target: i686-pc-windows-msvc
-            cargo_extra: "--no-default-features --features vendored-openssl"
-            cache_key: odbc-x86
-          - os: windows-11-arm
-            name: Windows ARM64
-            driver_lib: sfodbc.dll
-            cargo_extra: "--features vendored-openssl"
-            cache_key: odbc-arm64
+        include: ${{ fromJSON(needs.load-odbc-matrix.outputs.build-matrix) }}
     runs-on: ${{ matrix.os }}
     name: build_odbc_driver (${{ matrix.name }})
     steps:
