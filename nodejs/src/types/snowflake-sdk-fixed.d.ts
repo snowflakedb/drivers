@@ -2,8 +2,22 @@
 // augmentation: once this file is in the TS program (via tsconfig `include`),
 // every `from 'snowflake-sdk'` import in the project sees the patched types.
 import type { QueryStatus } from 'snowflake-sdk';
+import ColumnType from '../constants/ColumnType';
 
 declare module 'snowflake-sdk' {
+  // TODO:
+  // These constants are exported by the old driver but are undocumented.
+  // We declare them here and implement them in the new driver for compatibility.
+  // Might remove them later or move to a separate namespace.
+  export const STRING = ColumnType.STRING;
+  export const BOOLEAN = ColumnType.BOOLEAN;
+  export const NUMBER = ColumnType.NUMBER;
+  export const DATE = ColumnType.DATE;
+  export const OBJECT = ColumnType.OBJECT;
+  export const ARRAY = ColumnType.ARRAY;
+  export const MAP = ColumnType.MAP;
+  export const JSON = ColumnType.JSON;
+
   interface Connection {
     // Upstream: `getQueryStatus(queryId: string): Promise<string>`.
     // The server only ever returns one of the `QueryStatus` literals, and
