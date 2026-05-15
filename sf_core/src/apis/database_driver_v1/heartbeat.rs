@@ -69,12 +69,9 @@ pub fn compute_heartbeat_interval(
     let max = master / 4;
     let min = master / 16;
 
-    let interval = match user_frequency_secs {
-        None => min,
-        Some(secs) => Duration::from_secs(secs).clamp(min, max),
-    };
-
-    interval.min(MAX_HEARTBEAT_INTERVAL)
+    user_frequency_secs
+        .map_or(min, |s| Duration::from_secs(s).clamp(min, max))
+        .min(MAX_HEARTBEAT_INTERVAL)
 }
 
 /// Spawn a per-connection heartbeat background task.

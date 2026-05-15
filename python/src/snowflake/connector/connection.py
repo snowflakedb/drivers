@@ -645,10 +645,33 @@ class Connection(ErrorHandlerMixin):
         """Whether to keep the session active with periodic heartbeat requests."""
         return self.config.client_session_keep_alive
 
+    @client_session_keep_alive.setter
+    @backward_compatibility
+    def client_session_keep_alive(self, value: bool | None) -> None:
+        """Setter retained for compatibility with snowflake-connector-python.
+
+        The Universal Driver consumes ``client_session_keep_alive`` only at
+        connect time, so assigning to this attribute on a live ``Connection``
+        does not start or stop the heartbeat task. Pass the value as a
+        constructor kwarg instead.
+        """
+        self.config.client_session_keep_alive = value
+
     @property
     def client_session_keep_alive_heartbeat_frequency(self) -> int | None:
         """The frequency in seconds of heartbeat requests when session keep-alive is enabled."""
         return self.config.client_session_keep_alive_heartbeat_frequency
+
+    @client_session_keep_alive_heartbeat_frequency.setter
+    @backward_compatibility
+    def client_session_keep_alive_heartbeat_frequency(self, value: int | None) -> None:
+        """Setter retained for compatibility with snowflake-connector-python.
+
+        The Universal Driver consumes the heartbeat frequency only at connect
+        time, so post-connect assignments do not reschedule the running
+        heartbeat task. Pass the value as a constructor kwarg instead.
+        """
+        self.config.client_session_keep_alive_heartbeat_frequency = value
 
     @property
     def client_prefetch_threads(self) -> int:
