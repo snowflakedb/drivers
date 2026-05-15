@@ -47,14 +47,34 @@ impl Drop for HeartbeatHandle {
     }
 }
 
-/// Compute the heartbeat interval from master token validity.
+/// Compute the heartbeat interval from master token validity and an optional
+/// user-requested frequency (in seconds).
 ///
-/// Returns `master_validity / 4`, capped at 3600s.
-/// Falls back to 3600s if `master_validity` is `None`.
-pub fn compute_heartbeat_interval(master_validity: Option<Duration>) -> Duration {
-    master_validity
-        .map(|v| (v / 4).min(MAX_HEARTBEAT_INTERVAL))
-        .unwrap_or(MAX_HEARTBEAT_INTERVAL)
+/// When `user_frequency_secs` is `None`, returns `master_validity / 16` —
+/// matching the Python connector's default
+/// (`_validate_client_session_keep_alive_heartbeat_frequency`).
+///
+/// When `user_frequency_secs` is provided, it is clamped to the closed range
+/// `[master_validity / 16, master_validity / 4]`.
+///
+/// In both cases the final value is capped at [`MAX_HEARTBEAT_INTERVAL`].
+/// When `master_validity` is `None` the master validity defaults to 4h
+/// (the Snowflake server default), giving `[900s, 3600s]`.
+pub fn compute_heartbeat_interval(
+    master_validity: Option<Duration>,
+    user_frequency_secs: Option<u64>,
+) -> Duration {
+    const DEFAULT_MASTER_VALIDITY: Duration = Duration::from_secs(4 * 3600);
+    let master = master_validity.unwrap_or(DEFAULT_MASTER_VALIDITY);
+    let max = master / 4;
+    let min = master / 16;
+
+    let interval = match user_frequency_secs {
+        None => min,
+        Some(secs) => Duration::from_secs(secs).clamp(min, max),
+    };
+
+    interval.min(MAX_HEARTBEAT_INTERVAL)
 }
 
 /// Spawn a per-connection heartbeat background task.
@@ -184,26 +204,44 @@ mod tests {
     }
 
     #[test]
-    fn compute_interval_default() {
-        let interval = compute_heartbeat_interval(None);
+    fn compute_interval_default_uses_master_over_16() {
+        // No master validity, no user frequency -> default_master / 16 = 14400 / 16 = 900s.
+        let interval = compute_heartbeat_interval(None, None);
+        assert_eq!(interval, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn compute_interval_default_from_validity() {
+        // validity / 16
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)), None);
+        assert_eq!(interval, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn compute_interval_user_value_within_range() {
+        // 1800 is within [900, 3600] for master=14400.
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)), Some(1800));
+        assert_eq!(interval, Duration::from_secs(1800));
+    }
+
+    #[test]
+    fn compute_interval_user_value_clamped_to_min() {
+        // 100 is below 900; clamp up.
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)), Some(100));
+        assert_eq!(interval, Duration::from_secs(900));
+    }
+
+    #[test]
+    fn compute_interval_user_value_clamped_to_max() {
+        // 9000 is above 3600; clamp down.
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)), Some(9000));
         assert_eq!(interval, Duration::from_secs(3600));
     }
 
     #[test]
-    fn compute_interval_from_validity() {
-        let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)));
-        assert_eq!(interval, Duration::from_secs(3600));
-    }
-
-    #[test]
-    fn compute_interval_no_bottom_clamp() {
-        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100)));
-        assert_eq!(interval, Duration::from_secs(25));
-    }
-
-    #[test]
-    fn compute_interval_clamp_max() {
-        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100_000)));
+    fn compute_interval_clamp_max_overall() {
+        // With a master of 100_000s, default would be 6250s; cap at MAX_HEARTBEAT_INTERVAL.
+        let interval = compute_heartbeat_interval(Some(Duration::from_secs(100_000)), None);
         assert_eq!(interval, MAX_HEARTBEAT_INTERVAL);
     }
 

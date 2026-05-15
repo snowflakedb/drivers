@@ -189,7 +189,27 @@ impl DatabaseDriverV1 {
                     // Forward unrecognized settings as session parameters so
                     // drivers can set arbitrary Snowflake session params
                     // via regular connection options.
-                    let unknown_settings = collect_unknown_settings(&conn.connection_seed);
+                    let mut unknown_settings = collect_unknown_settings(&conn.connection_seed);
+                    // `CLIENT_SESSION_KEEP_ALIVE` and
+                    // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are registered
+                    // params so they don't show up as "unknown"; mirror them into
+                    // login session parameters to match the Python connector.
+                    if let Some(v) = resolved.get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE) {
+                        unknown_settings.insert(
+                            param_names::CLIENT_SESSION_KEEP_ALIVE.as_str().to_string(),
+                            v.to_string(),
+                        );
+                    }
+                    if let Some(v) =
+                        resolved.get_int(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY)
+                    {
+                        unknown_settings.insert(
+                            param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY
+                                .as_str()
+                                .to_string(),
+                            v.to_string(),
+                        );
+                    }
                     let init_params = match init_params {
                         Some(explicit) => {
                             // Normalize explicit keys to uppercase so precedence
@@ -264,10 +284,16 @@ impl DatabaseDriverV1 {
                     role: login_result.role_name,
                 };
 
-                let keep_alive = merged_params
-                    .get(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str())
-                    .map(|v| v.eq_ignore_ascii_case("true"))
+                // `CLIENT_SESSION_KEEP_ALIVE` and
+                // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are registered in
+                // the param registry (client-side, not forwarded to login as
+                // session parameters). Read them from the resolved snapshot.
+                let keep_alive = resolved_snapshot
+                    .get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE)
                     .unwrap_or(false);
+                let heartbeat_frequency_secs = resolved_snapshot
+                    .get_int(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY)
+                    .and_then(|v| u64::try_from(v).ok());
 
                 {
                     let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
@@ -357,6 +383,7 @@ impl DatabaseDriverV1 {
                                 .await
                                 .as_ref()
                                 .and_then(|t| t.master_valid_for()),
+                            heartbeat_frequency_secs,
                         );
                         let handle = spawn_heartbeat_task(
                             conn.tokens.clone(),
