@@ -308,13 +308,9 @@ fn connect_with_params(
             wrapper_identity: Some(WrapperIdentity {
                 driver_name: Some(ODBC_DRIVER_NAME.to_string()),
                 driver_version: Some(ODBC_DRIVER_VERSION.to_string()),
-                // The wrapper itself is implemented in Rust. We don't ship a
-                // separate `language_version` (rustc release) yet because
-                // capturing that requires a build script; leave it `None` so
-                // the field can be filled in later without changing the
-                // signature here.
-                language_runtime: Some("Rust".to_string()),
-                language_version: None,
+                // Set at compile time in `build.rs` (`SF_ODBC_*`) from Cargo / rustc.
+                language_runtime: Some(env!("SF_ODBC_WRAPPER_LANGUAGE_RUNTIME").to_string()),
+                language_version: Some(env!("SF_ODBC_BUILD_RUST_SEMVER").to_string()),
                 language_compiler: None,
             }),
         })

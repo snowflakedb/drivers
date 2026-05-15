@@ -19,7 +19,6 @@ use sf_core::protobuf::generated::database_driver_v1::{
 };
 
 use error_trace::ErrorTrace;
-use odbc_derive::ClassifyError;
 use sf_core::protobuf::generated::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
 use strum_macros::{Display as StrumDisplay, EnumDiscriminants, EnumIter, IntoStaticStr};
@@ -51,12 +50,12 @@ pub enum ErrorSource {
     /// A feature, attribute, or info type the wrapper does not (yet)
     /// implement.
     Unsupported,
-    /// `ClassifyError` fallback. New `OdbcError` variants without an
-    /// explicit `#[error_source(..)]` attribute will land here.
+    /// Errors that do not map to a more specific bucket (see
+    /// [`OdbcError::error_source`]).
     Unknown,
 }
 
-#[derive(Snafu, Debug, ErrorTrace, ClassifyError, IntoStaticStr, EnumDiscriminants)]
+#[derive(Snafu, Debug, ErrorTrace, IntoStaticStr, EnumDiscriminants)]
 #[snafu(visibility(pub))]
 #[strum_discriminants(
     name(OdbcErrorKind),
@@ -64,49 +63,42 @@ pub enum ErrorSource {
 )]
 pub enum OdbcError {
     #[snafu(display("Freeing environment failed: environment has connections"))]
-    #[error_source(ApiMisuse)]
     EnvironmentHasConnections {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Freeing connection failed: connection is still connected"))]
-    #[error_source(ApiMisuse)]
     ConnectionStillConnected {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Connection has no environment"))]
-    #[error_source(InternalError)]
     ConnectionHasNoEnvironment {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Failed to lock environment"))]
-    #[error_source(InternalError)]
     EnvironmentLockPoisoned {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Connection is disconnected"))]
-    #[error_source(ApiMisuse)]
     Disconnected {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Invalid handle"))]
-    #[error_source(ApiMisuse)]
     InvalidHandle {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Invalid handle type for this operation: {handle_type}"))]
-    #[error_source(ApiMisuse)]
     InvalidHandleType {
         handle_type: i16,
         #[snafu(implicit)]
@@ -114,7 +106,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid descriptor kind: {kind}"))]
-    #[error_source(ApiMisuse)]
     InvalidDescriptorKind {
         kind: u16,
         #[snafu(implicit)]
@@ -122,14 +113,12 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid use of null pointer"))]
-    #[error_source(ApiMisuse)]
     NullPointer {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Invalid string or buffer length: {length}"))]
-    #[error_source(ApiMisuse)]
     InvalidBufferLength {
         length: i64,
         #[snafu(implicit)]
@@ -137,14 +126,12 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid application buffer type"))]
-    #[error_source(ApiMisuse)]
     InvalidApplicationBufferType {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Invalid parameter type: {value}"))]
-    #[error_source(ApiMisuse)]
     InvalidParameterType {
         value: i16,
         #[snafu(implicit)]
@@ -152,7 +139,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid SQL data type: {value}"))]
-    #[error_source(ApiMisuse)]
     InvalidSqlDataType {
         value: i16,
         #[snafu(implicit)]
@@ -160,7 +146,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid record number: {number}"))]
-    #[error_source(ApiMisuse)]
     InvalidRecordNumber {
         number: sql::SmallInt,
         #[snafu(implicit)]
@@ -168,7 +153,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid descriptor index: {number}"))]
-    #[error_source(ApiMisuse)]
     InvalidDescriptorIndex {
         number: sql::SmallInt,
         #[snafu(implicit)]
@@ -176,7 +160,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid precision or scale value: {reason}"))]
-    #[error_source(ApiMisuse)]
     InvalidPrecisionOrScale {
         reason: String,
         #[snafu(implicit)]
@@ -184,7 +167,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid diagnostic identifier: {identifier}"))]
-    #[error_source(ApiMisuse)]
     InvalidDiagnosticIdentifier {
         identifier: sql::SmallInt,
         #[snafu(implicit)]
@@ -192,7 +174,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Unknown attribute: {attribute}"))]
-    #[error_source(ApiMisuse)]
     UnknownAttribute {
         attribute: i32,
         #[snafu(implicit)]
@@ -200,7 +181,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Attribute {attribute} is read-only and cannot be set"))]
-    #[error_source(ApiMisuse)]
     ReadOnlyAttribute {
         attribute: i32,
         #[snafu(implicit)]
@@ -208,7 +188,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Unsupported attribute: {attribute}"))]
-    #[error_source(Unsupported)]
     UnsupportedAttribute {
         attribute: i32,
         #[snafu(implicit)]
@@ -216,7 +195,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid attribute value {value} for attribute {attribute}"))]
-    #[error_source(ApiMisuse)]
     InvalidAttributeValue {
         attribute: i32,
         value: i64,
@@ -225,7 +203,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Unsupported info type: {:?}", info_type))]
-    #[error_source(Unsupported)]
     UnsupportedInfoType {
         info_type: InfoType,
         #[snafu(implicit)]
@@ -233,7 +210,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Unknown info type: {info_type}"))]
-    #[error_source(Unsupported)]
     UnknownInfoType {
         info_type: u16,
         #[snafu(implicit)]
@@ -241,7 +217,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Attribute cannot be set now: {attribute}"))]
-    #[error_source(ApiMisuse)]
     AttributeCannotBeSetNow {
         attribute: i32,
         #[snafu(implicit)]
@@ -249,21 +224,18 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Parameter number cannot be 0"))]
-    #[error_source(ApiMisuse)]
     InvalidParameterNumber {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Statement not executed"))]
-    #[error_source(CursorState)]
     StatementNotExecuted {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("COUNT field incorrect: {reason}"))]
-    #[error_source(ApiMisuse)]
     CountFieldIncorrect {
         reason: String,
         #[snafu(implicit)]
@@ -271,7 +243,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid catalog name: {name}"))]
-    #[error_source(ApiMisuse)]
     InvalidCatalogName {
         name: String,
         #[snafu(implicit)]
@@ -279,42 +250,36 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid cursor state: no result set associated with the statement"))]
-    #[error_source(CursorState)]
     InvalidCursorState {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Invalid cursor state: cursor is already open"))]
-    #[error_source(CursorState)]
     CursorAlreadyOpen {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Statement is in error state"))]
-    #[error_source(CursorState)]
     StatementErrorState {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Data not fetched yet"))]
-    #[error_source(CursorState)]
     DataNotFetched {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("No more data available"))]
-    #[error_source(CursorState)]
     NoMoreData {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Invalid cursor position"))]
-    #[error_source(CursorState)]
     InvalidCursorPosition {
         #[snafu(implicit)]
         location: Location,
@@ -323,14 +288,12 @@ pub enum OdbcError {
     #[snafu(display(
         "SQLFetch cannot be called after SQLExtendedFetch without closing the cursor"
     ))]
-    #[error_source(CursorState)]
     MixedCursorFunctions {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Internal driver error: {message}"))]
-    #[error_source(InternalError)]
     InternalError {
         message: String,
         #[snafu(implicit)]
@@ -338,28 +301,24 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Optional feature not implemented"))]
-    #[error_source(Unsupported)]
     UnsupportedFeature {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Fetch type out of range"))]
-    #[error_source(CursorState)]
     FetchTypeOutOfRange {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("SQLFetch cannot be mixed with SQLExtendedFetch without closing cursor"))]
-    #[error_source(CursorState)]
     ExtendedFetchUsed {
         #[snafu(implicit)]
         location: Location,
     },
 
     #[snafu(display("Failed to parse port '{port}'"))]
-    #[error_source(ConfigParsing)]
     InvalidPort {
         port: String,
         source: std::num::ParseIntError,
@@ -368,7 +327,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to set SQL query: {query}"))]
-    #[error_source(ServerError)]
     SetSqlQuery {
         query: String,
         #[snafu(implicit)]
@@ -376,7 +334,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to prepare statement: {statement}"))]
-    #[error_source(ServerError)]
     PrepareStatement {
         statement: String,
         #[snafu(implicit)]
@@ -384,7 +341,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to execute statement: {statement}"))]
-    #[error_source(ServerError)]
     ExecuteStatement {
         statement: String,
         #[snafu(implicit)]
@@ -392,7 +348,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Failed to bind parameters: {parameters}"))]
-    #[error_source(DataConversion)]
     BindParameters {
         parameters: String,
         #[snafu(implicit)]
@@ -400,7 +355,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Connection initialization failed: {connection}"))]
-    #[error_source(Connectivity)]
     ConnectionInit {
         connection: String,
         #[snafu(implicit)]
@@ -408,7 +362,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error reading arrow value: {source:?}"))]
-    #[error_source(DataConversion)]
     ConversionError {
         #[snafu(source(from(ConversionError, Box::new)))]
         source: Box<ConversionError>,
@@ -417,7 +370,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error binding JSON parameters: {source:?}"))]
-    #[error_source(DataConversion)]
     JsonBinding {
         source: JsonBindingError,
         #[snafu(implicit)]
@@ -425,7 +377,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error binding parameters: {parameters}"))]
-    #[error_source(DataConversion)]
     ParameterBinding {
         parameters: String,
         #[snafu(implicit)]
@@ -433,7 +384,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error fetching data: {source}"))]
-    #[error_source(DataConversion)]
     FetchData {
         source: ArrowError,
         #[snafu(implicit)]
@@ -441,21 +391,18 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Text conversion error: {source}"))]
-    #[error_source(DataConversion)]
     TextConversionFromUtf8 {
         source: FromUtf8Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Text conversion error: {source}"))]
-    #[error_source(DataConversion)]
     TextConversionFromUtf16 {
         source: FromUtf16Error,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Text conversion error: {source}"))]
-    #[error_source(DataConversion)]
     TextConversionUtf8 {
         source: Utf8Error,
         #[snafu(implicit)]
@@ -463,19 +410,15 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error while creating arrow array stream reader: {source}"))]
-    #[error_source(InternalError)]
     ArrowArrayStreamReaderCreation {
         source: ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
 
-    // Classification is computed dynamically from the inner
-    // `CoreProtobufError` variant in `telemetry_classification` (Transport →
-    // connectivity, Application → server_error). No `#[error_source(..)]`
-    // attribute here on purpose; the derive falls back to
-    // `ErrorSource::Unknown` for `CoreError::error_source()`, which is
-    // overridden by `telemetry_classification` before being consulted.
+    // `error_source()` returns [`ErrorSource::Unknown`]; the wire payload
+    // uses `telemetry_classification` to map the inner
+    // `CoreProtobufError` (Transport → connectivity, Application → server_error).
     #[snafu(display("Received core protobuf error"))]
     CoreError {
         source: Box<CoreProtobufError>,
@@ -484,7 +427,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("[Core] Required field missing: {message}"))]
-    #[error_source(InternalError)]
     ProtoRequiredFieldMissing {
         message: String,
         #[snafu(implicit)]
@@ -492,7 +434,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid FreeStmt option: {option}"))]
-    #[error_source(ApiMisuse)]
     InvalidFreeStmtOption {
         option: u16,
         #[snafu(implicit)]
@@ -500,7 +441,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("ODBC runtime error"))]
-    #[error_source(InternalError)]
     OdbcRuntime {
         source: crate::api::runtime::OdbcRuntimeError,
         #[snafu(implicit)]
@@ -508,16 +448,13 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Data source name not found: {dsn}"))]
-    #[error_source(ConfigParsing)]
     DataSourceNotFound {
         dsn: String,
         #[snafu(implicit)]
         location: Location,
     },
 
-    // OperationCanceled is caller-initiated and doesn't fit any of the
-    // error-source buckets cleanly; classification falls through to
-    // `ErrorSource::Unknown` via the `ClassifyError` derive default.
+    // Caller-initiated cancel; no dedicated bucket — maps to [`ErrorSource::Unknown`].
     #[snafu(display("Operation canceled"))]
     OperationCanceled {
         #[snafu(implicit)]
@@ -525,7 +462,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Invalid connection string: {reason}"))]
-    #[error_source(ConfigParsing)]
     InvalidConnectionString {
         reason: String,
         #[snafu(implicit)]
@@ -533,7 +469,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Data-at-execution required"))]
-    #[error_source(ApiMisuse)]
     DaeRequired {
         #[snafu(implicit)]
         location: Location,
@@ -542,7 +477,6 @@ pub enum OdbcError {
     #[snafu(display(
         "Function sequence error: cannot call this function during data-at-execution"
     ))]
-    #[error_source(ApiMisuse)]
     InvalidDuringDae {
         #[snafu(implicit)]
         location: Location,
@@ -592,6 +526,78 @@ fn is_well_formed_sql_state(state: &str) -> bool {
 }
 
 impl OdbcError {
+    /// High-level telemetry bucket for this wrapper error.
+    ///
+    /// [`OdbcError::CoreError`] returns [`ErrorSource::Unknown`] here; use
+    /// [`telemetry_classification`] for the in-band wire payload, which
+    /// inspects the inner protobuf error.
+    pub fn error_source(&self) -> ErrorSource {
+        match self {
+            OdbcError::EnvironmentHasConnections { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ConnectionStillConnected { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ConnectionHasNoEnvironment { .. } => ErrorSource::InternalError,
+            OdbcError::EnvironmentLockPoisoned { .. } => ErrorSource::InternalError,
+            OdbcError::Disconnected { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidHandle { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidHandleType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDescriptorKind { .. } => ErrorSource::ApiMisuse,
+            OdbcError::NullPointer { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidBufferLength { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidApplicationBufferType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidParameterType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidSqlDataType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidRecordNumber { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDescriptorIndex { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidPrecisionOrScale { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDiagnosticIdentifier { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnknownAttribute { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ReadOnlyAttribute { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnsupportedAttribute { .. } => ErrorSource::Unsupported,
+            OdbcError::InvalidAttributeValue { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnsupportedInfoType { .. } => ErrorSource::Unsupported,
+            OdbcError::UnknownInfoType { .. } => ErrorSource::Unsupported,
+            OdbcError::AttributeCannotBeSetNow { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidParameterNumber { .. } => ErrorSource::ApiMisuse,
+            OdbcError::StatementNotExecuted { .. } => ErrorSource::CursorState,
+            OdbcError::CountFieldIncorrect { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidCatalogName { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidCursorState { .. } => ErrorSource::CursorState,
+            OdbcError::CursorAlreadyOpen { .. } => ErrorSource::CursorState,
+            OdbcError::StatementErrorState { .. } => ErrorSource::CursorState,
+            OdbcError::DataNotFetched { .. } => ErrorSource::CursorState,
+            OdbcError::NoMoreData { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidCursorPosition { .. } => ErrorSource::CursorState,
+            OdbcError::MixedCursorFunctions { .. } => ErrorSource::CursorState,
+            OdbcError::InternalError { .. } => ErrorSource::InternalError,
+            OdbcError::UnsupportedFeature { .. } => ErrorSource::Unsupported,
+            OdbcError::FetchTypeOutOfRange { .. } => ErrorSource::CursorState,
+            OdbcError::ExtendedFetchUsed { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidPort { .. } => ErrorSource::ConfigParsing,
+            OdbcError::SetSqlQuery { .. } => ErrorSource::ServerError,
+            OdbcError::PrepareStatement { .. } => ErrorSource::ServerError,
+            OdbcError::ExecuteStatement { .. } => ErrorSource::ServerError,
+            OdbcError::BindParameters { .. } => ErrorSource::DataConversion,
+            OdbcError::ConnectionInit { .. } => ErrorSource::Connectivity,
+            OdbcError::ConversionError { .. } => ErrorSource::DataConversion,
+            OdbcError::JsonBinding { .. } => ErrorSource::DataConversion,
+            OdbcError::ParameterBinding { .. } => ErrorSource::DataConversion,
+            OdbcError::FetchData { .. } => ErrorSource::DataConversion,
+            OdbcError::TextConversionFromUtf8 { .. } => ErrorSource::DataConversion,
+            OdbcError::TextConversionFromUtf16 { .. } => ErrorSource::DataConversion,
+            OdbcError::TextConversionUtf8 { .. } => ErrorSource::DataConversion,
+            OdbcError::ArrowArrayStreamReaderCreation { .. } => ErrorSource::InternalError,
+            OdbcError::CoreError { .. } => ErrorSource::Unknown,
+            OdbcError::ProtoRequiredFieldMissing { .. } => ErrorSource::InternalError,
+            OdbcError::InvalidFreeStmtOption { .. } => ErrorSource::ApiMisuse,
+            OdbcError::OdbcRuntime { .. } => ErrorSource::InternalError,
+            OdbcError::DataSourceNotFound { .. } => ErrorSource::ConfigParsing,
+            OdbcError::OperationCanceled { .. } => ErrorSource::Unknown,
+            OdbcError::InvalidConnectionString { .. } => ErrorSource::ConfigParsing,
+            OdbcError::DaeRequired { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDuringDae { .. } => ErrorSource::ApiMisuse,
+        }
+    }
+
     /// Map this error to the in-band telemetry spec's
     /// `(exception_type, error_source)` pair sent in
     /// `TelemetrySendWrapperErrorRequest`.
@@ -599,11 +605,9 @@ impl OdbcError {
     /// - `exception_type` is the snafu variant name (no PII, no message
     ///   content), produced by `IntoStaticStr`. Renaming a variant
     ///   automatically updates this label, so there is no chance of drift.
-    /// - `error_source` is the high-level [`ErrorSource`] bucket. The
-    ///   value is sourced declaratively from the variant's
-    ///   `#[error_source(<Variant>)]` attribute via the [`ClassifyError`]
-    ///   derive (see [`OdbcError::error_source`]). Variants without an
-    ///   attribute fall back to [`ErrorSource::Unknown`].
+    /// - `error_source` is the high-level [`ErrorSource`] bucket from
+    ///   [`OdbcError::error_source`], except [`OdbcError::CoreError`] is
+    ///   split by inner transport vs application failure.
     pub fn telemetry_classification(&self) -> (&'static str, ErrorSource) {
         let exception_type: &'static str = self.into();
         let error_source = match self {

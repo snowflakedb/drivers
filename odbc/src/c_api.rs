@@ -23,7 +23,7 @@ macro_rules! record_api {
 /// returned `Err`. Inserted right after the diagnostic record is set.
 macro_rules! record_err {
     ($ht:expr, $h:expr, $r:expr) => {
-        if let Err(__err) = &$r {
+        if let Err(ref __err) = $r {
             crate::api::telemetry::record_wrapper_error($ht, $h, __err);
         }
     };
@@ -34,8 +34,13 @@ macro_rules! record_err {
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::RetCode {
     record_api!(sql::HandleType::Env, std::ptr::null_mut(), "SQLAllocEnv");
-    api::handle_allocation::sql_alloc_handle(sql::HandleType::Env, 0 as sql::Handle, output_handle)
-        .to_sql_code()
+    let result = api::handle_allocation::sql_alloc_handle(
+        sql::HandleType::Env,
+        0 as sql::Handle,
+        output_handle,
+    );
+    record_err!(sql::HandleType::Env, std::ptr::null_mut(), result);
+    result.to_sql_code()
 }
 /// # Safety
 /// This function is called by the ODBC driver manager.
@@ -45,12 +50,13 @@ pub unsafe extern "system" fn SQLAllocConnect(
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
     record_api!(sql::HandleType::Env, environment_handle, "SQLAllocConnect");
-    api::handle_allocation::sql_alloc_handle(
+    let result = api::handle_allocation::sql_alloc_handle(
         sql::HandleType::Dbc,
         environment_handle,
         output_handle,
-    )
-    .to_sql_code()
+    );
+    record_err!(sql::HandleType::Env, environment_handle, result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -64,7 +70,9 @@ pub unsafe extern "system" fn SQLAllocHandle(
     // Use the *parent* handle for telemetry attribution: SQLAllocHandle(STMT, dbc)
     // is reportable against the connection that owns the soon-to-exist statement.
     record_api!(handle_type, input_handle, "SQLAllocHandle");
-    api::handle_allocation::sql_alloc_handle(handle_type, input_handle, output_handle).to_sql_code()
+    let result = api::handle_allocation::sql_alloc_handle(handle_type, input_handle, output_handle);
+    record_err!(handle_type, input_handle, result);
+    result.to_sql_code()
 }
 
 /// # Safety

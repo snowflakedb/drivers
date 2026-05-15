@@ -63,6 +63,11 @@ const TELEMETRY_QUEUE_CAPACITY: usize = 8 * 1024;
 /// The runtime split also guarantees that the drainer task cannot
 /// occupy a SQL worker while waiting on sf_core's `Mutex<Connection>`,
 /// which the SQL fetch path also uses.
+///
+/// Telemetry does not expose a generic `spawn(future)` helper: the
+/// `SQL*` hot path enqueues fixed-size [`crate::api::telemetry::TelemetryEvent`]
+/// values (see [`Self::record_telemetry`]) instead of boxing per-call futures on
+/// the runtime.
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
     /// Held only to keep the drainer task's executor alive for the
