@@ -166,6 +166,13 @@ class Connection(ErrorHandlerMixin):
         # ``ConnectionConfig`` so it is never forwarded to the Rust core.
         self.auto_cleanup: bool = True if self.config.auto_cleanup is None else bool(self.config.auto_cleanup)
 
+        # Controls whether `query % params` is applied even when params is
+        # empty (e.g. {} or ()).  When True, doubled percents (`%%`) are
+        # unescaped to `%`.  The SQLAlchemy dialect toggles this in pre_exec /
+        # post_exec for compiled statements that use pyformat paramstyle.
+        # Defaults to False to match the old connector's behavior.
+        self._interpolate_empty_sequences: bool = False
+
         self.db_api = database_driver_client()
         self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
