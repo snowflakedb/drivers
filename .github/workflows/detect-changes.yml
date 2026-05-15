@@ -198,28 +198,36 @@ jobs:
               - '.buildkite/**'
               - 'scripts/decode_secrets.*'
               - 'scripts/shared/**'
-              # `ci/**` covers Dockerfiles, Jenkinsfiles, the matrix
-              # generator engine, shared mappings, etc. Per-driver
-              # ci/test_matrix/{models,mappings}/<driver>.py are excluded
-              # here and listed under each driver's filter above so that
-              # editing only python.py (for example) no longer triggers
-              # JDBC/ODBC/core test runs.
-              - 'ci/**'
-              - '!ci/test_matrix/models/core.py'
-              - '!ci/test_matrix/models/odbc.py'
-              - '!ci/test_matrix/models/python.py'
-              - '!ci/test_matrix/mappings/core.py'
-              - '!ci/test_matrix/mappings/odbc.py'
-              - '!ci/test_matrix/mappings/python.py'
+              # Truly-shared `ci/` files only. Negation patterns ('!path') are
+              # NOT used here: dorny/paths-filter@v3 runs with the default
+              # `predicate-quantifier: some`, which treats negations as
+              # standalone matches, not exclusions — every unrelated file
+              # would match a `!foo.py` rule and flip `shared=true`. List
+              # truly-shared paths explicitly. Per-driver `ci/test_matrix/
+              # {models,mappings}/<driver>.py` belong in each language's
+              # filter above; they are intentionally not listed here.
+              - 'ci/Dockerfile.*'
+              - 'ci/Jenkinsfile.*'
+              - 'ci/select_tests.py'
+              - 'ci/test-matrix.yml'
+              - 'ci/test_revocation.sh'
+              - 'ci/upload_test_results.sh'
+              - 'ci/test_matrix/generate_matrix.py'
+              - 'ci/test_matrix/test_generate_matrix.py'
+              - 'ci/test_matrix/mappings/__init__.py'
+              - 'ci/test_matrix/mappings/shared.py'
+              - 'ci/test_matrix/models/__init__.py'
+            # Negation patterns are NOT used here for the same reason as in
+            # `shared`: under `predicate-quantifier: some` (the default), a
+            # `!path` rule matches every file *except* `path`, which would
+            # flip `docs_only=true` for every non-doc change. List positive
+            # docs patterns only and rely on the AND-of-everything-else-false
+            # guard in the `Compute combined conditions` step below to avoid
+            # treating mixed PRs as docs-only.
             docs_only:
               - '**/*.md'
               - 'LICENSE'
               - '.github/CODEOWNERS'
-              - '**/*.txt'
-              - '!**/requirements.txt'
-              - '!**/CMakeLists.txt'
-              - '!**/*.yml'
-              - '!**/*.yaml'
 
       - name: Compute combined conditions
         id: computed
