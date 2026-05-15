@@ -222,20 +222,15 @@ behavior_differences:
       but has no effect and emits a `DeprecationWarning`.
 
   26:
-    name: "Post-connect assignment to client_session_keep_alive[_heartbeat_frequency] is a no-op"
+    name: "client_session_keep_alive[_heartbeat_frequency] setters removed"
     status: allowed
     type: api_incompatibility
     reviewed: false
     old_driver_behavior: |
       `Connection.client_session_keep_alive` and
-      `Connection.client_session_keep_alive_heartbeat_frequency` expose setters
-      that mutate connection state. In particular, setting
-      `client_session_keep_alive_heartbeat_frequency` re-validates and clamps
-      the value against the live `master_token_validity` window.
+      `Connection.client_session_keep_alive_heartbeat_frequency` expose
+      setters. In the old connector both setters wrote to a private attribute
+      having no effect on the live heartbeat thread either.
     new_driver_behavior: |
-      Both setters are retained for backward compatibility but emit a
-      `DeprecationWarning` on first external use. They write to the underlying
-      `ConnectionConfig` field, but the Universal Driver consumes these values
-      only at connect time: post-connect assignments do not start, stop, or
-      reschedule the running heartbeat task. Pass the values as constructor
-      kwargs instead.
+      Both attributes are read-only properties. Assignment raises
+      `AttributeError`.

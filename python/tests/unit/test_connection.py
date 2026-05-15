@@ -273,21 +273,15 @@ class TestClientSessionKeepAliveKwargUnit:
         assert conn.client_session_keep_alive is False
         assert conn.client_session_keep_alive_heartbeat_frequency is None
 
-    def test_keep_alive_setters_warn_and_write_to_config(self, connection):
-        # Setters are kept for backward compatibility but are no-ops on the
-        # live session. Assert they (a) emit DeprecationWarning on external
-        # use and (b) update the underlying ConnectionConfig field so a
-        # subsequent read returns the new value.
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", DeprecationWarning)
+    def test_keep_alive_attributes_are_read_only(self, connection):
+        # The old Python connector exposed setters but they were no-ops on
+        # the live heartbeat thread. The Universal Driver drops them so an
+        # accidental post-connect assignment fails loudly instead of being
+        # silently ignored.
+        with pytest.raises(AttributeError):
             connection.client_session_keep_alive = True
+        with pytest.raises(AttributeError):
             connection.client_session_keep_alive_heartbeat_frequency = 600
-
-        messages = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("client_session_keep_alive" in m for m in messages)
-        assert any("client_session_keep_alive_heartbeat_frequency" in m for m in messages)
-        assert connection.config.client_session_keep_alive is True
-        assert connection.config.client_session_keep_alive_heartbeat_frequency == 600
 
 
 class TestConnectionSetOptions:
