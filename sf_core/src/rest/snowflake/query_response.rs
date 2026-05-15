@@ -1,3 +1,4 @@
+use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager::SourceCompressionParam;
 use crate::{file_manager, query_types};
@@ -300,7 +301,15 @@ pub struct EncryptionMaterial {
 impl Data {
     /// Copies the fields necessary for file transfer.
     /// Encryption material is optional — SSE stages omit it from the response.
-    pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
+    ///
+    /// `flavor` selects the wrapper-specific shape of the resulting PUT
+    /// result set; it is forwarded into `SingleUploadData` so that
+    /// `file_manager::upload_single_file` can populate the `message` column
+    /// per `BehaviorDifferences.yaml` BD#3.
+    pub fn to_file_upload_data(
+        &self,
+        flavor: PutGetResultsetFlavor,
+    ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
         })?;
@@ -380,6 +389,7 @@ impl Data {
             auto_compress,
             source_compression,
             overwrite,
+            flavor,
         })
     }
 
@@ -1189,7 +1199,9 @@ mod tests {
     fn upload_encryption_material_null_returns_none() {
         let json = make_upload_json(r#""encryptionMaterial": null,"#);
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .unwrap();
         assert!(upload.encryption_material.is_none());
     }
 
@@ -1197,7 +1209,9 @@ mod tests {
     fn upload_encryption_material_absent_returns_none() {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .unwrap();
         assert!(upload.encryption_material.is_none());
     }
 
@@ -1205,7 +1219,9 @@ mod tests {
     fn upload_encryption_material_empty_array_returns_none() {
         let json = make_upload_json(r#""encryptionMaterial": [],"#);
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .unwrap();
         assert!(upload.encryption_material.is_none());
     }
 
@@ -1215,7 +1231,9 @@ mod tests {
             r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"},"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .unwrap();
         assert!(upload.encryption_material.is_some());
     }
 
@@ -1225,7 +1243,9 @@ mod tests {
             r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"}],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let upload = data.to_file_upload_data().unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .unwrap();
         assert!(upload.encryption_material.is_some());
     }
 
@@ -1238,13 +1258,33 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result = data.to_file_upload_data();
+        let result = data.to_file_upload_data(PutGetResultsetFlavor::default());
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("Expected exactly one encryption material"),
             "Error should mention the constraint: {err_msg}"
         );
+    }
+
+    #[test]
+    fn upload_data_forwards_flavor_python() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::Python)
+            .unwrap();
+        assert_eq!(upload.flavor, PutGetResultsetFlavor::Python);
+    }
+
+    #[test]
+    fn upload_data_forwards_flavor_odbc() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data
+            .to_file_upload_data(PutGetResultsetFlavor::Odbc)
+            .unwrap();
+        assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
     }
 
     #[test]
