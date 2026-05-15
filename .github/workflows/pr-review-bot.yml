@@ -1,10 +1,12 @@
 # Automate PR review pings.
 #
 # On a new (or freshly-undrafted) PR, pick a random reviewer from
-# .github/CODEOWNERS, request review + add as assignee via the GitHub
+# .github/reviewers, request review + add as assignee via the GitHub
 # REST API, and ping #drivers-review via slackapi/slack-github-action.
-# Every 2h, post a digest of open non-draft PRs that have no APPROVED /
-# CHANGES_REQUESTED review yet.
+# On the schedule below, post a digest of open non-draft PRs that have
+# no APPROVED / CHANGES_REQUESTED review yet; the digest pass also
+# re-assigns PRs whose every requested reviewer is OOO (Slack status)
+# to a non-OOO substitute drawn from the same label pool.
 #
 # All GitHub I/O goes through the `gh` CLI (with GITHUB_TOKEN) and all
 # Slack writes go through slackapi/slack-github-action. The Python
@@ -30,12 +32,15 @@
 #       Channel name (no leading '#') or channel ID. Defaults to
 #       'drivers-review'.
 #
-# Reviewer pool comes from .github/reviewers — list each reviewer
-# explicitly as @login, one per line. CODEOWNERS itself only references
-# the team alias so GitHub's native code-owner request fires once
-# against the team (no per-member ping). The bot keeps its own
-# individual pool so it does not need the read:org scope to resolve
-# team membership.
+# Reviewer pool comes from .github/reviewers, keyed by *PR label*
+# ("<label>  @login1 @login2 ..."). The bot reads the PR's labels off
+# the payload it already fetches, unions the reviewers of every rule
+# whose label is on the PR, falls back to the reserved `all` rule
+# when no label matches, then excludes the author + already-requested
+# reviewers + OOO candidates and picks one at random. CODEOWNERS stays
+# on the team alias so GitHub's native code-owner request keeps firing
+# once against the team; the bot keeps its own individual pool here so
+# it does not need the read:org scope to resolve team membership.
 #
 # Real <@U...> Slack mentions are resolved per-reviewer via
 # users.lookupByEmail using the email from commit.author of each
@@ -48,8 +53,9 @@ on:
   pull_request_target:
     types: [opened, ready_for_review, reopened]
   schedule:
-    # Every 2 hours, on the hour.
-    - cron: "0 */2 * * *"
+    # Every 2h on the hour, but only at UTC times that overlap
+    # working hours (08:00–16:59):
+    - cron: "0 7,12,14 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -133,6 +139,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          # The Python quiet-hours guard suppresses scheduled posts
+          # outside Warsaw working hours but lets manual
+          # workflow_dispatch runs through; it needs to know which
+          # trigger fired the job.
+          GH_EVENT_NAME: ${{ github.event_name }}
           SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL || 'drivers-review' }}
           # Used for users.lookupByEmail to mint <@U...> mentions; see
           # the assign-reviewer job for details.

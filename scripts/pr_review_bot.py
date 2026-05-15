@@ -11,9 +11,33 @@ payload file that the Slack action posts in the next step.
 Subcommands
 -----------
 ``assign``
-    Pick a random reviewer from the candidates listed in
-    ``.github/reviewers`` (or another path via ``REVIEWERS_PATH``),
-    excluding the PR author and any user already requested for review.
+    Pick a random reviewer for a single PR.
+
+    The candidate pool is derived from ``.github/reviewers`` (or
+    another path via ``REVIEWERS_PATH``) keyed by *PR label*: each
+    rule has the form ``<label> @login1 @login2 ...`` and contributes
+    its reviewers when the PR carries that label. Reviewers are
+    unioned across every matched rule so a PR labeled both ``python``
+    and ``odbc`` pools the experts of each domain. The reserved key
+    ``all`` (see :data:`FALLBACK_KEY`) defines the fallback pool used
+    when *no* PR label matches a rule (e.g. a fresh PR opened before
+    the triage labels are applied). Labels are read straight from the
+    PR payload — no extra API call is required.
+
+    The PR author and any user already requested for review are
+    excluded from the pool. Candidates whose Slack status currently
+    signals out-of-office (see :data:`_OOO_STATUS_EMOJIS` /
+    :data:`_OOO_TEXT_REGEX`) are dropped before the random pick —
+    unless the OOO filter would empty the pool, in which case the
+    unfiltered list is used so the PR is never left without a
+    reviewer. Status comes from ``users.info`` and requires
+    ``SLACK_BOT_TOKEN`` with the ``users:read`` scope (granted
+    implicitly by ``users:read.email``); when the token is missing or
+    the lookup fails the filter no-ops silently. As a final
+    safety-net, if no PR label matches any rule *and* the rules file
+    has no ``all`` fallback, the bot widens the pool to the union of
+    every listed reviewer.
+
     Requests review and adds the user as an assignee via the REST
     endpoints ``POST /pulls/:n/requested_reviewers`` and
     ``POST /issues/:n/assignees`` (we avoid ``gh pr edit`` because its
@@ -25,12 +49,6 @@ Subcommands
     Designed to be run from a ``pull_request_target`` workflow on the
     ``opened`` and ``ready_for_review`` activity types. Drafts are skipped.
 
-    The candidate pool is the list of individual ``@login`` entries in
-    ``.github/reviewers``. CODEOWNERS itself references only the team
-    alias so GitHub's native code-owner request fires once against the
-    team; the bot keeps its own individual pool here to avoid needing
-    ``read:org`` to resolve team membership.
-
 ``remind``
     Iterate every open non-draft PR in the repository (via ``gh``) and
     write a digest Slack payload listing PRs that are *waiting on a
@@ -39,6 +57,35 @@ Subcommands
     ``COMMENTED`` are flagged with a note that comments do not count as a
     review. Each entry includes the time elapsed since the *initial*
     ``review_requested`` event.
+
+    PRs whose waiting time is below :data:`MIN_WAITING_HOURS` are
+    dropped from the digest so freshly-opened or freshly-requested
+    PRs don't get pinged before the assignee has a chance to look at
+    them. PRs whose waiting timestamp can't be recovered at all are
+    always surfaced — better to nudge once than to silently swallow
+    a stale PR.
+
+    For each PR in the digest the bot also runs an OOO substitution
+    pass (see :func:`_swap_ooo_reviewers`): if a requested reviewer's
+    Slack status signals OOO and at least one other human is still
+    on the hook, the OOO reviewer is hidden from the post; if *every*
+    requested reviewer is OOO, the bot picks a non-OOO substitute
+    from the same label-keyed pool the assign path uses, requests
+    their review via the GitHub REST API, and retracts the OOO
+    requests so they don't keep cluttering the queue when they
+    return. PRs where every "actionable" person turned out to be
+    OOO and no substitute could be found drop out of the digest.
+
+    Scheduled posts (``GH_EVENT_NAME=schedule``) are suppressed during
+    Warsaw quiet hours (``QUIET_HOURS_START``..``QUIET_HOURS_END``,
+    i.e. 17:00–07:59 ``Europe/Warsaw``) because nobody on the team
+    reads pings overnight. The guard is DST-aware via
+    :mod:`zoneinfo`. The workflow cron is already narrowed to UTC
+    hours that overlap Warsaw 08:00–16:59 in both CET and CEST so the
+    runner is not spun up during dead hours; the Python guard exists
+    to catch the DST boundary slots that fall on the edge. Manual
+    ``workflow_dispatch`` runs bypass the guard so on-call folks can
+    always trigger a digest.
 
 Required environment variables
 ------------------------------
@@ -118,11 +165,13 @@ import json
 import logging
 import os
 import random
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("pr-review-bot")
@@ -131,6 +180,63 @@ DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
 
 # Review states that mean the reviewer has taken action on the PR.
 ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED"}
+
+# Minimum age (hours since the first ``review_requested`` event, or
+# since ``created_at`` when no review was requested yet) before a PR
+# is allowed into the reminder digest. Freshly-opened PRs need a
+# moment to be looked at by the assignee before the bot starts
+# pestering the channel about them. PRs whose waiting timestamp can't
+# be recovered at all (``waiting_hours is None``) are *not* filtered
+# by this threshold — we'd rather surface them than silently swallow
+# them.
+MIN_WAITING_HOURS = 2.0
+
+# Scheduled reminder posts are suppressed outside of Warsaw working hours.
+# The team is in Europe/Warsaw; nobody reads pings between 17:00 and the
+# next morning, and a digest sitting in the channel overnight gets buried
+# under whatever lands first thing in the morning instead of catching
+# attention. The guard is applied per-run (DST-correct via zoneinfo);
+# the schedule cron is also narrowed to UTC hours that *can* fall inside
+# this window in either CET or CEST so we don't even spin up the runner
+# during dead hours. Manual `workflow_dispatch` runs ignore the guard.
+WARSAW_TZ = ZoneInfo("Europe/Warsaw")
+QUIET_HOURS_START = 17  # 17:00 Warsaw — first hour we suppress.
+QUIET_HOURS_END = 8     # 08:00 Warsaw — first hour we resume.
+
+# Slack status emojis that, when set on a reviewer's profile, signal
+# unavailability. Conservative list — extend as the team converges on
+# conventions. Lowercased for case-insensitive comparison.
+_OOO_STATUS_EMOJIS = frozenset({
+    ":palm_tree:",
+    ":beach:",
+    ":beach_with_umbrella:",
+    ":airplane:",
+    ":airplane_departure:",
+    ":airplane_arriving:",
+    ":no_entry_sign:",
+    ":zzz:",
+    ":hospital:",
+    ":face_with_thermometer:",
+    ":vacation:",
+})
+
+# Free-text patterns that signal OOO when present in a Slack status_text.
+# Matched against the lowercased status text with simple word boundaries
+# so e.g. "google" does not false-match "ooo". The token "ooo" itself is
+# a real-world OOO abbreviation so we accept it standalone.
+_OOO_TEXT_REGEX = re.compile(
+    r"\b("
+    r"ooo|"
+    r"out[ -]of[ -]office|"
+    r"pto|"
+    r"vacation|"
+    r"holiday|"
+    r"afk|"
+    r"away until|"
+    r"on leave"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +275,29 @@ def gh_api_json(path: str, *, paginate: bool = False) -> Any:
     if not out:
         return None
     return json.loads(out)
+
+
+def gh_pr_remove_reviewer(repo: str, pr_number: int, login: str) -> None:
+    """Retract a review request from *login* on a PR.
+
+    Used by the reminder pass when it swaps an OOO reviewer for an
+    available one — without retracting the original request, GitHub
+    would keep showing the OOO person as a pending reviewer and
+    Slack would still surface them on the next reminder run.
+
+    Failure is the caller's problem to handle gracefully; the
+    typical response is to log and move on (the worst case is a
+    benign over-assignment where both the OOO and the substitute
+    are requested).
+    """
+    _gh(
+        "api",
+        "--method",
+        "DELETE",
+        f"/repos/{repo}/pulls/{pr_number}/requested_reviewers",
+        "-f",
+        f"reviewers[]={login}",
+    )
 
 
 def gh_pr_assign(repo: str, pr_number: int, login: str) -> None:
@@ -284,6 +413,32 @@ def first_review_request_time(repo: str, pr_number: int) -> datetime | None:
     return earliest
 
 
+def _is_bot_user(user: dict | None) -> bool:
+    """Return True when *user* (a GitHub user payload) is a bot account.
+
+    Used to exclude bot reviewers (Copilot, Dependabot, Renovate, …)
+    from anywhere a real person is implied — they should not be
+    pinged in Slack, should not gate the "already has reviewers"
+    skip in :func:`cmd_assign`, and should not let a bot approval
+    count as the PR having been actioned.
+
+    Both signals are checked because they fail in opposite ways:
+
+    * ``user["type"] == "Bot"`` — the canonical API discriminator,
+      but older webhook payloads occasionally omit ``type`` on the
+      user object inside ``requested_reviewers``.
+    * ``login.endswith("[bot]")`` — the rendered convention every GH
+      app uses (e.g. ``copilot-pull-request-reviewer[bot]``); always
+      present even when ``type`` is missing.
+    """
+    if not isinstance(user, dict):
+        return False
+    if user.get("type") == "Bot":
+        return True
+    login = user.get("login") or ""
+    return login.endswith("[bot]")
+
+
 def github_commit_author(repo: str, login: str) -> tuple[str | None, str | None]:
     """Return ``(name, email)`` from the user's most recent commit in *repo*.
 
@@ -312,42 +467,153 @@ def github_commit_author(repo: str, login: str) -> tuple[str | None, str | None]
 
 
 # ---------------------------------------------------------------------------
-# Reviewer pool parsing
+# Reviewer pool parsing (PR-label keyed)
 # ---------------------------------------------------------------------------
 
+# Parsed reviewer pool: ordered list of (label, [logins]) rules.
+# ``label`` is the PR-label name the rule applies to. The reserved key
+# ``FALLBACK_KEY`` (``"all"``) names the fallback bucket — used when no
+# PR label matches any rule. It is deliberately a real-looking label
+# (instead of e.g. ``*``) so the rules file reads as a uniform list of
+# labels. We assume no PR is ever tagged with ``all``; if one is, that
+# rule's reviewers would simply also fire — semantically harmless.
+FALLBACK_KEY = "all"
+ReviewerRules = list[tuple[str, list[str]]]
 
-def parse_reviewers(path: Path = DEFAULT_REVIEWERS_PATH) -> list[str]:
-    """Return the unique individual ``@login`` reviewers listed in *path*.
 
-    One handle per line, ``#`` comments and blank lines are ignored.
-    Team references (``@org/team-slug``) are rejected — this file is the
-    bot's individual-pool source of truth; resolving teams would require
-    ``read:org``.
+def parse_reviewers(path: Path = DEFAULT_REVIEWERS_PATH) -> ReviewerRules:
+    """Parse the bot's reviewer pool, keyed by PR label.
+
+    Each non-empty, non-comment line is::
+
+        <label>   @login1 @login2 ...
+
+    where ``<label>`` matches a GitHub label name on the PR
+    (case-insensitively) — e.g. ``jdbc``, ``odbc``, ``python``,
+    ``nodejs``. The reserved key ``all`` (see :data:`FALLBACK_KEY`)
+    defines the fallback pool used when *no* PR label matches a rule.
+    Blank lines and ``#`` comments are ignored. Team references
+    (``@org/team-slug``) are rejected — the bot deliberately avoids
+    the ``read:org`` scope.
+
+    Returns an ordered ``list[tuple[label, [logins]]]``. Order is
+    preserved purely for stable logging / deterministic random pick;
+    label matching itself is set-based.
     """
     if not path.exists():
         raise FileNotFoundError(f"Reviewers file not found at {path}")
 
-    individuals: set[str] = set()
+    rules: ReviewerRules = []
 
-    for raw_line in path.read_text().splitlines():
+    for lineno, raw_line in enumerate(path.read_text().splitlines(), start=1):
         line = raw_line.split("#", 1)[0].strip()
         if not line:
             continue
-        if not line.startswith("@"):
-            log.warning("Ignoring malformed line in %s: %r", path, raw_line)
-            continue
-        handle = line[1:]
-        if "/" in handle:
-            log.warning(
-                "Ignoring team reference %r in %s; list individual "
-                "@logins only.",
-                line,
-                path,
-            )
-            continue
-        individuals.add(handle)
+        tokens = line.split()
+        label, owner_tokens = tokens[0], tokens[1:]
+        owners: list[str] = []
+        for tok in owner_tokens:
+            if not tok.startswith("@"):
+                log.warning(
+                    "Ignoring malformed owner %r on line %d of %s (expected @login).",
+                    tok,
+                    lineno,
+                    path,
+                )
+                continue
+            handle = tok[1:]
+            if "/" in handle:
+                log.warning(
+                    "Ignoring team reference %r on line %d of %s; "
+                    "list individual @logins only.",
+                    tok,
+                    lineno,
+                    path,
+                )
+                continue
+            owners.append(handle)
 
-    return sorted(individuals)
+        # Dedupe within a single line while preserving order, in case the
+        # file accidentally lists the same person twice on one rule.
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for handle in owners:
+            key = handle.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(handle)
+        rules.append((label, deduped))
+
+    return rules
+
+
+def select_candidates(
+    rules: ReviewerRules, labels: Iterable[str]
+) -> list[str]:
+    """Return the union of reviewers whose rule label is on the PR.
+
+    Matching is case-insensitive. Reviewers from every matched rule
+    are unioned (a PR labeled both ``python`` and ``odbc`` pools the
+    experts from both rules). When no PR label matches any rule the
+    reviewers of the :data:`FALLBACK_KEY` rule (``all``) are returned
+    instead — these are the generalists who can review anything.
+
+    The returned list preserves rules-file order, so the downstream
+    random pick depends only on the RNG, not on dict iteration order.
+    Returns an empty list only when *neither* a label matched *nor* an
+    ``all`` fallback is configured; :func:`cmd_assign` widens to the
+    full pool in that case.
+    """
+    label_set = {(l or "").lower() for l in labels if l}
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    fallback_owners: list[str] = []
+
+    for key, owners in rules:
+        if key == FALLBACK_KEY:
+            fallback_owners = owners
+            continue
+        if key.lower() not in label_set:
+            continue
+        for login in owners:
+            k = login.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            selected.append(login)
+
+    if selected:
+        return selected
+
+    for login in fallback_owners:
+        k = login.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        selected.append(login)
+    return selected
+
+
+def all_reviewers(rules: ReviewerRules) -> list[str]:
+    """Return every unique reviewer login across all rules.
+
+    Used as the last-resort candidate pool when no rule label matches
+    a PR's labels *and* the file has no ``all`` fallback configured.
+    Order matches the rules-file order; duplicates across rules are
+    collapsed.
+    """
+    flat: list[str] = []
+    seen: set[str] = set()
+    for _label, owners in rules:
+        for handle in owners:
+            key = handle.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            flat.append(handle)
+    return flat
 
 
 # ---------------------------------------------------------------------------
@@ -449,8 +715,110 @@ def slack_lookup_by_email(email: str, token: str) -> str | None:
     return ((data.get("user") or {}).get("id")) or None
 
 
+def slack_user_status(uid: str, token: str) -> dict | None:
+    """Return ``{emoji, text, expiration}`` for *uid* via ``users.info``.
+
+    Used to decide whether a reviewer is currently out of office. Reads
+    only ``profile.status_emoji`` / ``profile.status_text`` /
+    ``profile.status_expiration`` from the response — no other profile
+    fields are inspected.
+
+    Requires the ``users:read`` scope on the bot token. Slack grants
+    ``users:read`` implicitly when ``users:read.email`` is granted, so
+    no scope change is needed beyond what the assign + reminder paths
+    already require. ``None`` is returned on any failure (network,
+    auth, parse, ``user_not_found``) so the caller can gracefully
+    skip OOO filtering instead of crashing.
+    """
+    if not uid or not token:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "--max-time",
+                "10",
+                "-G",
+                "https://slack.com/api/users.info",
+                "--data-urlencode",
+                f"user={uid}",
+                "-H",
+                f"Authorization: Bearer {token}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        log.warning("curl not available, cannot fetch status for %s: %s", uid, e)
+        return None
+
+    if result.returncode != 0:
+        log.warning(
+            "users.info curl failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return None
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        log.warning(
+            "users.info returned non-JSON for %s: %r",
+            uid,
+            result.stdout[:200],
+        )
+        return None
+
+    if not data.get("ok"):
+        err = data.get("error", "unknown")
+        log.info(
+            "users.info error for %s: %s (OOO filter will treat as available).",
+            uid,
+            err,
+        )
+        return None
+
+    profile = (data.get("user") or {}).get("profile") or {}
+    return {
+        "emoji": (profile.get("status_emoji") or "").strip(),
+        "text": (profile.get("status_text") or "").strip(),
+        "expiration": int(profile.get("status_expiration") or 0),
+    }
+
+
+def _is_ooo(status: dict | None, now_ts: float | None = None) -> bool:
+    """Return True when a Slack status indicates the user is OOO.
+
+    ``status`` is the dict returned by :func:`slack_user_status`
+    (``None`` if the lookup failed — treated as "available").
+
+    A status is considered OOO when its emoji is in
+    ``_OOO_STATUS_EMOJIS`` *or* its text matches ``_OOO_TEXT_REGEX``,
+    AND the status hasn't expired yet (``status_expiration == 0`` or
+    in the future).
+    """
+    if not status:
+        return False
+    expiration = status.get("expiration") or 0
+    if expiration:
+        if now_ts is None:
+            now_ts = datetime.now(timezone.utc).timestamp()
+        if expiration < now_ts:
+            return False
+    emoji = (status.get("emoji") or "").lower()
+    if emoji in _OOO_STATUS_EMOJIS:
+        return True
+    text = status.get("text") or ""
+    if text and _OOO_TEXT_REGEX.search(text):
+        return True
+    return False
+
+
 class ReviewerDisplay:
-    """Cache GitHub login -> Slack mention string.
+    """Cache GitHub login -> Slack mention string + OOO state.
 
     Resolution order, per reviewer:
 
@@ -459,7 +827,10 @@ class ReviewerDisplay:
     2. If a Slack bot token is configured, call ``users.lookupByEmail``
        with that email. On a match, return ``<@U…>`` so Slack renders a
        real channel mention that notifies the reviewer (the message is
-       posted in the channel — the bot never sends DMs).
+       posted in the channel — the bot never sends DMs). Also fetch
+       ``users.info`` for the same user and check for an OOO status
+       (see :func:`_is_ooo`); the result is cached so each reviewer is
+       only checked once per workflow run.
     3. Otherwise (no token, no email, lookup failed, or
        ``users_not_found``), fall back to the plain commit author name
        (e.g. ``Maxymilian Kowalski``). This is *not* a clickable mention
@@ -480,18 +851,24 @@ class ReviewerDisplay:
     ) -> None:
         self._repo = repo
         self._slack_token = slack_token
-        self._cache: dict[str, str] = {}
+        # login -> {"mention": str, "ooo": bool, "ooo_emoji": str | None}
+        self._cache: dict[str, dict] = {}
 
-    def name(self, login: str) -> str:
+    def _resolve(self, login: str) -> dict:
         if not login:
-            return ""
-        if login in self._cache:
-            return self._cache[login]
+            return {"mention": "", "ooo": False, "ooo_emoji": None}
+        cached = self._cache.get(login)
+        if cached is not None:
+            return cached
 
         commit_name: str | None = None
         commit_email: str | None = None
         if self._repo:
             commit_name, commit_email = github_commit_author(self._repo, login)
+
+        mention: str | None = None
+        ooo = False
+        ooo_emoji: str | None = None
 
         if commit_email and self._slack_token:
             slack_uid = slack_lookup_by_email(commit_email, self._slack_token)
@@ -503,26 +880,45 @@ class ReviewerDisplay:
                     slack_uid,
                     commit_email,
                 )
-                self._cache[login] = mention
-                return mention
+                status = slack_user_status(slack_uid, self._slack_token)
+                if _is_ooo(status):
+                    ooo = True
+                    ooo_emoji = (status or {}).get("emoji") or None
+                    log.info(
+                        "Reviewer %s is OOO (emoji=%r, text=%r).",
+                        login,
+                        (status or {}).get("emoji", ""),
+                        (status or {}).get("text", ""),
+                    )
 
-        if commit_name:
-            log.info(
-                "No Slack lookup match for %s; using commit author name %r.",
-                login,
-                commit_name,
-            )
-            self._cache[login] = commit_name
-            return commit_name
+        if mention is None:
+            if commit_name:
+                log.info(
+                    "No Slack lookup match for %s; using commit author name %r.",
+                    login,
+                    commit_name,
+                )
+                mention = commit_name
+            else:
+                mention = f"@{login}"
+                log.info(
+                    "No commit author name for %s in %s; falling back to GitHub login.",
+                    login,
+                    self._repo,
+                )
 
-        mention = f"@{login}"
-        log.info(
-            "No commit author name for %s in %s; falling back to GitHub login.",
-            login,
-            self._repo,
-        )
-        self._cache[login] = mention
-        return mention
+        entry = {"mention": mention, "ooo": ooo, "ooo_emoji": ooo_emoji}
+        self._cache[login] = entry
+        return entry
+
+    def name(self, login: str) -> str:
+        return self._resolve(login)["mention"]
+
+    def is_ooo(self, login: str) -> bool:
+        return bool(self._resolve(login)["ooo"])
+
+    def ooo_emoji(self, login: str) -> str | None:
+        return self._resolve(login)["ooo_emoji"]
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +993,33 @@ def _pick_reviewer(
     return random.choice(pool)
 
 
+def _filter_ooo(
+    candidates: list[str], names: ReviewerDisplay
+) -> list[str]:
+    """Drop candidates whose Slack status currently signals OOO.
+
+    Falls back to the unfiltered pool when *every* candidate appears
+    OOO (or status lookups failed) so a PR is never left unassigned.
+    Cheap on repeat calls — ``ReviewerDisplay`` caches per login.
+    """
+    available = [c for c in candidates if not names.is_ooo(c)]
+    if not available:
+        log.info(
+            "All %d candidate(s) appear OOO or Slack status unavailable; "
+            "falling back to the full pool so the PR isn't left unassigned.",
+            len(candidates),
+        )
+        return list(candidates)
+    skipped = [c for c in candidates if names.is_ooo(c)]
+    if skipped:
+        log.info(
+            "OOO filter dropped %d candidate(s): %s",
+            len(skipped),
+            ", ".join(skipped),
+        )
+    return available
+
+
 def _skip_assign(reason: str) -> int:
     log.info("%s", reason)
     set_gh_output("skip", "true")
@@ -627,16 +1050,21 @@ def cmd_assign(args: argparse.Namespace) -> int:
     title = pr["title"]
     html_url = pr["html_url"]
 
-    already_requested = [u["login"] for u in pr.get("requested_reviewers", []) or []]
-    # If anyone landed in requested_reviewers, the author themselves must
-    # NOT be one of them. GitHub's team-based code-owner round-robin (we
-    # ship CODEOWNERS pointing at @snowflakedb/snow-drivers-warsaw) can in
-    # principle pick the PR author themselves, and a human can also request
-    # them manually — both leave the author on the reviewer list. Always
-    # strip the author here and explicitly remove them via the REST API so
-    # the GitHub UI/notifications match: an author can never be one of
-    # their own reviewers.
-    if any(u.lower() == author.lower() for u in already_requested):
+    # `requested_reviewers` can pick up entries we don't want gating the
+    # skip-or-assign decision:
+    #
+    # 1. The PR author themselves. GitHub's team-based code-owner
+    #    round-robin (CODEOWNERS points at @snowflakedb/snow-drivers-warsaw)
+    #    can pick the author, and a human can also request them manually;
+    #    in both cases we strip them and call DELETE so the GH UI matches.
+    # 2. Bot reviewers (Copilot, Dependabot, …) that get attached
+    #    automatically. They are not people, so a Copilot-only review
+    #    request must not block this job from picking a human.
+    requested_objs = [
+        u for u in pr.get("requested_reviewers", []) or [] if isinstance(u, dict)
+    ]
+    all_requested_logins = [u["login"] for u in requested_objs if u.get("login")]
+    if any(u.lower() == author.lower() for u in all_requested_logins):
         log.warning(
             "PR #%d had its own author (%s) listed as a requested reviewer; "
             "removing.",
@@ -647,7 +1075,19 @@ def cmd_assign(args: argparse.Namespace) -> int:
             gh_pr_remove_reviewer(repo, pr_number, author)
         except RuntimeError as e:
             log.warning("Failed to remove author from reviewers: %s", e)
-    already_requested = [u for u in already_requested if u.lower() != author.lower()]
+    bot_reviewers = [u["login"] for u in requested_objs if _is_bot_user(u)]
+    if bot_reviewers:
+        log.info(
+            "Ignoring %d bot reviewer(s) on PR #%d: %s",
+            len(bot_reviewers),
+            pr_number,
+            ", ".join(bot_reviewers),
+        )
+    already_requested = [
+        u["login"]
+        for u in requested_objs
+        if not _is_bot_user(u) and u["login"].lower() != author.lower()
+    ]
     if already_requested:
         return _skip_assign(
             f"PR #{pr_number} already has reviewers requested "
@@ -656,13 +1096,19 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
     log.info("Reading reviewer pool from %s ...", reviewers_path)
     try:
-        candidates = parse_reviewers(reviewers_path)
+        rules = parse_reviewers(reviewers_path)
     except FileNotFoundError as e:
         log.error("%s. Aborting assign.", e)
         return 1
 
-    log.info("%s lists %d individual reviewer(s).", reviewers_path, len(candidates))
-    if not candidates:
+    full_pool = all_reviewers(rules)
+    log.info(
+        "%s defines %d rule(s) covering %d unique reviewer(s).",
+        reviewers_path,
+        len(rules),
+        len(full_pool),
+    )
+    if not full_pool:
         log.warning(
             "No individual @logins found in %s. Add reviewers explicitly to "
             "enable auto-assign.",
@@ -671,7 +1117,52 @@ def cmd_assign(args: argparse.Namespace) -> int:
         set_gh_output("skip", "true")
         return 0
 
-    reviewer = _pick_reviewer(candidates, excluded=[author, *already_requested])
+    # Label-based narrowing: prefer the experts whose rule label is on
+    # this PR. Labels live on the PR payload we already fetched, so no
+    # extra API call is needed. When no rule matches *and* there is no
+    # ``all`` fallback in the rules file, widen the pool to every
+    # listed reviewer so the PR is never left without a candidate.
+    pr_labels = [
+        (lbl.get("name") or "").strip()
+        for lbl in pr.get("labels", []) or []
+        if isinstance(lbl, dict)
+    ]
+    pr_labels = [lbl for lbl in pr_labels if lbl]
+    log.info(
+        "PR #%d carries %d label(s): %s",
+        pr_number,
+        len(pr_labels),
+        ", ".join(pr_labels) if pr_labels else "(none)",
+    )
+    candidates = select_candidates(rules, pr_labels)
+    if candidates:
+        log.info(
+            "Label-based selection picked %d candidate(s): %s",
+            len(candidates),
+            ", ".join(candidates),
+        )
+    else:
+        log.warning(
+            "No rule in %s matched any PR label and no `%s` fallback is "
+            "configured; widening to the full reviewer pool.",
+            reviewers_path,
+            FALLBACK_KEY,
+        )
+        candidates = full_pool
+
+    # Build the display/OOO resolver early so we can pre-filter the
+    # candidate pool by Slack status. The resolver caches per-login
+    # lookups, so reusing it later for the picked reviewer's mention
+    # doesn't re-hit Slack.
+    names = ReviewerDisplay(
+        repo=repo,
+        slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
+    )
+    available_candidates = _filter_ooo(candidates, names)
+
+    reviewer = _pick_reviewer(
+        available_candidates, excluded=[author, *already_requested]
+    )
     if not reviewer:
         return _skip_assign(
             f"No eligible reviewer found in {reviewers_path} (author={author})."
@@ -692,10 +1183,6 @@ def cmd_assign(args: argparse.Namespace) -> int:
         set_gh_output("skip", "true")
         return 0
 
-    names = ReviewerDisplay(
-        repo=repo,
-        slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
-    )
     reviewer_display = names.name(reviewer)
     fallback = (
         f"New PR ready for review: #{pr_number} — {title} "
@@ -746,10 +1233,17 @@ def _latest_review_state_per_user(reviews: list[dict]) -> dict[str, str]:
     ``COMMENTED`` reviews do not overwrite an earlier ``APPROVED`` /
     ``CHANGES_REQUESTED``, but a later ``DISMISSED`` does — i.e. dismissed
     approvals are treated as "no action taken".
+
+    Bot reviews are ignored entirely: a Copilot approval doesn't count
+    as the PR having been actioned, and a Copilot comment shouldn't
+    sneak the bot's login into the displayed ``commented_only`` list.
     """
     by_user: dict[str, str] = {}
     for rv in reviews:
-        user = (rv.get("user") or {}).get("login")
+        user_obj = rv.get("user") or {}
+        if _is_bot_user(user_obj):
+            continue
+        user = user_obj.get("login")
         state = rv.get("state")
         if not user or not state:
             continue
@@ -775,16 +1269,25 @@ def _classify_pr_for_reminder(
     if any(s in ACTIONED_STATES for s in states.values()):
         return None
 
-    # The PR author is never their own reviewer — strip them from both
-    # buckets so a self "Comment review" (or an unusual `requested_reviewers`
-    # entry from GitHub's team round-robin) doesn't surface them in the
-    # Slack reminder digest as a person we're waiting on.
+    # Strip two kinds of would-be reviewers from the displayed lists:
+    #
+    # 1. The PR author themselves — a self "Comment review" or a
+    #    misfired `requested_reviewers` entry from GitHub's team
+    #    round-robin should never surface them as someone we're
+    #    waiting on.
+    # 2. Bot reviewers (Copilot, Dependabot, …) — not people; naming
+    #    them in a Slack nudge confuses the channel. ``commented_only``
+    #    is derived from ``states``, which is already bot-free thanks
+    #    to :func:`_latest_review_state_per_user`.
     author_login = ((pr.get("user") or {}).get("login") or "").lower()
     requested_users = sorted(
         {
             u["login"]
             for u in pr.get("requested_reviewers", []) or []
-            if u.get("login") and u["login"].lower() != author_login
+            if isinstance(u, dict)
+            and u.get("login")
+            and not _is_bot_user(u)
+            and u["login"].lower() != author_login
         }
     )
     commented_only = sorted(
@@ -815,6 +1318,15 @@ def _classify_pr_for_reminder(
         waiting_hours = max(
             0.0, (now - waiting_since).total_seconds() / 3600.0
         )
+
+    # Suppress fresh-PR noise: a PR that was just opened or just had a
+    # reviewer requested doesn't need a Slack ping yet — the assignee
+    # has not had a chance to even look at it. PRs whose waiting
+    # timestamp couldn't be recovered (None) fall through deliberately
+    # so we never accidentally swallow a stale PR just because its
+    # history was malformed.
+    if waiting_hours is not None and waiting_hours < MIN_WAITING_HOURS:
+        return None
 
     return {
         "number": pr["number"],
@@ -871,6 +1383,197 @@ def _reminder_fallback_text(awaiting: list[dict]) -> str:
     return f"{len(awaiting)} PR(s) waiting on a reviewer"
 
 
+def _is_warsaw_quiet_hours(now: datetime | None = None) -> bool:
+    """Return True when *now* falls in the Warsaw 17:00–07:59 quiet window.
+
+    DST-correct: the comparison is done after converting to
+    ``Europe/Warsaw``, so a UTC 06:00 fires from a cron entry resolves
+    to 07:00 in winter (suppressed) and 08:00 in summer (allowed).
+
+    Args:
+        now: Override the wall clock. Defaults to ``datetime.now(timezone.utc)``;
+            the override exists for testability.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    warsaw_hour = now.astimezone(WARSAW_TZ).hour
+    return warsaw_hour >= QUIET_HOURS_START or warsaw_hour < QUIET_HOURS_END
+
+
+def _swap_ooo_reviewers(
+    repo: str,
+    pr: dict,
+    entry: dict,
+    names: ReviewerDisplay,
+    rules: ReviewerRules,
+) -> None:
+    """Replace OOO requested reviewers with a fresh non-OOO pick.
+
+    Run during the reminder pass after :func:`_classify_pr_for_reminder`
+    has produced *entry*. Mutates ``entry["requested"]`` (and
+    ``entry["commented_only"]``) so the Slack digest reflects the
+    post-swap state. Three branches:
+
+    1. No requested reviewer is OOO — nothing to do.
+    2. *Some* requested reviewers are OOO but at least one is not —
+       the PR is already covered by an available human, so we only
+       hide the OOO ones from the displayed list. No GitHub state
+       change; the OOO reviewer will see the request when they
+       return.
+    3. *All* requested reviewers are OOO — pick a non-OOO substitute
+       from the same domain pool (labels + ``all`` fallback, same as
+       the assign path) excluding the author and anyone already
+       requested. Add them via ``gh_pr_assign`` and retract the OOO
+       requests via ``gh_pr_remove_reviewer``. The Slack digest then
+       shows only the substitute.
+
+    If no non-OOO substitute exists in case (3) the OOO reviewers are
+    left as-is and the digest falls back to displaying them with OOO
+    markers (so the channel can manually triage).
+
+    Sequencing of API calls is "ADD then DELETE" so a partial failure
+    leaves the PR over-assigned rather than under-assigned.
+    """
+    requested = list(entry.get("requested") or [])
+    if not requested:
+        # Filter OOO commenters too — they can't formal-review either.
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    ooo = [u for u in requested if names.is_ooo(u)]
+    if not ooo:
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    available = [u for u in requested if not names.is_ooo(u)]
+    if available:
+        # PR is already covered by a non-OOO human. Just hide the
+        # OOO reviewers from the displayed list — no need to touch
+        # GitHub state.
+        log.info(
+            "PR #%d: %d/%d requested reviewer(s) OOO (%s); hiding from digest, "
+            "%s already on the hook.",
+            pr["number"],
+            len(ooo),
+            len(requested),
+            ", ".join(ooo),
+            ", ".join(available),
+        )
+        entry["requested"] = available
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    # Every requested human is OOO. Find a substitute via the same
+    # label-keyed selection cmd_assign uses, but with a wider safety
+    # net: if every domain expert is also OOO, widen to the full
+    # reviewer roster so the PR can at least get a generalist
+    # reviewing it instead of waiting for the OOO domain experts to
+    # return. This is *strict* OOO filtering — unlike the assign
+    # path's :func:`_filter_ooo` we never fall back to OOO candidates,
+    # because swapping one OOO reviewer for another is pointless.
+    pr_labels = [
+        (lbl.get("name") or "").strip()
+        for lbl in pr.get("labels") or []
+        if isinstance(lbl, dict)
+    ]
+    pr_labels = [lbl for lbl in pr_labels if lbl]
+    author = (pr.get("user") or {}).get("login") or ""
+    excluded = {u.lower() for u in requested} | {author.lower()}
+
+    def _available(candidates: list[str]) -> list[str]:
+        return [
+            c for c in candidates
+            if c.lower() not in excluded and not names.is_ooo(c)
+        ]
+
+    pool = _available(select_candidates(rules, pr_labels) or all_reviewers(rules))
+    widened = False
+    if not pool:
+        # Domain pool exhausted; widen to every listed reviewer.
+        wider = all_reviewers(rules)
+        pool = _available(wider)
+        widened = bool(pool)
+
+    if not pool:
+        log.info(
+            "PR #%d: all %d requested reviewer(s) OOO (%s) and no non-OOO "
+            "substitute anywhere in the roster; leaving as-is.",
+            pr["number"],
+            len(requested),
+            ", ".join(requested),
+        )
+        entry["commented_only"] = [
+            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+        ]
+        return
+
+    if widened:
+        log.info(
+            "PR #%d: every domain expert for labels %s is OOO; widening to "
+            "the full reviewer roster for the substitute pick.",
+            pr["number"],
+            pr_labels or "(none)",
+        )
+
+    replacement = random.choice(pool)
+
+    # ADD first so a partial failure (DELETE fails) leaves an
+    # over-assigned PR rather than an unreviewed one.
+    try:
+        gh_pr_assign(repo, pr["number"], replacement)
+    except RuntimeError as e:
+        log.warning(
+            "PR #%d: failed to assign OOO-substitute %s: %s",
+            pr["number"],
+            replacement,
+            e,
+        )
+        return
+    log.info(
+        "PR #%d: assigned %s in place of OOO reviewer(s) %s.",
+        pr["number"],
+        replacement,
+        ", ".join(ooo),
+    )
+    for ooo_login in ooo:
+        try:
+            gh_pr_remove_reviewer(repo, pr["number"], ooo_login)
+        except RuntimeError as e:
+            log.warning(
+                "PR #%d: failed to retract OOO reviewer %s (benign — both will "
+                "show as requested on GH): %s",
+                pr["number"],
+                ooo_login,
+                e,
+            )
+
+    entry["requested"] = [replacement]
+    entry["commented_only"] = [
+        u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
+    ]
+
+
+def _decorate_reviewer(names: ReviewerDisplay, login: str) -> str:
+    """Render a reviewer mention, appending an OOO marker when applicable.
+
+    Uses the reviewer's own Slack status emoji when one is configured
+    (so a `:palm_tree:` user shows up as ``<@U…> :palm_tree:``); falls
+    back to ``:zzz:`` when the OOO heuristic matched on status_text but
+    no emoji was set. Non-OOO reviewers render unchanged.
+    """
+    label = names.name(login)
+    if not names.is_ooo(login):
+        return label
+    emoji = names.ooo_emoji(login) or ":zzz:"
+    return f"{label} {emoji}"
+
+
 def _build_reminder_blocks(
     awaiting: list[dict], names: ReviewerDisplay
 ) -> list[dict]:
@@ -888,7 +1591,7 @@ def _build_reminder_blocks(
             u for u in pr["commented_only"] if u not in pr["requested"]
         ]
         people_str = (
-            ", ".join(names.name(u) for u in people)
+            ", ".join(_decorate_reviewer(names, u) for u in people)
             if people
             else "_no reviewer_"
         )
@@ -924,12 +1627,50 @@ def cmd_remind(args: argparse.Namespace) -> int:
         )
         return 2
 
+    # Suppress scheduled posts during Warsaw quiet hours (17:00–07:59).
+    # The cron is already narrowed to UTC hours that fall inside the
+    # working window in both CET and CEST, but DST shifts can drag a
+    # tick into the boundary (e.g. UTC 06 in winter = Warsaw 07); the
+    # guard here is the precise, DST-aware filter. Manual
+    # `workflow_dispatch` runs bypass the check so on-call folks can
+    # always poke the bot.
+    event_name = os.environ.get("GH_EVENT_NAME", "").strip()
+    if event_name == "schedule" and _is_warsaw_quiet_hours():
+        log.info(
+            "Current Warsaw time is in the quiet window (%d:00–%d:00); "
+            "skipping scheduled reminder.",
+            QUIET_HOURS_START,
+            QUIET_HOURS_END,
+        )
+        set_gh_output("skip", "true")
+        return 0
+
+    # Load the reviewer rules early so the OOO-swap pass below can
+    # consult them. Missing/empty file disables swapping (we still
+    # post the reminder; OOO reviewers just stay in the digest with
+    # their markers).
+    reviewers_path = Path(
+        os.environ.get("REVIEWERS_PATH") or DEFAULT_REVIEWERS_PATH
+    )
+    try:
+        rules = parse_reviewers(reviewers_path)
+    except FileNotFoundError:
+        log.warning(
+            "Reviewers file not found at %s; OOO substitution disabled.",
+            reviewers_path,
+        )
+        rules = []
+
     log.info("Listing open PRs in %s ...", repo)
     prs = list_open_prs(repo)
     log.info("Found %d open PR(s).", len(prs))
 
     now = datetime.now(timezone.utc)
     awaiting: list[dict] = []
+    # We hold on to the raw PR payload alongside each classified entry
+    # so the OOO-swap pass can read labels / author without a second
+    # /pulls/:n round trip.
+    pr_by_number: dict[int, dict] = {}
     for pr in prs:
         if pr.get("draft"):
             continue
@@ -938,6 +1679,7 @@ def cmd_remind(args: argparse.Namespace) -> int:
         entry = _classify_pr_for_reminder(pr, reviews, first_request, now=now)
         if entry is not None:
             awaiting.append(entry)
+            pr_by_number[entry["number"]] = pr
 
     if not awaiting:
         log.info("No PRs need a reminder; not writing Slack payload.")
@@ -951,6 +1693,28 @@ def cmd_remind(args: argparse.Namespace) -> int:
         repo=repo,
         slack_token=os.environ.get("SLACK_BOT_TOKEN") or None,
     )
+
+    # For every PR in the digest, try to replace OOO requested
+    # reviewers with an available substitute. Mutates each entry's
+    # ``requested`` / ``commented_only`` so the Slack message reflects
+    # the post-swap state. Disabled when the rules file is empty.
+    if rules:
+        for entry in awaiting:
+            _swap_ooo_reviewers(
+                repo, pr_by_number[entry["number"]], entry, names, rules
+            )
+        # Re-filter: an entry whose only humans were OOO and that the
+        # swap couldn't find a substitute for may now have no one left
+        # to remind. Drop those.
+        awaiting = [e for e in awaiting if e.get("requested") or e.get("commented_only")]
+        if not awaiting:
+            log.info(
+                "All PRs were covered after the OOO-swap pass (nothing actionable "
+                "left for humans); not writing Slack payload."
+            )
+            set_gh_output("skip", "true")
+            return 0
+
     fallback = _reminder_fallback_text(awaiting)
     blocks = _build_reminder_blocks(awaiting, names)
     write_slack_payload(payload_file, channel, fallback, blocks=blocks)
