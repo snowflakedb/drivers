@@ -157,7 +157,7 @@ class TestFromConnectionArgs:
     def test_private_key_normalization(self):
         """Private key is normalized via normalize_private_key."""
         with patch(
-            "snowflake.connector.connection_config.normalize_private_key",
+            "snowflake.connector._internal.connection_config_mixin.normalize_private_key",
             return_value="normalized",
         ):
             config = ConnectionConfig.from_connection_args(user="u", private_key="raw_key")
@@ -248,4 +248,4 @@ class TestClassVariables:
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY
 
     def test_all_fields_superset_of_python_only(self):
-        assert ConnectionConfig._PYTHON_ONLY.issubset(ConnectionConfig._ALL_FIELDS)
+        assert ConnectionConfig._PYTHON_ONLY.issubset(ConnectionConfig._all_field_names())
