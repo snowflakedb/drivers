@@ -30,24 +30,28 @@ def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
 
 @pytest.fixture
 def mock_db_api():
-    """Create a mock DatabaseDriverClient with minimal stubs for Connection.__init__."""
+    """Create a mock DatabaseDriverClient patched into core_driver."""
+    from snowflake.connector._internal.api_client.client_api import core_driver
+
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
     db_api.connection_get_parameter.return_value = MagicMock(value="")
 
-    # connection_is_closed reports "closed" once the conn_handle has been
-    # released (Connection.close() swaps the handle to None, which ends up as
-    # id=0 after protobuf default initialization). Mirrors real Core behavior
-    # and lets tests call close() then assert is_closed() == True.
     def _connection_is_closed(request):
         return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
 
     db_api.connection_is_closed.side_effect = _connection_is_closed
-    # Provide a real StatementHandle so protobuf field validation passes
     db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
     db_api.statement_execute_query.return_value = _make_execute_response()
-    return db_api
+    db_api.connection_get_result_set.return_value = MagicMock(
+        result_descriptor=ResultSetDescriptor(query_id="fake-qid"),
+    )
+
+    old_client = core_driver._client
+    core_driver.client = db_api
+    yield db_api
+    core_driver.client = old_client
 
 
 @pytest.fixture
@@ -55,11 +59,7 @@ def connection(mock_db_api):
     """Create a Connection with a mocked db_api."""
     from snowflake.connector.connection import Connection
 
-    # Return stream_ptr=0 so release_arrow_stream (called in __del__) is a no-op.
-    with (
-        patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api),
-        patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
-    ):
+    with patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0):
         conn = Connection(user="test_user", account="test_account")
         yield conn
 
