@@ -227,14 +227,26 @@ fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Opti
 // Server URL derivation (mirrored from rest_parameters::get_server_url)
 // ---------------------------------------------------------------------------
 
+/// Resolve the effective protocol from settings.
+///
+/// `ssl` takes precedence when present because it has no registry default
+/// and therefore is always an explicit user choice.  `protocol` serves as
+/// the fallback (the fallback `"https"` is hardcoded here).
+fn resolve_protocol(settings: &ParamStore) -> String {
+    if let Some(ssl_on) = settings.get_bool(SSL) {
+        return if ssl_on { "https" } else { "http" }.to_string();
+    }
+    settings
+        .get_string(PROTOCOL)
+        .unwrap_or_else(|| "https".to_string())
+}
+
 fn derive_server_url(settings: &ParamStore) -> Result<String, ConfigError> {
     if let Some(url) = settings.get_string(SERVER_URL) {
         return Ok(url);
     }
 
-    let protocol = settings
-        .get_string(PROTOCOL)
-        .unwrap_or_else(|| "https".to_string());
+    let protocol = resolve_protocol(settings);
     let host = settings.get_string(HOST).context(MissingParameterSnafu {
         parameter: String::from(HOST),
     })?;
@@ -688,6 +700,16 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         });
     }
 
+    // --- ConflictingParameters: ssl + protocol ---
+    if settings.get_bool(SSL).is_some() && settings.get_string(PROTOCOL).is_some() {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: SSL.into(),
+            message: "Both 'ssl' and 'protocol' are set. Please provide only one.".into(),
+            code: ValidationCode::ConflictingParameters,
+        });
+    }
+
     // --- InvalidValue: protocol ---
     if let Some(protocol) = settings.get_string(PROTOCOL)
         && protocol != "http"
@@ -854,6 +876,57 @@ mod tests {
         ]);
         let config = ConnectionConfig::build(&settings).unwrap();
         assert_eq!(config.server.server_url, "https://custom.url");
+    }
+
+    #[test]
+    fn build_server_url_from_ssl_true() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("ssl", Setting::Bool(true)),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.server.server_url, "https://myhost.com");
+    }
+
+    #[test]
+    fn build_server_url_from_ssl_false() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("ssl", Setting::Bool(false)),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.server.server_url, "http://myhost.com");
+    }
+
+    #[test]
+    fn build_server_url_ssl_and_protocol_conflict() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("protocol", Setting::String("http".into())),
+            ("ssl", Setting::Bool(true)),
+        ]);
+        let err = ConnectionConfig::build(&settings).unwrap_err();
+        match err {
+            ConfigError::ValidationFailed { ref issues, .. } => {
+                assert!(
+                    issues
+                        .iter()
+                        .any(|i| i.code == ValidationCode::ConflictingParameters
+                            && i.parameter == "ssl"),
+                    "Expected ConflictingParameters for ssl + protocol, got: {issues:?}"
+                );
+            }
+            other => panic!("Expected ValidationFailed, got: {other}"),
+        }
     }
 
     #[test]

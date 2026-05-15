@@ -138,14 +138,17 @@ class ConnectionConfig(ConnectionConfigMixin):
     private_key_password: str | None = None
     """Passphrase for encrypted private key"""
 
-    protocol: str | None = "https"
-    """Connection protocol (http or https). Default: 'https'"""
+    protocol: str | None = None
+    """Connection protocol (http or https)"""
 
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 
     server_url: str | None = None
     """Full server URL (alternative to host/port/protocol)"""
+
+    ssl: bool | None = None
+    """Enable or disable SSL/TLS (sets protocol to https or http). Deprecated: use protocol instead"""
 
     token: str | None = None
     """Programmatic access token. Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""

@@ -84,7 +84,7 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
-        // Forward other keys (e.g. SERVER, UID) for `sf_core` alias resolution; do not
+        // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
     }
@@ -237,6 +237,11 @@ fn connect_with_params(
         })?;
         options.insert("port".to_owned(), port_int.into());
     }
+
+    // Legacy ODBC silently swallows all logout errors (destructor catch-all).
+    options
+        .entry("LOGOUT_ERROR_STRATEGY".to_owned())
+        .or_insert_with(|| "best_effort".to_owned().into());
 
     let dbc = conn_from_handle(connection_handle)?;
     // Read pre-connection data under lock, then release before the async call.
