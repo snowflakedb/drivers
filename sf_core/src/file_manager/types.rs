@@ -129,6 +129,12 @@ pub struct StageInfo {
     pub use_virtual_url: bool,
     /// Whether to use regional GCS endpoints.
     pub use_regional_url: bool,
+    /// Whether to use the S3 regional endpoint (`s3.<region>.amazonaws.com`)
+    /// instead of the global one. Set by GS for PrivateLink-to-S3 accounts
+    /// and Snowpipe Streaming. Computed as `useS3RegionalUrl || useRegionalUrl`
+    /// from the response. Ignored when `end_point` is set — FIPS / VPCE /
+    /// custom endpoint takes precedence.
+    pub use_s3_regional_url: bool,
     /// Azure storage account name (required for Azure Blob Storage).
     pub storage_account: Option<String>,
 }

@@ -266,9 +266,28 @@ async fn create_s3_client(
         };
         tracing::debug!("Using Snowflake-provided S3 endpoint: {endpoint_url}");
         s3_config = s3_config.endpoint_url(endpoint_url);
+    } else if stage_info.use_s3_regional_url {
+        // PrivateLink-to-S3 / Snowpipe Streaming: the global endpoint is
+        // unreachable, only `s3.<region>.amazonaws.com[.cn]` resolves.
+        let endpoint_url = regional_s3_endpoint(&stage_info.region);
+        tracing::debug!("Using S3 regional endpoint: {endpoint_url}");
+        s3_config = s3_config.endpoint_url(endpoint_url);
     }
 
     Ok(S3Client::from_conf(s3_config.build()))
+}
+
+/// Builds the S3 regional endpoint URL for a given region. China regions
+/// (`cn-*`) use the `amazonaws.com.cn` suffix; everything else uses
+/// `amazonaws.com`. Mirrors `getDomainSuffixForRegionalUrl` in
+/// snowflake-jdbc's `SnowflakeS3Client.java:248-250`.
+fn regional_s3_endpoint(region: &str) -> String {
+    let suffix = if region.to_ascii_lowercase().starts_with("cn-") {
+        "amazonaws.com.cn"
+    } else {
+        "amazonaws.com"
+    };
+    format!("https://s3.{region}.{suffix}")
 }
 
 /// Error returned when `create_s3_client` is called with non-S3 credentials.
@@ -411,5 +430,43 @@ mod tests {
         let cfg = to_aws_timeout_config(&policy);
         assert_eq!(cfg.operation_timeout(), Some(policy.max_elapsed));
         assert_eq!(cfg.operation_attempt_timeout(), policy.per_request_timeout);
+    }
+
+    // --- Regional endpoint construction ---
+
+    #[test]
+    fn regional_s3_endpoint_default_suffix() {
+        assert_eq!(
+            regional_s3_endpoint("us-east-1"),
+            "https://s3.us-east-1.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn regional_s3_endpoint_china_suffix() {
+        assert_eq!(
+            regional_s3_endpoint("cn-north-1"),
+            "https://s3.cn-north-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn regional_s3_endpoint_china_match_is_case_insensitive() {
+        // GS could conceivably send the region in upper case; the suffix
+        // detection must not depend on case.
+        assert_eq!(
+            regional_s3_endpoint("CN-NORTH-1"),
+            "https://s3.CN-NORTH-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn regional_s3_endpoint_govcloud_uses_default_suffix() {
+        // GovCloud regions are still under amazonaws.com (e.g.
+        // s3.us-gov-west-1.amazonaws.com); only `cn-*` gets the .cn TLD.
+        assert_eq!(
+            regional_s3_endpoint("us-gov-west-1"),
+            "https://s3.us-gov-west-1.amazonaws.com"
+        );
     }
 }

@@ -562,6 +562,7 @@ mod tests {
             presigned_url: None,
             use_virtual_url: false,
             use_regional_url: false,
+            use_s3_regional_url: false,
             storage_account: overrides
                 .storage_account
                 .or(Some("mystorageaccount".to_string())),

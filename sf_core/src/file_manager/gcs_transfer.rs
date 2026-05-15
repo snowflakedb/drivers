@@ -556,6 +556,7 @@ mod tests {
             presigned_url: overrides.presigned_url,
             use_virtual_url: overrides.use_virtual_url,
             use_regional_url: overrides.use_regional_url,
+            use_s3_regional_url: false,
             storage_account: None,
         }
     }
