@@ -70,16 +70,26 @@ const TELEMETRY_QUEUE_CAPACITY: usize = 8 * 1024;
 /// the runtime.
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
-    /// Held only to keep the drainer task's executor alive for the
-    /// lifetime of `OdbcGlobals`. Dropping this runtime aborts the
-    /// drainer, which is what we want at env teardown.
-    #[allow(dead_code)]
-    telemetry_runtime: tokio::runtime::Runtime,
+    /// Telemetry executor — on [`Drop`](Drop) we call
+    /// [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background)
+    /// so teardown never blocks on an in-flight `telemetry_send_*` awaiting I/O /
+    /// `Mutex<Connection>` (otherwise [`Runtime`](tokio::runtime::Runtime) destruction waits for spawned tasks).
+    telemetry_runtime: Option<tokio::runtime::Runtime>,
     client: Arc<DatabaseDriverClient>,
     telemetry_tx: mpsc::Sender<TelemetryEvent>,
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
     pub stmt_registry: HandleManager<crate::api::Statement>,
+}
+
+impl Drop for OdbcGlobals {
+    fn drop(&mut self) {
+        // Fire-and-forget extends to unload: `Runtime::drop` waits for all
+        // spawned work; our drainer can be stuck in `telemetry_send_*`.
+        if let Some(rt) = self.telemetry_runtime.take() {
+            rt.shutdown_background();
+        }
+    }
 }
 
 impl OdbcGlobals {
@@ -197,7 +207,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         telemetry_runtime.spawn(drain_telemetry(telemetry_rx, drain_client));
         guard.globals = Some(OdbcGlobals {
             runtime,
-            telemetry_runtime,
+            telemetry_runtime: Some(telemetry_runtime),
             client,
             telemetry_tx,
             env_registry: HandleManager::new(),
