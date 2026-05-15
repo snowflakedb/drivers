@@ -114,7 +114,7 @@ jobs:
 
   build_odbc_packages:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_packaging == 'true'
     uses: ./.github/workflows/_build-odbc-packages.yml
     with:
       # WiX Toolset git ref to build from source inside _build-odbc-packages.yml.
