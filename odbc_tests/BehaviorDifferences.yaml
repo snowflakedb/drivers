@@ -601,3 +601,29 @@ behavior_differences:
       Concurrent SQLDisconnect calls are serialized; exactly one returns SQL_SUCCESS and the rest return SQL_ERROR with SQLSTATE 08003 (Connection not open).
     impact: |
       Multi-threaded applications that disconnect from multiple threads no longer risk a crash.
+
+  55:
+    name: "SQL_VARCHAR fetched as SQL_C_INTERVAL_* is now parsed per ODBC Appendix D instead of rejected with 07006"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      When SQLGetData (or SQLBindCol + SQLFetch) is called with a SQL_C_INTERVAL_* target on a VARCHAR/STRING column - including Snowflake INTERVAL columns surfaced as VARCHAR when ENABLE_INTERVAL_TYPES_AS_TEXT_IN_CLIENT_RESPONSE is on - the reference driver rejects the conversion at bind / get time with SQL_ERROR and SQLSTATE 07006 (Restricted data type attribute violation). No SQL_C_INTERVAL_* target is supported.
+    new_driver_behavior: |
+      Implements the ODBC Appendix D "Character to Interval" conversion table for all 13 SQL_C_INTERVAL_* targets (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND and every YEAR_TO_MONTH / DAY_TO_* / HOUR_TO_* / MINUTE_TO_SECOND composite). The VARCHAR text is parsed as an ANSI interval literal whose qualifier must match the C target, and the four spec outcomes are mapped to the standard SQLSTATEs:
+        1. Valid value, no truncation                 -> SQL_SUCCESS
+        2. Valid value, trailing-field truncation     -> SQL_SUCCESS_WITH_INFO, 01S07
+        3. Valid value, leading-field precision lost  -> SQL_ERROR, 22015
+        4. Not a valid interval value                 -> SQL_ERROR, 22018
+      `SQL_DESC_DATETIME_INTERVAL_PRECISION` defaults to 2 (matching the MS ODBC default). Sign handling is consistent with `numeric_helpers::write_single_field_interval`: zero-magnitude composites clear the sign bit regardless of the literal's leading minus.
+
+      Trailing composite-interval fields are validated against the canonical ANSI SQL ranges and a violation surfaces SQLSTATE 22018 (outcome #4). Enforced ranges:
+        * MONTH (in YEAR_TO_MONTH composites)            : 0..=11
+        * HOUR  (trailing in *_TO_HOUR/MINUTE/SECOND)    : 0..=23
+        * MINUTE (trailing in *_TO_MINUTE/SECOND)        : 0..=59
+        * SECOND (trailing in *_TO_SECOND)               : 0..=59
+      Leading fields keep the precision-driven 22015 check and are intentionally NOT range-checked because per ANSI a leading field can be arbitrarily large within its declared `SQL_DESC_DATETIME_INTERVAL_PRECISION`. For MINUTE_TO_SECOND the leading slot is the minute (precision-driven); only the trailing second is range-checked against 0..=59.
+    impact: |
+      Applications that previously had to round-trip Snowflake INTERVAL values through SQL_C_CHAR plus an application-side parse can now fetch them as the standard SQL_C_INTERVAL_* C types. Applications still relying on the 07006 rejection to detect "no native interval support" must instead handle the standard 22015 / 22018 / 01S07 SQLSTATEs. Inputs whose trailing fields exceed the canonical ANSI ranges (e.g. '25:61' as HOUR_TO_MINUTE, '3-12' as YEAR_TO_MONTH) now surface SQLSTATE 22018 instead of being silently accepted with the literal magnitude.
+    description: |
+      Spec reference: ODBC Appendix D, "Converting Data from SQL to C Data Types" - "Character to Interval" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-sql-to-c-data-types). The strict trailing-field range enforcement implements outcome #4 ("Not a valid interval value", SQLSTATE 22018, "Invalid character value for cast specification") as defined by the same Appendix D conversion table; the canonical ANSI ranges (HOUR 0..23, MINUTE/SECOND 0..59, MONTH 0..11 in YEAR_TO_MONTH composites) are taken from ANSI SQL/Foundation interval literal grammar.

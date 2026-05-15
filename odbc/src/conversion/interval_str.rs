@@ -32,10 +32,27 @@
 //!      SQLSTATE 22015.
 //!   4. Not a valid interval value. SQL_ERROR, SQLSTATE 22018.
 //!
-//! This parser is intentionally lenient: it accepts the canonical
-//! ANSI literal for the *target* qualifier, plus any literal that
-//! carries *more* trailing fields than the target wants — which is
-//! the truncation case (#2). Any other shape is a format error (#4).
+//! Shape handling: the parser accepts the canonical ANSI literal
+//! for the *target* qualifier, plus any literal that carries *more*
+//! trailing fields than the target wants — the latter is the
+//! truncation case (#2). Any other shape is a format error (#4).
+//!
+//! Range handling: trailing composite fields are validated against
+//! their canonical ANSI SQL ranges and a violation surfaces 22018
+//! per Appendix D outcome #4 ("not a valid interval value"). The
+//! enforced ranges for *trailing* slots in a composite literal are:
+//!
+//!   * MONTH (in `YEAR_TO_MONTH`)        : 0..=11
+//!   * HOUR  (in `*_TO_HOUR/MINUTE/SECOND`) : 0..=23
+//!   * MINUTE (in `*_TO_MINUTE/SECOND`)  : 0..=59
+//!   * SECOND (in `*_TO_SECOND`)         : 0..=59
+//!
+//! The *leading* field of any single-field or composite target keeps
+//! the precision-driven check (`SQL_DESC_DATETIME_INTERVAL_PRECISION`,
+//! 22015 on overflow) and is *not* range-checked, because per ANSI a
+//! leading field can be arbitrarily large within its declared
+//! precision. For `MINUTE_TO_SECOND`, the leading slot is the minute,
+//! so only the trailing second is range-checked against 0..=59.
 
 use odbc_sys as sql;
 
@@ -119,7 +136,7 @@ struct SecondParse {
     /// `true` when the source carried more than 6 fractional digits
     /// AND at least one of the dropped digits was non-zero. Mirrors
     /// `numeric_helpers::compute_interval_fraction`'s `was_truncated`
-    /// flag and lets the caller surface 01S07 / `StringDataTruncated`.
+    /// flag and lets the caller surface 01S07 / `NumericValueTruncated`.
     fraction_was_truncated: bool,
 }
 
@@ -444,11 +461,13 @@ fn build_composite(
         IntervalYearToMonth => {
             let y = read(parts.year, "year")?;
             let m = read(parts.month, "month")?;
+            check_trailing_field_range("month", m, 11)?;
             (sql::Interval::YearToMonth as i32, y, None, Some((y, m)))
         }
         IntervalDayToHour => {
             let d = read(parts.day, "day")?;
             let h = read(parts.hour, "hour")?;
+            check_trailing_field_range("hour", h, 23)?;
             (
                 sql::Interval::DayToHour as i32,
                 d,
@@ -460,6 +479,8 @@ fn build_composite(
             let d = read(parts.day, "day")?;
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
+            check_trailing_field_range("hour", h, 23)?;
+            check_trailing_field_range("minute", m, 59)?;
             (
                 sql::Interval::DayToMinute as i32,
                 d,
@@ -472,6 +493,9 @@ fn build_composite(
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
             let s = read(parts.second, "second")?;
+            check_trailing_field_range("hour", h, 23)?;
+            check_trailing_field_range("minute", m, 59)?;
+            check_trailing_field_range("second", s, 59)?;
             (
                 sql::Interval::DayToSecond as i32,
                 d,
@@ -482,6 +506,7 @@ fn build_composite(
         IntervalHourToMinute => {
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
+            check_trailing_field_range("minute", m, 59)?;
             (
                 sql::Interval::HourToMinute as i32,
                 h,
@@ -493,6 +518,8 @@ fn build_composite(
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
             let s = read(parts.second, "second")?;
+            check_trailing_field_range("minute", m, 59)?;
+            check_trailing_field_range("second", s, 59)?;
             (
                 sql::Interval::HourToSecond as i32,
                 h,
@@ -530,6 +557,10 @@ fn build_composite(
                     .fail();
                 }
             };
+            // Range check the trailing SECOND slot only. The leading
+            // MINUTE slot (`m`) is governed by the precision-based
+            // 22015 check below, not the canonical 0..=59 range.
+            check_trailing_field_range("second", s, 59)?;
             (
                 sql::Interval::MinuteToSecond as i32,
                 m,
@@ -595,10 +626,45 @@ fn field_overflow(name: &str, value: u128) -> WriteOdbcError {
     .build()
 }
 
-/// Returns 01S07 (`StringDataTruncated`) if the parsed input carried any
-/// non-zero field that the target qualifier cannot represent OR if the
-/// parser already discarded non-zero fractional digits past the 6-digit
-/// microsecond cap.
+/// Validate a *trailing* composite-interval field against its
+/// canonical ANSI SQL range. Returns `InvalidValue` (mapped to
+/// SQLSTATE 22018, "Invalid character value for cast specification"
+/// — Appendix D outcome #4) when the magnitude exceeds
+/// `max_inclusive`. Leading fields use a precision-based check
+/// (22015) elsewhere and must NOT be passed through this helper.
+fn check_trailing_field_range(
+    name: &'static str,
+    value: u128,
+    max_inclusive: u32,
+) -> Result<(), WriteOdbcError> {
+    if value > u128::from(max_inclusive) {
+        InvalidValueSnafu {
+            reason: format!(
+                "trailing '{name}' field magnitude {value} is outside the canonical ANSI range 0..={max_inclusive}"
+            ),
+        }
+        .fail()
+    } else {
+        Ok(())
+    }
+}
+
+/// Returns 01S07 (`Warning::NumericValueTruncated` →
+/// `SqlState::FractionalTruncation`) when either:
+///
+///   * the parsed input carried a non-zero field that the target
+///     qualifier cannot represent (classic trailing-field truncation —
+///     Appendix D "Character to Interval" outcome #2), or
+///   * the parser already discarded non-zero fractional digits past
+///     the 6-digit microsecond cap (sub-microsecond loss; independent
+///     of which qualifier the target asks for).
+///
+/// Per ODBC Appendix D outcome #2 the spec-mandated SQLSTATE for
+/// interval-conversion truncation is 01S07, *not* 01004
+/// (`StringDataRightTruncated`). `Warning::StringDataTruncated` maps
+/// to 01004 in `odbc/src/api/diagnostic.rs`, which would mis-classify
+/// the diagnostic, so this function uses `Warning::NumericValueTruncated`
+/// throughout.
 fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings {
     use CDataType::*;
 
@@ -607,15 +673,17 @@ fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings
     // the dropped digits, so we always surface 01S07 when the
     // parser saw non-zero data past the 6-digit microsecond cap.
     if parts.fraction_was_truncated {
-        return vec![Warning::StringDataTruncated];
+        return vec![Warning::NumericValueTruncated];
     }
 
     // Bare-numeric inputs ("5" or "5.5") populate every field with
     // the same value as a convenience for single-field targets; do
     // NOT treat that as truncation. The only meaningful loss is a
-    // non-zero fraction sent to an integer-only target.
+    // non-zero fraction sent to an integer-only target — a zero
+    // fraction (e.g. "5.0") loses no information and must not warn.
     if parts.is_single_int_input {
         if parts.has_fraction
+            && parts.fraction_micros.unwrap_or(0) > 0
             && !matches!(
                 target,
                 IntervalSecond
@@ -624,7 +692,7 @@ fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings
                     | IntervalMinuteToSecond
             )
         {
-            return vec![Warning::StringDataTruncated];
+            return vec![Warning::NumericValueTruncated];
         }
         return vec![];
     }
@@ -675,7 +743,7 @@ fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings
         || (!consumes_fraction && parts.has_fraction && parts.fraction_micros.unwrap_or(0) > 0);
 
     if lost {
-        vec![Warning::StringDataTruncated]
+        vec![Warning::NumericValueTruncated]
     } else {
         vec![]
     }
