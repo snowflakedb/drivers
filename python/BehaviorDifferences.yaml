@@ -25,7 +25,8 @@ behavior_differences:
     old_driver_behavior: |
       `private_key_file_pwd`
     new_driver_behavior: |
-      `private_key_password`
+      `private_key_password`. The legacy name `private_key_file_pwd` is still accepted
+      and mapped to `private_key_password`, but emits a `DeprecationWarning`.
 
   11:
     name: "CONFIG_PARSER deprecated alias removed"
@@ -86,8 +87,8 @@ behavior_differences:
       `client_request_mfa_token` enables MFA token caching.
     new_driver_behavior: |
       `client_store_temporary_credential` enables MFA token caching. The legacy name
-      `client_request_mfa_token` is also accepted as a backward-compatible alias and is silently
-      mapped to `client_store_temporary_credential`.
+      `client_request_mfa_token` is also accepted as a backward-compatible alias and is mapped
+      to `client_store_temporary_credential`, but emits a `DeprecationWarning`.
 
   17:
     name: "rest.request() validates HTTP method (internal API)"
@@ -203,3 +204,19 @@ behavior_differences:
       not have a `region` property. Callers that previously relied on `region` to derive
       the hostname must supply the fully-qualified `account` identifier (e.g.
       `"myaccount.us-east-1"`) or set `host` explicitly instead.
+
+  25:
+    name: "client_fetch_threads deprecated; client_fetch_use_mp removed"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      `client_fetch_threads` controls the chunk-fetch pool size (defaulting to
+      `client_prefetch_threads`). `client_fetch_use_mp=True` switches the pool from
+      `ThreadPoolExecutor` to `ProcessPoolExecutor`.
+    new_driver_behavior: |
+      `client_fetch_threads` is accepted as a deprecated alias for `client_prefetch_threads`
+      and emits a `DeprecationWarning`. The legacy `client_fetch_use_mp` parameter (which switched
+      chunk fetching from a thread pool to a process pool) has no equivalent: the universal driver
+      always uses a thread pool. Passing `client_fetch_use_mp` is accepted for source compatibility
+      but has no effect and emits a `DeprecationWarning`.

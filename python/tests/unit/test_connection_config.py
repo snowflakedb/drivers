@@ -62,19 +62,41 @@ class TestFromKwargs:
         assert config._extra == {"custom_param": "value"}
 
     def test_legacy_rewrite_private_key_file_pwd(self):
-        config = ConnectionConfig.from_kwargs(private_key_file_pwd="secret")
+        with pytest.warns(DeprecationWarning, match="private_key_file_pwd"):
+            config = ConnectionConfig.from_kwargs(private_key_file_pwd="secret")
         assert config.private_key_password == "secret"
 
     def test_legacy_rewrite_client_request_mfa_token(self):
-        config = ConnectionConfig.from_kwargs(client_request_mfa_token=True)
+        with pytest.warns(DeprecationWarning, match="client_request_mfa_token"):
+            config = ConnectionConfig.from_kwargs(client_request_mfa_token=True)
         assert config.client_store_temporary_credential is True
 
     def test_legacy_rewrite_does_not_override_canonical(self):
-        config = ConnectionConfig.from_kwargs(
-            client_request_mfa_token=True,
-            client_store_temporary_credential=False,
-        )
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(
+                client_request_mfa_token=True,
+                client_store_temporary_credential=False,
+            )
         assert config.client_store_temporary_credential is False
+
+    def test_client_fetch_threads_maps_to_prefetch_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="client_fetch_threads"):
+            config = ConnectionConfig.from_kwargs(client_fetch_threads=8)
+        assert config.client_prefetch_threads == 8
+
+    def test_client_fetch_threads_does_not_override_canonical(self):
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(
+                client_fetch_threads=8,
+                client_prefetch_threads=2,
+            )
+        assert config.client_prefetch_threads == 2
+
+    def test_client_fetch_use_mp_is_dropped_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="client_fetch_use_mp"):
+            config = ConnectionConfig.from_kwargs(user="u", client_fetch_use_mp=True)
+        assert config.user == "u"
+        assert "client_fetch_use_mp" not in config._extra
 
 
 class TestFromConnectionArgs:
