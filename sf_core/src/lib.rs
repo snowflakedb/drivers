@@ -19,6 +19,7 @@ pub mod http;
 pub mod logging;
 pub mod perf_timing;
 pub mod query_types;
+pub mod refresh;
 pub mod rest;
 pub mod sensitive;
 pub mod telemetry;

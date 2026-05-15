@@ -1187,22 +1187,105 @@ impl RefreshContext {
 
     /// Execute an async operation with automatic token refresh on session expiry.
     ///
-    /// Canonical implementation of the refresh-retry loop. On `SessionExpired`,
-    /// refreshes the session token via master token and retries exactly once.
-    /// Named to parallel [`execute_with_retry`](crate::http::retry::execute_with_retry).
+    /// On `SessionExpired`, refreshes the session token via master token and
+    /// retries exactly once. Implemented on top of the generic
+    /// [`refresh::execute_with_refresh`] helper — see that module for the
+    /// shared retry-shape that this and the S3 STS refresher both use. Named
+    /// to parallel [`execute_with_retry`](crate::http::retry::execute_with_retry).
     pub async fn execute_with_refresh<F, Fut, T>(&mut self, f: F) -> Result<T, ApiError>
     where
         F: Fn(SensitiveString) -> Fut,
         Fut: Future<Output = Result<T, RestError>>,
     {
-        let mut last_error: Option<RestError> = None;
-        loop {
-            let token = self.refresh_token(last_error).await?;
-            match f(token).await {
-                Ok(result) => return Ok(result),
-                Err(e) => last_error = Some(e),
+        use snafu::IntoError;
+        crate::refresh::execute_with_refresh(self, |token| {
+            let fut = f(token);
+            async move { fut.await.map_err(|e| QuerySnafu.into_error(e)) }
+        })
+        .await
+    }
+}
+
+impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
+    fn current(&mut self) -> crate::refresh::RefreshFuture<'_, Result<SensitiveString, ApiError>> {
+        Box::pin(async move {
+            let tokens_guard = self.tokens_lock.read().await;
+            let token = tokens_guard
+                .as_ref()
+                .map(|t| t.session_token.clone())
+                .context(ConnectionNotInitializedSnafu)?;
+            // Stamp the token into the state machine on first read so that
+            // `refresh()` can detect the "another request already rotated
+            // while we waited" race.
+            if matches!(self.state, RefreshState::Initial) {
+                self.state = RefreshState::FirstToken(token.clone());
             }
-        }
+            Ok(token)
+        })
+    }
+
+    fn should_refresh(&self, err: &ApiError) -> bool {
+        let ApiError::Query { source, .. } = err else {
+            return false;
+        };
+        matches!(
+            source.as_ref(),
+            RestError::InvalidSnowflakeResponse {
+                source: SnowflakeResponseError::SessionExpired { .. },
+                ..
+            },
+        )
+    }
+
+    fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, ApiError>> {
+        Box::pin(async move {
+            // The existing one-shot state machine: the first refresh call
+            // does the work, subsequent calls return Ok(false) so the
+            // generic helper propagates the original error.
+            let failed_token = match &self.state {
+                RefreshState::FirstToken(t) => t.clone(),
+                RefreshState::Refreshed => return Ok(false),
+                RefreshState::Initial => return Ok(false),
+            };
+            self.state = RefreshState::Refreshed;
+
+            // Acquire the write lock — blocks other readers/writers during
+            // refresh.
+            let mut tokens_guard = self.tokens_lock.write().await;
+            let tokens = tokens_guard
+                .as_ref()
+                .cloned()
+                .context(ConnectionNotInitializedSnafu)?;
+
+            // If another request already refreshed while we waited, the
+            // current token is fresh — treat as a successful rotation
+            // without hitting GS.
+            if tokens.session_token.reveal() != failed_token.reveal() {
+                tracing::debug!("Session already refreshed by another request");
+                return Ok(true);
+            }
+
+            if tokens.is_master_expired() {
+                tracing::error!("Master token expired, full re-authentication required");
+                return MasterTokenExpiredSnafu.fail();
+            }
+
+            tracing::info!("Session expired, attempting refresh");
+            let new_tokens = snowflake::refresh_session(
+                &self.http_client,
+                &self.server_url,
+                &self.client_info,
+                &tokens,
+            )
+            .await
+            .context(SessionRefreshSnafu)?;
+
+            *tokens_guard = Some(new_tokens);
+            drop(tokens_guard);
+
+            tracing::info!("Session refreshed, retrying operation");
+            Ok(true)
+        })
     }
 }
 
