@@ -4,84 +4,14 @@ use crate::crl::worker::CrlWorker;
 use crate::tls::x509_utils::load_system_root_store;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::{WebPkiServerVerifier, verify_server_cert_signed_by_trust_anchor};
-use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
+use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::ParsedCertificate;
 use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
-use std::fmt;
 use std::sync::Arc;
 
 fn default_supported_algs() -> WebPkiSupportedAlgorithms {
     rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms
-}
-
-/// Verifies the certificate chain/trust anchor but deliberately skips hostname
-/// verification. Used when `verify_hostname = false` with custom root stores
-/// (Path 2: CRL disabled + custom roots).
-pub(crate) struct NoHostnameVerifier {
-    roots: Arc<RootCertStore>,
-    supported_algs: WebPkiSupportedAlgorithms,
-}
-
-impl NoHostnameVerifier {
-    pub(crate) fn new(roots: Arc<RootCertStore>) -> Self {
-        Self {
-            roots,
-            supported_algs: default_supported_algs(),
-        }
-    }
-}
-
-impl fmt::Debug for NoHostnameVerifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NoHostnameVerifier")
-            .field("roots", &"...")
-            .field("supported_algs", &self.supported_algs)
-            .finish()
-    }
-}
-
-impl ServerCertVerifier for NoHostnameVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        now: UnixTime,
-    ) -> Result<ServerCertVerified, TlsError> {
-        let cert = ParsedCertificate::try_from(end_entity)?;
-        verify_server_cert_signed_by_trust_anchor(
-            &cert,
-            &self.roots,
-            intermediates,
-            now,
-            self.supported_algs.all,
-        )?;
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, TlsError> {
-        verify_tls12_signature(message, cert, dss, &self.supported_algs)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, TlsError> {
-        verify_tls13_signature(message, cert, dss, &self.supported_algs)
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.supported_algs.supported_schemes()
-    }
 }
 
 #[derive(Debug)]
@@ -135,24 +65,26 @@ impl ServerCertVerifier for CrlServerCertVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
-        // Parse once before the closure to avoid redundant ASN.1 parsing per
-        // chain iteration. Unconditional so the closure never needs to panic.
-        let parsed_cert = ParsedCertificate::try_from(end_entity)?;
+        // Parse only when hostname verification is disabled (chain-only path).
+        let parsed_cert: Option<ParsedCertificate<'_>> = if !self.verify_hostname {
+            Some(ParsedCertificate::try_from(end_entity)?)
+        } else {
+            None
+        };
 
         // Helper closure to re-validate a path with fixed verifier inputs.
         // When verify_hostname is false, use chain-only validation (skip hostname check).
-        let verify_path = |inters: &[rustls::pki_types::CertificateDer<'_>]| {
-            if self.verify_hostname {
-                self.webpki_verifier.verify_server_cert(
-                    end_entity,
-                    inters,
-                    server_name,
-                    ocsp_response,
-                    now,
-                )
-            } else {
+        let verify_path = |inters: &[CertificateDer<'_>]| match &parsed_cert {
+            None => self.webpki_verifier.verify_server_cert(
+                end_entity,
+                inters,
+                server_name,
+                ocsp_response,
+                now,
+            ),
+            Some(cert) => {
                 verify_server_cert_signed_by_trust_anchor(
-                    &parsed_cert,
+                    cert,
                     &self.root_store,
                     inters,
                     now,

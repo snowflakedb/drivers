@@ -14,10 +14,10 @@ use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Spawns a TLS-terminating proxy backed by a wiremock `MockServer` (200 for all
-/// requests). Returns the proxy's listen address and the path to a temp PEM file
-/// containing the self-signed root certificate for "localhost".
+/// requests). Returns the proxy's listen address and a `NamedTempFile` containing
+/// the self-signed root certificate PEM for "localhost".
 ///
-/// The returned `tempfile::NamedTempFile` must be kept alive for the PEM path to
+/// The returned `NamedTempFile` must be kept alive for the PEM file on disk to
 /// remain valid.
 async fn spawn_tls_proxy() -> (SocketAddr, tempfile::NamedTempFile) {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
