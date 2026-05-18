@@ -31,7 +31,7 @@ from ._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
 )
-from ._internal.oauth import SENSITIVE_OAUTH_KWARGS
+from ._internal.oauth import SENSITIVE_OAUTH_KWARGS, rewrite_oauth_kwargs
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
@@ -129,11 +129,24 @@ class Connection(ErrorHandlerMixin):
         self._messages: list[tuple[type[Exception], ErrorValue]] = []
         self._errorhandler: Callable[..., None] = Error.default_errorhandler
 
+        # Rewrite OAuth kwargs before handing them to ConnectionConfig so
+        # the Rust core only ever sees canonical names (e.g.
+        # ``oauth_token_url`` -> ``oauth_token_request_url``) and
+        # ``snowflake-connector-python``-only switches that have no
+        # equivalent on the universal driver (e.g. ``oauth_socket_uri``,
+        # ``oauth_credentials_in_body``, ``oauth_enable_refresh_tokens``)
+        # are dropped with a ``DeprecationWarning`` instead of being
+        # forwarded as unknown parameters. The original ``kwargs`` is
+        # still used to build the public ``Connection.kwargs`` view below
+        # so callers see what they actually passed (with secrets
+        # redacted).
+        rewritten_kwargs = rewrite_oauth_kwargs(kwargs)
+
         self.config = ConnectionConfig.from_connection_args(
             connection_name=connection_name,
             connections_file_path=connections_file_path,
             config=config,
-            **kwargs,
+            **rewritten_kwargs,
         )
 
         # paramstyle (via setter so str | ParamStyle normalization is single-sourced)
@@ -195,8 +208,8 @@ class Connection(ErrorHandlerMixin):
 
         self._connect()
 
-        self._session_parameters = SessionParametersProxy(self.db_api, self.conn_handle)
-        self._connection_info = ConnectionInfoProxy(self.db_api, self.conn_handle)
+        self._session_parameters = SessionParametersProxy(self.conn_handle)
+        self._connection_info = ConnectionInfoProxy(self.conn_handle)
 
         # OAuth secrets (`oauth_client_secret`, `token`) join the legacy
         # password/private-key family so the public `Connection.kwargs` view
