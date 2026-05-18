@@ -84,6 +84,10 @@ pub struct SessionTokens {
     pub session_expires_at: Option<std::time::Instant>,
     /// When the master token expires (after this, full re-auth is needed)
     pub master_expires_at: Option<std::time::Instant>,
+    /// Configured master-token TTL as returned by the server (`masterValidityInSeconds`).
+    /// Unlike the remaining time derived from `master_expires_at`, this does not shrink
+    /// as the token ages, so it is the right input for heartbeat-cadence computation.
+    pub master_validity: Option<std::time::Duration>,
 }
 
 /// Result of a successful login to Snowflake
@@ -750,6 +754,7 @@ pub async fn snowflake_login_with_client(
             session_id,
             session_expires_at,
             master_expires_at,
+            master_validity: auth_response.data.master_validity,
         },
         session_parameters: session_params,
         database_name,
@@ -855,6 +860,7 @@ pub async fn refresh_session(
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
+        master_validity: data.master_validity,
     })
 }
 

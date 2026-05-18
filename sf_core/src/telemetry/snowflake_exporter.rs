@@ -212,6 +212,7 @@ mod tests {
             session_id: 1,
             session_expires_at: None,
             master_expires_at: None,
+            master_validity: None,
         };
 
         Arc::new(ExporterSession {

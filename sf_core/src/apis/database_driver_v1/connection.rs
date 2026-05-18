@@ -285,15 +285,18 @@ impl DatabaseDriverV1 {
                 };
 
                 // `CLIENT_SESSION_KEEP_ALIVE` and
-                // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are registered in
-                // the param registry (client-side, not forwarded to login as
-                // session parameters). Read them from the resolved snapshot.
-                let keep_alive = resolved_snapshot
-                    .get_bool(param_names::CLIENT_SESSION_KEEP_ALIVE)
+                // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are read from
+                // `merged_params` so the server-echoed value (or a server-side
+                // default) takes effect even when the client did not pass them
+                // explicitly. The client-mirrored values are already merged in
+                // above (init_params + login_result.session_parameters).
+                let keep_alive = merged_params
+                    .get(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str())
+                    .map(|v| v.eq_ignore_ascii_case("true"))
                     .unwrap_or(false);
-                let heartbeat_frequency_secs = resolved_snapshot
-                    .get_int(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY)
-                    .and_then(|v| u64::try_from(v).ok());
+                let heartbeat_frequency_secs = merged_params
+                    .get(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str())
+                    .and_then(|v| v.parse::<u64>().ok());
 
                 {
                     let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
@@ -382,7 +385,7 @@ impl DatabaseDriverV1 {
                                 .read()
                                 .await
                                 .as_ref()
-                                .and_then(|t| t.master_valid_for()),
+                                .and_then(|t| t.master_validity),
                             heartbeat_frequency_secs,
                         );
                         let handle = spawn_heartbeat_task(
@@ -2360,6 +2363,7 @@ mod tests {
                 session_id: 1,
                 session_expires_at: None,
                 master_expires_at: None,
+                master_validity: None,
             };
             *conn.tokens.write().await = Some(tokens);
         }
@@ -2538,6 +2542,7 @@ mod tests {
                 master_expires_at: Some(
                     std::time::Instant::now() + std::time::Duration::from_secs(14400),
                 ),
+                master_validity: Some(std::time::Duration::from_secs(14400)),
             };
             *conn.tokens.write().await = Some(tokens);
         }
