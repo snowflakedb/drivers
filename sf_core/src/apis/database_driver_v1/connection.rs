@@ -376,7 +376,16 @@ impl DatabaseDriverV1 {
                             crate::telemetry::record_session_init(&env_info);
                         }
 
-                        conn.telemetry_span = Some(conn_span);
+                        // Publish the recorder into the sync side-table so
+                        // in-process callers (e.g. the ODBC wrapper at
+                        // `SQLConnect` time, or the protobuf handlers
+                        // below) can fetch a cheap clone without entering
+                        // this connection's async mutex.
+                        let recorder = crate::telemetry::ConnectionTelemetry::with_span(conn_span);
+                        self.connection_recorders
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(conn_handle.id, recorder);
                     }
 
                     if keep_alive {
@@ -413,37 +422,58 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Return the per-connection telemetry span if available.
+    /// Return a clone of the per-connection telemetry recorder.
     ///
-    /// Callers enter this span and record OTel events (via
-    /// `telemetry::record_api_call` / `record_exception`). The span
-    /// carries `snowflake.session.id` for routing by the shared exporter.
-    pub async fn telemetry_span(&self, handle: Handle) -> Option<tracing::Span> {
-        let conn_ptr = self.connections.get_obj(handle)?;
-        let conn = conn_ptr.lock().await;
-        conn.telemetry_span.clone()
+    /// **Synchronous.** Looks the recorder up in the lock-light
+    /// [`connection_recorders`](crate::apis::database_driver_v1::DatabaseDriverV1)
+    /// side-table populated during the telemetry-enabled branch of
+    /// [`connection_init`](Self::connection_init), so callers don't
+    /// have to enter the per-connection async mutex.
+    ///
+    /// Returns a [`ConnectionTelemetry::noop`] for unknown handles or
+    /// for handles that never had telemetry enabled. The returned
+    /// recorder is cheap to clone (`Arc` internally) and is intended
+    /// to be cached by callers (e.g. the ODBC wrapper stashes it on
+    /// its `Dbc` after `SQLConnect`), so per-event recording is a
+    /// lone OTel `add_event` on the cached handle.
+    ///
+    /// [`ConnectionTelemetry::noop`]: crate::telemetry::ConnectionTelemetry::noop
+    pub fn connection_telemetry(&self, handle: Handle) -> crate::telemetry::ConnectionTelemetry {
+        self.connection_recorders
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&handle.id)
+            .cloned()
+            .unwrap_or_else(crate::telemetry::ConnectionTelemetry::noop)
     }
 
     /// End the connection span and deregister from the shared telemetry
     /// session registry. Must be called while session tokens are still alive
     /// (before logout/cleanup) so the exporter can authenticate the POST.
-    /// Idempotent: no-op if the span was already taken.
+    /// Idempotent: no-op if the recorder was already taken.
     pub async fn flush_connection_telemetry(&self, conn_handle: Handle) {
-        let Some(conn_ptr) = self.connections.get_obj(conn_handle) else {
-            return;
+        let recorder = self
+            .connection_recorders
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&conn_handle.id);
+
+        let Some(recorder) = recorder else { return };
+
+        let session_id = match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let tokens_arc = conn_ptr.lock().await.tokens.clone();
+                tokens_arc.read().await.as_ref().map(|t| t.session_id)
+            }
+            None => None,
         };
-        let (span, tokens_arc) = {
-            let mut conn = conn_ptr.lock().await;
-            (conn.telemetry_span.take(), conn.tokens.clone())
-        };
-        // Mutex dropped before reading the tokens RwLock to avoid deadlock.
-        let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
 
         // Drop the tracing span — this ends the underlying OTel span.
         // SimpleSpanProcessor calls the exporter synchronously via
         // futures_executor::block_on.  The exporter spawns the HTTP
         // POST on the tokio runtime and awaits the JoinHandle, so by
         // the time drop() returns the telemetry has been sent.
+        let span = recorder.close();
         drop(span);
         if let Some(id) = session_id
             && let Some(sessions) = self.telemetry_sessions()
@@ -613,6 +643,22 @@ impl DatabaseDriverV1 {
     }
 
     pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        // Defensive cleanup: a well-behaved caller already drained the
+        // recorder via `flush_connection_telemetry` during
+        // `connection_close`. If they didn't (e.g. the wrapper
+        // released a connection without closing it), drop our entry
+        // here so the side-table doesn't leak across the lifetime of
+        // the `DatabaseDriverV1`. Any outstanding `ConnectionTelemetry`
+        // clones held by other in-process callers continue to share
+        // the same cell — they observe the eventual span drop
+        // normally.
+        let leftover = self
+            .connection_recorders
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&conn_handle.id);
+        drop(leftover);
+
         match self.connections.delete_handle(conn_handle) {
             true => Ok(()),
             false => InvalidArgumentSnafu {
@@ -781,10 +827,6 @@ pub struct Connection {
     pub final_session_names: RwLock<FinalSessionNames>,
     /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
-    /// Long-lived connection span carrying `snowflake.session.id`.
-    /// Telemetry events (session_init, api_usage, wrapper_error) are
-    /// recorded as OTel events on this span; it is ended on release.
-    pub(crate) telemetry_span: Option<tracing::Span>,
     /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
     pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
 }
@@ -815,7 +857,6 @@ impl Connection {
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
-            telemetry_span: None,
             heartbeat_handle: None,
         }
     }

@@ -321,9 +321,17 @@ fn connect_with_params(
 
     tracing::info!("connect_with_params: connection_init completed");
 
+    // Fetch the per-connection telemetry recorder once, here, and cache
+    // it on the `Dbc`'s state.
+    let telemetry = global()
+        .context(OdbcRuntimeSnafu)?
+        .driver()
+        .connection_telemetry(sf_core::handle_manager::Handle::from(conn_handle));
+
     dbc.connection.lock().state = ConnectionState::Connected {
         db_handle,
         conn_handle,
+        telemetry,
     };
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
@@ -576,6 +584,7 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
         ConnectionState::Connected {
             db_handle,
             conn_handle,
+            ..
         } => (*db_handle, *conn_handle),
         ConnectionState::Disconnected => {
             return DisconnectedSnafu.fail();

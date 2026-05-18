@@ -1026,6 +1026,7 @@ pub enum ConnectionState {
         #[allow(dead_code)]
         db_handle: TDatabaseHandle,
         conn_handle: TConnectionHandle,
+        telemetry: sf_core::telemetry::ConnectionTelemetry,
     },
 }
 

@@ -15,7 +15,7 @@ use converter::{
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
 use std::future::Future;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use tracing::instrument;
 
 #[allow(clippy::result_large_err)]
@@ -36,7 +36,7 @@ fn not_implemented(message: &str) -> DriverException {
 }
 
 pub struct DatabaseDriverImpl {
-    driver: DatabaseDriverV1,
+    driver: Arc<DatabaseDriverV1>,
 }
 
 impl Default for DatabaseDriverImpl {
@@ -51,9 +51,15 @@ impl DatabaseDriverImpl {
     }
 
     pub fn new_with(providers: DriverProviders) -> Self {
-        Self {
-            driver: DatabaseDriverV1::with_providers(providers),
-        }
+        Self::from_driver(Arc::new(DatabaseDriverV1::with_providers(providers)))
+    }
+
+    pub fn from_driver(driver: Arc<DatabaseDriverV1>) -> Self {
+        Self { driver }
+    }
+
+    pub fn driver(&self) -> &Arc<DatabaseDriverV1> {
+        &self.driver
     }
 }
 
@@ -912,13 +918,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: TelemetrySendApiUsageRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        let handle = Handle::from(conn_handle);
-
-        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            let _guard = conn_span.enter();
-            crate::telemetry::record_api_call(&input.api_method);
-        }
-
+        self.driver
+            .connection_telemetry(Handle::from(conn_handle))
+            .record_api_call(&input.api_method);
         Ok(TelemetrySendResponse {})
     }
 
@@ -931,13 +933,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: TelemetrySendWrapperErrorRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        let handle = Handle::from(conn_handle);
-
-        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            let _guard = conn_span.enter();
-            crate::telemetry::record_exception(&input.exception_type, &input.error_source);
-        }
-
+        self.driver
+            .connection_telemetry(Handle::from(conn_handle))
+            .record_exception(&input.exception_type, &input.error_source);
         Ok(TelemetrySendResponse {})
     }
 }
@@ -970,7 +968,27 @@ pub fn database_driver_client() -> DatabaseDriverClient {
 }
 
 pub fn database_driver_client_with(providers: DriverProviders) -> DatabaseDriverClient {
-    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new_with(providers))
+    let (client, _driver) = database_driver_client_and_driver_with(providers);
+    client
+}
+
+/// Build a [`DatabaseDriverClient`] together with the shared
+/// [`DatabaseDriverV1`] it routes to.
+///
+/// In-process callers (e.g. the ODBC driver) keep both:
+/// - the `client` for the normal async/protobuf SQL path, and
+/// - the `Arc<DatabaseDriverV1>` for direct sync calls (notably
+///   [`DatabaseDriverV1::connection_telemetry`] on the in-band
+///   telemetry hot path) that would otherwise pay a `Runtime::block_on`
+///   per recorded event.
+pub fn database_driver_client_and_driver_with(
+    providers: DriverProviders,
+) -> (DatabaseDriverClient, Arc<DatabaseDriverV1>) {
+    let driver = Arc::new(DatabaseDriverV1::with_providers(providers));
+    let transport = crate::protobuf::apis::RustTransport::from_impl(
+        DatabaseDriverImpl::from_driver(Arc::clone(&driver)),
+    );
+    (DatabaseDriverClient::new(transport), driver)
 }
 
 // Synchronous convenience wrappers used by Rust test helpers and small

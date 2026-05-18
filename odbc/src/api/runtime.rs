@@ -2,8 +2,9 @@ use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
 use parking_lot::Mutex;
+use sf_core::apis::database_driver_v1::DatabaseDriverV1;
 use sf_core::protobuf::apis::database_driver_v1::{
-    DatabaseDriverClient, DriverProviders, WrapperPresets, database_driver_client_with,
+    DatabaseDriverClient, DriverProviders, WrapperPresets, database_driver_client_and_driver_with,
 };
 use snafu::{Location, ResultExt, Snafu};
 
@@ -35,71 +36,55 @@ static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 /// On Windows the ODBC Driver Manager unloads the driver DLL after the last
 /// environment is freed, so we must shut down before that happens.
 ///
-/// The `client` is held behind an `Arc` so fire-and-forget telemetry futures
-/// can take a cheap clone without forcing the generated `DatabaseDriverClient`
-/// itself to be `Clone`.
+/// The `client` is held behind an `Arc` so callers that want to invoke
+/// protobuf RPCs (foreground SQL via [`block_on`](Self::block_on),
+/// synchronous telemetry via the same helper) do not force the generated
+/// `DatabaseDriverClient` itself to be `Clone`.
 ///
-/// # Single runtime + per-call spawn for telemetry
+/// # Single runtime, direct-API telemetry
 ///
-/// A single multi-threaded tokio runtime drives every foreground SQL
-/// operation via [`block_on`](Self::block_on) and also hosts fire-and-forget
-/// telemetry tasks via [`spawn_telemetry`](Self::spawn_telemetry). Each
-/// `SQL*` entry point pays one [`tokio::runtime::Runtime::spawn`] per
-/// telemetry event (~1 µs); the spawned future calls
-/// `client.telemetry_send_*` directly, which only records an in-memory
-/// OTel event under the per-connection span (no network I/O) and so
-/// returns promptly.
+/// A single multi-threaded tokio runtime (`num_cpus` workers) drives
+/// every foreground SQL operation through the protobuf client. The
+/// in-band telemetry path, on the other hand, **never** touches the
+/// runtime or the protobuf transport:
 ///
-/// The [`Drop`] impl calls
-/// [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background)
-/// so process exit never blocks on a stray in-flight telemetry task. At
-/// `env_freed` time all user-facing SQL handles have already been freed,
-/// so abandoning any remaining spawned futures is safe.
+/// - At `SQLConnect` time the wrapper calls the **synchronous**
+///   [`DatabaseDriverV1::connection_telemetry`] via [`driver()`](Self::driver),
+///   which serves the recorder from sf_core's lock-light side-table.
+///   No `block_on`.
+/// - The returned [`ConnectionTelemetry`](sf_core::telemetry::ConnectionTelemetry)
+///   is stashed on the `Dbc`'s `ConnectionState::Connected`. Each
+///   subsequent `SQL*` entry point records its `api_call` /
+///   `exception` event through that cached recorder — no `block_on`,
+///   no protobuf serialisation, no async-mutex contention with the
+///   SQL data path.
+///
+/// `driver` is the very same [`DatabaseDriverV1`] the `client`'s
+/// transport routes to (shared via `Arc`), so protobuf and direct
+/// callers always see the same handle registries.
+///
+/// At `env_freed` time all user-facing SQL handles have already been
+/// freed, so the runtime is quiescent and `Runtime::drop` does not block
+/// process exit.
 pub struct OdbcGlobals {
-    /// Wrapped in `Option` so [`Drop`] can `.take()` the runtime out of
-    /// `&mut self` and call
-    /// [`Runtime::shutdown_background`](tokio::runtime::Runtime::shutdown_background)
-    /// instead of joining all spawned tasks on the current thread.
-    runtime: Option<tokio::runtime::Runtime>,
+    runtime: tokio::runtime::Runtime,
     client: Arc<DatabaseDriverClient>,
+    driver: Arc<DatabaseDriverV1>,
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
     pub stmt_registry: HandleManager<crate::api::Statement>,
 }
 
-impl Drop for OdbcGlobals {
-    fn drop(&mut self) {
-        if let Some(rt) = self.runtime.take() {
-            rt.shutdown_background();
-        }
-    }
-}
-
 impl OdbcGlobals {
-    fn runtime(&self) -> &tokio::runtime::Runtime {
-        self.runtime
-            .as_ref()
-            .expect("OdbcGlobals runtime accessed after Drop (bug)")
-    }
-
     pub fn block_on<T>(&self, f: impl AsyncFnOnce(&DatabaseDriverClient) -> T) -> T {
-        self.runtime().block_on(f(&self.client))
+        self.runtime.block_on(f(&self.client))
     }
 
-    /// Spawn a fire-and-forget telemetry future on the main runtime.
-    ///
-    /// The closure receives an `Arc` clone of the shared
-    /// [`DatabaseDriverClient`] and returns the future to spawn. Returns
-    /// immediately to the SQL hot path; the future itself runs on the
-    /// runtime and is abandoned at process exit (see
-    /// [`Drop`](Self#impl-Drop-for-OdbcGlobals)).
-    pub fn spawn_telemetry<F, Fut>(&self, f: F)
-    where
-        F: FnOnce(Arc<DatabaseDriverClient>) -> Fut,
-        Fut: std::future::Future<Output = ()> + Send + 'static,
-    {
-        let client = Arc::clone(&self.client);
-        self.runtime().spawn(f(client));
+    /// Shared driver instance used by both the protobuf client above
+    /// and by direct sync callers (notably the telemetry recorder
+    /// fetch at `SQLConnect` time).
+    pub fn driver(&self) -> &Arc<DatabaseDriverV1> {
+        &self.driver
     }
 }
 
@@ -179,10 +164,12 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         .enable_all()
         .build()
         .context(RuntimeCreationSnafu)?;
-    let client = Arc::new(database_driver_client_with(providers));
+    let (client, driver) = database_driver_client_and_driver_with(providers);
+    let client = Arc::new(client);
     guard.globals = Some(Arc::new(OdbcGlobals {
-        runtime: Some(runtime),
+        runtime,
         client,
+        driver,
         env_registry: HandleManager::new(),
         dbc_registry: HandleManager::new(),
         stmt_registry: HandleManager::new(),
