@@ -30,9 +30,13 @@
 // configuration is valid, and the CC flow performs an HTTP token
 // exchange against the configured IdP. Neither is appropriate for an
 // integration test that must run offline. Happy-path coverage lives in
-// the e2e suite (oauth.cpp) gated behind a real IdP, and the
-// BROWSER_LAUNCH_DISABLED kill switch is exercised by sf_core's own
-// integration tests (sf_core/tests/integration/authentication/oauth.rs).
+// the e2e suite (oauth.cpp) gated behind a real IdP, and sf_core's own
+// integration tests (sf_core/tests/integration/authentication/oauth.rs)
+// exercise the AC flow against a wiremock IdP -- the browser leg is
+// suppressed there by the cfg-gated `browser_launcher` default that
+// `OAuthAuthorizationCodeConfig::from_settings` installs under
+// `cfg(any(test, feature = "test-utils"))`, so no real OS browser is
+// ever launched in those test builds.
 //
 // What we DO cover here, mapped to scenarios in
 // tests/definitions/shared/authentication/oauth.feature:
@@ -105,9 +109,12 @@ bool diag_contains_missing(const std::vector<DiagRec>& records, const std::strin
 // AC configuration is supplied, sf_core spawns the loopback listener
 // and launches the OS browser -- both unsafe in CI / offline test
 // environments. AC happy-path coverage lives in the e2e suite (oauth.cpp)
-// gated behind a real IdP, and the BROWSER_LAUNCH_DISABLED kill switch is
-// exercised by sf_core's own integration tests
-// (sf_core/tests/integration/authentication/oauth.rs).
+// gated behind a real IdP, and sf_core's own integration tests
+// (sf_core/tests/integration/authentication/oauth.rs) drive the AC flow
+// against a wiremock IdP without ever launching a browser (the cfg-gated
+// `browser_launcher` default installed by
+// `OAuthAuthorizationCodeConfig::from_settings` under
+// `cfg(any(test, feature = "test-utils"))` is a no-op).
 
 // =============================================================================
 // OAuth Client Credentials (CC) flow -- validation only (token exchange would
