@@ -313,7 +313,7 @@ pub struct OAuthAuthorizationCodeConfig {
     /// `cfg(any(test, feature = "test-utils"))` so integration / e2e
     /// builds never pop a real browser window against wiremock IdPs;
     /// production builds carry `None` and use the system browser.
-    pub browser_launcher: Option<Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>>,
+    pub(crate) browser_launcher: Option<Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>>,
 }
 
 // `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` is not `Debug`, so we
