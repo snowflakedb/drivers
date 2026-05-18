@@ -200,14 +200,10 @@ impl WriteODBCType for SnowflakeTime {
                     hour: snowflake_value.hour() as u16,
                     minute: snowflake_value.minute() as u16,
                     second: snowflake_value.second() as u16,
-                    fraction: 0,
+                    fraction: snowflake_value.nanosecond(),
                 };
                 binding.write_fixed(ts);
-                if snowflake_value.nanosecond() != 0 {
-                    Ok(vec![Warning::NumericValueTruncated])
-                } else {
-                    Ok(vec![])
-                }
+                Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

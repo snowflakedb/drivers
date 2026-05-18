@@ -266,6 +266,33 @@ mod tests {
     }
 
     // ========================================================================
+    // WriteODBCType — SQL_C_TYPE_TIMESTAMP struct
+    // ========================================================================
+
+    #[test]
+    fn write_timestamp_struct_preserves_fractional_seconds() {
+        let sn = time(3);
+        let mut value = sql::Timestamp {
+            year: 0,
+            month: 0,
+            day: 0,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::TypeTimestamp, &mut value, &mut str_len);
+        let input = NaiveTime::from_hms_milli_opt(12, 56, 10, 513).unwrap();
+        let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.hour, 12);
+        assert_eq!(value.minute, 56);
+        assert_eq!(value.second, 10);
+        assert_eq!(value.fraction, 513_000_000);
+    }
+
+    // ========================================================================
     // WriteODBCType — SQL_C_CHAR
     // ========================================================================
 
