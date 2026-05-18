@@ -13,15 +13,13 @@ therefore focus on:
 
 Cross-referenced specs:
 
-* Cross-driver configuration matrix — canonical parameter names.
-* Cross-driver logging & redaction rules.
+* ``analysis_feature_oauth.md`` §9 — configuration matrix.
+* ``analysis_feature_oauth.md`` §11 — logging & redaction.
 """
 
 from __future__ import annotations
 
 import warnings
-
-from unittest.mock import patch
 
 import pytest
 
@@ -91,7 +89,7 @@ class TestIsOauthAuthenticator:
 
 
 class TestIsSensitiveOauthKwarg:
-    """OAuth secret detection is exact-match on the canonical name."""
+    """OAuth secret detection is exact-match on the canonical name (analysis §11)."""
 
     @pytest.mark.parametrize("name", sorted(SENSITIVE_OAUTH_KWARGS))
     def test_flags_canonical_secrets(self, name):
@@ -227,11 +225,18 @@ class TestRewriteOauthKwargs:
 
 
 def _build_connection(mock_db_api, **kwargs):
-    """Construct a Connection with a mocked db_api so no Rust core is touched."""
+    """Construct a Connection with a mocked db_api so no Rust core is touched.
+
+    The `mock_db_api` fixture (tests/helpers/fixtures.py) already patches
+    `core_driver.client`, so every RPC `Connection.__init__` issues
+    against `core_driver` flows through the mock. No extra patching is
+    needed -- and patching a non-existent
+    `snowflake.connector.connection.database_driver_client` raises
+    `AttributeError` from `unittest.mock`.
+    """
     from snowflake.connector.connection import Connection
 
-    with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-        return Connection(**kwargs)
+    return Connection(**kwargs)
 
 
 def _connection_set_options_request(mock_db_api):
@@ -302,7 +307,7 @@ class TestConnectionForwardsCanonicalOauthOptions:
 
 
 class TestConnectionKwargsRedaction:
-    """``Connection.kwargs`` never echoes an OAuth secret."""
+    """``Connection.kwargs`` never echoes an OAuth secret (analysis §11)."""
 
     def test_oauth_client_secret_is_redacted(self, mock_db_api):
         conn = _build_connection(
