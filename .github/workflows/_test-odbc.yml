@@ -71,6 +71,23 @@ jobs:
         if: matrix.cargo_target
         run: rustup target add ${{ matrix.cargo_target }}
 
+      - name: Build rustc-wrapper-arm64ec
+        # See tools/rustc-wrapper-arm64ec/README.md. Same purpose as in
+        # _build-odbc-packages.yml: a RUSTC_WRAPPER that injects
+        # --cfg target_arch="aarch64" into arrow-buffer (only) so its
+        # aarch64 ALIGNMENT constant is available under arm64ec.
+        if: matrix.cargo_target == 'arm64ec-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          cargo build --release `
+            --manifest-path tools/rustc-wrapper-arm64ec/Cargo.toml `
+            --target-dir tools/rustc-wrapper-arm64ec/target
+          $wrapper = Join-Path $PWD "tools\rustc-wrapper-arm64ec\target\release\rustc-wrapper-arm64ec.exe"
+          if (-not (Test-Path $wrapper)) { throw "rustc-wrapper-arm64ec build did not produce $wrapper" }
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTC_WRAPPER=$wrapper"
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTC_WRAPPER_ARM64EC_VERBOSE=1"
+          Write-Host "Configured RUSTC_WRAPPER=$wrapper"
+
       - name: Build ODBC driver (Linux)
         if: runner.os == 'Linux'
         run: cargo build --package odbc
@@ -82,6 +99,7 @@ jobs:
         run: cargo build --package odbc
 
       - name: Build ODBC driver (Windows)
+        # RUSTC_WRAPPER is inherited from GITHUB_ENV for the arm64ec lane only.
         if: runner.os == 'Windows'
         run: cargo build --package odbc ${{ matrix.cargo_extra }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
         env:

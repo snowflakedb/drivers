@@ -13,6 +13,12 @@ members = [
     "error_trace_derive",
     "odbc_trace_tool",
 ]
+# tools/rustc-wrapper-arm64ec is a build-time helper for the arm64ec CI lane,
+# not a runtime crate. Keep it out of the workspace so `cargo build` /
+# `cargo test` on the workspace ignore it; it is built explicitly by the
+# arm64ec lane in .github/workflows/_build-odbc-packages.yml and
+# .github/workflows/_test-odbc.yml. See tools/rustc-wrapper-arm64ec/README.md.
+exclude = ["tools/rustc-wrapper-arm64ec"]
 resolver = "2"
 
 [profile.release]

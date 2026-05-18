@@ -182,6 +182,27 @@ jobs:
         if: matrix.cargo_target && matrix.arch != 'x64'
         run: rustup target add ${{ matrix.cargo_target }}
 
+      - name: Build rustc-wrapper-arm64ec
+        # See tools/rustc-wrapper-arm64ec/README.md. Builds a tiny RUSTC_WRAPPER
+        # that injects --cfg target_arch="aarch64" into the arrow-buffer crate
+        # only, so it picks up its aarch64 ALIGNMENT constant when compiled for
+        # arm64ec-pc-windows-msvc (upstream has no arm64ec branch yet). Built
+        # for the runner host with an isolated target dir to keep the wrapper
+        # binary out of the cached arm64ec target dir.
+        if: matrix.cargo_target == 'arm64ec-pc-windows-msvc'
+        shell: pwsh
+        env:
+          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
+        run: |
+          cargo build --release `
+            --manifest-path tools/rustc-wrapper-arm64ec/Cargo.toml `
+            --target-dir tools/rustc-wrapper-arm64ec/target
+          $wrapper = Join-Path $PWD "tools\rustc-wrapper-arm64ec\target\release\rustc-wrapper-arm64ec.exe"
+          if (-not (Test-Path $wrapper)) { throw "rustc-wrapper-arm64ec build did not produce $wrapper" }
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTC_WRAPPER=$wrapper"
+          Add-Content -Path $env:GITHUB_ENV -Value "RUSTC_WRAPPER_ARM64EC_VERBOSE=1"
+          Write-Host "Configured RUSTC_WRAPPER=$wrapper"
+
       - name: Download self-built WiX
         uses: actions/download-artifact@v4
         with:
@@ -194,6 +215,7 @@ jobs:
           wix-version: ${{ env.WIX_REF }}
 
       - name: Build ODBC driver
+        # RUSTC_WRAPPER is inherited from GITHUB_ENV for the arm64ec lane only.
         run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
         env:
           RUSTFLAGS: "-C linker=rust-lld"

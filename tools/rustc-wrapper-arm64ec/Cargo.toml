@@ -1,0 +1,18 @@
+[package]
+name = "rustc-wrapper-arm64ec"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+description = "RUSTC_WRAPPER that injects --cfg target_arch=\"aarch64\" into arrow-buffer when building for arm64ec-pc-windows-msvc. See README.md for the full rationale."
+license = "Apache-2.0"
+
+[[bin]]
+name = "rustc-wrapper-arm64ec"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 1
+strip = true
