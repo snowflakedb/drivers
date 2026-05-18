@@ -41,8 +41,8 @@ pub enum Credentials {
         passcode: Option<SensitiveString>,
     },
     /// Pre-acquired OAuth access token forwarded to Snowflake unchanged
-    /// (analysis §6 — legacy `AUTHENTICATOR=OAUTH` with raw `token=`).
-    /// Consumed by `auth_request_data` to populate the legacy login body.
+    /// (legacy `AUTHENTICATOR=OAUTH` with raw `token=`). Consumed by
+    /// `auth_request_data` to populate the legacy login body.
     OAuth {
         username: String,
         access_token: SensitiveString,
@@ -182,10 +182,10 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             username: username.clone(),
             access_token: token.clone(),
         }),
-        // OAuth Authorization Code and Client Credentials run their own multi-step
-        // flow (PKCE, browser/loopback, token exchange, refresh) outside of
-        // create_credentials — see analysis_feature_oauth.md §3 / §4. Mirror the
-        // NativeOkta arm above and surface a typed error rather than panicking.
+        // OAuth AC and CC run their own multi-step flow (PKCE,
+        // browser/loopback, token exchange, refresh) outside of
+        // create_credentials. Mirror the NativeOkta arm above and surface
+        // a typed error rather than panicking.
         LoginMethod::OAuthAuthorizationCode(_) => UnsupportedLoginMethodSnafu {
             method: "OAuthAuthorizationCode",
         }

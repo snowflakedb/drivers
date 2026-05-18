@@ -1,11 +1,11 @@
 //! Errors raised by the OAuth flow engine.
 //!
-//! The variant set is derived from the cross-driver error taxonomy in
-//! `analysis_feature_oauth.md` §13. Marked `pub(crate)` because the
-//! wiring layer (step 2.3) translates these into the driver-facing
-//! `RestError` / `AuthError` taxonomy. Crate-internal callers should
-//! match on variants to make eviction / refresh decisions (analysis §8:
-//! e.g. `RefreshTokenExchange` should drop the cached refresh token and
+//! The variant set mirrors the cross-driver error taxonomy (JDBC
+//! `ErrorCode.OAUTH_*`, ODBC `SFOAuthError`, Python `ER_OAUTH_*`).
+//! Marked `pub(crate)` because the wiring layer translates these into
+//! the driver-facing `RestError` / `AuthError` taxonomy. Crate-internal
+//! callers should match on variants to make eviction / refresh decisions
+//! (e.g. `RefreshTokenExchange` should drop the cached refresh token and
 //! replay the full flow).
 
 use crate::token_cache::TokenCacheError;
@@ -14,7 +14,7 @@ use snafu::{Location, Snafu};
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum OAuthError {
-    /// `state` mismatch on the loopback redirect — analysis §14 #7.
+    /// `state` mismatch on the loopback redirect (potential XSS attack).
     /// Equality is enforced via `oauth2::CsrfToken`'s timing-safe
     /// `PartialEq` (the `timing-resistant-secret-traits` feature
     /// derives a SHA-256-based comparator).
@@ -46,8 +46,7 @@ pub enum OAuthError {
     },
 
     /// Loopback `accept()` did not see a request before the configured
-    /// browser-response timeout elapsed (cross-driver: JDBC/Python/Go/.NET
-    /// 120s default, analysis §3.5).
+    /// browser-response timeout elapsed (cross-driver default: 120s).
     #[snafu(display("OAuth browser authorization timed out"))]
     BrowserTimeout {
         #[snafu(implicit)]
@@ -106,7 +105,7 @@ pub enum OAuthError {
     },
 
     /// Refresh-token exchange failed. Caller should evict the refresh
-    /// token from cache and replay the full flow (analysis §7.4 / §8).
+    /// token from cache and replay the full flow.
     #[snafu(display("OAuth refresh-token exchange failed"))]
     RefreshTokenExchange {
         #[snafu(implicit)]
@@ -115,7 +114,7 @@ pub enum OAuthError {
 
     /// Token endpoint returned 2xx but no `access_token` field. Treated
     /// as an error to avoid passing an empty Bearer token downstream
-    /// (analysis §13: ODBC's `idp_auth_missing_access_token` fixture).
+    /// (mirrors ODBC's `idp_auth_missing_access_token` fixture).
     #[snafu(display("OAuth token response did not include an access_token"))]
     MissingAccessToken {
         #[snafu(implicit)]
@@ -151,7 +150,7 @@ pub enum OAuthError {
 
     /// Sentinel: token endpoint requested a DPoP nonce. Internal callers
     /// catch this once and retry with the supplied nonce embedded in the
-    /// proof JWT. Never bubbled to user code (analysis §5.1).
+    /// proof JWT. Never bubbled to user code.
     #[snafu(display("OAuth token endpoint requested a DPoP nonce; retrying"))]
     DPoPNonceRequired {
         #[snafu(implicit)]

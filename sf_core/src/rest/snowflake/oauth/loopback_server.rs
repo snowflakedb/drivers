@@ -2,7 +2,8 @@
 //!
 //! Must bind explicitly to `127.0.0.1` (and only `::1` when the user
 //! supplies a literal IPv6 redirect URI). Do **not** replicate Node's
-//! `0.0.0.0` bind — see `analysis_feature_oauth.md` §3.5 and §14 #11.
+//! `0.0.0.0` bind — it widens the OAuth-window attack surface to the
+//! local network.
 //!
 //! HTTP parsing and response writing are delegated to `axum`; we keep
 //! ownership of the bind decision and the single-shot semantics

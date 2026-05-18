@@ -247,44 +247,44 @@ pub struct NativeOktaConfig {
 
 /// OAuth 2.0 Authorization Code (with PKCE) flow configuration.
 ///
-/// Mirrors the cross-driver configuration matrix in `analysis_feature_oauth.md` §9.
-/// All optional URL fields fall back to Snowflake-as-IdP defaults at flow time
-/// (see analysis §9 / §14): `https://{host}/oauth/authorize`,
-/// `https://{host}/oauth/token-request`, and an ephemeral `http://127.0.0.1:<random>`
-/// loopback redirect URI.
+/// Mirrors the cross-driver configuration matrix
+/// (JDBC/ODBC/Python/.NET/Go/Node). All optional URL fields fall back to
+/// Snowflake-as-IdP defaults at flow time: `https://{host}/oauth/authorize`,
+/// `https://{host}/oauth/token-request`, and an ephemeral
+/// `http://127.0.0.1:<random>` loopback redirect URI.
 #[derive(Debug)]
 pub struct OAuthAuthorizationCodeConfig {
     /// Snowflake user name. Sent unchanged in the login-request body
-    /// (analysis §10.1: `LOGIN_NAME` is always set, unlike .NET's `loginName=""` quirk).
+    /// (`LOGIN_NAME` is always set; .NET's `loginName=""` quirk is not replicated).
     pub username: String,
     /// IdP-issued client identifier. For Snowflake-as-IdP the wiring step
-    /// will substitute `LOCAL_APPLICATION` when this is empty (analysis §1, §9).
+    /// will substitute `LOCAL_APPLICATION` when this is empty.
     pub client_id: String,
     /// IdP-issued client secret.
     pub client_secret: SensitiveString,
     /// Optional override for the IdP authorization endpoint.
-    /// `None` ⇒ default `https://{host}/oauth/authorize` (analysis §9).
+    /// `None` ⇒ default `https://{host}/oauth/authorize`.
     pub authorization_url: Option<Url>,
     /// Optional override for the IdP token endpoint.
     /// `None` ⇒ default `https://{host}/oauth/token-request`. Also used to
-    /// derive the OAuth cache-key host (analysis §7.3).
+    /// derive the OAuth cache-key host.
     pub token_url: Option<Url>,
     /// Optional override for the loopback redirect URI advertised to the IdP.
-    /// `None` ⇒ ephemeral `http://127.0.0.1:<random>` (analysis §3.5; bind to
-    /// `127.0.0.1`, never `0.0.0.0` per §14 gotcha #11).
+    /// `None` ⇒ ephemeral `http://127.0.0.1:<random>` (bind to `127.0.0.1`,
+    /// never `0.0.0.0`).
     pub redirect_uri: Option<Url>,
     /// OAuth scope string (space-separated). `None` ⇒ derived from role
-    /// (`session:role:<role>` per analysis §9).
+    /// (`session:role:<role>`).
     pub scope: Option<String>,
     /// Snowflake-as-IdP only: request single-use refresh-token rotation by
-    /// adding `enable_single_use_refresh_tokens=true` to the token body
-    /// (analysis §7.4). Defaults to `false`.
+    /// adding `enable_single_use_refresh_tokens=true` to the token body.
+    /// Defaults to `false`.
     pub enable_single_use_refresh_tokens: bool,
-    /// Python-only escape hatch (analysis §9): disable PKCE S256.
-    /// All other drivers always run PKCE; defaults to `false` here.
+    /// Python-only escape hatch: disable PKCE S256. All other drivers
+    /// always run PKCE; defaults to `false` here.
     pub disable_pkce: bool,
     /// Whether refresh tokens may be persisted to the OS-level token cache
-    /// (analysis §7.1; controls `client_store_temporary_credential`).
+    /// (controls `client_store_temporary_credential`).
     pub client_store_temporary_credential: bool,
     /// Driver-local flow behavior (DPoP, timeout). Not sent to Snowflake.
     pub flow_options: OAuthFlowOptions,
@@ -299,15 +299,15 @@ pub struct OAuthAuthorizationCodeConfig {
 #[derive(Debug)]
 pub struct OAuthFlowOptions {
     /// Enable RFC 9449 DPoP proof-of-possession on token + login requests.
-    /// Currently only JDBC has parity (analysis §5); defaults to `false`.
+    /// Currently only JDBC has DPoP parity; defaults to `false`.
     pub enable_dpop: bool,
     /// End-to-end auth budget for the OAuth flow.
     pub authentication_timeout_secs: u64,
 }
 
 /// OAuth 2.0 Client Credentials flow configuration (external IdP only —
-/// Snowflake's GS does not issue tokens for `grant_type=client_credentials`,
-/// see analysis §4).
+/// Snowflake's GS does not issue tokens for
+/// `grant_type=client_credentials`).
 #[derive(Debug)]
 pub struct OAuthClientCredentialsConfig {
     /// Snowflake user name (sent in the Snowflake login-request body).
@@ -317,7 +317,7 @@ pub struct OAuthClientCredentialsConfig {
     /// IdP-issued client secret (required for CC).
     pub client_secret: SensitiveString,
     /// IdP token endpoint. **Required** for CC: there is no Snowflake default
-    /// because Snowflake-as-IdP does not support CC (analysis §4).
+    /// because Snowflake-as-IdP does not support CC.
     pub token_url: Url,
     /// OAuth scope string (space-separated). `None` ⇒ derived from role.
     pub scope: Option<String>,
@@ -353,16 +353,15 @@ pub enum LoginMethod {
         authentication_timeout_secs: u64,
     },
     /// Pre-acquired OAuth access token (legacy `AUTHENTICATOR=OAUTH` with
-    /// raw `token=`). The driver forwards the token to Snowflake unchanged
-    /// (analysis §6). Production wiring + parsing land in step 2.3.
+    /// raw `token=`). The driver forwards the token to Snowflake unchanged.
     OAuthAccessToken {
         username: String,
         token: SensitiveString,
     },
     /// OAuth 2.0 Authorization Code with PKCE (S256). Multi-step flow
-    /// orchestrated outside of `create_credentials` (analysis §3).
+    /// orchestrated outside of `create_credentials`.
     OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
-    /// OAuth 2.0 Client Credentials. External IdP only (analysis §4).
+    /// OAuth 2.0 Client Credentials. External IdP only.
     OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
 
@@ -614,9 +613,8 @@ impl LoginMethod {
                 let username = Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
                 // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
-                // missing client_id/client_secret at flow time
-                // (analysis_feature_oauth.md §1, §9). Keep them empty here
-                // and let the AC provider apply that default.
+                // missing client_id/client_secret at flow time. Keep them
+                // empty here and let the AC provider apply that default.
                 let client_id =
                     Self::non_empty_string(settings, "oauth_client_id").unwrap_or_default();
                 let client_secret =
@@ -655,8 +653,8 @@ impl LoginMethod {
             }
             "OAUTH_CLIENT_CREDENTIALS" => {
                 // CC is external-IdP only: Snowflake's GS does not issue
-                // tokens for `grant_type=client_credentials` (analysis §4),
-                // so client_id, client_secret and token_url are mandatory.
+                // tokens for `grant_type=client_credentials`, so client_id,
+                // client_secret and token_url are mandatory.
                 let username = Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
                 let client_id = Self::non_empty_string(settings, "oauth_client_id").context(

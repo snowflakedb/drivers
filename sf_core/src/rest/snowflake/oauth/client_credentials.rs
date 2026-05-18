@@ -1,9 +1,9 @@
 //! OAuth 2.0 Client Credentials flow (external IdP only).
 //!
-//! Snowflake-as-IdP does not currently issue tokens for
-//! `grant_type=client_credentials` (analysis_feature_oauth.md §4), so this
-//! module always requires an explicit `token_url`. Tokens obtained here are
-//! intentionally not persisted to the OS token cache (analysis §14 #12).
+//! Snowflake GS does not currently issue tokens for
+//! `grant_type=client_credentials`, so this module always requires an
+//! explicit `token_url`. Tokens obtained here are intentionally not
+//! persisted to the OS token cache (matches JDBC/.NET/Python/Node).
 //!
 //! HTTP authentication uses RFC 6749 §2.3.1 Basic auth, mirroring JDBC,
 //! ODBC, .NET, Python (default), and Go. Node's `ClientSecretPost` shape
@@ -42,8 +42,8 @@ pub(crate) async fn acquire_client_credentials(
     };
 
     // Drift B.1: `LOCAL_APPLICATION` substitution is intentionally NOT
-    // performed for CC. CC is external-IdP only (analysis §4: Snowflake's
-    // GS does not issue tokens for `grant_type=client_credentials`), and
+    // performed for CC. CC is external-IdP only (Snowflake's GS does not
+    // issue tokens for `grant_type=client_credentials`), and
     // `LoginMethod::from_settings` enforces non-empty `client_id` /
     // `client_secret` before the config ever reaches this function — so
     // the Snowflake-IdP substitution path documented for AC has no
@@ -85,8 +85,8 @@ pub(crate) async fn acquire_client_credentials(
     };
 
     tracing::info!("OAuth client credentials flow completed");
-    // CC tokens MUST NOT be persisted (analysis §14 #12); we hand them
-    // straight back to the caller.
+    // CC tokens MUST NOT be persisted (matches JDBC/.NET/Python/Node);
+    // we hand them straight back to the caller.
     Ok(AcquiredOAuthToken {
         access_token,
         refresh_token: None,

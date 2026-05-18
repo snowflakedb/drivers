@@ -72,12 +72,12 @@ pub const SESSION_GONE: i32 = 390111;
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
 /// GS error code returned when the OAuth access token presented at login is
-/// invalid (analysis_feature_oauth.md §8). Treated cross-driver as a signal
-/// to evict the cached access token and replay the OAuth flow.
+/// invalid. Treated cross-driver as a signal to evict the cached access
+/// token and replay the OAuth flow.
 pub const OAUTH_ACCESS_TOKEN_INVALID: i32 = 390303;
 /// GS error code returned when the OAuth access token presented at login has
-/// expired (analysis_feature_oauth.md §8). Same eviction-and-retry behavior
-/// as [`OAUTH_ACCESS_TOKEN_INVALID`].
+/// expired. Same eviction-and-retry behavior as
+/// [`OAUTH_ACCESS_TOKEN_INVALID`].
 pub const OAUTH_ACCESS_TOKEN_EXPIRED: i32 = 390318;
 /// GS error codes that indicate the cached OAuth access token (and any
 /// DPoP-bundled cache entry) must be evicted, after which the login is
@@ -405,12 +405,12 @@ fn remove_mfa_token_from_cache(
 /// present) for an Authorization Code login. Used by the
 /// `390303 / 390318` retry block in [`snowflake_login_with_client`]:
 /// after eviction the next call to `auth_request_data` will run the
-/// refresh-token leg or, if that also fails, the full interactive flow
-/// (analysis_feature_oauth.md §8 + §3.2 state machine).
+/// refresh-token leg or, if that also fails, the full interactive flow.
 ///
-/// The cache key host follows the cross-driver convention from analysis
-/// §7.3: prefer the IdP token URL host, otherwise fall back to the
-/// Snowflake server host. The synthetic `https://{host}` URL string
+/// The cache key host follows the cross-driver convention
+/// (JDBC/Python/.NET/Node): prefer the IdP token URL host, otherwise
+/// fall back to the Snowflake server host. The synthetic `https://{host}`
+/// URL string
 /// passed to the eviction helpers parses cleanly into the same host the
 /// AC flow used when storing the token.
 fn evict_oauth_access_token_for_authorization_code(
@@ -487,11 +487,10 @@ pub async fn auth_request_data(
         // Authorization Code orchestration runs the PKCE/state/loopback flow
         // (and any cache hits / refresh-token exchange) before forwarding the
         // resulting access token to Snowflake under AUTHENTICATOR=OAUTH.
-        // Per analysis §10.1 / §14 #5, the body always uses uppercase
-        // "OAUTH" — never the user-supplied authenticator string verbatim —
-        // and tags the request with OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so
-        // GS knows which flow produced the token. LOGIN_NAME is always set
-        // (§14 #10).
+        // The body always uses uppercase "OAUTH" — never the user-supplied
+        // authenticator string verbatim — and tags the request with
+        // OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so GS knows which flow
+        // produced the token. LOGIN_NAME is always set.
         LoginMethod::OAuthAuthorizationCode(cfg) => {
             let server_url = url::Url::parse(&login_parameters.server_url)
                 .context(oauth::EndpointUrlParseSnafu {
@@ -515,8 +514,8 @@ pub async fn auth_request_data(
             // (RFC 9449).
             data.dpop_jwk_json = acquired.dpop_jwk_json;
         }
-        // Client Credentials is external-IdP only (analysis §4) and tokens
-        // are intentionally not cached (§14 #12). On Snowflake error codes
+        // Client Credentials is external-IdP only and tokens are
+        // intentionally not cached. On Snowflake error codes
         // 390303/390318 the retry block in `snowflake_login_with_client`
         // skips the AC eviction step and just replays the flow so the IdP
         // token endpoint is re-hit.
@@ -781,15 +780,14 @@ pub async fn snowflake_login_with_client(
         }
     }
 
-    // OAuth refresh-on-failure (analysis_feature_oauth.md §8 / §14 #9):
-    // when GS rejects the OAuth access token with 390303 / 390318, replay
-    // the login once. For Authorization Code we first evict the cached
-    // access token (and any DPoP-bundled entry) so the replay exercises
-    // the refresh-token leg or, failing that, the interactive flow. For
-    // Client Credentials there is no cache to evict (analysis §4 / §14
-    // #12), so the replay re-hits the IdP token endpoint to fetch a
-    // fresh access token. Cross-driver consensus per analysis §8 (JDBC,
-    // ODBC, .NET, Go all retry both flows). Legacy `OAuthAccessToken`
+    // OAuth refresh-on-failure: when GS rejects the OAuth access token
+    // with 390303 / 390318, replay the login once. For Authorization Code
+    // we first evict the cached access token (and any DPoP-bundled entry)
+    // so the replay exercises the refresh-token leg or, failing that, the
+    // interactive flow. For Client Credentials there is no cache to evict
+    // (CC tokens are not persisted), so the replay re-hits the IdP token
+    // endpoint to fetch a fresh access token. Cross-driver consensus:
+    // JDBC, ODBC, .NET, Go all retry both flows. Legacy `OAuthAccessToken`
     // bubbles the error since the caller supplies the token directly.
     if !auth_response.success {
         let code = auth_response
@@ -814,7 +812,7 @@ pub async fn snowflake_login_with_client(
                     should_retry = true;
                 }
                 LoginMethod::OAuthClientCredentials(_) => {
-                    // No cache to evict for CC (analysis §4 / §14 #12);
+                    // No cache to evict for CC (tokens are not persisted);
                     // the replay re-acquires from the IdP token endpoint.
                     tracing::debug!(
                         code = code,

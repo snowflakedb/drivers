@@ -10,7 +10,7 @@
 //! only place a DPoP header needs to be attached during the AC/CC flows
 //! (RFC 9449 §5). On a `400 use_dpop_nonce` response the adapter stashes
 //! the `DPoP-Nonce` header value and performs exactly one retry with
-//! the nonce embedded in the proof JWT (RFC 9449 §8 + analysis §5.1).
+//! the nonce embedded in the proof JWT (RFC 9449 §8).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -133,7 +133,7 @@ impl<'c> AsyncHttpClient<'c> for OAuthHttpClient {
             let first_request = clone_request(&request);
             let response = self.send_once(first_request, nonce.as_deref()).await?;
 
-            // DPoP nonce-retry per RFC 9449 §8 + analysis §5.1.
+            // DPoP nonce-retry per RFC 9449 §8.
             if let Some(dpop) = self.dpop.as_ref()
                 && let Ok(body) = std::str::from_utf8(response.body())
                 && let Some(server_nonce) = dpop::check_use_dpop_nonce(response.headers(), body)

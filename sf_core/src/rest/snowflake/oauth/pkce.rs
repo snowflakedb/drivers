@@ -1,7 +1,7 @@
 //! PKCE (RFC 7636) verifier and S256 challenge generation.
 //!
-//! Cross-driver verifier sizes converge on ≥43 URL-safe characters; see
-//! `analysis_feature_oauth.md` §3.3 for the per-driver matrix. We use the
+//! Cross-driver verifier sizes converge on ≥43 URL-safe characters (JDBC
+//! 256-bit Nimbus, ODBC/Go/Node 32-byte, Python 43-byte). We use the
 //! `oauth2` crate's RFC-compliant generator (32 random bytes → 43-char
 //! URL-safe verifier), matching ODBC/Go/Node and well within the
 //! 43..=128 character window required by the RFC.

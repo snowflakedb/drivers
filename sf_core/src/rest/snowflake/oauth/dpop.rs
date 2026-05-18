@@ -3,14 +3,14 @@
 //! ES256 P-256 keypair, proof JWT with `jti`/`htm`/`htu`/`iat` (and
 //! optional `nonce` on `use_dpop_nonce` retry), `dpop_jkt` thumbprint on
 //! the `/authorize` request, and a bundled access-token cache row. Only
-//! JDBC has parity today (analysis_feature_oauth.md §5).
+//! JDBC has DPoP parity today among Snowflake drivers.
 //!
 //! Implementation notes:
 //! - JWS signature is hand-built so we can attach the `jwk` header parameter
 //!   (which the `jwt` crate's [`jwt::Header`] does not expose). We still
 //!   share the openssl-backed signing primitive with `sf_core::auth`.
 //! - `htu` deliberately strips the URL query string and fragment per
-//!   RFC 9449 §4.3 (also gotcha #2 in `analysis_feature_oauth.md` §14).
+//!   RFC 9449 §4.3.
 //! - JWK thumbprint is computed over the canonical RFC 7638 form:
 //!   `{"crv":"P-256","kty":"EC","x":"…","y":"…"}` with lex-sorted keys,
 //!   no whitespace.
@@ -106,7 +106,7 @@ impl DPoPKey {
 
     /// Serialize the key as a JWK including the private component, so it
     /// can be reused across the token-acquisition leg and the Snowflake
-    /// login-request leg (analysis §5.1 — the JDBC bundled-cache pattern).
+    /// login-request leg (the JDBC bundled-cache pattern).
     pub(crate) fn to_jwk_json(&self) -> Result<String, OAuthError> {
         let (x_b64, y_b64) = self.public_xy_b64()?;
         let d_b64 = bn_to_b64url(self.key.private_key())?;
@@ -246,7 +246,7 @@ fn json_escape(s: &str) -> String {
 
 /// If the IdP responded with an `error == "use_dpop_nonce"` body and a
 /// `DPoP-Nonce` header, return the nonce so the caller can retry once
-/// with the nonce embedded in the proof (analysis §5.1; mirrors JDBC
+/// with the nonce embedded in the proof (mirrors JDBC
 /// `RestRequest.checkForDPoPNonceError`).
 pub(crate) fn check_use_dpop_nonce(headers: &HeaderMap, body: &str) -> Option<String> {
     let parsed: serde_json::Value = serde_json::from_str(body).ok()?;

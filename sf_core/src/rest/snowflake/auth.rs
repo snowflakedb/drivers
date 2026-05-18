@@ -100,8 +100,8 @@ pub struct AuthRequestData {
     /// Transient DPoP JWK JSON carried from the OAuth flow to
     /// `send_login_request` when DPoP is enabled. Never serialized into
     /// the login-request body — it is consumed by `send_login_request`
-    /// to sign the DPoP proof JWT attached as an HTTP header
-    /// (analysis_feature_oauth.md §5 / §14 #5).
+    /// to sign the RFC 9449 DPoP proof JWT attached as an HTTP header
+    /// (matching JDBC's `DPoPUtil` pattern).
     #[serde(skip)]
     pub dpop_jwk_json: Option<String>,
 }
