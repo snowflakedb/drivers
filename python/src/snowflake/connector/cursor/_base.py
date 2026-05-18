@@ -2,15 +2,14 @@
 Base cursor class and supporting decorators.
 
 This module defines the abstract base cursor class (``SnowflakeCursorBase``)
-and its associated helpers: ``FetchMode``, type aliases, and decorator
-functions for precondition checks.
+and its associated helpers: type aliases, and decorator functions for
+precondition checks.
 """
 
 from __future__ import annotations
 
 import abc
 import ctypes
-import enum
 import functools
 import logging
 
@@ -68,17 +67,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 T = TypeVar("T", bound=Sequence[Any])
 
 
-class FetchMode(enum.Enum):
-    """Distinguishes row-by-row fetching from Arrow/Pandas fetching.
-
-    Once a cursor begins consuming results with one mode, switching to
-    the other is disallowed until a new ``execute()`` resets state.
-    """
-
-    ROW = "row"
-    ARROW = "arrow"
-
-
 def _requires_open(func: F) -> F:
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
@@ -120,28 +108,6 @@ def _with_prefetch_hook(func: F) -> F:
     return cast(F, wrapper)
 
 
-def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
-    """Validate and lock the cursor's fetch mode before entering the wrapped method."""
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-            if self._fetch_mode and self._fetch_mode != mode:
-                if mode == FetchMode.ARROW:
-                    raise ProgrammingError(msg="Cannot use arrow/pandas fetch methods after row-by-row fetching")
-                elif mode == FetchMode.ROW:
-                    raise ProgrammingError(msg="Cannot use row-by-row fetch methods after arrow/pandas fetching")
-                else:
-                    raise ProgrammingError(msg=f"Unexpected fetch mode: {mode}")
-            self._fetch_mode = mode
-
-            return func(self, *args, **kwargs)
-
-        return cast(F, wrapper)
-
-    return decorator
-
-
 class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
@@ -181,7 +147,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
         # -- Active iteration state (cleared on reset) --
         self._iterator: ArrowStreamIterator | None = None
-        self._fetch_mode: FetchMode | None = None
 
         # -- Statement parameters (persists until explicitly changed) --
         self._statement_parameters: dict[str, Any] = {}
@@ -690,7 +655,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
@@ -715,7 +679,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -750,7 +713,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
     def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -925,7 +887,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         self._query_result.reset(closing=closing)
         self._result_set.release()
         self._iterator = None
-        self._fetch_mode = None
         self._binding_data = None
         self._prefetch_hook = None
         # Clear multistatement state
@@ -1033,7 +994,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_batches(
         self,
         force_microsecond_precision: bool = False,
@@ -1052,7 +1012,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_all(
         self,
         force_return_table: bool = False,

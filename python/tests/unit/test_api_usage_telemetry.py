@@ -182,7 +182,6 @@ class TestCursorApiTelemetry:
         # fetchone requires a prior execute — mock the iterator
         cursor._execute_result = MagicMock()
         cursor._iterator = iter([])
-        cursor._fetch_mode = None
         cursor.fetchone()
 
         methods = _get_api_methods(mock_db_api)
@@ -194,7 +193,6 @@ class TestCursorApiTelemetry:
         mock_iterator.fetch_many.return_value = [(1,), (2,)]
         cursor._execute_result = MagicMock()
         cursor._iterator = mock_iterator
-        cursor._fetch_mode = None
         cursor.fetchmany(2)
 
         methods = _get_api_methods(mock_db_api)
@@ -209,7 +207,6 @@ class TestCursorApiTelemetry:
 
         cur._execute_result = MagicMock()
         cur._iterator = iter([])
-        cur._fetch_mode = None
         cur.fetchone()
 
         methods = _get_api_methods(mock_db_api)

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from ._base import (
     DictRow,
-    FetchMode,
     Row,
     SnowflakeCursorBase,
 )
@@ -31,7 +30,6 @@ __all__ = [
     "CursorType",
     "DictCursor",
     "DictRow",
-    "FetchMode",
     "QueryResultStats",
     "ResultMetadata",
     "ResultMetadataV2",
