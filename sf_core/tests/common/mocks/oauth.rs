@@ -35,7 +35,7 @@ use wiremock::{Mock, Respond, ResponseTemplate};
 /// persistence path.
 pub fn idp_token_endpoint_success_authorization_code() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .and(body_string_contains("grant_type=authorization_code"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "ac-access-token-success",
@@ -46,28 +46,6 @@ pub fn idp_token_endpoint_success_authorization_code() -> Mock {
         })))
 }
 
-/// AC token exchange whose body asserts `enable_single_use_refresh_tokens=true`.
-///
-/// Mirrors ODBC's `idp_auth_successful_with_single_use_refresh_token.json`
-/// The wiremock body matcher only fires when the
-/// driver actually included the flag, so a missing flag fails the test
-/// with a 404 from wiremock and the OAuth flow surfaces a token-exchange
-/// error.
-pub fn idp_token_endpoint_success_with_single_use_refresh_token() -> Mock {
-    Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
-        .and(body_string_contains("grant_type=authorization_code"))
-        .and(body_string_contains(
-            "enable_single_use_refresh_tokens=true",
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ac-access-token-single-use",
-            "refresh_token": "ac-refresh-token-rotated",
-            "token_type": "Bearer",
-            "expires_in": 600
-        })))
-}
-
 /// Successful CC token exchange (`grant_type=client_credentials`).
 ///
 /// Mirrors ODBC's `idp_client_successful.json`. CC tokens are
@@ -75,7 +53,7 @@ pub fn idp_token_endpoint_success_with_single_use_refresh_token() -> Mock {
 /// not include a `refresh_token`.
 pub fn idp_token_endpoint_success_client_credentials() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .and(body_string_contains("grant_type=client_credentials"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "cc-access-token-success",
@@ -91,7 +69,7 @@ pub fn idp_token_endpoint_success_client_credentials() -> Mock {
 /// rotated RT is persisted to the cache (single-use refresh-token rotation).
 pub fn idp_token_endpoint_success_refresh() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .and(body_string_contains("grant_type=refresh_token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "ac-access-token-refreshed",
@@ -108,7 +86,7 @@ pub fn idp_token_endpoint_success_refresh() -> Mock {
 /// `OAuthError::IdpError { error: "invalid_scope", .. }`.
 pub fn idp_token_endpoint_invalid_scope() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .respond_with(ResponseTemplate::new(400).set_body_json(json!({
             "error": "invalid_scope",
             "error_description": "One or more scopes are not configured for the authorization server resource."
@@ -121,7 +99,7 @@ pub fn idp_token_endpoint_invalid_scope() -> Mock {
 /// surfaces `OAuthError::MissingAccessToken`.
 pub fn idp_token_endpoint_missing_access_token() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "",
             "refresh_token": "rt-but-no-at",
@@ -135,22 +113,8 @@ pub fn idp_token_endpoint_missing_access_token() -> Mock {
 /// The flow surfaces `OAuthError::TokenExchange { status: 500, .. }`.
 pub fn idp_token_endpoint_token_request_error() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error from IdP"))
-}
-
-/// IdP returns 400 with an explicit `invalid_token` IdP-side error (the
-/// body's `access_token` field is empty so even if the body were 200,
-/// `MissingAccessToken` would fire). Mirrors ODBC's
-/// `idp_auth_invalid_access_token.json` semantics — the IdP signals that
-/// the token it would have minted is itself invalid.
-pub fn idp_token_endpoint_invalid_access_token() -> Mock {
-    Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
-            "error": "invalid_token",
-            "error_description": "Identity Provider rejected the access token"
-        })))
 }
 
 /// Refresh-token exchange fails with `invalid_grant`. Mirrors ODBC's
@@ -159,7 +123,7 @@ pub fn idp_token_endpoint_invalid_access_token() -> Mock {
 /// (evicts RT, then falls back to full interactive flow).
 pub fn idp_token_endpoint_refresh_failed() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/oauth/token-request"))
+        .and(path_regex(r"^/oauth/token-request$"))
         .and(body_string_contains("grant_type=refresh_token"))
         .respond_with(ResponseTemplate::new(400).set_body_json(json!({
             "error": "invalid_grant",
@@ -177,7 +141,7 @@ pub fn idp_token_endpoint_refresh_failed() -> Mock {
 /// cached-AT short-circuit assertion.
 pub fn snowflake_login_success_oauth(expected_token: &str) -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/session/v1/login-request"))
+        .and(path_regex(r"^/session/v1/login-request$"))
         .and(body_partial_json(json!({
             "data": {
                 "AUTHENTICATOR": "OAUTH",
@@ -201,7 +165,7 @@ pub fn snowflake_login_success_oauth(expected_token: &str) -> Mock {
 /// remove the cached access token and replay the login.
 pub fn snowflake_login_oauth_access_token_invalid_390303() -> Mock {
     Mock::given(method("POST"))
-        .and(path_regex(r"/session/v1/login-request"))
+        .and(path_regex(r"^/session/v1/login-request$"))
         .and(body_partial_json(json!({
             "data": {
                 "AUTHENTICATOR": "OAUTH"
@@ -211,23 +175,6 @@ pub fn snowflake_login_oauth_access_token_invalid_390303() -> Mock {
             "success": false,
             "code": "390303",
             "message": "OAuth access token is invalid."
-        })))
-}
-
-/// Snowflake login returns `390318` (`OAUTH_ACCESS_TOKEN_EXPIRED`).
-/// Same eviction-and-replay semantics as 390303.
-pub fn snowflake_login_oauth_access_token_expired_390318() -> Mock {
-    Mock::given(method("POST"))
-        .and(path_regex(r"/session/v1/login-request"))
-        .and(body_partial_json(json!({
-            "data": {
-                "AUTHENTICATOR": "OAUTH"
-            }
-        })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "success": false,
-            "code": "390318",
-            "message": "OAuth access token has expired."
         })))
 }
 
@@ -251,7 +198,7 @@ pub fn snowflake_login_oauth_then_success(code: &str) -> Mock {
         _ => "OAuth access token error.",
     };
     Mock::given(method("POST"))
-        .and(path_regex(r"/session/v1/login-request"))
+        .and(path_regex(r"^/session/v1/login-request$"))
         .and(body_partial_json(json!({
             "data": {
                 "AUTHENTICATOR": "OAUTH"

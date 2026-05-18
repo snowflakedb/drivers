@@ -348,136 +348,6 @@ fn parse_authentication_timeout(settings: &ParamStore) -> u64 {
         .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS)
 }
 
-/// Read a boolean parameter that wrappers may submit as a typed bool,
-/// a string (`"true"`/`"1"`), or an int (`0`/`1`). Mirrors
-/// `LoginMethod::get_flexible_bool` so OAuth knobs behave identically
-/// regardless of which path constructed the auth config.
-fn get_flexible_bool(settings: &ParamStore, key: crate::config::ParamKey) -> bool {
-    settings
-        .get_bool(key)
-        .or_else(|| {
-            settings
-                .get_string(key)
-                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        })
-        .or_else(|| settings.get_int(key).map(|v| v != 0))
-        .unwrap_or(false)
-}
-
-fn parse_optional_url(
-    settings: &ParamStore,
-    key: crate::config::ParamKey,
-) -> Result<Option<Url>, ConfigError> {
-    let Some(raw) = non_empty_string(settings, key) else {
-        return Ok(None);
-    };
-    let url = Url::parse(&raw).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(key),
-            value: raw,
-            explanation: format!("Could not parse URL: {e}"),
-        }
-        .build()
-    })?;
-    Ok(Some(url))
-}
-
-fn parse_required_url(
-    settings: &ParamStore,
-    key: crate::config::ParamKey,
-) -> Result<Url, ConfigError> {
-    let raw = non_empty_string(settings, key).context(MissingParameterSnafu {
-        parameter: String::from(key),
-    })?;
-    Url::parse(&raw).map_err(|e| {
-        InvalidParameterValueSnafu {
-            parameter: String::from(key),
-            value: raw,
-            explanation: format!("Could not parse URL: {e}"),
-        }
-        .build()
-    })
-}
-
-fn build_oauth_authorization_code_config(
-    settings: &ParamStore,
-) -> Result<OAuthAuthorizationCodeConfig, ConfigError> {
-    let username = non_empty_string(settings, USER).context(MissingParameterSnafu {
-        parameter: String::from(USER),
-    })?;
-    // For Snowflake-as-IdP we let the AC provider substitute
-    // LOCAL_APPLICATION at flow time when client_id/client_secret are
-    // empty (Snowflake-as-IdP auto-substitutes LOCAL_APPLICATION). Rest of the config is taken straight
-    // from settings.
-    let client_id = non_empty_string(settings, OAUTH_CLIENT_ID).unwrap_or_default();
-    let client_secret = non_empty_string(settings, OAUTH_CLIENT_SECRET).unwrap_or_default();
-    let authorization_url = parse_optional_url(settings, OAUTH_AUTHORIZATION_URL)?;
-    let token_url = parse_optional_url(settings, OAUTH_TOKEN_REQUEST_URL)?;
-    let redirect_uri = parse_optional_url(settings, OAUTH_REDIRECT_URI)?;
-    let scope = non_empty_string(settings, OAUTH_SCOPE);
-    let enable_single_use_refresh_tokens =
-        get_flexible_bool(settings, OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS);
-    let disable_pkce = get_flexible_bool(settings, OAUTH_DISABLE_PKCE);
-    let enable_dpop = get_flexible_bool(settings, OAUTH_ENABLE_DPOP);
-    let client_store_temporary_credential =
-        get_flexible_bool(settings, CLIENT_STORE_TEMPORARY_CREDENTIAL);
-    let authentication_timeout_secs = settings
-        .get_int(AUTHENTICATION_TIMEOUT)
-        .and_then(|v| u64::try_from(v).ok())
-        .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
-
-    Ok(OAuthAuthorizationCodeConfig {
-        username,
-        client_id,
-        client_secret: client_secret.into(),
-        authorization_url,
-        token_url,
-        redirect_uri,
-        scope,
-        enable_single_use_refresh_tokens,
-        disable_pkce,
-        client_store_temporary_credential,
-        flow_options: OAuthFlowOptions {
-            enable_dpop,
-            authentication_timeout_secs,
-        },
-    })
-}
-
-fn build_oauth_client_credentials_config(
-    settings: &ParamStore,
-) -> Result<OAuthClientCredentialsConfig, ConfigError> {
-    let username = non_empty_string(settings, USER).context(MissingParameterSnafu {
-        parameter: String::from(USER),
-    })?;
-    let client_id = non_empty_string(settings, OAUTH_CLIENT_ID).context(MissingParameterSnafu {
-        parameter: String::from(OAUTH_CLIENT_ID),
-    })?;
-    let client_secret =
-        non_empty_string(settings, OAUTH_CLIENT_SECRET).context(MissingParameterSnafu {
-            parameter: String::from(OAUTH_CLIENT_SECRET),
-        })?;
-    let token_url = parse_required_url(settings, OAUTH_TOKEN_REQUEST_URL)?;
-    let scope = non_empty_string(settings, OAUTH_SCOPE);
-    let enable_dpop = get_flexible_bool(settings, OAUTH_ENABLE_DPOP);
-    let authentication_timeout_secs = settings
-        .get_int(AUTHENTICATION_TIMEOUT)
-        .and_then(|v| u64::try_from(v).ok())
-        .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
-
-    Ok(OAuthClientCredentialsConfig {
-        username,
-        client_id,
-        client_secret: client_secret.into(),
-        token_url,
-        scope,
-        flow_options: OAuthFlowOptions {
-            enable_dpop,
-            authentication_timeout_secs,
-        },
-    })
-}
-
 fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
@@ -551,14 +421,14 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         // Snowflake-as-IdP defaults (LOCAL_APPLICATION substitution +
         // default endpoints) are applied at flow time.
         "OAUTH_AUTHORIZATION_CODE" => Ok(AuthConfig::OAuthAuthorizationCode(
-            build_oauth_authorization_code_config(settings)?,
+            OAuthAuthorizationCodeConfig::from_settings(settings)?,
         )),
         // ─── OAuth: Client Credentials (external IdP only) ───────────────
         // client_id/client_secret/token_url are mandatory because
         // Snowflake's GS does not issue tokens for
         // grant_type=client_credentials.
         "OAUTH_CLIENT_CREDENTIALS" => Ok(AuthConfig::OAuthClientCredentials(
-            build_oauth_client_credentials_config(settings)?,
+            OAuthClientCredentialsConfig::from_settings(settings)?,
         )),
         _ if auth_upper.starts_with("HTTPS://") => {
             let okta_url = Url::parse(&authenticator).map_err(|_| {
@@ -717,6 +587,10 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
                     enable_dpop: cfg.flow_options.enable_dpop,
                     authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
                 },
+                // Cheap Arc clone — the launcher factory rides with the
+                // config through the LoginMethod projection (test builds
+                // carry a no-op factory; production carries `None`).
+                browser_launcher: cfg.browser_launcher.clone(),
             })
         }
         AuthConfig::OAuthClientCredentials(cfg) => {

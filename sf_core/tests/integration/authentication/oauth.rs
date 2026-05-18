@@ -26,7 +26,6 @@
 //! tokens it seeded as part of teardown (mirroring
 //! `user_password_mfa_token_cache.rs`).
 
-use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::common::mocks::oauth;
@@ -34,17 +33,12 @@ use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
 use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
 
-/// Suppress the real OS browser launcher exactly once for the lifetime
-/// of the test process. The OAuth Authorization Code flow's interactive
-/// leg would otherwise pop a browser window pointed at the wiremock IdP
-/// (`http://127.0.0.1:<port>/oauth/authorize?...`) every time a fixture
-/// fell through the cache short-circuit and refresh-on-failure paths.
-fn ensure_browser_launch_suppressed() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        sf_core::rest::snowflake::disable_browser_launch_for_tests();
-    });
-}
+// The OAuth Authorization Code flow's interactive leg would otherwise
+// pop a real browser window against the wiremock IdP. We rely on the
+// `cfg(any(test, feature = "test-utils"))` default in
+// `OAuthAuthorizationCodeConfig::from_settings`, which installs a no-op
+// browser launcher automatically when `sf_core` is built with the
+// `test-utils` feature (as it is for the integration test binaries).
 
 // =============================================================================
 // Test Fixture
@@ -76,7 +70,6 @@ impl OAuthTestFixture {
     /// (`/oauth/token-request`) and the Snowflake login endpoint
     /// (`/session/v1/login-request`).
     fn with_authorization_code(user: &str) -> Self {
-        ensure_browser_launch_suppressed();
         let mock = MockServerWithTls::start();
         let token_url = format!("{}/oauth/token-request", mock.http_url());
         let auth_url = format!("{}/oauth/authorize", mock.http_url());
@@ -105,7 +98,6 @@ impl OAuthTestFixture {
 
     /// Build a fixture configured for the OAuth Client Credentials flow.
     fn with_client_credentials(user: &str) -> Self {
-        ensure_browser_launch_suppressed();
         let mock = MockServerWithTls::start();
         let token_url = format!("{}/oauth/token-request", mock.http_url());
 
@@ -132,7 +124,6 @@ impl OAuthTestFixture {
     /// Build a fixture configured for the legacy pre-acquired token
     /// flow (`AUTHENTICATOR=OAUTH` + raw `token=`).
     fn with_legacy_oauth(user: &str, token: &str) -> Self {
-        ensure_browser_launch_suppressed();
         let mock = MockServerWithTls::start();
 
         let client = SnowflakeTestClient::with_int_tests_params(Some(&mock.http_url()));
@@ -152,12 +143,11 @@ impl OAuthTestFixture {
         }
     }
 
-    /// Set an arbitrary connection option, returning `&self` for chaining.
-    fn set_oauth_options(&self, options: &[(&str, &str)]) -> &Self {
+    /// Set an arbitrary connection option.
+    fn set_oauth_options(&self, options: &[(&str, &str)]) {
         for (k, v) in options {
             self.client.set_connection_option(k, v);
         }
-        self
     }
 
     fn seed_access_token(&self, value: &str) {

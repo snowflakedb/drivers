@@ -7,13 +7,17 @@ pub mod heartbeat;
 pub mod logout;
 mod native_okta;
 mod oauth;
-
-/// Suppress the OS browser launcher used by the OAuth Authorization
-/// Code flow. Test-only re-export of [`oauth::disable_browser_launch_for_tests`]
-/// so integration tests in `sf_core/tests/` can opt-out without
-/// reaching into the private `oauth` module.
+/// Re-export of the browser-launcher closure type so that
+/// `crate::config::rest_parameters::OAuthAuthorizationCodeConfig` can
+/// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory
+/// without reaching into the private `oauth` module hierarchy.
+pub(crate) use oauth::BrowserLaunchFn;
+/// Re-exported under `cfg(any(test, feature = "test-utils"))` so e2e
+/// tests can derive the OAuth token-cache key host without
+/// reimplementing the Python-style `urlparse(token_request_url).hostname`
+/// fallback chain. Production builds do not expose this helper.
 #[cfg(any(test, feature = "test-utils"))]
-pub use oauth::disable_browser_launch_for_tests;
+pub use oauth::host_from_token_url;
 pub mod query_request;
 pub mod query_response;
 pub mod sql_state;

@@ -45,7 +45,6 @@
 //! | `SNOWFLAKE_TEST_OAUTH_SCOPE`                  | AC + CC: requested OAuth scope (optional)    |
 //! | `SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN`           | legacy `AUTHENTICATOR=OAUTH` flow            |
 
-use crate::common::config::Parameters;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
 
@@ -162,8 +161,16 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
         .user
         .clone()
         .expect("SNOWFLAKE_TEST_USER must be set for OAuth AC short-circuit test");
-    let cache_host = derive_cache_host(&client.parameters)
-        .expect("expected to derive a cache host from oauth_token_request_url or server URL");
+    let token_url = client.parameters.oauth_token_request_url.clone();
+    let server_url = client
+        .parameters
+        .get_server_url()
+        .expect("expected a configured server URL");
+    let cache_host = sf_core::rest::snowflake::host_from_token_url(
+        token_url.as_deref().unwrap_or(""),
+        &server_url,
+    )
+    .expect("derive cache host");
 
     // Pre-seed the OAuth access token so the AC flow skips the
     // browser leg entirely (mirroring the wiremock-driven
@@ -315,29 +322,4 @@ fn set_optional_oauth_endpoints(client: &SnowflakeTestClient) {
     if let Some(scope) = client.parameters.oauth_scope.clone() {
         client.set_connection_option("oauth_scope", &scope);
     }
-}
-
-/// Mirror of `sf_core::rest::snowflake::oauth::host_from_token_url`:
-/// the OAuth token cache keys off the IdP token endpoint host when
-/// available, otherwise the Snowflake server URL host (Python-style
-/// `urlparse(token_request_url).hostname`). Kept private
-/// to this test file so the production helper does not need to be
-/// promoted to `pub`.
-fn derive_cache_host(parameters: &Parameters) -> Option<String> {
-    fn host_of(raw: &str) -> Option<String> {
-        url::Url::parse(raw)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_string))
-    }
-    if let Some(token_url) = parameters.oauth_token_request_url.as_deref()
-        && let Some(host) = host_of(token_url)
-    {
-        return Some(host);
-    }
-    if let Some(server_url) = parameters.get_server_url()
-        && let Some(host) = host_of(&server_url)
-    {
-        return Some(host);
-    }
-    parameters.host.clone()
 }

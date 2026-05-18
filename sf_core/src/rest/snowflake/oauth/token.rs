@@ -22,10 +22,25 @@ use crate::token_cache::{TokenCache, TokenType};
 /// Python convention (`urllib.parse.urlparse(token_request_url).hostname`):
 /// use the IdP token endpoint host when present,
 /// otherwise fall back to the Snowflake server host.
+///
+/// Exposed as `pub` under `cfg(any(test, feature = "test-utils"))` so
+/// e2e tests can derive the OAuth token-cache key host through the
+/// re-export at `sf_core::rest::snowflake::host_from_token_url`;
+/// production builds keep it `pub(crate)`.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn host_from_token_url(token_request_url: &str, fallback_server_url: &str) -> Option<String> {
+    host_from_token_url_inner(token_request_url, fallback_server_url)
+}
+
+#[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) fn host_from_token_url(
     token_request_url: &str,
     fallback_server_url: &str,
 ) -> Option<String> {
+    host_from_token_url_inner(token_request_url, fallback_server_url)
+}
+
+fn host_from_token_url_inner(token_request_url: &str, fallback_server_url: &str) -> Option<String> {
     if let Some(host) = Url::parse(token_request_url)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))

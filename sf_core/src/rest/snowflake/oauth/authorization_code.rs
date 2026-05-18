@@ -119,29 +119,17 @@ pub(crate) struct AcquiredOAuthToken {
 /// [`webbrowser::open`] with a stdout paste fallback (drift C.6 — the
 /// fallback URL is stdout per `doc/oauth.md` §3); tests can substitute a
 /// deterministic driver that pokes the loopback directly.
-type BrowserLaunchFn = Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
-
-/// Process-wide kill switch for the real OS browser launcher.
 ///
-/// Defaults to `false` (production behavior). Integration tests that
-/// drive the AC flow against a wiremock IdP — and which would otherwise
-/// spawn the OS browser against a localhost mock URL — must flip this
-/// to `true` via [`super::set_browser_launch_disabled`] before the first
-/// `acquire_authorization_code` call.
-pub(super) static BROWSER_LAUNCH_DISABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// Exposed at `pub(crate)` so [`OAuthAuthorizationCodeConfig`] can carry
+/// an `Arc<dyn Fn() -> BrowserLaunchFn + …>` factory field — letting
+/// tests inject deterministic launchers as configuration data rather
+/// than through global mutable state.
+pub(crate) type BrowserLaunchFn =
+    Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
 fn default_browser_launch() -> BrowserLaunchFn {
     Box::new(|authorize_url, _redirect_uri| {
         Box::pin(async move {
-            if BROWSER_LAUNCH_DISABLED.load(std::sync::atomic::Ordering::SeqCst) {
-                tracing::debug!(
-                    authority = %authorize_url.authority(),
-                    path = %authorize_url.path(),
-                    "Browser launch suppressed by test kill switch"
-                );
-                return;
-            }
             tracing::debug!(
                 authority = %authorize_url.authority(),
                 path = %authorize_url.path(),
@@ -167,14 +155,17 @@ pub(crate) async fn run_oauth_authorization_code(
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
-    run_authorization_code_flow(
-        client,
-        server_url,
-        config,
-        token_cache,
-        default_browser_launch(),
-    )
-    .await
+    // The launcher rides on the config (Arc'd factory ⇒ each call mints
+    // a fresh `FnOnce` so the retry-on-failure path can rebuild one).
+    // Production builds default to `None` ⇒ open the system browser;
+    // test/test-utils builds default to `Some(noop)` ⇒ never touch the
+    // OS browser. See `OAuthAuthorizationCodeConfig::from_settings`.
+    let launch_browser = config
+        .browser_launcher
+        .as_ref()
+        .map(|factory| factory())
+        .unwrap_or_else(default_browser_launch);
+    run_authorization_code_flow(client, server_url, config, token_cache, launch_browser).await
 }
 
 #[tracing::instrument(skip(client, config, token_cache, launch_browser), fields(username = %config.username))]
@@ -840,6 +831,11 @@ mod tests {
                 enable_dpop: false,
                 authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
             },
+            // Unit tests that drive the interactive leg pass their
+            // launcher directly through `acquire_authorization_code_inner`
+            // (see `loopback_redirect_with`). Cache / refresh-only paths
+            // never invoke the launcher, so `None` is safe.
+            browser_launcher: None,
         }
     }
 
@@ -1473,6 +1469,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn flow_does_not_log_secrets_at_any_level() {
         // tracing_test::traced_test installs a dedicated subscriber and
         // captures all tracing output for the lifetime of the test. We
@@ -1481,60 +1478,50 @@ mod tests {
         // occur (client secret, authorization code, token-endpoint
         // response body) and assert NONE of them appear in the captured
         // logs (cross-driver redaction requirement).
-        async fn body() {
-            const ACCESS_TOKEN: &str = "AT-LEAK-CANARY-AAAAAAAAAAAA";
-            const REFRESH_TOKEN: &str = "RT-LEAK-CANARY-BBBBBBBBBBBB";
-            const CLIENT_SECRET: &str = "client-secret-leak-canary-CCCCCC";
-            const AUTH_CODE: &str = "auth-code-leak-canary-DDDDDDDD";
+        const ACCESS_TOKEN: &str = "AT-LEAK-CANARY-AAAAAAAAAAAA";
+        const REFRESH_TOKEN: &str = "RT-LEAK-CANARY-BBBBBBBBBBBB";
+        const CLIENT_SECRET: &str = "client-secret-leak-canary-CCCCCC";
+        const AUTH_CODE: &str = "auth-code-leak-canary-DDDDDDDD";
 
-            let server = MockServer::start().await;
-            Mock::given(method("POST"))
-                .and(path("/oauth/token"))
-                .respond_with(ResponseTemplate::new(200).set_body_raw(
-                    format!(
-                        r#"{{"access_token":"{ACCESS_TOKEN}","refresh_token":"{REFRESH_TOKEN}","token_type":"Bearer"}}"#
-                    ),
-                    "application/json",
-                ))
-                .mount(&server)
-                .await;
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(
+                    r#"{{"access_token":"{ACCESS_TOKEN}","refresh_token":"{REFRESH_TOKEN}","token_type":"Bearer"}}"#
+                ),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
 
-            let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
-            let mut config = cfg_with_token_url(token_url);
-            config.authorization_url =
-                Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
-            config.client_store_temporary_credential = false;
-            config.client_secret = CLIENT_SECRET.into();
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+        config.client_secret = CLIENT_SECRET.into();
 
-            let client = reqwest::Client::new();
-            let acquired = acquire_authorization_code_inner(
-                &client,
-                &server_url(),
-                &config,
-                None,
-                loopback_redirect_with(AUTH_CODE),
-            )
-            .await
-            .expect("happy path");
-            assert_eq!(acquired.access_token.reveal(), ACCESS_TOKEN);
+        let client = reqwest::Client::new();
+        let acquired = acquire_authorization_code_inner(
+            &client,
+            &server_url(),
+            &config,
+            None,
+            loopback_redirect_with(AUTH_CODE),
+        )
+        .await
+        .expect("happy path");
+        assert_eq!(acquired.access_token.reveal(), ACCESS_TOKEN);
 
-            // Captured logs live in a thread-local buffer when the
-            // `tracing_test::traced_test` macro is on the wrapping
-            // function; `logs_contain` reads them.
-            for needle in [ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET, AUTH_CODE] {
-                assert!(
-                    !tracing_test::internal::logs_with_scope_contain("", needle),
-                    "secret value {needle:?} leaked into tracing output"
-                );
-            }
+        // `logs_contain` is injected into scope by `#[traced_test]` and
+        // reads the thread-local buffer that the macro's dedicated
+        // subscriber populates.
+        for needle in [ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET, AUTH_CODE] {
+            assert!(
+                !logs_contain(needle),
+                "secret value {needle:?} leaked into tracing output"
+            );
         }
-        // Pull in the macro at call-site so this whole helper module
-        // doesn't pay the "global subscriber" cost when it's not under
-        // test.
-        #[tracing_test::traced_test]
-        async fn run() {
-            body().await
-        }
-        run().await
     }
 }
