@@ -13,7 +13,7 @@ use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSna
 use crate::crl::config::CrlConfig;
 use crate::rest::snowflake::BrowserLaunchFn;
 use crate::sensitive::SensitiveString;
-use crate::tls::config::TlsConfig;
+use crate::tls::config::{ProxyConfig, TlsConfig};
 use openssl::pkey::PKey;
 use snafu::OptionExt;
 
@@ -123,6 +123,7 @@ pub struct ClientInfo {
     pub compiler: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
+    pub proxy_config: ProxyConfig,
     pub platforms: Vec<String>,
     pub os_details: Option<HashMap<String, String>>,
 }
@@ -131,6 +132,15 @@ impl ClientInfo {
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
+        let proxy_config = ProxyConfig {
+            host: settings.get_string("proxy_host"),
+            port: settings.get_int("proxy_port"),
+            user: settings.get_string("proxy_user"),
+            password: settings
+                .get_string("proxy_password")
+                .map(SensitiveString::from),
+            no_proxy: settings.get_string("no_proxy"),
+        };
 
         let client_app_id = settings
             .get_string("client_app_id")
@@ -161,6 +171,7 @@ impl ClientInfo {
                 .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
             crl_config,
             tls_config,
+            proxy_config,
             platforms: Vec::new(),
             os_details: None,
         };
@@ -190,6 +201,7 @@ pub mod test_fixtures {
             compiler: None,
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
+            proxy_config: crate::tls::config::ProxyConfig::default(),
             platforms: Vec::new(),
             os_details: None,
         }

@@ -117,6 +117,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     logout_total_timeout_seconds: int | None = None
     """Total timeout budget for logout operation including retries"""
 
+    no_proxy: str | None = None
+    """Comma-separated list of hosts to bypass the proxy for"""
+
     oauth_authorization_url: str | None = None
     """IdP authorization endpoint (defaults to https://{host}/oauth/authorize)"""
 
@@ -180,6 +183,18 @@ class ConnectionConfig(ConnectionConfigMixin):
     protocol: str | None = None
     """Connection protocol (http or https)"""
 
+    proxy_host: str | None = None
+    """Proxy server hostname"""
+
+    proxy_password: str | None = None
+    """Proxy server password for Basic auth"""
+
+    proxy_port: int | None = None
+    """Proxy server port"""
+
+    proxy_user: str | None = None
+    """Proxy server username for Basic auth"""
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 
@@ -237,6 +252,7 @@ class ConnectionConfig(ConnectionConfigMixin):
         "priv_key_file": "private_key_file",
         "priv_key_file_pwd": "private_key_password",
         "priv_key_pwd": "private_key_password",
+        "proxy": "proxy_host",
         "pwd": "password",
         "server": "host",
         "tls_custom_root_store_path": "custom_root_store_path",
@@ -262,6 +278,7 @@ class ConnectionConfig(ConnectionConfigMixin):
             "password",
             "private_key",
             "private_key_password",
+            "proxy_password",
             "token",
         }
     )

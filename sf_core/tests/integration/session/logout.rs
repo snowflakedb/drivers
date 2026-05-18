@@ -1838,6 +1838,7 @@ fn test_client_info() -> ClientInfo {
         ocsp_mode: Some("FAIL_OPEN".to_string()),
         crl_config: Default::default(),
         tls_config: Default::default(),
+        proxy_config: Default::default(),
         platforms: vec![],
         os_details: None,
         compiler: None,

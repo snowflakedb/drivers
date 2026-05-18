@@ -1,10 +1,11 @@
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::tls::CrlServerCertVerifier;
-use crate::tls::config::TlsConfig;
+use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{
-    ClientBuildSnafu, PemParseSnafu, RootStoreAddSnafu, TlsError, VerifierBuildSnafu,
+    ClientBuildSnafu, PemParseSnafu, ProxyBuildSnafu, RootStoreAddSnafu, TlsError,
+    VerifierBuildSnafu,
 };
-use reqwest::{Client, ClientBuilder};
+use reqwest::{Client, ClientBuilder, NoProxy, Proxy};
 use rustls::ClientConfig;
 use snafu::ResultExt;
 use std::sync::Arc;
@@ -15,10 +16,26 @@ use std::time::Duration;
 /// This is the main entry point for creating HTTP clients in the application.
 /// Handles all TLS configuration including CRL validation, custom root stores, etc.
 pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, TlsError> {
+    create_tls_client_with_proxy(tls_config, None)
+}
+
+/// Create a reqwest Client with TLS configuration and an optional explicit proxy.
+///
+/// When `proxy` is `Some` and has a `host` set, an explicit proxy is applied to
+/// every HTTP/HTTPS request and reqwest's default env-var detection is suppressed
+/// (matches JDBC/Go/Node/ODBC precedence: connection params > env vars). When
+/// `proxy` is `None` or has no host, env vars (`HTTP_PROXY`/`HTTPS_PROXY`/
+/// `NO_PROXY`, plus lowercase variants) continue to work via reqwest defaults.
+pub fn create_tls_client_with_proxy(
+    tls_config: TlsConfig,
+    proxy: Option<&ProxyConfig>,
+) -> Result<Client, TlsError> {
+    let proxy = proxy.filter(|p| p.is_explicit());
+
     // Handle insecure configurations
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        return configure_http_client(Client::builder())
+        return configure_http_client(Client::builder(), proxy)?
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
             .build()
@@ -41,7 +58,7 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
     // Create client based on CRL configuration
     match tls_config.crl_config.check_mode {
         CertRevocationCheckMode::Disabled => {
-            let mut builder = configure_http_client(Client::builder());
+            let mut builder = configure_http_client(Client::builder(), proxy)?;
             if let Some(ref pem) = custom_pem {
                 tracing::debug!("CRL disabled, applying custom root store");
                 let certs = reqwest::Certificate::from_pem_bundle(pem).context(ClientBuildSnafu)?;
@@ -70,6 +87,7 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
                 tls_config.crl_config,
                 custom_root_store,
                 tls_config.verify_hostname,
+                proxy,
             )
         }
     }
@@ -80,6 +98,7 @@ pub(crate) fn create_crl_tls_client_with_root_store(
     crl_config: CrlConfig,
     custom_root_store: Option<rustls::RootCertStore>,
     verify_hostname: bool,
+    proxy: Option<&ProxyConfig>,
 ) -> Result<Client, TlsError> {
     tracing::debug!("Creating custom TLS client with CRL handshake validation");
     if !verify_hostname {
@@ -104,7 +123,7 @@ pub(crate) fn create_crl_tls_client_with_root_store(
         .with_no_client_auth();
 
     // Create reqwest client with custom TLS configuration
-    let client = configure_http_client(Client::builder())
+    let client = configure_http_client(Client::builder(), proxy)?
         .use_preconfigured_tls(tls_config)
         .timeout(Duration::from_secs(
             crl_config.http_timeout.num_seconds() as u64
@@ -139,9 +158,159 @@ pub fn create_root_store_from_pem(pem_data: &[u8]) -> Result<rustls::RootCertSto
     Ok(root_store)
 }
 
-fn configure_http_client(builder: ClientBuilder) -> ClientBuilder {
-    builder
+fn configure_http_client(
+    builder: ClientBuilder,
+    proxy: Option<&ProxyConfig>,
+) -> Result<ClientBuilder, TlsError> {
+    let builder = builder
         .pool_idle_timeout(Some(Duration::from_secs(30)))
         .pool_max_idle_per_host(32)
-        .tcp_keepalive(Some(Duration::from_secs(60)))
+        .tcp_keepalive(Some(Duration::from_secs(60)));
+
+    let Some(proxy) = proxy else {
+        return Ok(builder);
+    };
+    let Some(host) = proxy.host.as_deref().filter(|s| !s.is_empty()) else {
+        return Ok(builder);
+    };
+
+    let url = build_proxy_url(host, proxy);
+    let reqwest_proxy = Proxy::all(&url)
+        .context(ProxyBuildSnafu { url: url.clone() })?
+        .no_proxy(proxy.no_proxy.as_deref().and_then(NoProxy::from_string));
+
+    Ok(builder.proxy(reqwest_proxy))
+}
+
+/// Build an `http://[user:pass@]host[:port]` URL from a `ProxyConfig`.
+/// Credentials are percent-encoded so values containing `:`, `@`, or `/`
+/// don't break URL parsing (a known footgun in the legacy Python connector).
+fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
+    let mut url = String::from("http://");
+    if let Some(user) = proxy.user.as_deref().filter(|s| !s.is_empty()) {
+        url.push_str(&urlencoding::encode(user));
+        if let Some(pw) = proxy
+            .password
+            .as_ref()
+            .map(|p| p.reveal())
+            .filter(|s| !s.is_empty())
+        {
+            url.push(':');
+            url.push_str(&urlencoding::encode(pw));
+        }
+        url.push('@');
+    }
+    url.push_str(host);
+    if let Some(port) = proxy.port.filter(|p| *p > 0) {
+        url.push(':');
+        url.push_str(&port.to_string());
+    }
+    url
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sensitive::SensitiveString;
+
+    fn proxy(
+        host: Option<&str>,
+        port: Option<i64>,
+        user: Option<&str>,
+        password: Option<&str>,
+    ) -> ProxyConfig {
+        ProxyConfig {
+            host: host.map(String::from),
+            port,
+            user: user.map(String::from),
+            password: password.map(|s| SensitiveString::from(s.to_string())),
+            no_proxy: None,
+        }
+    }
+
+    #[test]
+    fn build_proxy_url_host_only() {
+        let p = proxy(Some("p.example.com"), None, None, None);
+        assert_eq!(build_proxy_url("p.example.com", &p), "http://p.example.com");
+    }
+
+    #[test]
+    fn build_proxy_url_host_port() {
+        let p = proxy(Some("p.example.com"), Some(8080), None, None);
+        assert_eq!(
+            build_proxy_url("p.example.com", &p),
+            "http://p.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn build_proxy_url_with_creds() {
+        let p = proxy(
+            Some("p.example.com"),
+            Some(8080),
+            Some("alice"),
+            Some("s3cret"),
+        );
+        assert_eq!(
+            build_proxy_url("p.example.com", &p),
+            "http://alice:s3cret@p.example.com:8080"
+        );
+    }
+
+    #[test]
+    fn build_proxy_url_percent_encodes_special_chars_in_creds() {
+        // Legacy Python footgun: raw `:` / `@` / `/` in user or password
+        // breaks URL parsing. Verify we percent-encode.
+        let p = proxy(
+            Some("p.example.com"),
+            Some(8080),
+            Some("user@corp"),
+            Some("p:a/ss@1"),
+        );
+        let url = build_proxy_url("p.example.com", &p);
+        assert_eq!(url, "http://user%40corp:p%3Aa%2Fss%401@p.example.com:8080");
+        // Sanity-check: reqwest parses the resulting URL successfully.
+        Proxy::all(&url).expect("reqwest must accept percent-encoded creds");
+    }
+
+    #[test]
+    fn build_proxy_url_omits_port_when_zero_or_negative() {
+        let p = proxy(Some("p.example.com"), Some(0), None, None);
+        assert_eq!(build_proxy_url("p.example.com", &p), "http://p.example.com");
+        let p = proxy(Some("p.example.com"), Some(-1), None, None);
+        assert_eq!(build_proxy_url("p.example.com", &p), "http://p.example.com");
+    }
+
+    #[test]
+    fn build_proxy_url_omits_creds_when_user_empty() {
+        let p = proxy(Some("p.example.com"), None, Some(""), Some("ignored"));
+        assert_eq!(build_proxy_url("p.example.com", &p), "http://p.example.com");
+    }
+
+    #[test]
+    fn configure_http_client_no_proxy_returns_builder_unchanged() {
+        // When proxy is None, no error and reqwest's env-var detection
+        // remains in effect (we don't assert env behavior here, only that
+        // the call succeeds and returns a usable builder).
+        let builder = configure_http_client(Client::builder(), None).unwrap();
+        builder.build().expect("client must build");
+    }
+
+    #[test]
+    fn configure_http_client_empty_host_treated_as_none() {
+        let p = proxy(Some(""), Some(8080), None, None);
+        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        builder
+            .build()
+            .expect("empty-host proxy must be ignored, not fail");
+    }
+
+    #[test]
+    fn configure_http_client_with_explicit_proxy() {
+        let p = proxy(Some("p.example.com"), Some(8080), Some("u"), Some("p"));
+        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        builder
+            .build()
+            .expect("client with explicit proxy must build");
+    }
 }

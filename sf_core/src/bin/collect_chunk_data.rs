@@ -128,6 +128,7 @@ fn default_client_info() -> ClientInfo {
         compiler: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
+        proxy_config: sf_core::tls::config::ProxyConfig::default(),
         platforms: Vec::new(),
         os_details: None,
     }

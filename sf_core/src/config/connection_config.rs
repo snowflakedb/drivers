@@ -22,7 +22,7 @@ use crate::config::{
 };
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::sensitive::SensitiveString;
-use crate::tls::config::TlsConfig;
+use crate::tls::config::{ProxyConfig, TlsConfig};
 
 // ---------------------------------------------------------------------------
 // Typed config structs
@@ -35,6 +35,7 @@ pub struct ConnectionConfig {
     pub auth: AuthConfig,
     pub session: SessionContext,
     pub tls: TlsConfig,
+    pub proxy: ProxyConfig,
 }
 
 #[derive(Debug)]
@@ -337,6 +338,16 @@ fn build_tls_config(settings: &ParamStore) -> TlsConfig {
     }
 }
 
+fn build_proxy_config(settings: &ParamStore) -> ProxyConfig {
+    ProxyConfig {
+        host: settings.get_string(PROXY_HOST),
+        port: settings.get_int(PROXY_PORT),
+        user: settings.get_string(PROXY_USER),
+        password: settings.get_sensitive_string(PROXY_PASSWORD),
+        no_proxy: settings.get_string(NO_PROXY),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Auth config building (mirrored from rest_parameters::LoginMethod)
 // ---------------------------------------------------------------------------
@@ -500,6 +511,7 @@ impl ConnectionConfig {
         let server_url = derive_server_url(settings)?;
         let auth = build_auth_config(settings)?;
         let tls = build_tls_config(settings);
+        let proxy = build_proxy_config(settings);
 
         let session = SessionContext {
             database: settings.get_string(DATABASE),
@@ -516,6 +528,7 @@ impl ConnectionConfig {
             auth,
             session,
             tls,
+            proxy,
         })
     }
 }
@@ -1115,6 +1128,77 @@ mod tests {
             }
             other => panic!("Expected ValidationFailed, got: {other}"),
         }
+    }
+
+    #[test]
+    fn build_proxy_config_empty_by_default() {
+        let settings = minimal_password_settings();
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(config.proxy.host.is_none());
+        assert!(config.proxy.port.is_none());
+        assert!(config.proxy.user.is_none());
+        assert!(config.proxy.password.is_none());
+        assert!(config.proxy.no_proxy.is_none());
+        assert!(!config.proxy.is_explicit());
+    }
+
+    #[test]
+    fn build_proxy_config_populated() {
+        let mut settings = minimal_password_settings();
+        settings.insert(
+            "proxy_host".into(),
+            Setting::String("proxy.example.com".into()),
+        );
+        settings.insert("proxy_port".into(), Setting::Int(8080));
+        settings.insert("proxy_user".into(), Setting::String("puser".into()));
+        settings.insert("proxy_password".into(), Setting::String("ppass".into()));
+        settings.insert(
+            "no_proxy".into(),
+            Setting::String("internal.example.com,*.local".into()),
+        );
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.proxy.host.as_deref(), Some("proxy.example.com"));
+        assert_eq!(config.proxy.port, Some(8080));
+        assert_eq!(config.proxy.user.as_deref(), Some("puser"));
+        assert_eq!(
+            config
+                .proxy
+                .password
+                .as_ref()
+                .map(|p| p.reveal().to_string()),
+            Some("ppass".to_string())
+        );
+        assert_eq!(
+            config.proxy.no_proxy.as_deref(),
+            Some("internal.example.com,*.local")
+        );
+        assert!(config.proxy.is_explicit());
+    }
+
+    #[test]
+    fn build_proxy_config_port_from_string() {
+        // Per ParamStore::get_int, string values like `proxy_port = "8080"` from
+        // TOML or DSN strings are coerced to ints. Verify that path works.
+        let mut settings = minimal_password_settings();
+        settings.insert("proxy_host".into(), Setting::String("p.example.com".into()));
+        settings.insert("proxy_port".into(), Setting::String("8080".into()));
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.proxy.port, Some(8080));
+    }
+
+    #[test]
+    fn build_proxy_config_via_uppercase_alias() {
+        // ODBC DSN strings deliver UPPERCASE keys; verify the registry alias
+        // resolves them. Note: param_registry resolves canonical keys, but
+        // ParamStore uses canonical names. This test inserts the canonical
+        // forms (which the registry would have resolved aliases to upstream).
+        let mut settings = minimal_password_settings();
+        settings.insert("proxy_host".into(), Setting::String("p.example.com".into()));
+        settings.insert("proxy_port".into(), Setting::Int(3128));
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.proxy.host.as_deref(), Some("p.example.com"));
+        assert_eq!(config.proxy.port, Some(3128));
     }
 
     #[test]

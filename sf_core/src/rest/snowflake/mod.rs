@@ -40,7 +40,7 @@ use crate::rest::snowflake::external_browser::{
 };
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
-use crate::tls::client::create_tls_client_with_config;
+use crate::tls::client::create_tls_client_with_proxy;
 use crate::tls::error::TlsError;
 use crate::token_cache::{TokenCache, TokenType};
 use reqwest::{self, Method, StatusCode, header};
@@ -1819,7 +1819,11 @@ where
 
 #[track_caller]
 fn build_tls_http_client(client_info: &ClientInfo) -> Result<reqwest::Client, RestError> {
-    create_tls_client_with_config(client_info.tls_config.clone()).context(CrlValidationSnafu)
+    create_tls_client_with_proxy(
+        client_info.tls_config.clone(),
+        Some(&client_info.proxy_config),
+    )
+    .context(CrlValidationSnafu)
 }
 
 pub(crate) fn authorization_header(session_token: &str) -> header::HeaderValue {
