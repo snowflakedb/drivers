@@ -107,3 +107,108 @@ pub fn login_failure() -> Mock {
             "message": "Invalid credentials"
         })))
 }
+
+// ─── Cached ID Token Login ──────────────────────────────────────────────────
+
+/// Successful login using a cached SSO ID token (no PROOF_KEY in request).
+pub fn login_success_with_cached_id_token() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "ID_TOKEN",
+                "TOKEN": "cached_id_token"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token",
+                "masterToken": "mock_master_token",
+                "sessionId": 12345,
+                "validityInSeconds": 3600,
+                "masterValidityInSeconds": 14400,
+                "parameters": [],
+                "sessionInfo": {
+                    "databaseName": "test_database",
+                    "schemaName": "test_schema",
+                    "warehouseName": "test_warehouse",
+                    "roleName": "test_role"
+                }
+            }
+        })))
+}
+
+/// Successful login that returns an idToken (for caching after browser flow).
+pub fn login_success_with_id_token_in_response() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "EXTERNALBROWSER"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token",
+                "masterToken": "mock_master_token",
+                "sessionId": 12345,
+                "idToken": "server_issued_id_token",
+                "idTokenValidityInSeconds": 3600,
+                "validityInSeconds": 3600,
+                "masterValidityInSeconds": 14400,
+                "parameters": [],
+                "sessionInfo": {
+                    "databaseName": "test_database",
+                    "schemaName": "test_schema",
+                    "warehouseName": "test_warehouse",
+                    "roleName": "test_role"
+                }
+            }
+        })))
+}
+
+// ─── EXT_AUTHN Failure with Cached ID Token ─────────────────────────────────
+
+fn login_failure_ext_authn_with_cached_id_token(code: &str, message: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "ID_TOKEN",
+                "TOKEN": "cached_id_token"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": code,
+            "message": message
+        })))
+}
+
+pub fn login_failure_ext_authn_denied_cached_id() -> Mock {
+    login_failure_ext_authn_with_cached_id_token(
+        "390120",
+        "Authentication denied by external provider",
+    )
+}
+
+pub fn login_failure_ext_authn_locked_cached_id() -> Mock {
+    login_failure_ext_authn_with_cached_id_token("390123", "Account locked by external provider")
+}
+
+pub fn login_failure_ext_authn_timeout_cached_id() -> Mock {
+    login_failure_ext_authn_with_cached_id_token("390126", "External authentication timed out")
+}
+
+pub fn login_failure_ext_authn_invalid_cached_id() -> Mock {
+    login_failure_ext_authn_with_cached_id_token(
+        "390127",
+        "External authentication token is invalid",
+    )
+}
+
+pub fn login_failure_ext_authn_exception_cached_id() -> Mock {
+    login_failure_ext_authn_with_cached_id_token("390129", "External authentication exception")
+}

@@ -247,9 +247,12 @@ impl DatabaseDriverV1 {
                     read_spcs_token(self.fs_adapter().as_ref()),
                 );
 
-                let mfa_caching_requested = matches!(
+                let token_caching_requested = matches!(
                     &login_parameters.login_method,
                     LoginMethod::UserPasswordMfa {
+                        client_store_temporary_credential: true,
+                        ..
+                    } | LoginMethod::ExternalBrowser {
                         client_store_temporary_credential: true,
                         ..
                     }
@@ -270,7 +273,7 @@ impl DatabaseDriverV1 {
                         if cfg.client_store_temporary_credential
                 );
 
-                let token_cache = if mfa_caching_requested || oauth_caching_requested {
+                let token_cache = if token_caching_requested || oauth_caching_requested {
                     Some(self.token_cache().context(TokenCacheInitializationSnafu)?)
                 } else {
                     None
