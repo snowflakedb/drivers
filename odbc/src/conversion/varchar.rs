@@ -383,6 +383,30 @@ impl WriteODBCType for SnowflakeVarchar {
             CDataType::Binary => {
                 Ok(binding.write_binary(snowflake_value.as_bytes(), get_data_offset))
             }
+            // SQL_C_INTERVAL_* fetch (per ODBC Appendix D, "Character to
+            // Interval"). Snowflake VARCHAR holds the interval literal
+            // text; the parser is target-aware so the input shape must
+            // match the qualifier (truncation of trailing fields is
+            // surfaced as 01S07 in the helper).
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => {
+                crate::conversion::interval_str::varchar_to_interval(
+                    snowflake_value,
+                    binding.target_type,
+                    binding,
+                )
+            }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }
