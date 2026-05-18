@@ -203,14 +203,32 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             snowflake_type: SnowflakeBinary { len: 0 },
         })),
 
-        sql::SqlDataType::DATE => Ok(Box::new(JsonParamConverter {
+        // ODBC 3.x SQL_TYPE_DATE (=91) and its ODBC 2.x predecessor SQL_DATE
+        // (=9, exposed in `odbc-sys` as `SqlDataType::DATETIME` because the
+        // header value is shared with the datetime-header code) route to the
+        // same converter. Per ODBC Appendix G, ODBC 3.x drivers must accept
+        // either spelling and treat them as identical at the API boundary.
+        sql::SqlDataType::DATE | sql::SqlDataType::DATETIME => Ok(Box::new(JsonParamConverter {
             snowflake_type: SnowflakeDate,
         })),
 
-        sql::SqlDataType::TIME => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeTime { scale: 9 },
-        })),
+        // ODBC 3.x SQL_TYPE_TIME (=92) and its ODBC 2.x predecessor SQL_TIME
+        // (=10, exposed in `odbc-sys` as `EXT_TIME_OR_INTERVAL` because the
+        // header value is shared with the interval-header code) route to the
+        // same converter. Bare value 10 is unambiguously SQL_TIME at the
+        // SQLBindParameter boundary: the interval subtypes use codes
+        // 101-113 and are matched by their own guarded arms below.
+        sql::SqlDataType::TIME | sql::SqlDataType::EXT_TIME_OR_INTERVAL => {
+            Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeTime { scale: 9 },
+            }))
+        }
 
+        // ODBC 3.x SQL_TYPE_TIMESTAMP (=93) and its ODBC 2.x predecessor
+        // SQL_TIMESTAMP (=11, exposed as `EXT_TIMESTAMP`) route to the same
+        // converter (already covered before this PR; documented here for
+        // symmetry with the new DATE / TIME alias arms above).
+        //
         // SQL_TYPE_TIMESTAMP (93) routing depends on the optional Snowflake
         // vendor opt-in. Default (no opt-in) maps to TIMESTAMP_NTZ for
         // backward compatibility with Tableau/Excel/Power BI; explicit LTZ
