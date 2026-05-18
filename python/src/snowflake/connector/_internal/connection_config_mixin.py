@@ -143,6 +143,15 @@ class ConnectionConfigMixin:
         "client_fetch_use_mp": (
             "not supported; universal driver uses a thread pool for chunk fetch (see BehaviorDifferences)"
         ),
+        "oauth_enable_refresh_tokens": (
+            "not supported; the universal driver always uses the refresh token "
+            "returned by the IdP. Use client_store_temporary_credential to gate caching"
+        ),
+        "oauth_credentials_in_body": (
+            "not supported; the universal driver always sends client credentials "
+            "as HTTP Basic for OAUTH_CLIENT_CREDENTIALS"
+        ),
+        "oauth_socket_uri": ("not supported; the universal driver binds the loopback listener to oauth_redirect_uri"),
     }
     """Legacy kwargs that are accepted for source compatibility but have no effect."""
 

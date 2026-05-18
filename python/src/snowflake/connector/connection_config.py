@@ -228,6 +228,7 @@ class ConnectionConfig(ConnectionConfigMixin):
         "clientstoretemporarycredential": "client_store_temporary_credential",
         "crl_enabled": "crl_check_mode",
         "crl_mode": "crl_check_mode",
+        "oauth_token_url": "oauth_token_request_url",
         "passcodeinpassword": "passcode_in_password",
         "priv_key_base64": "private_key",
         "priv_key_file": "private_key_file",

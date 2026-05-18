@@ -524,7 +524,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
-        aliases: &["OAUTH_TOKEN_REQUEST_URL"],
+        aliases: &["OAUTH_TOKEN_REQUEST_URL", "OAUTH_TOKEN_URL"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
