@@ -444,15 +444,15 @@ behavior_differences:
 
   42:
     name: "TIME to SQL_C_TYPE_TIMESTAMP does not report fractional truncation"
-    status: unknown
+    status: fixed
     type: bug
     reviewed: false
     old_driver_behavior: |
       When TIME with fractional seconds (e.g. '14:30:45.123') is converted to SQL_C_TYPE_TIMESTAMP, the old driver returns SQL_SUCCESS and places the fractional seconds into the timestamp fraction field. It does not report SQLSTATE 01S07 (Fractional truncation).
     new_driver_behavior: |
-      Per the ODBC specification, when SQL_TYPE_TIME is converted to SQL_C_TYPE_TIMESTAMP the fraction field is set to zero. If the original TIME value had fractional seconds, SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01S07 (Fractional truncation).
+      Aligned with the old driver: the fractional seconds are placed into the timestamp fraction field (in nanoseconds, per SQL_TIMESTAMP_STRUCT) and SQL_SUCCESS is returned with no warning. Preserves precision for downstream consumers (e.g. dtm-server) that depend on this behavior.
     description: |
-      Spec reference: "Converting Data from SQL to C Data Types" — SQL_TIME to SQL_C_TYPE_TIMESTAMP: "The timestamp fraction field is set to zero."
+      Spec reference: "Converting Data from SQL to C Data Types" — SQL_TIME to SQL_C_TYPE_TIMESTAMP: "The timestamp fraction field is set to zero." We deliberately deviate from this clause to preserve sub-second precision, matching the old driver.
 
   43:
     name: "TIME to SQL_C_BINARY conversion not supported"

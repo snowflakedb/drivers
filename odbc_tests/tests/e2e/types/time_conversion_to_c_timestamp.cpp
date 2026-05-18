@@ -88,36 +88,46 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP end of day", "[time][conversion][c_times
   CHECK(ts.fraction == 0);
 }
 
-TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with fractional truncation", "[time][conversion][c_timestamp][truncation]") {
-  SKIP_OLD_DRIVER("BD#42", "old driver does not report 01S07 for fractional seconds");
+TEST_CASE("TIME with fractional seconds to SQL_C_TYPE_TIMESTAMP", "[time][conversion][c_timestamp]") {
   // Given Snowflake client is logged in
   Connection conn;
 
   // When A TIME with non-zero fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
-  auto ts = check_fractional_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '14:30:45.123'::TIME"), 1);
+  int before_y, before_m, before_d;
+  get_local_date(before_y, before_m, before_d);
+  auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '14:30:45.123'::TIME"), 1);
+  int after_y, after_m, after_d;
+  get_local_date(after_y, after_m, after_d);
 
-  // Then Time components are extracted with SQLSTATE 01S07 warning and fraction is zero
+  // Then Time components and fractional seconds are preserved (fraction holds nanoseconds)
+  CHECK((date_matches(ts.year, ts.month, ts.day, before_y, before_m, before_d) ||
+         date_matches(ts.year, ts.month, ts.day, after_y, after_m, after_d)));
   CHECK(ts.hour == 14);
   CHECK(ts.minute == 30);
   CHECK(ts.second == 45);
-  CHECK(ts.fraction == 0);
+  CHECK(ts.fraction == 123'000'000);
 }
 
-TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with high-precision fractional truncation",
-          "[time][conversion][c_timestamp][truncation]") {
-  SKIP_OLD_DRIVER("BD#42", "old driver does not report 01S07 for fractional seconds");
+TEST_CASE("TIME with high-precision fractional seconds to SQL_C_TYPE_TIMESTAMP",
+          "[time][conversion][c_timestamp]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIME with high-precision fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
+  // When A TIME with nanosecond precision is fetched as SQL_C_TYPE_TIMESTAMP
+  int before_y, before_m, before_d;
+  get_local_date(before_y, before_m, before_d);
   auto ts =
-      check_fractional_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '10:30:00.123456789'::TIME"), 1);
+      check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '10:30:00.123456789'::TIME"), 1);
+  int after_y, after_m, after_d;
+  get_local_date(after_y, after_m, after_d);
 
-  // Then Time components are extracted with SQLSTATE 01S07 warning and fraction is zero
+  // Then Full nanosecond precision is preserved in the fraction field
+  CHECK((date_matches(ts.year, ts.month, ts.day, before_y, before_m, before_d) ||
+         date_matches(ts.year, ts.month, ts.day, after_y, after_m, after_d)));
   CHECK(ts.hour == 10);
   CHECK(ts.minute == 30);
   CHECK(ts.second == 0);
-  CHECK(ts.fraction == 0);
+  CHECK(ts.fraction == 123'456'789);
 }
 
 TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP with zero fractional seconds", "[time][conversion][c_timestamp]") {
