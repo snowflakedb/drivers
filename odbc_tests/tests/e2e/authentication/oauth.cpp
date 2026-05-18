@@ -126,7 +126,6 @@ void verify_oauth_simple_query_execution(ConnectionHandleWrapper& dbc) {
 // =============================================================================
 
 TEST_CASE("oauth should authenticate with pre acquired access token", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
   auto params = get_test_parameters("testconnection");
   std::string access_token = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN");
 
@@ -149,8 +148,6 @@ TEST_CASE("oauth should authenticate with pre acquired access token", "[oauth_e2
 }
 
 TEST_CASE("oauth should fail legacy authentication with invalid token", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
-
   // Given Authentication is set to legacy OAUTH and an invalid
   //       OAuth access token is supplied
   std::stringstream ss = get_oauth_base_connection_stream("OAUTH");
@@ -166,7 +163,6 @@ TEST_CASE("oauth should fail legacy authentication with invalid token", "[oauth_
 }
 
 TEST_CASE("oauth should authenticate using lowercase oauth authenticator", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
   auto params = get_test_parameters("testconnection");
   std::string access_token = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN");
 
@@ -199,7 +195,6 @@ TEST_CASE("oauth should authenticate using lowercase oauth authenticator", "[oau
 // SNOWFLAKE_OAUTH_E2E_BROWSER=1.
 
 TEST_CASE("oauth should authenticate using authorization code flow", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
   REQUIRE_OAUTH_AC_BROWSER("Authorization Code happy path");
   auto params = get_test_parameters("testconnection");
   std::string client_id = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_CLIENT_ID");
@@ -239,7 +234,6 @@ TEST_CASE("oauth should authenticate using authorization code flow", "[oauth_e2e
 }
 
 TEST_CASE("oauth should fail authorization code flow with bad client secret", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
   REQUIRE_OAUTH_AC_BROWSER("Authorization Code negative path (browser leg still required)");
   auto params = get_test_parameters("testconnection");
   std::string client_id = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_CLIENT_ID");
@@ -277,7 +271,6 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
 // is required up-front.
 
 TEST_CASE("oauth should authenticate using client credentials flow", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
   auto params = get_test_parameters("testconnection");
   std::string client_id = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_CLIENT_ID");
   std::string client_secret = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_CLIENT_SECRET");
@@ -307,7 +300,6 @@ TEST_CASE("oauth should authenticate using client credentials flow", "[oauth_e2e
 }
 
 TEST_CASE("oauth should fail client credentials flow with bad client secret", "[oauth_e2e]") {
-  SKIP_OLD_DRIVER("", "OAuth flows are new-driver-only");
   auto params = get_test_parameters("testconnection");
   std::string client_id = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_CLIENT_ID");
   std::string token_url = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL");

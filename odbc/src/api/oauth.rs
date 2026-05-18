@@ -1,8 +1,3 @@
-// Some of the constants and helpers in this module are wired into the
-// connection-string and setup-dialog paths in subsequent commits of
-// the OAuth ODBC stack. Allow them to live here without warnings while
-// the stack is being built.
-#![allow(dead_code)]
 //! OAuth DSN keys and helpers used by the ODBC wrapper.
 //!
 //! This module is the single source of truth for the OAuth-related
