@@ -2,8 +2,8 @@
 Feature: OAuth Authentication
 
   OAuth 2.0 authentication for Snowflake drivers, covering the three
-  flows documented in analysis_feature_oauth.md (§3 Authorization Code,
-  §4 Client Credentials, §6 legacy pre-acquired access token). Behaviour
+  flows (Authorization Code with PKCE, Client Credentials, and legacy
+  pre-acquired access token). Behaviour
   parity with snowflake-jdbc and snowflake-connector-python is the goal;
   the feature description requires the `oauth2` crate as the underlying
   primitive in sf_core.
@@ -91,19 +91,19 @@ Feature: OAuth Authentication
 
   @core_e2e @odbc_e2e
   Scenario: oauth should authenticate using authorization code flow
-    Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id / secret. `oauth_authorization_url` and `oauth_token_request_url` are forwarded from parameters when present (otherwise the driver falls back to the Snowflake-IdP defaults `https://{host}/oauth/authorize` and `https://{host}/oauth/token-request`). `client_store_temporary_credential=true` lets the AC flow short-circuit on subsequent runs by re-using the cached access / refresh token (analysis §3.2 / §7).
+    Given Authentication is set to OAUTH_AUTHORIZATION_CODE with a valid client id / secret. `oauth_authorization_url` and `oauth_token_request_url` are forwarded from parameters when present (otherwise the driver falls back to the Snowflake-IdP defaults `https://{host}/oauth/authorize` and `https://{host}/oauth/token-request`). `client_store_temporary_credential=true` lets the AC flow short-circuit on subsequent runs by re-using the cached access / refresh token (AC state machine: cache → refresh → interactive).
     When Trying to Connect (this will spawn the local-loopback HTTP listener and `xdg-open`/`open`/`ShellExecute` the IdP login URL unless a previously cached access token short-circuits the leg)
     Then Login is successful and a simple query can be executed
 
   @core_e2e
   Scenario: oauth should short circuit authorization code flow with cached access token
-    Given Authentication is set to OAUTH_AUTHORIZATION_CODE and a valid OAuth access token is pre-seeded in the OS keyring under the (host, user, OAUTH_ACCESS_TOKEN) cache key. The host is derived from `oauth_token_request_url` — falling back to the Snowflake server URL — exactly like `host_from_token_url` in production code (analysis §7.3).
+    Given Authentication is set to OAUTH_AUTHORIZATION_CODE and a valid OAuth access token is pre-seeded in the OS keyring under the (host, user, OAUTH_ACCESS_TOKEN) cache key. The host is derived from `oauth_token_request_url` — falling back to the Snowflake server URL — exactly like `host_from_token_url` in production code (prefers IdP token URL host, falls back to Snowflake host).
     When Trying to Connect — should NOT spawn a browser; the pre-seeded access token must satisfy the AC short-circuit.
     Then Login is successful and a simple query can be executed
 
   @core_e2e @odbc_e2e
   Scenario: oauth should authenticate using client credentials flow
-    Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id / secret and an external IdP token URL. Snowflake's GS does not mint CC tokens (analysis §4), so `oauth_token_request_url` is required up-front.
+    Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id / secret and an external IdP token URL. Snowflake's GS does not mint CC tokens, so `oauth_token_request_url` is required up-front.
     When Trying to Connect
     Then Login is successful and a simple query can be executed
 

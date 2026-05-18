@@ -31,7 +31,7 @@
 // legacy OAUTH paths do not require a browser and run whenever the
 // matching parameters are configured.
 //
-// Required parameters.json keys (analysis_feature_oauth.md §9):
+// Required parameters.json keys (cross-driver configuration matrix):
 //
 //   * SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN     legacy OAUTH / AC short-circuit
 //   * SNOWFLAKE_TEST_OAUTH_CLIENT_ID        AC + CC
@@ -122,7 +122,7 @@ void verify_oauth_simple_query_execution(ConnectionHandleWrapper& dbc) {
 }  // anonymous namespace
 
 // =============================================================================
-// Legacy AUTHENTICATOR=OAUTH (pre-acquired access token, analysis §6 / §10.1)
+// Legacy AUTHENTICATOR=OAUTH (pre-acquired access token)
 // =============================================================================
 
 TEST_CASE("oauth should authenticate with pre acquired access token", "[oauth_e2e]") {
@@ -188,7 +188,7 @@ TEST_CASE("oauth should authenticate using lowercase oauth authenticator", "[oau
 }
 
 // =============================================================================
-// OAuth Authorization Code (AC) flow (analysis §3 / §10.2)
+// OAuth Authorization Code (AC) flow
 // =============================================================================
 //
 // AC requires a real browser leg unless an OAuth access token has been
@@ -213,7 +213,7 @@ TEST_CASE("oauth should authenticate using authorization code flow", "[oauth_e2e
   //       and `https://{host}/oauth/token-request`).
   //       `client_store_temporary_credential=true` lets the AC flow
   //       short-circuit on subsequent runs by re-using the cached
-  //       access / refresh token (analysis §3.2 / §7).
+  //       access / refresh token (AC state machine: cache → refresh → interactive).
   std::stringstream ss = get_oauth_base_connection_stream("OAUTH_AUTHORIZATION_CODE");
   ss << "OAUTH_CLIENT_ID=" << client_id << ";";
   ss << "OAUTH_CLIENT_SECRET=" << client_secret << ";";
@@ -268,12 +268,12 @@ TEST_CASE("oauth should fail authorization code flow with bad client secret", "[
 }
 
 // =============================================================================
-// OAuth Client Credentials (CC) flow (analysis §4 / §10.3)
+// OAuth Client Credentials (CC) flow
 // =============================================================================
 //
 // CC does not launch a browser -- it performs an HTTP token exchange
 // directly against the configured IdP token URL. Snowflake itself does
-// not mint CC tokens (analysis §4), so SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL
+// not mint CC tokens, so SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL
 // is required up-front.
 
 TEST_CASE("oauth should authenticate using client credentials flow", "[oauth_e2e]") {
@@ -285,7 +285,7 @@ TEST_CASE("oauth should authenticate using client credentials flow", "[oauth_e2e
 
   // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a
   //       valid client id / secret and an external IdP token URL.
-  //       Snowflake's GS does not mint CC tokens (analysis §4), so
+  //       Snowflake's GS does not mint CC tokens, so
   //       `oauth_token_request_url` is required up-front.
   std::stringstream ss = get_oauth_base_connection_stream("OAUTH_CLIENT_CREDENTIALS");
   ss << "OAUTH_CLIENT_ID=" << client_id << ";";

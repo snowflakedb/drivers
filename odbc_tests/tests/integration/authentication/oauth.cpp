@@ -19,7 +19,7 @@
 //
 // Scope: connection-string parsing, parameter normalisation, and
 // required-parameter validation paths for the three OAuth flows
-// (analysis_feature_oauth.md §3 / §4 / §6):
+// (AC, CC, legacy pre-acquired access token):
 //
 //   * AUTHENTICATOR=OAUTH                     -- legacy pre-acquired access token
 //   * AUTHENTICATOR=OAUTH_AUTHORIZATION_CODE  -- AC + PKCE

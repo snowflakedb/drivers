@@ -1431,7 +1431,7 @@ mod tests {
 
     /// Belt-and-braces: every OAuth key declared in `oauth::ALL_OAUTH_KEYS`
     /// must round-trip through `normalize_connection_string_options` to its
-    /// `sf_core` canonical lowercase name (analysis §9). Picks a plausible
+    /// `sf_core` canonical lowercase name. Picks a plausible
     /// non-secret string value for every key so the assertion is uniform.
     #[test]
     fn normalize_connection_string_options_canonicalizes_every_oauth_key() {
@@ -1608,7 +1608,7 @@ mod tests {
     }
 
     /// End-to-end parse → normalize for the canonical OAuth
-    /// authorization-code connection string (analysis §10.1). The
+    /// authorization-code connection string. The
     /// resulting options map must contain every OAuth field as its
     /// `sf_core` lowercase canonical name AND must not have any
     /// SCREAMING_SNAKE residue.

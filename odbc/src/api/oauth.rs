@@ -21,8 +21,8 @@
 //! and the OAuth secret list so [`redacted_param_map`] is the single
 //! place to update when a new sensitive key joins either family.
 //!
-//! The key list mirrors `analysis_feature_oauth.md` §9 (configuration
-//! matrix) and matches the `param_registry` aliases in
+//! The key list mirrors the cross-driver configuration matrix and
+//! matches the `param_registry` aliases in
 //! `sf_core::config::param_registry`. All ODBC keys here are the
 //! `JDBC/ODBC` SCREAMING_SNAKE form and resolve via `sf_core` to the
 //! lowercase canonical name shown in the doc comment for each constant.
@@ -30,7 +30,7 @@
 /// `OAUTH_CLIENT_ID` (canonical: `oauth_client_id`).
 ///
 /// External-IdP client ID. When absent and the IdP is Snowflake, the
-/// flow substitutes the literal `LOCAL_APPLICATION` (analysis §1).
+/// flow substitutes the literal `LOCAL_APPLICATION` (Snowflake-as-IdP default).
 pub const OAUTH_CLIENT_ID: &str = "OAUTH_CLIENT_ID";
 
 /// `OAUTH_CLIENT_SECRET` (canonical: `oauth_client_secret`).
@@ -48,38 +48,38 @@ pub const OAUTH_AUTHORIZATION_URL: &str = "OAUTH_AUTHORIZATION_URL";
 /// `OAUTH_TOKEN_REQUEST_URL` (canonical: `oauth_token_request_url`).
 ///
 /// IdP token endpoint. Required for the CC flow (Snowflake's GS does
-/// not mint client-credentials tokens — analysis §4) and also used to
-/// derive the cache host (analysis §7.3).
+/// not mint client-credentials tokens) and also used to derive the
+/// cache-key host (prefers IdP token URL host, falls back to Snowflake host).
 pub const OAUTH_TOKEN_REQUEST_URL: &str = "OAUTH_TOKEN_REQUEST_URL";
 
 /// `OAUTH_REDIRECT_URI` (canonical: `oauth_redirect_uri`).
 ///
 /// Loopback redirect URI for the AC flow. Defaults to
-/// `http://127.0.0.1:<random>` when omitted (analysis §3.5).
+/// `http://127.0.0.1:<random>` when omitted (always binds loopback only).
 pub const OAUTH_REDIRECT_URI: &str = "OAUTH_REDIRECT_URI";
 
 /// `OAUTH_SCOPE` (canonical: `oauth_scope`).
 ///
 /// Space-separated OAuth scope list. Defaults to
-/// `session:role:<role>` when omitted (analysis §9).
+/// `session:role:<role>` when omitted.
 pub const OAUTH_SCOPE: &str = "OAUTH_SCOPE";
 
 /// `OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS` (canonical:
 /// `oauth_enable_single_use_refresh_tokens`).
 ///
 /// When `true` and Snowflake is the IdP, the AC flow asks for a
-/// rotating single-use refresh token (analysis §3 / §7.4).
+/// rotating single-use refresh token (Snowflake-IdP only).
 pub const OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS: &str = "OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS";
 
 /// `OAUTH_DISABLE_PKCE` (canonical: `oauth_disable_pkce`).
 ///
-/// Python parity (analysis §9). Defaults to `false`. When `true`, the
+/// Python parity escape hatch. Defaults to `false`. When `true`, the
 /// AC flow omits `code_challenge` / `code_verifier`.
 pub const OAUTH_DISABLE_PKCE: &str = "OAUTH_DISABLE_PKCE";
 
 /// `OAUTH_ENABLE_DPOP` (canonical: `oauth_enable_dpop`).
 ///
-/// Opt-in to RFC 9449 DPoP (JDBC parity — analysis §5). Defaults to
+/// Opt-in to RFC 9449 DPoP (JDBC parity). Defaults to
 /// `false`.
 pub const OAUTH_ENABLE_DPOP: &str = "OAUTH_ENABLE_DPOP";
 
@@ -87,19 +87,19 @@ pub const OAUTH_ENABLE_DPOP: &str = "OAUTH_ENABLE_DPOP";
 /// `oauth_disable_console_login`).
 ///
 /// Carried for parity with JDBC `DISABLE_CONSOLE_LOGIN`; **does not**
-/// affect OAuth flows (analysis §3.6) — only the legacy SAML
+/// affect OAuth flows — only the legacy SAML
 /// EXTERNALBROWSER `console_login` form.
 pub const OAUTH_DISABLE_CONSOLE_LOGIN: &str = "OAUTH_DISABLE_CONSOLE_LOGIN";
 
 /// `TOKEN` (canonical: `token`).
 ///
 /// Pre-acquired access token used by the legacy
-/// `AUTHENTICATOR=OAUTH` mode (analysis §6 / §10.1). **Sensitive** —
+/// `AUTHENTICATOR=OAUTH` mode (pre-acquired access token). **Sensitive** —
 /// already in `REDACTED_KEYS` in `connection::connect_with_params`.
 pub const TOKEN: &str = "TOKEN";
 
 /// All ODBC DSN/connection-string keys defined by the OAuth feature
-/// (analysis §9). Used by the wrapper to:
+/// Used by the wrapper to:
 ///
 /// * teach `setup_dialog::write_dsn_values` which OAuth keys are safe
 ///   to persist (everything except [`OAUTH_CLIENT_SECRET`] and
@@ -132,15 +132,15 @@ pub const SENSITIVE_OAUTH_KEYS: &[&str] = &[OAUTH_CLIENT_SECRET, TOKEN];
 /// setup dialog and tests can branch on a single source of truth.
 pub mod authenticator {
     /// `AUTHENTICATOR=OAUTH` — legacy pre-acquired access token mode
-    /// (analysis §6).
+    /// (pre-acquired access token).
     pub const OAUTH: &str = "OAUTH";
 
     /// `AUTHENTICATOR=OAUTH_AUTHORIZATION_CODE` — interactive
-    /// authorization-code-with-PKCE flow (analysis §3).
+    /// authorization-code-with-PKCE flow.
     pub const OAUTH_AUTHORIZATION_CODE: &str = "OAUTH_AUTHORIZATION_CODE";
 
     /// `AUTHENTICATOR=OAUTH_CLIENT_CREDENTIALS` — non-interactive
-    /// machine-to-machine flow against an external IdP (analysis §4).
+    /// machine-to-machine flow against an external IdP.
     pub const OAUTH_CLIENT_CREDENTIALS: &str = "OAUTH_CLIENT_CREDENTIALS";
 }
 
@@ -207,7 +207,7 @@ pub fn canonical_name(key: &str) -> Option<&'static str> {
 }
 
 /// Returns `value` unchanged when `key` is not sensitive, or `"****"`
-/// when `key` is an OAuth secret (analysis §11). The returned string
+/// when `key` is an OAuth secret. The returned string
 /// is borrowed from `value` or is the static `"****"` placeholder, so
 /// no allocation is performed in either branch.
 ///
@@ -224,7 +224,7 @@ pub fn redact_value<'a>(key: &str, value: &'a str) -> &'a str {
 }
 
 /// Returns `false` when `key` is an OAuth secret that must never
-/// reach the on-disk DSN registry (analysis §11 / §14 #11). Returns
+/// reach the on-disk DSN registry (secrets must not be persisted). Returns
 /// `true` for all non-secret OAuth keys and for any non-OAuth key
 /// (callers compose this with their own DSN-skip rules for `PWD`,
 /// `DSN`, etc.).
