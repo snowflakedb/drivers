@@ -33,7 +33,11 @@ def connection(mock_db_api):
     from snowflake.connector.connection import Connection
 
     conn = Connection(user="test_user", account="test_account")
-    return conn
+    yield conn
+    # Prevent a late __del__ (deferred GC, especially on Python 3.14+) from
+    # calling close() through the *next* test's mock_db_api and polluting its
+    # call counts.
+    conn.auto_cleanup = False
 
 
 class TestGetConnectionInfo:
