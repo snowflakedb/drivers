@@ -243,7 +243,7 @@ pub struct StageInfo {
     location: Option<String>,
 
     #[serde(rename = "endPoint")]
-    end_point: Option<String>,
+    endpoint: Option<String>,
 
     #[serde(rename = "locationType")]
     location_type: Option<String>,
@@ -852,11 +852,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             },
         };
 
-        let end_point = value
-            .end_point
-            .as_ref()
-            .filter(|ep| !ep.is_empty())
-            .cloned();
+        let endpoint = value.endpoint.as_ref().filter(|ep| !ep.is_empty()).cloned();
 
         let presigned_url = value
             .presigned_url
@@ -900,7 +896,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             key_prefix,
             region,
             creds,
-            end_point,
+            endpoint,
             presigned_url,
             use_virtual_url,
             use_regional_url,
@@ -1785,52 +1781,52 @@ mod tests {
     // `useS3RegionalUrl` / `useRegionalUrl` mirror the reference Python /
     // JDBC / libsnowflakeclient S3 paths.
 
-    fn s3_stage_info_json(use_s3_regional: Option<bool>, use_regional: Option<bool>) -> String {
-        let s3_regional = match use_s3_regional {
-            Some(b) => format!(", \"useS3RegionalUrl\": {b}"),
-            None => String::new(),
-        };
-        let regional = match use_regional {
-            Some(b) => format!(", \"useRegionalUrl\": {b}"),
-            None => String::new(),
-        };
-        format!(
-            r#"{{
-                "locationType": "S3",
-                "location": "my-bucket/some/prefix/",
-                "region": "us-east-1",
-                "endPoint": null,
-                "creds": {{
-                    "AWS_KEY_ID": "k",
-                    "AWS_SECRET_KEY": "s",
-                    "AWS_TOKEN": "t"
-                }}{s3_regional}{regional}
-            }}"#
-        )
+    fn s3_stage_info_value(
+        use_s3_regional: Option<bool>,
+        use_regional: Option<bool>,
+    ) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "locationType": "S3",
+            "location": "my-bucket/some/prefix/",
+            "region": "us-east-1",
+            "endPoint": null,
+            "creds": {
+                "AWS_KEY_ID": "k",
+                "AWS_SECRET_KEY": "s",
+                "AWS_TOKEN": "t",
+            },
+        });
+        let obj = value.as_object_mut().expect("stage-info JSON is an object");
+        if let Some(b) = use_s3_regional {
+            obj.insert("useS3RegionalUrl".to_string(), serde_json::Value::Bool(b));
+        }
+        if let Some(b) = use_regional {
+            obj.insert("useRegionalUrl".to_string(), serde_json::Value::Bool(b));
+        }
+        value
     }
 
-    fn parse_s3_stage_info(json: &str) -> file_manager::StageInfo {
-        let raw: super::StageInfo = serde_json::from_str(json).expect("parse stage info json");
+    fn parse_s3_stage_info(value: serde_json::Value) -> file_manager::StageInfo {
+        let raw: super::StageInfo = serde_json::from_value(value).expect("parse stage info json");
         (&raw).try_into().expect("convert stage info")
     }
 
     #[test]
     fn use_s3_regional_url_propagates_when_only_s3_flag_set() {
-        let info = parse_s3_stage_info(&s3_stage_info_json(Some(true), Some(false)));
+        let info = parse_s3_stage_info(s3_stage_info_value(Some(true), Some(false)));
         assert!(info.use_s3_regional_url);
     }
 
     #[test]
     fn use_s3_regional_url_propagates_when_only_generic_regional_flag_set() {
-        // Mirrors Python's `useS3RegionalUrl OR useRegionalUrl` at
-        // s3_storage_client.py:85-91.
-        let info = parse_s3_stage_info(&s3_stage_info_json(Some(false), Some(true)));
+        // Mirrors Python's `useS3RegionalUrl OR useRegionalUrl` semantics.
+        let info = parse_s3_stage_info(s3_stage_info_value(Some(false), Some(true)));
         assert!(info.use_s3_regional_url);
     }
 
     #[test]
     fn use_s3_regional_url_false_when_neither_flag_set() {
-        let info = parse_s3_stage_info(&s3_stage_info_json(Some(false), Some(false)));
+        let info = parse_s3_stage_info(s3_stage_info_value(Some(false), Some(false)));
         assert!(!info.use_s3_regional_url);
     }
 
@@ -1838,7 +1834,7 @@ mod tests {
     fn use_s3_regional_url_false_when_both_flags_absent() {
         // Older GS responses may omit both fields. Default must be false so
         // we keep talking to the global `s3.amazonaws.com` endpoint.
-        let info = parse_s3_stage_info(&s3_stage_info_json(None, None));
+        let info = parse_s3_stage_info(s3_stage_info_value(None, None));
         assert!(!info.use_s3_regional_url);
     }
 }

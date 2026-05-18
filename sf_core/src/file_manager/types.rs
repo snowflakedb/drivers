@@ -122,7 +122,7 @@ pub struct StageInfo {
     pub creds: CloudCredentials,
     /// Cloud endpoint provided by Snowflake (e.g. for FIPS or regional routing).
     /// When present, the storage client uses this instead of the default.
-    pub end_point: Option<String>,
+    pub endpoint: Option<String>,
     /// Presigned URL for GCS operations (when access tokens are not available).
     pub presigned_url: Option<String>,
     /// Whether to use virtual-hosted-style URLs for GCS.
@@ -132,7 +132,7 @@ pub struct StageInfo {
     /// Whether to use the S3 regional endpoint (`s3.<region>.amazonaws.com`)
     /// instead of the global one. Set by GS for PrivateLink-to-S3 accounts
     /// and Snowpipe Streaming. Computed as `useS3RegionalUrl || useRegionalUrl`
-    /// from the response. Ignored when `end_point` is set — FIPS / VPCE /
+    /// from the response. Ignored when `endpoint` is set — FIPS / VPCE /
     /// custom endpoint takes precedence.
     pub use_s3_regional_url: bool,
     /// Azure storage account name (required for Azure Blob Storage).
