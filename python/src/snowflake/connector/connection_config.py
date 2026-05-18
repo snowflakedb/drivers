@@ -43,9 +43,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Timeout in seconds for native Okta SSO authentication. Default: 120"""
 
     authenticator: str | None = None
-    """Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA,
-    OAUTH, OAUTH_AUTHORIZATION_CODE, OAUTH_CLIENT_CREDENTIALS)
-    """
+    """Authenticator type for the connection"""
 
     client_app_id: str | None = None
     """Application identifier sent by the client wrapper (e.g. PythonConnector)"""
@@ -113,6 +111,39 @@ class ConnectionConfig(ConnectionConfigMixin):
     logout_total_timeout_seconds: int | None = None
     """Total timeout budget for logout operation including retries"""
 
+    oauth_authorization_url: str | None = None
+    """IdP authorization endpoint (defaults to https://{host}/oauth/authorize)"""
+
+    oauth_client_id: str | None = None
+    """OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)"""
+
+    oauth_client_secret: str | None = None
+    """OAuth client secret (redacted from logs)"""
+
+    oauth_disable_console_login: bool | None = False
+    """Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth). Default: False"""
+
+    oauth_disable_pkce: bool | None = False
+    """Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch). Default: False"""
+
+    oauth_enable_dpop: bool | None = False
+    """Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible). Default: False"""
+
+    oauth_enable_single_use_refresh_tokens: bool | None = False
+    """Request single-use refresh-token rotation (Snowflake-IdP only). Default: False"""
+
+    oauth_redirect_uri: str | None = None
+    """Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)"""
+
+    oauth_scope: str | None = None
+    """OAuth scope (space-separated; defaults to session:role:<role>)"""
+
+    oauth_token_request_url: str | None = None
+    """IdP token endpoint (CC only; defaults to https://{host}/oauth/token-request for AC).
+
+    Required when authenticator=OAUTH_CLIENT_CREDENTIALS
+    """
+
     okta_username: str | None = None
     """Okta username (defaults to the Snowflake user if omitted)"""
 
@@ -153,7 +184,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Enable or disable SSL/TLS (sets protocol to https or http). Deprecated: use protocol instead"""
 
     token: str | None = None
-    """Programmatic access token. Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+    """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
 
     user: str | None = None
     """Login username. Required"""
@@ -219,6 +250,7 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset(
         {
+            "oauth_client_secret",
             "passcode",
             "password",
             "private_key",
