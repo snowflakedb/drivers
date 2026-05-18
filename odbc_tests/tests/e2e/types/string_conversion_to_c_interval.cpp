@@ -255,25 +255,34 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite SQL_C_INT
   auto stmt =
       conn.execute_fetch("SELECT '3-6' AS y_m, '0-11' AS zero_year_eleven_month, '12-0' AS twelve_year_zero_month");
 
-  // Then '3-6' produces year = 3, month = 6
-  {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
-    CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.year_month.year == 3);
-    CHECK(interval.intval.year_month.month == 6);
+  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    assert_old_driver_varchar_interval_columns(
+        stmt,
+        {{1, SQL_C_INTERVAL_YEAR_TO_MONTH}, {2, SQL_C_INTERVAL_YEAR_TO_MONTH}, {3, SQL_C_INTERVAL_YEAR_TO_MONTH}});
+    return;
   }
-  // And '0-11' produces year = 0, month = 11
-  {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 2);
-    CHECK(interval.intval.year_month.year == 0);
-    CHECK(interval.intval.year_month.month == 11);
-  }
-  // And '12-0' produces year = 12, month = 0
-  {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 3);
-    CHECK(interval.intval.year_month.year == 12);
-    CHECK(interval.intval.year_month.month == 0);
+
+  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    // Then '3-6' produces year = 3, month = 6
+    {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
+      CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
+      CHECK(interval.interval_sign == SQL_FALSE);
+      CHECK(interval.intval.year_month.year == 3);
+      CHECK(interval.intval.year_month.month == 6);
+    }
+    // And '0-11' produces year = 0, month = 11
+    {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 2);
+      CHECK(interval.intval.year_month.year == 0);
+      CHECK(interval.intval.year_month.month == 11);
+    }
+    // And '12-0' produces year = 12, month = 0
+    {
+      auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 3);
+      CHECK(interval.intval.year_month.year == 12);
+      CHECK(interval.intval.year_month.month == 0);
+    }
   }
 }
 
