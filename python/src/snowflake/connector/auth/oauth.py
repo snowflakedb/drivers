@@ -13,9 +13,8 @@ This module exists purely so that code written against the legacy
 ``object`` and exposes no methods. Driver code does not look at this
 module at all.
 
-See ``analysis_feature_oauth.md`` §6 (legacy ``AUTHENTICATOR=OAUTH`` +
-pre-acquired ``token=``) for the wire-level contract the Rust core
-implements.
+Legacy ``AUTHENTICATOR=OAUTH`` + pre-acquired ``token=`` flow. The
+Rust core forwards the token unchanged to Snowflake's login endpoint.
 """
 
 from __future__ import annotations

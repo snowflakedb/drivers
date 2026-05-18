@@ -11,9 +11,11 @@ responsibility is to:
   ``oauth_*`` names registered in
   ``sf_core/src/config/param_registry.rs``.
 * Translate the legacy ``snowflake-connector-python`` aliases for OAuth
-  parameters into those canonical names (analysis §9 Python column).
+  parameters into those canonical names (cross-driver configuration matrix,
+  Python column).
 * Redact OAuth secrets from any log line that echoes connect kwargs
-  (analysis §11) — currently ``oauth_client_secret`` and ``token``.
+  (cross-driver redaction requirement) — currently ``oauth_client_secret``
+  and ``token``.
 
 The helpers in this module are pure functions (no side-effects, no
 network, no Rust core). They are wired into ``Connection.__init__`` in a
@@ -22,9 +24,8 @@ unit tests can exercise the mapping / redaction logic without spinning
 up a connection.
 
 References:
-* ``analysis_feature_oauth.md`` §9 — configuration matrix (canonical
-  names per driver).
-* ``analysis_feature_oauth.md`` §11 — logging & redaction rules.
+* Cross-driver configuration matrix — canonical names per driver.
+* Cross-driver logging & redaction rules.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from typing import Any, Final
 
 
 # ---------------------------------------------------------------------------
-# Canonical OAuth parameter names (analysis §9). These must match the
+# Canonical OAuth parameter names. These must match the
 # canonical names registered in ``sf_core/src/config/param_registry.rs``;
 # the Rust core resolves any aliases case-insensitively, so we only
 # need to send the canonical lowercase form.
@@ -78,7 +79,7 @@ SENSITIVE_OAUTH_KWARGS: Final[frozenset[str]] = frozenset({OAUTH_CLIENT_SECRET, 
 
 
 # ---------------------------------------------------------------------------
-# ``authenticator`` enum values that select an OAuth flow (analysis §9).
+# ``authenticator`` enum values that select an OAuth flow.
 # Re-declared here so the Python wrapper has a single source of truth
 # for "is this kwarg shape an OAuth-flavoured login?". ``sf_core`` does
 # the actual case-insensitive match against ``LoginMethod``.
@@ -109,8 +110,8 @@ def is_oauth_authenticator(authenticator: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Legacy alias → canonical map. Drawn from ``analysis_feature_oauth.md``
-# §9 (Python column) plus the Python-only switches that the legacy
+# Legacy alias → canonical map. Drawn from the cross-driver configuration
+# matrix (Python column) plus the Python-only switches that the legacy
 # ``snowflake-connector-python`` exposes.
 # ---------------------------------------------------------------------------
 
@@ -158,7 +159,7 @@ def is_sensitive_oauth_kwarg(name: Any) -> bool:
     Case-sensitive on purpose: connect kwargs are normalised to
     lowercase canonical names before they reach this check, and the
     Rust core's ``param_registry`` likewise stores canonical names in
-    lowercase (analysis §11).
+    lowercase.
     """
     if not isinstance(name, str):
         return False
@@ -169,7 +170,7 @@ def redacted_kwargs_for_log(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     """Return a copy of ``kwargs`` with every OAuth secret value replaced by ``"***"``.
 
     The redaction list is intentionally narrow — it covers only the
-    OAuth secrets (analysis §11). ``Connection.__init__`` composes this
+    OAuth secrets. ``Connection.__init__`` composes this
     with its existing redaction set for ``password`` /
     ``private_key`` / ``passcode`` to produce the final
     ``connection.kwargs`` view.
@@ -227,8 +228,8 @@ def rewrite_oauth_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
             (
                 f"{python_only!r} is a legacy snowflake-connector-python "
                 "kwarg that has no equivalent on the universal driver and "
-                "is silently ignored. See analysis_feature_oauth.md §9 for "
-                "the canonical configuration."
+                "is silently ignored. See the cross-driver configuration "
+                "matrix for canonical parameter names."
             ),
             DeprecationWarning,
             stacklevel=3,

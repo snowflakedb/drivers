@@ -6,8 +6,8 @@ anything imported from this package — every submodule here is a
 placeholder kept so legacy ``from snowflake.connector.auth.<flow> import
 AuthBy<Flow>`` imports keep working.
 
-See ``analysis_feature_oauth.md`` for the cross-driver behavioural spec
-that the Rust core implements for the OAuth flows.
+The Rust core implements the cross-driver behavioural spec for the
+OAuth flows.
 """
 
 from __future__ import annotations

@@ -14,7 +14,7 @@ sf_core's loopback listener; they are gated additionally behind
 Credentials and legacy ``AUTHENTICATOR=OAUTH`` paths do not require a
 browser and run whenever the matching parameters are configured.
 
-Required ``parameters.json`` keys (analysis_feature_oauth.md §9):
+Required ``parameters.json`` keys (cross-driver configuration matrix):
 
 * ``SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN``       legacy OAUTH / AC short-circuit
 * ``SNOWFLAKE_TEST_OAUTH_CLIENT_ID``          AC + CC
@@ -80,7 +80,7 @@ def oauth_params() -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
-# Legacy AUTHENTICATOR=OAUTH (pre-acquired access token, analysis §6 / §10.1)
+# Legacy AUTHENTICATOR=OAUTH (pre-acquired access token)
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +126,7 @@ class TestLegacyOAuthAccessToken:
 
 
 # ---------------------------------------------------------------------------
-# OAuth Authorization Code (AC) flow (analysis §3 / §10.2)
+# OAuth Authorization Code (AC) flow
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ class TestOAuthAuthorizationCode:
         #       when present (otherwise the driver falls back to the Snowflake-IdP defaults
         #       `https://{host}/oauth/authorize` and `https://{host}/oauth/token-request`).
         #       `client_store_temporary_credential=true` lets the AC flow short-circuit on subsequent
-        #       runs by re-using the cached access / refresh token (analysis §3.2 / §7).
+        #       runs by re-using the cached access / refresh token (AC state machine: cache → refresh → interactive).
         kwargs: dict[str, object] = {
             "authenticator": "OAUTH_AUTHORIZATION_CODE",
             "oauth_client_id": client_id,
@@ -198,7 +198,7 @@ class TestOAuthAuthorizationCode:
 
 
 # ---------------------------------------------------------------------------
-# OAuth Client Credentials (CC) flow (analysis §4 / §10.2)
+# OAuth Client Credentials (CC) flow
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +209,7 @@ class TestOAuthClientCredentials:
         token_url = _require_oauth_param(oauth_params, "SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL")
 
         # Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a valid client id / secret and
-        #       an external IdP token URL. Snowflake's GS does not mint CC tokens (analysis §4),
+        #       an external IdP token URL. Snowflake's GS does not mint CC tokens,
         #       so `oauth_token_request_url` is required up-front.
         kwargs: dict[str, object] = {
             "authenticator": "OAUTH_CLIENT_CREDENTIALS",

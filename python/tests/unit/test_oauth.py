@@ -13,8 +13,8 @@ therefore focus on:
 
 Cross-referenced specs:
 
-* ``analysis_feature_oauth.md`` §9 — configuration matrix.
-* ``analysis_feature_oauth.md`` §11 — logging & redaction.
+* Cross-driver configuration matrix — canonical parameter names.
+* Cross-driver logging & redaction rules.
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ class TestIsOauthAuthenticator:
 
 
 class TestIsSensitiveOauthKwarg:
-    """OAuth secret detection is exact-match on the canonical name (analysis §11)."""
+    """OAuth secret detection is exact-match on the canonical name."""
 
     @pytest.mark.parametrize("name", sorted(SENSITIVE_OAUTH_KWARGS))
     def test_flags_canonical_secrets(self, name):
@@ -302,7 +302,7 @@ class TestConnectionForwardsCanonicalOauthOptions:
 
 
 class TestConnectionKwargsRedaction:
-    """``Connection.kwargs`` never echoes an OAuth secret (analysis §11)."""
+    """``Connection.kwargs`` never echoes an OAuth secret."""
 
     def test_oauth_client_secret_is_redacted(self, mock_db_api):
         conn = _build_connection(
