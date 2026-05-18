@@ -237,8 +237,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
           $triplet = "${{ matrix.vcpkg_triplet }}"
-          if ("${{ matrix.msvc_arch }}" -eq "arm64") {
-            # ARM64 vcpkg builds require the ARM64 MSVC toolchain environment
+          if (@("arm64", "arm64ec") -contains "${{ matrix.msvc_arch }}") {
             cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet openssl:$triplet"
             if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
           } else {

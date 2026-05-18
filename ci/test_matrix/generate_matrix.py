@@ -271,7 +271,7 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
                 f"but missing 'cache_key'. This field is required by "
                 f"--emit-build-matrix to generate the build_odbc_driver job's "
                 f"include array — set it to the cargo-cache shared-key value "
-                f"used by that lane (e.g. 'odbc', 'odbc-x64', 'odbc-arm64')."
+                f"used by that lane (e.g. 'odbc', 'odbc-x64', 'odbc-arm64ec')."
             )
         # PYTHON_PLATFORM is required on every Python lane: _build_gha_row reads
         # wheel_artifact + wheels from it. Missing rows silently drop py3.11+ cells

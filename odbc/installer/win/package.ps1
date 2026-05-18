@@ -37,7 +37,7 @@
     .\odbc\installer\win\package.ps1 -DriverBinDir target\i686-pc-windows-msvc\debug -Arch x86 -BuildConfig debug
 
 .EXAMPLE
-    .\odbc\installer\win\package.ps1 -DriverBinDir target\aarch64-pc-windows-msvc\release -Arch arm64
+    .\odbc\installer\win\package.ps1 -DriverBinDir target\arm64ec-pc-windows-msvc\release -Arch arm64
 #>
 
 [CmdletBinding()]

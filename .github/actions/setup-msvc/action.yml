@@ -30,6 +30,11 @@ runs:
         $ErrorActionPreference = "Stop"
         $arch = "${{ inputs.arch }}"
 
+        # vcvarsall.bat has no `arm64ec` argument: the ARM64EC ABI is a
+        # compile/link-time selection layered on top of the ARM64 toolchain.
+        # Translate so callers can express intent as `arm64ec` end-to-end.
+        $vcvarsArch = if ($arch -eq "arm64ec") { "arm64" } else { $arch }
+
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         if (-not (Test-Path $vswhere)) {
           throw "vswhere.exe not found at $vswhere"
@@ -49,11 +54,11 @@ runs:
         # Piping `cmd /c ... | ForEach-Object` would succeed as a pipeline even if
         # vcvarsall.bat itself failed, leaving later steps running without cl.exe
         # or link.exe on PATH.
-        $vcvarsOutput = cmd /c "`"$vcvars`" $arch && set" 2>&1
+        $vcvarsOutput = cmd /c "`"$vcvars`" $vcvarsArch && set" 2>&1
         if ($LASTEXITCODE -ne 0) {
           Write-Host "vcvarsall.bat output:"
           $vcvarsOutput | ForEach-Object { Write-Host $_ }
-          throw "vcvarsall.bat $arch failed with exit code $LASTEXITCODE"
+          throw "vcvarsall.bat $vcvarsArch failed with exit code $LASTEXITCODE"
         }
 
         $vcvarsOutput | ForEach-Object {
@@ -78,7 +83,7 @@ runs:
         # vcvarsall arch grammar is `[host_]target`: `x86`, `x64`, `arm64`,
         # `amd64_arm64`, `x86_arm64`, etc. VSCMD_ARG_TGT_ARCH is set to the
         # target portion using x64 (not amd64) terminology.
-        $expectedTgt = ($arch -split '_')[-1]
+        $expectedTgt = ($vcvarsArch -split '_')[-1]
         if ($expectedTgt -eq 'amd64') { $expectedTgt = 'x64' }
         if ($env:VSCMD_ARG_TGT_ARCH -ne $expectedTgt) {
           throw "VSCMD_ARG_TGT_ARCH is '$($env:VSCMD_ARG_TGT_ARCH)', expected '$expectedTgt' for arch '$arch'"

@@ -24,8 +24,10 @@ Per-row keys:
                    build_odbc_driver (e.g. "--features vendored-openssl").
                    Empty string is fine.
   cargo_target     (str, optional) Cross-compile target triple for
-                   `cargo build --target <triple>`. Currently only Windows x86
-                   uses i686-pc-windows-msvc.
+                   `cargo build --target <triple>`. Windows x86 uses
+                   i686-pc-windows-msvc; Windows arm uses
+                   arm64ec-pc-windows-msvc (the host triple on `windows-11-arm`
+                   is aarch64-pc-windows-msvc, so arm64ec must be explicit).
 
 To add a new platform: add an entry here. If the lane needs a GHA build, also
 set driver_artifact + cache_key (+ optional cargo_extra/cargo_target). The
@@ -47,8 +49,9 @@ ODBC_PLATFORM: dict[tuple[str, str], dict[str, str]] = {
                          "cache_key": "odbc-x86",
                          "cargo_extra": "--no-default-features --features vendored-openssl",
                          "cargo_target": "i686-pc-windows-msvc"},
-    ("windows", "arm"): {"driver_lib": "sfodbc.dll",      "driver_artifact": "Windows ARM64",
-                         "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows",
-                         "cache_key": "odbc-arm64",
-                         "cargo_extra": "--features vendored-openssl"},
+    ("windows", "arm"): {"driver_lib": "sfodbc.dll",      "driver_artifact": "Windows ARM64EC",
+                         "msvc_arch": "arm64ec", "vcpkg_triplet": "arm64ec-windows",
+                         "cache_key": "odbc-arm64ec",
+                         "cargo_extra": "--features vendored-openssl",
+                         "cargo_target": "arm64ec-pc-windows-msvc"},
 }

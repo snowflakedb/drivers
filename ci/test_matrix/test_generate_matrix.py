@@ -1278,10 +1278,11 @@ class OdbcBuildMatrixTests(unittest.TestCase):
                               "cargo_extra": "--no-default-features --features vendored-openssl",
                               "cache_key": "odbc-x86",
                               "msvc_arch": "x86", "vcpkg_triplet": "x86-windows"},
-            "Windows ARM64": {"os": "windows-11-arm", "driver_lib": "sfodbc.dll",
-                              "cargo_extra": "--features vendored-openssl",
-                              "cache_key": "odbc-arm64",
-                              "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows"},
+            "Windows ARM64EC": {"os": "windows-11-arm", "driver_lib": "sfodbc.dll",
+                                "cargo_target": "arm64ec-pc-windows-msvc",
+                                "cargo_extra": "--features vendored-openssl",
+                                "cache_key": "odbc-arm64ec",
+                                "msvc_arch": "arm64ec", "vcpkg_triplet": "arm64ec-windows"},
         }
         actual = {e["name"]: {k: v for k, v in e.items() if k not in ("name", "driver_artifact")}
                   for e in self.matrix_nightly}
@@ -1307,13 +1308,16 @@ class OdbcBuildMatrixTests(unittest.TestCase):
                 )
 
     def test_optional_keys_only_where_applicable(self) -> None:
-        # cargo_target only on Windows x86; msvc_arch only on Windows non-x64;
-        # vcpkg_triplet only on Windows; cargo_extra only on Windows.
+        # cargo_target on Windows x86 and Windows ARM64EC; msvc_arch only on
+        # Windows non-x64; vcpkg_triplet only on Windows; cargo_extra only on
+        # Windows.
         for entry in self.matrix_nightly:
             name = entry["name"]
             if name == "Windows x86":
                 self.assertEqual(entry.get("cargo_target"), "i686-pc-windows-msvc")
-            elif name in ("Windows x64", "Windows ARM64"):
+            elif name == "Windows ARM64EC":
+                self.assertEqual(entry.get("cargo_target"), "arm64ec-pc-windows-msvc")
+            elif name == "Windows x64":
                 self.assertNotIn("cargo_target", entry, name)
             else:  # Linux / macOS lanes
                 self.assertNotIn("cargo_target", entry, name)
@@ -1324,7 +1328,7 @@ class OdbcBuildMatrixTests(unittest.TestCase):
     def test_pr_count_at_4(self) -> None:
         # Pin the post-MERGE_VALID PR-level count: 4 driver flavours
         # (Linux x64, macOS ARM64, Windows x64, Windows x86).
-        # Windows ARM64 is only at merge level via pairwise.
+        # Windows ARM64EC is only at merge level via pairwise.
         self.assertEqual(
             len(self.matrix_pr), 4,
             f"expected 4 PR-level driver builds; got {len(self.matrix_pr)}: "
@@ -1336,10 +1340,10 @@ class OdbcBuildMatrixTests(unittest.TestCase):
         )
 
     def test_merge_includes_windows_arm(self) -> None:
-        # Windows ARM64 is added at merge via pairwise (no PR cell uses it),
+        # Windows ARM64EC is added at merge via pairwise (no PR cell uses it),
         # so the merge build matrix must include it.
         names = {e["name"] for e in self.matrix_merge}
-        self.assertIn("Windows ARM64", names)
+        self.assertIn("Windows ARM64EC", names)
 
     def test_emit_build_matrix_cli_format(self) -> None:
         # CLI emits exactly one line of the form `matrix=<json>`.

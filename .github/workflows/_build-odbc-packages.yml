@@ -1,10 +1,11 @@
 name: Build ODBC Packages
 
 # Reusable workflow that builds every distributable ODBC artifact (MSI on
-# Windows for x64/x86/arm64, RPM on Linux for x86_64/aarch64, DMG on macOS
-# universal). The Windows MSIs depend on a WiX toolchain that we build from
-# source as the first job here, so the whole graph lives together to keep
-# the build_wix → build_msi edge inside this file.
+# Windows for x64/x86/arm64 — the arm64 MSI ships an ARM64EC driver DLL,
+# RPM on Linux for x86_64/aarch64, DMG on macOS universal). The Windows
+# MSIs depend on a WiX toolchain that we build from source as the first
+# job here, so the whole graph lives together to keep the
+# build_wix → build_msi edge inside this file.
 
 on:
   workflow_call:
@@ -134,11 +135,11 @@ jobs:
             cargo_target: i686-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: "--no-default-features"
-          - name: Windows ARM64 Release
+          - name: Windows ARM64EC Release
             os: windows-11-arm
             arch: arm64
             config: release
-            cargo_target: aarch64-pc-windows-msvc
+            cargo_target: arm64ec-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: ""
     runs-on: ${{ matrix.os }}
@@ -174,7 +175,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
 
       - name: Install Rust target
-        if: matrix.arch == 'x86'
+        # x64 and aarch64 hosts already have their native target in the runner
+        # image, but cross-targets (Windows x86, Windows ARM64EC) must be added
+        # explicitly. Gate on cargo_target presence rather than enumerating
+        # arches so adding a new cross-target row "just works".
+        if: matrix.cargo_target && matrix.arch != 'x64'
         run: rustup target add ${{ matrix.cargo_target }}
 
       - name: Download self-built WiX
