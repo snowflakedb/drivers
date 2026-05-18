@@ -52,11 +52,12 @@ Subcommands
 ``remind``
     Iterate every open non-draft PR in the repository (via ``gh``) and
     write a digest Slack payload listing PRs that are *waiting on a
-    reviewer's action* — i.e. no review with state ``APPROVED`` or
-    ``CHANGES_REQUESTED``. PRs where a requested reviewer has only
-    ``COMMENTED`` are flagged with a note that comments do not count as a
-    review. Each entry includes the time elapsed since the *initial*
-    ``review_requested`` event.
+    reviewer's action* — i.e. no review with state ``APPROVED``,
+    ``CHANGES_REQUESTED`` or ``COMMENTED``. A plain comment-review
+    counts as engagement and clears the PR from the digest, so the
+    channel is not re-pinged while a reviewer is mid-discussion with
+    the author. Each entry includes the time elapsed since the
+    *initial* ``review_requested`` event.
 
     PRs whose waiting time is below :data:`MIN_WAITING_HOURS` are
     dropped from the digest so freshly-opened or freshly-requested
@@ -179,7 +180,11 @@ log = logging.getLogger("pr-review-bot")
 DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
 
 # Review states that mean the reviewer has taken action on the PR.
-ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED"}
+# ``COMMENTED`` is included so a plain comment-review counts the same as
+# an approval or change request: any human engagement clears the PR
+# from the reminder digest. This avoids re-pinging the channel while a
+# reviewer is mid-discussion with the author.
+ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
 
 # Minimum age (hours since the first ``review_requested`` event, or
 # since ``created_at`` when no review was requested yet) before a PR
@@ -1228,15 +1233,18 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
 
 def _latest_review_state_per_user(reviews: list[dict]) -> dict[str, str]:
-    """Return ``{login: latest_review_state}`` collapsing comments.
+    """Return ``{login: latest_review_state}`` per reviewer.
 
-    ``COMMENTED`` reviews do not overwrite an earlier ``APPROVED`` /
-    ``CHANGES_REQUESTED``, but a later ``DISMISSED`` does — i.e. dismissed
-    approvals are treated as "no action taken".
+    All non-``PENDING`` review states count as the user having acted on
+    the PR (see :data:`ACTIONED_STATES`, which now includes
+    ``COMMENTED``). A later ``COMMENTED`` does not overwrite an earlier
+    ``APPROVED`` / ``CHANGES_REQUESTED`` so the more specific signal is
+    preserved for any future caller that distinguishes between them; a
+    later ``DISMISSED`` does overwrite — dismissed approvals are
+    treated as "no action taken".
 
-    Bot reviews are ignored entirely: a Copilot approval doesn't count
-    as the PR having been actioned, and a Copilot comment shouldn't
-    sneak the bot's login into the displayed ``commented_only`` list.
+    Bot reviews are ignored entirely: a Copilot approval or comment
+    must not count as a human having actioned the PR.
     """
     by_user: dict[str, str] = {}
     for rv in reviews:
@@ -1269,16 +1277,13 @@ def _classify_pr_for_reminder(
     if any(s in ACTIONED_STATES for s in states.values()):
         return None
 
-    # Strip two kinds of would-be reviewers from the displayed lists:
+    # Strip would-be reviewers from the displayed list:
     #
-    # 1. The PR author themselves — a self "Comment review" or a
-    #    misfired `requested_reviewers` entry from GitHub's team
-    #    round-robin should never surface them as someone we're
-    #    waiting on.
+    # 1. The PR author themselves — a misfired ``requested_reviewers``
+    #    entry from GitHub's team round-robin should never surface
+    #    them as someone we're waiting on.
     # 2. Bot reviewers (Copilot, Dependabot, …) — not people; naming
-    #    them in a Slack nudge confuses the channel. ``commented_only``
-    #    is derived from ``states``, which is already bot-free thanks
-    #    to :func:`_latest_review_state_per_user`.
+    #    them in a Slack nudge confuses the channel.
     author_login = ((pr.get("user") or {}).get("login") or "").lower()
     requested_users = sorted(
         {
@@ -1290,11 +1295,8 @@ def _classify_pr_for_reminder(
             and u["login"].lower() != author_login
         }
     )
-    commented_only = sorted(
-        {u for u, s in states.items() if s == "COMMENTED" and u.lower() != author_login}
-    )
 
-    if not requested_users and not commented_only:
+    if not requested_users:
         return None
 
     if now is None:
@@ -1335,7 +1337,6 @@ def _classify_pr_for_reminder(
         "url": pr["html_url"],
         "updated_at": pr.get("updated_at", ""),
         "requested": requested_users,
-        "commented_only": commented_only,
         "waiting_hours": waiting_hours,
         "waiting_source": waiting_source if waiting_hours is not None else None,
     }
@@ -1410,9 +1411,8 @@ def _swap_ooo_reviewers(
     """Replace OOO requested reviewers with a fresh non-OOO pick.
 
     Run during the reminder pass after :func:`_classify_pr_for_reminder`
-    has produced *entry*. Mutates ``entry["requested"]`` (and
-    ``entry["commented_only"]``) so the Slack digest reflects the
-    post-swap state. Three branches:
+    has produced *entry*. Mutates ``entry["requested"]`` so the Slack
+    digest reflects the post-swap state. Three branches:
 
     1. No requested reviewer is OOO — nothing to do.
     2. *Some* requested reviewers are OOO but at least one is not —
@@ -1436,17 +1436,10 @@ def _swap_ooo_reviewers(
     """
     requested = list(entry.get("requested") or [])
     if not requested:
-        # Filter OOO commenters too — they can't formal-review either.
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     ooo = [u for u in requested if names.is_ooo(u)]
     if not ooo:
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     available = [u for u in requested if not names.is_ooo(u)]
@@ -1464,9 +1457,6 @@ def _swap_ooo_reviewers(
             ", ".join(available),
         )
         entry["requested"] = available
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     # Every requested human is OOO. Find a substitute via the same
@@ -1508,9 +1498,6 @@ def _swap_ooo_reviewers(
             len(requested),
             ", ".join(requested),
         )
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     if widened:
@@ -1554,9 +1541,6 @@ def _swap_ooo_reviewers(
             )
 
     entry["requested"] = [replacement]
-    entry["commented_only"] = [
-        u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-    ]
 
 
 def _decorate_reviewer(names: ReviewerDisplay, login: str) -> str:
@@ -1581,15 +1565,13 @@ def _build_reminder_blocks(
 
     Compact layout: one heading section plus one bulleted section
     where each line is ``• <url|title> — reviewer(s) — waiting``. Keeps
-    the digest short even when many PRs are stale; per-PR author and
-    "comments don't count" footnotes are dropped on purpose — the linked
-    PR carries the rest of the context for anyone who clicks through.
+    the digest short even when many PRs are stale; per-PR author is
+    dropped on purpose — the linked PR carries the rest of the context
+    for anyone who clicks through.
     """
     lines: list[str] = []
     for pr in awaiting:
-        people = pr["requested"] + [
-            u for u in pr["commented_only"] if u not in pr["requested"]
-        ]
+        people = pr["requested"]
         people_str = (
             ", ".join(_decorate_reviewer(names, u) for u in people)
             if people
@@ -1696,8 +1678,8 @@ def cmd_remind(args: argparse.Namespace) -> int:
 
     # For every PR in the digest, try to replace OOO requested
     # reviewers with an available substitute. Mutates each entry's
-    # ``requested`` / ``commented_only`` so the Slack message reflects
-    # the post-swap state. Disabled when the rules file is empty.
+    # ``requested`` so the Slack message reflects the post-swap state.
+    # Disabled when the rules file is empty.
     if rules:
         for entry in awaiting:
             _swap_ooo_reviewers(
@@ -1706,7 +1688,7 @@ def cmd_remind(args: argparse.Namespace) -> int:
         # Re-filter: an entry whose only humans were OOO and that the
         # swap couldn't find a substitute for may now have no one left
         # to remind. Drop those.
-        awaiting = [e for e in awaiting if e.get("requested") or e.get("commented_only")]
+        awaiting = [e for e in awaiting if e.get("requested")]
         if not awaiting:
             log.info(
                 "All PRs were covered after the OOO-swap pass (nothing actionable "
