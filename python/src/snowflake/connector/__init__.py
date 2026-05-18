@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from . import util_text  # noqa: F401 - backward compatibility re-exports
-from ._internal.api_client.c_api import register_default_logger_callback  # noqa: F401
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
 from .connection_config import ConnectionConfig

@@ -1,3 +1,13 @@
+"""Logger adapter used exclusively by the bundled nanoarrow C++ extension.
+
+The extension imports this module via pybind (see
+``_internal/nanoarrow_cpp/Logging/logging.cpp``) and calls
+``SnowLogger.log()`` so it can pass C++-side file / function / line
+information through Python's logging machinery. Pure-Python code does
+not use this adapter — it goes through ``_internal/logging.py`` and
+``logging.getLogger(__name__)`` instead.
+"""
+
 from __future__ import annotations
 
 import logging
