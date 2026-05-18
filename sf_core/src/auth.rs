@@ -42,9 +42,7 @@ pub enum Credentials {
     },
     /// Pre-acquired OAuth access token forwarded to Snowflake unchanged
     /// (analysis §6 — legacy `AUTHENTICATOR=OAUTH` with raw `token=`).
-    /// Fields are populated by `create_credentials` in step 2.1 but are
-    /// only read once `auth_request_data` is wired in step 2.3.
-    #[allow(dead_code)]
+    /// Consumed by `auth_request_data` to populate the legacy login body.
     OAuth {
         username: String,
         access_token: SensitiveString,
@@ -206,13 +204,6 @@ pub enum AuthError {
     ))]
     UnsupportedLoginMethod {
         method: &'static str,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("OAuth flow '{flow}' is not yet wired into the login pipeline"))]
-    #[snafu(visibility(pub(crate)))]
-    OAuthFlowNotWired {
-        flow: &'static str,
         #[snafu(implicit)]
         location: Location,
     },

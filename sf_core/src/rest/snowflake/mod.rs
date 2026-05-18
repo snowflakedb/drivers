@@ -71,6 +71,19 @@ pub const SESSION_GONE: i32 = 390111;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the OAuth access token presented at login is
+/// invalid (analysis_feature_oauth.md §8). Treated cross-driver as a signal
+/// to evict the cached access token and replay the OAuth flow.
+pub const OAUTH_ACCESS_TOKEN_INVALID: i32 = 390303;
+/// GS error code returned when the OAuth access token presented at login has
+/// expired (analysis_feature_oauth.md §8). Same eviction-and-retry behavior
+/// as [`OAUTH_ACCESS_TOKEN_INVALID`].
+pub const OAUTH_ACCESS_TOKEN_EXPIRED: i32 = 390318;
+/// GS error codes that indicate the cached OAuth access token (and any
+/// DPoP-bundled cache entry) must be evicted, after which the login is
+/// retried once. Mirrors JDBC/Go's `refreshOAuthTokenErrorCodes` set.
+const OAUTH_REFRESH_ERROR_CODES: [i32; 2] =
+    [OAUTH_ACCESS_TOKEN_INVALID, OAUTH_ACCESS_TOKEN_EXPIRED];
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -388,6 +401,40 @@ fn remove_mfa_token_from_cache(
     }
 }
 
+/// Evict the cached OAuth access token (and DPoP-bundled entry, when
+/// present) for an Authorization Code login. Used by the
+/// `390303 / 390318` retry block in [`snowflake_login_with_client`]:
+/// after eviction the next call to `auth_request_data` will run the
+/// refresh-token leg or, if that also fails, the full interactive flow
+/// (analysis_feature_oauth.md §8 + §3.2 state machine).
+///
+/// The cache key host follows the cross-driver convention from analysis
+/// §7.3: prefer the IdP token URL host, otherwise fall back to the
+/// Snowflake server host. The synthetic `https://{host}` URL string
+/// passed to the eviction helpers parses cleanly into the same host the
+/// AC flow used when storing the token.
+fn evict_oauth_access_token_for_authorization_code(
+    cfg: &crate::config::rest_parameters::OAuthAuthorizationCodeConfig,
+    server_url: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let token_url_str = cfg
+        .token_url
+        .as_ref()
+        .map(|u| u.as_str().to_string())
+        .unwrap_or_default();
+    let Some(host) = oauth::host_from_token_url(&token_url_str, server_url) else {
+        tracing::warn!(
+            "Cannot evict cached OAuth access token: unable to derive IdP host from token_url or server_url"
+        );
+        return;
+    };
+    let synthetic_host_url = format!("https://{host}");
+    tracing::debug!(host = %host, "Evicting cached OAuth access token for IdP host");
+    oauth::remove_oauth_access_token(&synthetic_host_url, &cfg.username, token_cache);
+    oauth::remove_oauth_dpop_bundled(&synthetic_host_url, &cfg.username, token_cache);
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -437,6 +484,53 @@ pub async fn auth_request_data(
             data.token = Some(result.token);
             data.proof_key = Some(result.proof_key);
         }
+        // Authorization Code orchestration runs the PKCE/state/loopback flow
+        // (and any cache hits / refresh-token exchange) before forwarding the
+        // resulting access token to Snowflake under AUTHENTICATOR=OAUTH.
+        // Per analysis §10.1 / §14 #5, the body always uses uppercase
+        // "OAUTH" — never the user-supplied authenticator string verbatim —
+        // and tags the request with OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so
+        // GS knows which flow produced the token. LOGIN_NAME is always set
+        // (§14 #10).
+        LoginMethod::OAuthAuthorizationCode(cfg) => {
+            let server_url = url::Url::parse(&login_parameters.server_url)
+                .context(oauth::EndpointUrlParseSnafu {
+                    url: login_parameters.server_url.clone(),
+                })
+                .context(OAuthFlowSnafu)?;
+            let acquired =
+                oauth::run_oauth_authorization_code(client, &server_url, cfg, token_cache)
+                    .await
+                    .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some("OAUTH".to_string());
+            data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
+            // `dpop_jwk_json` is `Option<String>`: `Some` when DPoP was
+            // enabled, `None` otherwise, so the assignment is implicitly
+            // conditional. The JWK is carried through login data so the
+            // driver can build a DPoP proof header on the Snowflake login
+            // request; the server validates it statelessly against the
+            // thumbprint (`jkt`) already embedded in the access token
+            // (RFC 9449).
+            data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
+        // Client Credentials is external-IdP only (analysis §4) and tokens
+        // are intentionally not cached (§14 #12). On Snowflake error codes
+        // 390303/390318 the retry block in `snowflake_login_with_client`
+        // skips the AC eviction step and just replays the flow so the IdP
+        // token endpoint is re-hit.
+        LoginMethod::OAuthClientCredentials(cfg) => {
+            let acquired = oauth::acquire_client_credentials(client, cfg)
+                .await
+                .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some("OAUTH".to_string());
+            data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
+            // See AC branch above for why dpop_jwk_json is carried here.
+            data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
             Credentials::Password { username, password } => {
                 data.login_name = Some(username);
@@ -452,16 +546,17 @@ pub async fn auth_request_data(
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
             }
-            Credentials::OAuth { .. } => {
-                // Legacy AUTHENTICATOR=OAUTH body wiring lands in step 2.3
-                // (analysis_feature_oauth.md §6 / §10.1). This skeleton
-                // surfaces a typed error so the variant remains constructible
-                // without smuggling in flow logic.
-                return crate::auth::OAuthFlowNotWiredSnafu {
-                    flow: "OAuthAccessToken",
-                }
-                .fail()
-                .context(AuthenticationSnafu);
+            // Legacy pre-acquired access token: forward unchanged (analysis
+            // §6 / §10.1). LOGIN_NAME is always set (§14 #10) — never the
+            // .NET-only `loginName=""` quirk — and OAUTH_TYPE is omitted to
+            // distinguish the legacy flow from AC/CC.
+            Credentials::OAuth {
+                username,
+                access_token,
+            } => {
+                data.login_name = Some(username);
+                data.token = Some(access_token);
+                data.authenticator = Some("OAUTH".to_string());
             }
             Credentials::UserPasswordMfa {
                 username,
@@ -533,8 +628,30 @@ async fn send_login_request(
 
     let user_agent = user_agent(&login_parameters.client_info);
 
+    // Drift C.5: when the OAuth flow handed us a DPoP JWK alongside the
+    // access token, sign a DPoP proof JWT for the Snowflake login URL on
+    // every send (including retries — `proof_jwt` includes a fresh `jti`
+    // and `iat` per RFC 9449 §4.2). The key is parsed once up front so a
+    // malformed JWK fails the login fast instead of inside the retry
+    // closure. Snowflake's GS does not issue `use_dpop_nonce` for login,
+    // so we don't replicate the OAuth-token-endpoint nonce retry here
+    // (matches JDBC `SessionUtil.java:746-750`).
+    let dpop_signer: Option<DPoPSigner> =
+        if let Some(jwk_json) = login_request.data.dpop_jwk_json.as_deref() {
+            let key = oauth::dpop::DPoPKey::from_jwk_json(jwk_json).context(OAuthFlowSnafu)?;
+            let url = Url::parse(&login_url).context(UrlJoinSnafu {
+                path: "/session/v1/login-request",
+            })?;
+            Some(DPoPSigner {
+                key: std::sync::Arc::new(key),
+                url: std::sync::Arc::new(url),
+            })
+        } else {
+            None
+        };
+
     let build_request = || {
-        client
+        let mut builder = client
             .post(&login_url)
             .query(&[
                 (
@@ -558,7 +675,16 @@ async fn send_login_request(
             .header("accept", "application/snowflake")
             .header("User-Agent", &user_agent)
             .header("Authorization", "Snowflake Token=\"None\"")
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(30));
+        if let Some(signer) = dpop_signer.as_ref() {
+            // Signing is infallible once `from_jwk_json` succeeded above
+            // (only openssl primitive failures could surface here, which
+            // would have already failed the validation step).
+            let proof = oauth::dpop::proof_jwt(&signer.key, "POST", &signer.url, None)
+                .expect("DPoP proof generation must succeed for a pre-validated key");
+            builder = builder.header("DPoP", proof.reveal());
+        }
+        builder
     };
 
     let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
@@ -573,6 +699,15 @@ async fn send_login_request(
     read_response_json::<auth::AuthResponseMain>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)
+}
+
+/// Drift C.5: per-request DPoP signing context for `send_login_request`.
+/// Holds an `Arc`-shared key and login URL so the `build_request`
+/// closure (called once per retry attempt) can stamp a fresh proof JWT
+/// without moving values out of the surrounding scope.
+struct DPoPSigner {
+    key: std::sync::Arc<oauth::dpop::DPoPKey>,
+    url: std::sync::Arc<Url>,
 }
 
 #[tracing::instrument(
@@ -643,6 +778,62 @@ pub async fn snowflake_login_with_client(
                     .await?;
             let retry_request = AuthRequest { data: retry_data };
             auth_response = send_login_request(client, login_parameters, &retry_request).await?;
+        }
+    }
+
+    // OAuth refresh-on-failure (analysis_feature_oauth.md §8 / §14 #9):
+    // when GS rejects the OAuth access token with 390303 / 390318, replay
+    // the login once. For Authorization Code we first evict the cached
+    // access token (and any DPoP-bundled entry) so the replay exercises
+    // the refresh-token leg or, failing that, the interactive flow. For
+    // Client Credentials there is no cache to evict (analysis §4 / §14
+    // #12), so the replay re-hits the IdP token endpoint to fetch a
+    // fresh access token. Cross-driver consensus per analysis §8 (JDBC,
+    // ODBC, .NET, Go all retry both flows). Legacy `OAuthAccessToken`
+    // bubbles the error since the caller supplies the token directly.
+    if !auth_response.success {
+        let code = auth_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        if OAUTH_REFRESH_ERROR_CODES.contains(&code) {
+            let mut should_retry = false;
+            match &login_parameters.login_method {
+                LoginMethod::OAuthAuthorizationCode(cfg) => {
+                    tracing::debug!(
+                        code = code,
+                        oauth_type = "OAUTH_AUTHORIZATION_CODE",
+                        "OAuth access token cache eviction triggered by Snowflake error code {code}"
+                    );
+                    evict_oauth_access_token_for_authorization_code(
+                        cfg,
+                        &login_parameters.server_url,
+                        token_cache,
+                    );
+                    should_retry = true;
+                }
+                LoginMethod::OAuthClientCredentials(_) => {
+                    // No cache to evict for CC (analysis §4 / §14 #12);
+                    // the replay re-acquires from the IdP token endpoint.
+                    tracing::debug!(
+                        code = code,
+                        oauth_type = "OAUTH_CLIENT_CREDENTIALS",
+                        "Re-acquiring OAuth client-credentials access token after Snowflake error code {code}"
+                    );
+                    should_retry = true;
+                }
+                _ => {}
+            }
+            if should_retry {
+                tracing::debug!("Retrying login after OAuth refresh");
+                let retry_data =
+                    auth_request_data(client, login_parameters, session_parameters, token_cache)
+                        .await?;
+                let retry_request = AuthRequest { data: retry_data };
+                auth_response =
+                    send_login_request(client, login_parameters, &retry_request).await?;
+            }
         }
     }
 
@@ -1663,6 +1854,12 @@ pub enum RestError {
     #[snafu(display("External browser SSO failed"))]
     ExternalBrowser {
         source: external_browser::ExternalBrowserError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("OAuth flow failed"))]
+    OAuthFlow {
+        source: oauth::OAuthError,
         #[snafu(implicit)]
         location: Location,
     },
