@@ -1,9 +1,8 @@
 """Integration tests for the Python OAuth wrapper plumbing.
 
 Scope: connect-time kwarg validation, AUTHENTICATOR handling, and
-secret redaction for the three OAuth flows (analysis_feature_oauth.md
-§3 Authorization Code, §4 Client Credentials, §6 legacy pre-acquired
-access token).
+secret redaction for the three OAuth flows (Authorization Code with
+PKCE, Client Credentials, and legacy pre-acquired access token).
 
 These tests intentionally do NOT exercise the full OAuth flows:
 
@@ -77,7 +76,7 @@ class TestOAuthClientCredentialsRequiredParams:
 
     def test_should_fail_oauth_client_credentials_when_token_request_url_is_missing(self, int_test_connection_factory):
         # Snowflake's GS does not mint client-credentials tokens, so the IdP token endpoint must
-        # be provided up-front per analysis §4.
+        # be provided up-front (Snowflake's GS does not mint CC tokens).
 
         # Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_token_request_url
         kwargs = {
@@ -151,7 +150,7 @@ class TestOAuthAuthenticatorValue:
 
 
 class TestOAuthSecretRedaction:
-    """No driver-emitted error message echoes an OAuth secret literal (analysis §11)."""
+    """No driver-emitted error message echoes an OAuth secret literal."""
 
     SECRET_LITERAL = "ZZ_PY_SECRET_NEEDLE_OAUTH_CC_ZZ"
 

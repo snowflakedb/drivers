@@ -200,7 +200,7 @@ class Connection(ErrorHandlerMixin):
 
         # OAuth secrets (`oauth_client_secret`, `token`) join the legacy
         # password/private-key family so the public `Connection.kwargs` view
-        # never echoes a credential — see analysis_feature_oauth.md §11.
+        # never echoes a credential (cross-driver redaction requirement).
         _sensitive_keys = {
             "password",
             "private_key",

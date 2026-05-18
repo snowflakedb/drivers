@@ -13,8 +13,8 @@ there is no Python-level CC class to subclass or replace. This module
 only exists so legacy ``from snowflake.connector.auth.oauth_credentials
 import AuthByOauthCredentials`` imports keep working.
 
-See ``analysis_feature_oauth.md`` §4 (CC flow) and §9 (configuration
-matrix) for the full behavioural spec.
+The Rust core implements the CC flow (external IdP only; Snowflake's
+GS does not issue tokens for ``grant_type=client_credentials``).
 """
 
 from __future__ import annotations

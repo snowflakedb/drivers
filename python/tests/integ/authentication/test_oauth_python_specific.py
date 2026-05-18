@@ -15,11 +15,11 @@ Covered behaviours:
 * Failing legacy ``AUTHENTICATOR=OAUTH`` when ``token`` is absent.
 * Rewriting the legacy ``oauth_token_url`` alias to the canonical
   ``oauth_token_request_url`` before forwarding (Python-only API
-  surface — analysis §9 Python column / `_internal/oauth.py`).
+  surface — Python column of the cross-driver configuration matrix / `_internal/oauth.py`).
 * Emitting a ``DeprecationWarning`` for Python-only OAuth switches
   (``oauth_enable_refresh_tokens``, ``oauth_credentials_in_body``,
   ``oauth_socket_uri``) that the universal driver does not honour
-  (analysis §9 Python column).
+  (Python column of the cross-driver configuration matrix).
 * Redacting a legacy OAUTH ``token`` literal from the wrapper's
   exception chain.
 
@@ -116,7 +116,7 @@ class TestOAuthLegacyAliasRewrite:
 
         # sf_core must NOT raise "Missing required parameter ...
         # oauth_token_request_url" — the wrapper rewrote the alias
-        # before forwarding (analysis §9 Python column). The connect
+        # before forwarding (Python legacy alias rewriting). The connect
         # still fails because no real IdP is reachable, but for a
         # *different* reason than missing-param.
         text = _full_error_text(exception)

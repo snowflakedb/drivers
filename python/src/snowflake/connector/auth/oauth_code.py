@@ -12,8 +12,8 @@ there is no Python-level AC class to subclass or replace. This module
 only exists so legacy ``from snowflake.connector.auth.oauth_code import
 AuthByOauthCode`` imports keep working.
 
-See ``analysis_feature_oauth.md`` §3 (AC sequence + state machine) and
-§9 (configuration matrix) for the full behavioural spec.
+The Rust core implements the full AC sequence and state machine
+(cache → refresh → interactive browser leg).
 """
 
 from __future__ import annotations
