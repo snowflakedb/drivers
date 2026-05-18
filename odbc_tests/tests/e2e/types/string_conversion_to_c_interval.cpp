@@ -11,7 +11,7 @@
 //   4. Not a valid interval value                 -> SQL_ERROR, 22018
 //
 // Each test branches on the driver: the reference driver rejects every
-// SQL_C_INTERVAL_* target against VARCHAR with SQLSTATE 07006 (BD#54). The
+// SQL_C_INTERVAL_* target against VARCHAR with SQLSTATE 07006 (BD#55). The
 // universal driver implements Appendix D and asserts the success / 01S07 /
 // 22015 / 22018 paths above.
 
@@ -38,7 +38,7 @@
 
 namespace {
 
-constexpr const char* kBd54VarcharIntervalFetch = "BD#54";
+constexpr const char* kBd55VarcharIntervalFetch = "BD#55";
 
 inline void expect_old_driver_interval_get_data_sqlstate_07006(const StatementHandleWrapper& stmt, SQLUSMALLINT column,
                                                                SQLSMALLINT interval_c_type) {
@@ -69,7 +69,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as single-field SQL_C_
       "SELECT '5' AS years, '10' AS months, '15' AS days, "
       "'8' AS hours, '30' AS minutes, '45' AS seconds");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR},
                                                       {2, SQL_C_INTERVAL_MONTH},
                                                       {3, SQL_C_INTERVAL_DAY},
@@ -79,7 +79,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as single-field SQL_C_
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR reads year = 5
     {
       INFO("SQL_C_INTERVAL_YEAR");
@@ -140,7 +140,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should preserve negative sign across SQL_C_
       "SELECT '-5' AS neg_years, '-10' AS neg_months, '-15' AS neg_days, "
       "'-3-6' AS neg_year_month, '-5 10' AS neg_day_hour");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR},
                                                       {2, SQL_C_INTERVAL_MONTH},
                                                       {3, SQL_C_INTERVAL_DAY},
@@ -149,7 +149,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should preserve negative sign across SQL_C_
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR has interval_sign = SQL_TRUE and year = 5
     {
       INFO("SQL_C_INTERVAL_YEAR (negative)");
@@ -199,7 +199,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch zero VARCHAR as SQL_C_INTERVAL
       "'-0' AS neg_zero_year, '-0-0' AS neg_zero_year_month, "
       "'0 00:00:00' AS zero_day_second");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR},
                                                       {2, SQL_C_INTERVAL_YEAR_TO_MONTH},
                                                       {3, SQL_C_INTERVAL_YEAR},
@@ -208,7 +208,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch zero VARCHAR as SQL_C_INTERVAL
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR has year = 0 and interval_sign = SQL_FALSE
     {
       auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
@@ -255,14 +255,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite SQL_C_INT
   auto stmt =
       conn.execute_fetch("SELECT '3-6' AS y_m, '0-11' AS zero_year_eleven_month, '12-0' AS twelve_year_zero_month");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(
         stmt,
         {{1, SQL_C_INTERVAL_YEAR_TO_MONTH}, {2, SQL_C_INTERVAL_YEAR_TO_MONTH}, {3, SQL_C_INTERVAL_YEAR_TO_MONTH}});
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then '3-6' produces year = 3, month = 6
     {
       auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
@@ -295,7 +295,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite day-time 
       "'2 08:15:30' AS d_s, '10:45' AS h_m, "
       "'12:30:45' AS h_s, '45:30' AS m_s");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_DAY_TO_HOUR},
                                                       {2, SQL_C_INTERVAL_DAY_TO_MINUTE},
                                                       {3, SQL_C_INTERVAL_DAY_TO_SECOND},
@@ -305,7 +305,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as composite day-time 
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_DAY_TO_HOUR populates day and hour
     {
       INFO("SQL_C_INTERVAL_DAY_TO_HOUR");
@@ -370,7 +370,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR with fractional second
       "SELECT '12.500000' AS sec_frac, '45:30.125' AS m_s_frac, "
       "'12:30:45.999' AS h_s_frac, '2 08:15:30.500' AS d_s_frac");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_SECOND},
                                                       {2, SQL_C_INTERVAL_MINUTE_TO_SECOND},
                                                       {3, SQL_C_INTERVAL_HOUR_TO_SECOND},
@@ -378,7 +378,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR with fractional second
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_SECOND parses '12.500000' as second = 12, fraction = 500000 microseconds
     {
       auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
@@ -419,12 +419,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should trim whitespace in VARCHAR -> SQL_C_
   // When A VARCHAR row carrying interval literals padded with whitespace is fetched
   auto stmt = conn.execute_fetch("SELECT '  5  ' AS pad_year, '  3-6  ' AS pad_year_month");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR}, {2, SQL_C_INTERVAL_YEAR_TO_MONTH}});
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then leading/trailing whitespace is ignored and SQL_C_INTERVAL_YEAR parses year = 5
     {
       auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
@@ -451,13 +451,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields with SQLSTA
       "SELECT '3-6' AS y_m_to_year, '5 10:30:45' AS d_s_to_day, "
       "'12:30:45' AS h_s_to_hour");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(
         stmt, {{1, SQL_C_INTERVAL_YEAR}, {2, SQL_C_INTERVAL_DAY}, {3, SQL_C_INTERVAL_HOUR}});
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then '3-6' fetched as SQL_C_INTERVAL_YEAR keeps year = 3 and warns 01S07 for the dropped month
     {
       auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
@@ -487,13 +487,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields in compound
       "SELECT '2 08:15:30' AS d_s_to_d_h, '2 08:15:30' AS d_s_to_d_m, "
       "'12:30:45' AS h_s_to_h_m");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(
         stmt, {{1, SQL_C_INTERVAL_DAY_TO_HOUR}, {2, SQL_C_INTERVAL_DAY_TO_MINUTE}, {3, SQL_C_INTERVAL_HOUR_TO_MINUTE}});
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then '2 08:15:30' fetched as SQL_C_INTERVAL_DAY_TO_HOUR keeps day = 2, hour = 8 with 01S07
     {
       auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
@@ -525,12 +525,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should warn 01S07 when fractional digits ar
   // When A VARCHAR row carrying fractional literals targeted at integer-only qualifiers is fetched
   auto stmt = conn.execute_fetch("SELECT '5.5' AS half_year");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     expect_old_driver_interval_get_data_sqlstate_07006(stmt, 1, SQL_C_INTERVAL_YEAR);
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR keeps year = 5 and warns 01S07 for the dropped fraction
     auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -549,12 +549,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should not warn when fractional component i
   // When A VARCHAR row carrying a zero-magnitude fraction is fetched as SQL_C_INTERVAL_YEAR
   auto stmt = conn.execute_fetch("SELECT '5.0' AS year_dot_zero");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     expect_old_driver_interval_get_data_sqlstate_07006(stmt, 1, SQL_C_INTERVAL_YEAR);
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR returns year = 5 with no truncation warning
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -577,7 +577,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail with 22015 when leading-field p
       "SELECT '10000' AS big_year, '10000' AS big_month, '10000' AS big_day, "
       "'10000' AS big_hour, '10000' AS big_second");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR},
                                                       {2, SQL_C_INTERVAL_MONTH},
                                                       {3, SQL_C_INTERVAL_DAY},
@@ -586,7 +586,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail with 22015 when leading-field p
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR returns SQL_ERROR with SQLSTATE 22015
     check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 1);
     // And SQL_C_INTERVAL_MONTH returns SQL_ERROR with SQLSTATE 22015
@@ -608,14 +608,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail with 22015 when composite leadi
       "SELECT '10000-6' AS big_y_m, '10000 10:30:45' AS big_d_s, "
       "'10000:30' AS big_h_m");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(
         stmt,
         {{1, SQL_C_INTERVAL_YEAR_TO_MONTH}, {2, SQL_C_INTERVAL_DAY_TO_SECOND}, {3, SQL_C_INTERVAL_HOUR_TO_MINUTE}});
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_YEAR_TO_MONTH returns SQL_ERROR with SQLSTATE 22015
     check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
     // And SQL_C_INTERVAL_DAY_TO_SECOND returns SQL_ERROR with SQLSTATE 22015
@@ -643,10 +643,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should respect SQL_DESC_DATETIME_INTERVAL_P
     ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)5, 0);
     REQUIRE(ret == SQL_SUCCESS);
 
-    OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
       expect_old_driver_interval_get_data_sqlstate_07006(stmt, 1, SQL_C_INTERVAL_YEAR);
     }
-    NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
       // Then Precision 5 admits value 99999 for SQL_C_INTERVAL_YEAR
       auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
       CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -663,10 +663,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should respect SQL_DESC_DATETIME_INTERVAL_P
     ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)5, 0);
     REQUIRE(ret == SQL_SUCCESS);
 
-    OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
       expect_old_driver_interval_get_data_sqlstate_07006(stmt, 1, SQL_C_INTERVAL_YEAR);
     }
-    NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) { check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 1); }
+    NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) { check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 1); }
   }
 
   // And Precision 1 admits value 9 for SQL_C_INTERVAL_HOUR
@@ -678,10 +678,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should respect SQL_DESC_DATETIME_INTERVAL_P
     ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)1, 0);
     REQUIRE(ret == SQL_SUCCESS);
 
-    OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
       expect_old_driver_interval_get_data_sqlstate_07006(stmt, 1, SQL_C_INTERVAL_HOUR);
     }
-    NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
       auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 1);
       CHECK(interval.interval_type == SQL_IS_HOUR);
       CHECK(interval.intval.day_second.hour == 9);
@@ -697,10 +697,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should respect SQL_DESC_DATETIME_INTERVAL_P
     ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)1, 0);
     REQUIRE(ret == SQL_SUCCESS);
 
-    OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+    OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
       expect_old_driver_interval_get_data_sqlstate_07006(stmt, 1, SQL_C_INTERVAL_HOUR);
     }
-    NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) { check_interval_precision_lost<SQL_C_INTERVAL_HOUR>(stmt, 1); }
+    NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) { check_interval_precision_lost<SQL_C_INTERVAL_HOUR>(stmt, 1); }
   }
 }
 
@@ -716,13 +716,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR with SQLSTA
       "SELECT 'not-an-interval' AS bad1, 'abc' AS bad2, "
       "'12.34.56' AS bad3, '' AS empty");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(
         stmt, {{1, SQL_C_INTERVAL_YEAR}, {2, SQL_C_INTERVAL_MONTH}, {3, SQL_C_INTERVAL_DAY}, {4, SQL_C_INTERVAL_HOUR}});
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then every interval target returns SQL_ERROR with SQLSTATE 22018
     check_invalid_string<SQL_C_INTERVAL_YEAR>(stmt, 1);
     check_invalid_string<SQL_C_INTERVAL_MONTH>(stmt, 2);
@@ -739,7 +739,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed year-month VARCHAR 
       "SELECT '3/6' AS wrong_sep, '3.6' AS dot_sep, "
       "'year-month' AS text, '3 6' AS space_sep");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR_TO_MONTH},
                                                       {2, SQL_C_INTERVAL_YEAR_TO_MONTH},
                                                       {3, SQL_C_INTERVAL_YEAR_TO_MONTH},
@@ -747,7 +747,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed year-month VARCHAR 
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then every malformed year-month literal returns SQL_ERROR with SQLSTATE 22018
     check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
     check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 2);
@@ -764,7 +764,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed day-time VARCHAR wi
       "SELECT '5-10' AS wrong_sep, 'day hour' AS text_values, "
       "'5:10:30:45' AS too_many, '::' AS empty_parts");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_DAY_TO_HOUR},
                                                       {2, SQL_C_INTERVAL_DAY_TO_SECOND},
                                                       {3, SQL_C_INTERVAL_HOUR_TO_SECOND},
@@ -772,7 +772,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed day-time VARCHAR wi
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then every malformed day-time literal returns SQL_ERROR with SQLSTATE 22018
     check_invalid_string<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
     check_invalid_string<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 2);
@@ -787,7 +787,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject bare integer for every compos
   // When A VARCHAR carrying a bare integer is fetched as each composite target
   auto stmt = conn.execute_fetch("SELECT '5' AS bare");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_YEAR_TO_MONTH},
                                                       {1, SQL_C_INTERVAL_DAY_TO_HOUR},
                                                       {1, SQL_C_INTERVAL_DAY_TO_MINUTE},
@@ -798,7 +798,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject bare integer for every compos
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then every composite target returns SQL_ERROR with SQLSTATE 22018
     check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
     check_invalid_string<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
@@ -828,7 +828,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range field magnitudes
       "SELECT '25:61' AS h_m, '30:61' AS m_s, "
       "'5 24:0:0' AS d_s, '3-12' AS y_m");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_HOUR_TO_MINUTE},
                                                       {2, SQL_C_INTERVAL_MINUTE_TO_SECOND},
                                                       {3, SQL_C_INTERVAL_DAY_TO_SECOND},
@@ -836,7 +836,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range field magnitudes
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_HOUR_TO_MINUTE rejects minute=61 with SQLSTATE 22018
     check_invalid_string<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
     // And SQL_C_INTERVAL_MINUTE_TO_SECOND rejects second=61 with SQLSTATE 22018
@@ -861,7 +861,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should accept boundary field magnitudes",
       "SELECT '23:59' AS h_m, '23:59:59' AS h_s, "
       "'45:59' AS m_s, '3-11' AS y_m");
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     assert_old_driver_varchar_interval_columns(stmt, {{1, SQL_C_INTERVAL_HOUR_TO_MINUTE},
                                                       {2, SQL_C_INTERVAL_HOUR_TO_SECOND},
                                                       {3, SQL_C_INTERVAL_MINUTE_TO_SECOND},
@@ -869,7 +869,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should accept boundary field magnitudes",
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Then SQL_C_INTERVAL_HOUR_TO_MINUTE accepts hour=23, minute=59
     {
       auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
@@ -940,7 +940,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as SQL_C_INTERVAL_YEAR
 
   ret = SQLFetch(stmt.getHandle());
 
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     REQUIRE(ret == SQL_ERROR);
     auto records = get_diag_rec(stmt);
     REQUIRE(!records.empty());
@@ -948,7 +948,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fetch VARCHAR as SQL_C_INTERVAL_YEAR
     return;
   }
 
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) {
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     REQUIRE_ODBC(ret, stmt);
 
     // Then the bound struct holds year = 5 with indicator = sizeof(SQL_INTERVAL_STRUCT)
@@ -976,6 +976,6 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR via SQLBind
   CHECK(ret == SQL_ERROR);
   auto records = get_diag_rec(stmt);
   REQUIRE(!records.empty());
-  OLD_DRIVER_ONLY(kBd54VarcharIntervalFetch) { CHECK(records[0].sqlState == "07006"); }
-  NEW_DRIVER_ONLY(kBd54VarcharIntervalFetch) { CHECK(records[0].sqlState == "22018"); }
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) { CHECK(records[0].sqlState == "07006"); }
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) { CHECK(records[0].sqlState == "22018"); }
 }
