@@ -169,6 +169,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     client_prefetch_threads: int | None = 4
     """Number of concurrent chunk prefetch threads for result set downloading. Default: 4"""
 
+    client_session_keep_alive: bool | None = False
+    """Keep the session alive with periodic heartbeat requests. Default: False"""
+
+    client_session_keep_alive_heartbeat_frequency: int | None = None
+    """Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)"""
+
     database: str | None = None
     """Default database to use"""
 
@@ -203,6 +209,8 @@ class ConnectionConfig(ConnectionConfigMixin):
     _PYTHON_TO_RUST_NAME: ClassVar[dict[str, str]] = {
         "client_memory_limit": "CLIENT_MEMORY_LIMIT",
         "client_prefetch_threads": "CLIENT_PREFETCH_THREADS",
+        "client_session_keep_alive": "CLIENT_SESSION_KEEP_ALIVE",
+        "client_session_keep_alive_heartbeat_frequency": "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY",
         "passcode_in_password": "passcodeInPassword",
     }
     """Python field name -> Rust canonical name (only for names that differ)."""

@@ -98,6 +98,18 @@ class TestFromKwargs:
         assert config.user == "u"
         assert "client_fetch_use_mp" not in config._extra
 
+    def test_client_session_keep_alive_kwargs(self):
+        config = ConnectionConfig.from_kwargs(
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=600,
+        )
+        assert config.client_session_keep_alive is True
+        assert config.client_session_keep_alive_heartbeat_frequency == 600
+
+    def test_client_session_keep_alive_upper_case_alias(self):
+        config = ConnectionConfig.from_kwargs(CLIENT_SESSION_KEEP_ALIVE=True)
+        assert config.client_session_keep_alive is True
+
 
 class TestFromConnectionArgs:
     """Test ConnectionConfig.from_connection_args factory method."""
@@ -206,6 +218,24 @@ class TestToOptions:
         opts = config.to_options()
         assert "passcodeInPassword" in opts
         assert "passcode_in_password" not in opts
+
+    def test_client_session_keep_alive_forwarded(self):
+        config = ConnectionConfig(
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=1200,
+        )
+        opts = config.to_options()
+        assert opts["CLIENT_SESSION_KEEP_ALIVE"] is True
+        assert opts["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"] == 1200
+
+    def test_client_session_keep_alive_defaults(self):
+        config = ConnectionConfig()
+        opts = config.to_options()
+        # Default is False (forwarded so the server sees the explicit choice).
+        assert opts["CLIENT_SESSION_KEEP_ALIVE"] is False
+        # Frequency stays None: the heartbeat scheduler computes the default
+        # from master_token_validity at runtime.
+        assert "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY" not in opts
 
     def test_includes_extra(self):
         config = ConnectionConfig(user="u")

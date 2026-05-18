@@ -235,6 +235,55 @@ class TestAutocommitKwargUnit:
         # If connection_set_session_parameters was not called at all, that's also correct
 
 
+class TestClientSessionKeepAliveKwargUnit:
+    """Unit tests for client_session_keep_alive[_heartbeat_frequency] kwargs."""
+
+    def test_keep_alive_kwargs_forwarded_to_set_options(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(
+            user="u",
+            account="a",
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=1500,
+        )
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["CLIENT_SESSION_KEEP_ALIVE"] == ConfigSetting(bool_value=True)
+        assert request.options["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"] == ConfigSetting(int_value=1500)
+
+    def test_keep_alive_properties_read_from_config(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(
+            user="u",
+            account="a",
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=900,
+        )
+
+        assert conn.client_session_keep_alive is True
+        assert conn.client_session_keep_alive_heartbeat_frequency == 900
+
+    def test_keep_alive_properties_defaults(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a")
+
+        assert conn.client_session_keep_alive is False
+        assert conn.client_session_keep_alive_heartbeat_frequency is None
+
+    def test_keep_alive_attributes_are_read_only(self, connection):
+        # The old Python connector exposed setters but they were no-ops on
+        # the live heartbeat thread. The Universal Driver drops them so an
+        # accidental post-connect assignment fails loudly instead of being
+        # silently ignored.
+        with pytest.raises(AttributeError):
+            connection.client_session_keep_alive = True
+        with pytest.raises(AttributeError):
+            connection.client_session_keep_alive_heartbeat_frequency = 600
+
+
 class TestConnectionSetOptions:
     """Unit tests for the batched connection_set_options RPC during __init__."""
 

@@ -90,6 +90,8 @@ pub mod param_names {
     pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
     pub const CLIENT_SESSION_KEEP_ALIVE: ParamKey = ParamKey("CLIENT_SESSION_KEEP_ALIVE");
+    pub const CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY: ParamKey =
+        ParamKey("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY");
     // Logout configuration
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
     pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
@@ -888,6 +890,35 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: false,
         mutable_after_connect: true,
     },
+    // ── Session keep-alive ─────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Keep the session alive with periodic heartbeat requests",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
 ];
 
 impl ParamDef {
@@ -1015,6 +1046,24 @@ mod tests {
                 param.canonical_name
             );
         }
+    }
+
+    #[test]
+    fn client_session_keep_alive_params_registered() {
+        let r = registry();
+        let keep_alive = r
+            .resolve("CLIENT_SESSION_KEEP_ALIVE")
+            .expect("CLIENT_SESSION_KEEP_ALIVE should resolve");
+        assert_eq!(keep_alive.value_type, ValueType::Bool);
+        assert_eq!(keep_alive.scope, ParamScope::Session);
+        assert!(keep_alive.used_at_connect);
+
+        let freq = r
+            .resolve("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY")
+            .expect("heartbeat frequency param should resolve");
+        assert_eq!(freq.value_type, ValueType::Int);
+        assert_eq!(freq.scope, ParamScope::Session);
+        assert!(freq.used_at_connect);
     }
 
     #[test]

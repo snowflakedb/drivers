@@ -643,20 +643,12 @@ class Connection(ErrorHandlerMixin):
     @property
     def client_session_keep_alive(self) -> bool | None:
         """Whether to keep the session active with periodic heartbeat requests."""
-        raise NotImplementedError("client_session_keep_alive is not yet implemented")
-
-    @client_session_keep_alive.setter
-    def client_session_keep_alive(self, value: bool) -> None:
-        raise NotImplementedError("client_session_keep_alive is not yet implemented")
+        return self.config.client_session_keep_alive
 
     @property
     def client_session_keep_alive_heartbeat_frequency(self) -> int | None:
         """The frequency in seconds of heartbeat requests when session keep-alive is enabled."""
-        raise NotImplementedError("client_session_keep_alive_heartbeat_frequency is not yet implemented")
-
-    @client_session_keep_alive_heartbeat_frequency.setter
-    def client_session_keep_alive_heartbeat_frequency(self, value: int) -> None:
-        raise NotImplementedError("client_session_keep_alive_heartbeat_frequency is not yet implemented")
+        return self.config.client_session_keep_alive_heartbeat_frequency
 
     @property
     def client_prefetch_threads(self) -> int:

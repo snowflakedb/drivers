@@ -16,6 +16,7 @@ fn test_tokens() -> SessionTokens {
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
+        master_validity: None,
     }
 }
 

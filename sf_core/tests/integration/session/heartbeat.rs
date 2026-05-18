@@ -455,5 +455,6 @@ fn test_tokens(session_token: &str) -> SessionTokens {
         session_id: 1,
         session_expires_at: None,
         master_expires_at: Some(std::time::Instant::now() + Duration::from_secs(14400)),
+        master_validity: Some(Duration::from_secs(14400)),
     }
 }
