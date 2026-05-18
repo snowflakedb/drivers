@@ -595,6 +595,7 @@ impl OdbcError {
                         SqlState::RestrictedDataTypeAttributeViolation
                     }
                 },
+                ConversionError::DatetimeOutOfSqlRange { .. } => SqlState::InvalidDatetimeFormat,
                 ConversionError::ReadArrowValue { .. } => SqlState::GeneralError,
                 _ => SqlState::GeneralError,
             },
@@ -610,12 +611,14 @@ impl OdbcError {
                 }
                 JsonBindingError::InvalidDatetimeValue { .. } => SqlState::InvalidDatetimeFormat,
                 JsonBindingError::DatetimeFieldOverflow { .. } => SqlState::DatetimeFieldOverflow,
-                JsonBindingError::UnsupportedCDataType { .. } => {
+                JsonBindingError::UnsupportedCDataType { .. }
+                | JsonBindingError::UnsupportedParameterType { .. } => {
                     SqlState::RestrictedDataTypeAttributeViolation
                 }
                 JsonBindingError::InvalidBooleanValue { .. }
                 | JsonBindingError::InvalidNumericLiteral { .. }
-                | JsonBindingError::InvalidHexLiteral { .. } => {
+                | JsonBindingError::InvalidHexLiteral { .. }
+                | JsonBindingError::InvalidCharacterValueForCast { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
                 _ => SqlState::GeneralError,
@@ -729,6 +732,16 @@ impl OdbcError {
         }
     }
 
+    pub fn query_id(&self) -> Option<&str> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { query_id, .. } => query_id.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     #[track_caller]
     pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
         let loc = std::panic::Location::caller();
@@ -745,6 +758,7 @@ impl OdbcError {
                 status_code: driver_exception.status_code,
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
+                query_id: driver_exception.query_id,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
@@ -773,6 +787,8 @@ pub enum CoreProtobufError {
         error_trace: Vec<ErrorTraceEntry>,
         /// ANSI SQL state forwarded from the server response, if present.
         sql_state: Option<String>,
+        /// Snowflake Query ID from the failed query, if available.
+        query_id: Option<String>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -821,8 +837,9 @@ impl ErrorTrace for CoreProtobufError {
 mod tests {
     use super::*;
     use crate::conversion::error::{
-        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, InvalidNumericLiteralSnafu,
-        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+        BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidBooleanValueSnafu,
+        InvalidCharacterValueForCastSnafu, InvalidNumericLiteralSnafu,
+        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
     };
 
     #[test]
@@ -849,6 +866,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: None,
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -880,6 +898,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: None,
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -908,6 +927,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -944,6 +964,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1002,6 +1023,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1037,5 +1059,73 @@ mod tests {
             odbc_err.to_sql_state(),
             SqlState::RestrictedDataTypeAttributeViolation
         );
+    }
+
+    #[test]
+    fn unsupported_parameter_type_maps_to_07006() {
+        // Per the MS ODBC spec, "Restricted data type attribute violation"
+        // (07006) is the right code when `ParameterType` is a valid driver
+        // SQL type for which no conversion from the supplied `ValueType` is
+        // available -- for example binding any C type to
+        // `SQL_SF_TIMESTAMP_TZ` (2001), which the new driver does not yet
+        // support.
+        let json_err = UnsupportedParameterTypeSnafu {
+            sql_type: odbc_sys::SqlDataType(2001),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
+    }
+
+    /// Pins the SQLSTATE for the "string didn't match the expected format
+    /// for the SQL target" path -- 22018, the same class as
+    /// `InvalidNumericLiteral` / `InvalidBooleanValue`. Used by
+    /// `parse_tz_string_with_fallback` for SQL_C_CHAR / SQL_C_WCHAR bound
+    /// to SQL_SF_TIMESTAMP_TZ when the input lacks both an offset suffix
+    /// and a parseable offset-less shape. See PR #1005 review on
+    /// `timestamp.rs:643`.
+    #[test]
+    fn invalid_character_value_for_cast_maps_to_22018() {
+        let json_err = InvalidCharacterValueForCastSnafu {
+            c_type: crate::api::CDataType::Char,
+            value: "not-a-timestamp".to_string(),
+            expected_format: "YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM",
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidCharacterValueForCast
+        );
+    }
+
+    /// Pins the SQLSTATE for "the parsed datetime overflowed the wire
+    /// format's representable range" -- 22008, distinct from 22018 (parse
+    /// failure on the input string) and 07006 (the binding shape itself
+    /// was wrong). Triggered by `write_timestamp_tz_json` when
+    /// `timestamp_nanos_opt()` returns `None`. See PR #1005 review on
+    /// `timestamp.rs:643`.
+    #[test]
+    fn datetime_field_overflow_maps_to_22008() {
+        let json_err = DatetimeFieldOverflowSnafu {
+            reason: "TIMESTAMP_TZ UTC instant 9999-12-31 23:59:59 exceeds the i64 \
+                     nanosecond epoch range supported by the wire format"
+                .to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::DatetimeFieldOverflow);
     }
 }

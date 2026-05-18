@@ -1,0 +1,1461 @@
+"""
+Tests for ci/test_matrix/generate_matrix.py.
+
+Run with:
+    python -m pytest ci/test_matrix/test_generate_matrix.py -q
+or:
+    python -m unittest ci/test_matrix/test_generate_matrix.py
+"""
+
+from __future__ import annotations
+
+import io
+import itertools
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stderr
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import generate_matrix as gm  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _write_model(text: str) -> Path:
+    """Write a Python coverage model module to a fresh tempfile and return its path."""
+    f = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False)
+    f.write(text)
+    f.close()
+    return Path(f.name)
+
+
+# ---------------------------------------------------------------------------
+# Pairwise + parser
+# ---------------------------------------------------------------------------
+
+class PairwiseTests(unittest.TestCase):
+    def test_pairwise_covers_all_pairs(self) -> None:
+        """Every (param_i, val_i, param_j, val_j) pair must appear at least once."""
+        param_values = [["a", "b", "c"], ["1", "2"], ["x", "y", "z"]]
+        cover = gm.pairwise(param_values)
+        n = len(param_values)
+        for i, j in itertools.combinations(range(n), 2):
+            for vi in param_values[i]:
+                for vj in param_values[j]:
+                    self.assertTrue(
+                        any(c[i] == vi and c[j] == vj for c in cover),
+                        f"pair ({i}={vi}, {j}={vj}) not covered",
+                    )
+
+    def test_pairwise_minimal(self) -> None:
+        """For 3x3x3, pairwise should produce <= full cartesian (27)."""
+        cover = gm.pairwise([["a", "b", "c"]] * 3)
+        self.assertLess(len(cover), 27)
+
+
+class LoadModelTests(unittest.TestCase):
+    """Exercises load_model() — the Python-module coverage-model loader."""
+
+    def test_load_basic(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "CONSTRAINTS = [lambda x: False if x['OS'] == 'macos' and x['Arch'] == 'x64' else True]\n"
+            "PR_CELLS = [{'OS': 'ubuntu', 'Arch': 'x64'}]\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            params, constraints, _merge_valid, pr_cells, json_cells = gm.load_model(path)
+            self.assertEqual(params, {"OS": ["ubuntu", "macos"], "Arch": ["x64", "arm"]})
+            self.assertEqual(len(constraints), 1)
+            self.assertTrue(callable(constraints[0]))
+            # Predicate semantics: macos+arm valid, macos+x64 invalid.
+            self.assertTrue(constraints[0]({"OS": "macos", "Arch": "arm"}))
+            self.assertFalse(constraints[0]({"OS": "macos", "Arch": "x64"}))
+            self.assertEqual(pr_cells, [{"OS": "ubuntu", "Arch": "x64"}])
+            self.assertEqual(json_cells, {"pr": [], "merge": [], "nightly": []})
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_load_json_sections(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "CONSTRAINTS = [lambda x: False if x['OS'] == 'macos' and x['Arch'] == 'x64' else True]\n"
+            "PR_CELLS = [{'OS': 'ubuntu', 'Arch': 'x64'}]\n"
+            "JSON_CELLS = {\n"
+            "    'pr':      [{'OS': 'ubuntu', 'Arch': 'x64'}],\n"
+            "    'merge':   [{'OS': 'macos',  'Arch': 'arm'}],\n"
+            "    'nightly': [],\n"
+            "}\n"
+        )
+        try:
+            _params, _c, _mv, _pr, json_cells = gm.load_model(path)
+            self.assertEqual(json_cells["pr"], [{"OS": "ubuntu", "Arch": "x64"}])
+            self.assertEqual(json_cells["merge"], [{"OS": "macos", "Arch": "arm"}])
+            self.assertEqual(json_cells["nightly"], [])
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_constraints_must_be_callable(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "PR_CELLS = []\n"
+            "CONSTRAINTS = [{'if': {'OS': 'ubuntu'}, 'then': {'OS': 'ubuntu'}}]\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("callable", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_constraints_must_be_a_list(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "PR_CELLS = []\n"
+            "CONSTRAINTS = 'not a list'\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("CONSTRAINTS", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_pr_cell_missing_param_raises(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu'], 'Arch': ['x64'], 'Cloud': ['aws']}\n"
+            "PR_CELLS = [{'OS': 'ubuntu', 'Arch': 'x64'}]\n"  # missing Cloud
+            "CONSTRAINTS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("PR_CELLS", str(ctx.exception))
+            self.assertIn("Cloud", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_pr_cell_extra_key_raises(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu'], 'Arch': ['x64']}\n"
+            "PR_CELLS = [{'OS': 'ubuntu', 'Arch': 'x64', 'Bogus': 'x'}]\n"
+            "CONSTRAINTS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("Bogus", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_json_cell_missing_param_raises(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu'], 'Arch': ['x64'], 'Cloud': ['aws']}\n"
+            "PR_CELLS = []\n"
+            "CONSTRAINTS = []\n"
+            "JSON_CELLS = {'pr': [{'OS': 'ubuntu', 'Arch': 'x64'}], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("JSON_CELLS", str(ctx.exception))
+            self.assertIn("Cloud", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_unknown_json_trigger_level_raises(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "PR_CELLS = []\n"
+            "CONSTRAINTS = []\n"
+            "JSON_CELLS = {'foo': [{'OS': 'ubuntu'}]}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("'foo'", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_missing_params_raises(self) -> None:
+        path = _write_model(
+            "PR_CELLS = []\n"
+            "CONSTRAINTS = []\n"
+            "JSON_CELLS = {}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("PARAMS", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_block_list_function_constraint(self) -> None:
+        """
+        Lock in support for the recommended block-list shape: a single
+        is_valid(c) function that returns False for explicitly-forbidden
+        combos and falls through to True for everything else.
+        """
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "def is_valid(c):\n"
+            "    if c['OS'] == 'macos':\n"
+            "        if c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "CONSTRAINTS = [is_valid]\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            _, constraints, _mv, _, _ = gm.load_model(path)
+            self.assertEqual(len(constraints), 1)
+            # Forbidden by an explicit return False.
+            self.assertFalse(constraints[0]({"OS": "macos", "Arch": "x64"}))
+            # Allowed via fall-through return True.
+            self.assertTrue(constraints[0]({"OS": "macos", "Arch": "arm"}))
+            self.assertTrue(constraints[0]({"OS": "ubuntu", "Arch": "x64"}))
+        finally:
+            path.unlink(missing_ok=True)
+
+
+    def test_merge_valid_defaults_to_empty(self) -> None:
+        """A model without MERGE_VALID should load with merge_valid=[]."""
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "CONSTRAINTS = []\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            _params, _constraints, merge_valid, _pr, _json = gm.load_model(path)
+            self.assertEqual(merge_valid, [])
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_loads_callable(self) -> None:
+        """MERGE_VALID predicates should round-trip through load_model unchanged."""
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm']}\n"
+            "CONSTRAINTS = []\n"
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            _params, _c, merge_valid, _pr, _json = gm.load_model(path)
+            self.assertEqual(len(merge_valid), 1)
+            self.assertTrue(callable(merge_valid[0]))
+            self.assertFalse(merge_valid[0]({"OS": "macos", "Arch": "x64"}))
+            self.assertTrue(merge_valid[0]({"OS": "macos", "Arch": "arm"}))
+            self.assertTrue(merge_valid[0]({"OS": "ubuntu", "Arch": "x64"}))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_must_be_callable(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "CONSTRAINTS = []\n"
+            "MERGE_VALID = ['not callable']\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("MERGE_VALID", str(ctx.exception))
+            self.assertIn("callable", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_must_be_a_list(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu']}\n"
+            "CONSTRAINTS = []\n"
+            "MERGE_VALID = 'not a list'\n"
+            "PR_CELLS = []\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                gm.load_model(path)
+            self.assertIn("MERGE_VALID", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+
+
+class MergeValidSemanticsTests(unittest.TestCase):
+    """
+    End-to-end semantics for MERGE_VALID.
+
+    Combos rejected by MERGE_VALID:
+      * MUST NOT appear at trigger_level=pr or merge.
+      * MUST still appear at nightly (full cartesian product preserved).
+    Combos listed in PR_CELLS take precedence — they always run on PR
+    even if MERGE_VALID would block them from the pairwise pool.
+    Mapping coverage is unaffected: a missing mapping for a MERGE_VALID-
+    blocked but otherwise-valid combo still raises in validate_mappings.
+    """
+
+    def _write_python_model(self, merge_valid_block: str = "") -> Path:
+        return _write_model(
+            "PARAMS = {\n"
+            "    'OS':        ['ubuntu', 'macos', 'windows'],\n"
+            "    'Arch':      ['x64', 'arm'],\n"
+            "    'Cloud':     ['aws', 'gcp', 'azure'],\n"
+            "    'PyVersion': ['3.10', '3.11', '3.12', '3.13', '3.14'],\n"
+            "    'HatchEnv':  ['test', 'test-pandas'],\n"
+            "}\n"
+            "def is_valid(c):\n"
+            "    if c['OS'] == 'windows' and c['Arch'] == 'arm':\n"
+            "        if c['PyVersion'] == '3.10':      return False\n"
+            "        if c['HatchEnv'] == 'test-pandas': return False\n"
+            "    return True\n"
+            "CONSTRAINTS = [is_valid]\n"
+            f"{merge_valid_block}"
+            "PR_CELLS = [\n"
+            "    {'OS': 'ubuntu',  'Arch': 'x64', 'Cloud': 'aws',\n"
+            "     'PyVersion': '3.10', 'HatchEnv': 'test'},\n"
+            "    {'OS': 'macos',   'Arch': 'arm', 'Cloud': 'gcp',\n"
+            "     'PyVersion': '3.12', 'HatchEnv': 'test-pandas'},\n"
+            "    {'OS': 'windows', 'Arch': 'x64', 'Cloud': 'azure',\n"
+            "     'PyVersion': '3.14', 'HatchEnv': 'test'},\n"
+            "]\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+
+    def test_macos_x64_only_at_nightly(self) -> None:
+        """Block macos-x64 from merge; nightly must still see it."""
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            mac_x64 = [r for r in rows if r["os"] == "macos-15-intel"]
+            self.assertTrue(mac_x64, "macos-x64 must still appear at nightly")
+            for r in mac_x64:
+                self.assertEqual(
+                    r["trigger_level"], "nightly",
+                    f"macos-x64 row {r['name']} should be nightly-only "
+                    f"under MERGE_VALID, got trigger_level={r['trigger_level']}",
+                )
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_pr_cells_unaffected_by_merge_valid(self) -> None:
+        """PR_CELLS bypass MERGE_VALID — they always run at PR scope."""
+        # Block ALL macos via MERGE_VALID; the PR_CELLS macos row should
+        # still appear at trigger_level=pr.
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            mac_pr = [
+                r for r in rows
+                if "macos" in r["os"] and r["trigger_level"] == "pr"
+            ]
+            self.assertEqual(
+                len(mac_pr), 1,
+                f"expected the explicit macOS PR cell to survive MERGE_VALID; "
+                f"got {[r['name'] for r in mac_pr]}",
+            )
+            self.assertEqual(mac_pr[0]["py"], "3.12")
+            self.assertEqual(mac_pr[0]["cloud_provider"], "gcp")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_does_not_block_nightly_combos(self) -> None:
+        """Combos blocked from merge must appear in the full nightly product."""
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            # macOS-x64 has wheels for 3.11, 3.12, 3.13, 3.14 plus py3.10 sdist.
+            # Without MERGE_VALID nightly emits exactly those rows; with
+            # MERGE_VALID they should still appear, just at trigger_level=nightly.
+            mac_x64_pys = {r["py"] for r in rows if r["os"] == "macos-15-intel"}
+            self.assertEqual(
+                mac_x64_pys, {"3.10", "3.11", "3.12", "3.13", "3.14"},
+                f"nightly must cover every PyVersion on macos-x64; got {mac_x64_pys}",
+            )
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_empty_merge_valid_is_no_op(self) -> None:
+        """Adding MERGE_VALID = [] to a model must not change the matrix."""
+        without = self._write_python_model("")
+        with_empty = self._write_python_model("MERGE_VALID = []\n")
+        try:
+            rows_a = gm.generate(without, "python")
+            rows_b = gm.generate(with_empty, "python")
+            self.assertEqual(rows_a, rows_b)
+        finally:
+            without.unlink(missing_ok=True)
+            with_empty.unlink(missing_ok=True)
+
+    def test_merge_valid_predicates_anded(self) -> None:
+        """Multiple MERGE_VALID predicates: all must pass for a combo to be in pairwise."""
+        block = (
+            "def block_x64(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "def block_arm_aws(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'arm' and c['Cloud'] == 'aws':\n"
+            "        return False\n"
+            "    return True\n"
+            "MERGE_VALID = [block_x64, block_arm_aws]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            rows = gm.generate(path, "python")
+            # No macos-x64 should reach merge level (blocked by 1st predicate).
+            mac_x64_at_merge = [
+                r for r in rows
+                if r["os"] == "macos-15-intel" and r["trigger_level"] in ("pr", "merge")
+            ]
+            self.assertEqual(mac_x64_at_merge, [])
+            # No macos-arm + aws should reach merge level (blocked by 2nd predicate),
+            # but PR_CELLS uses macos-arm + gcp so the PR cell is unaffected.
+            mac_arm_aws_at_merge = [
+                r for r in rows
+                if r["os"] == "macos-latest" and r["cloud_provider"] == "aws"
+                and r["trigger_level"] in ("pr", "merge")
+            ]
+            self.assertEqual(mac_arm_aws_at_merge, [])
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_merge_valid_does_not_affect_mapping_validation(self) -> None:
+        """validate_mappings runs over the full constraint-valid set, not the
+        MERGE_VALID-restricted set, so a missing mapping for a MERGE_VALID-
+        blocked combo still raises."""
+        # Pop a mapping for an (OS, Arch) that MERGE_VALID will block, and
+        # confirm generate() still raises because validate_mappings sees the
+        # combo via the unfiltered cartesian product.
+        original = gm.PYTHON_PLATFORM.pop(("macos", "x64"), None)
+        block = (
+            "def merge_valid(c):\n"
+            "    if c['OS'] == 'macos' and c['Arch'] == 'x64': return False\n"
+            "    return True\n"
+            "MERGE_VALID = [merge_valid]\n"
+        )
+        path = self._write_python_model(block)
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.generate(path, "python")
+            self.assertIn("PYTHON_PLATFORM", str(ctx.exception))
+        finally:
+            path.unlink(missing_ok=True)
+            if original is not None:
+                gm.PYTHON_PLATFORM[("macos", "x64")] = original
+
+
+class BlockListShapeTests(unittest.TestCase):
+    """
+    Static-AST guard: every model's is_valid() must be a pure block-list.
+
+    Discipline:
+      * Every `return` inside the function is either `return False` or
+        `return True` — never `return <expression>`. An expression-return
+        is how allow-list creep enters (e.g. `return c["X"] in (...)`),
+        which silently drops new PARAMS values.
+      * The function ends with `return True` (the fall-through allow).
+        Every other `return` is `return False` (an early-exit forbid).
+
+    Catches drift-inducing patterns at PR-review time instead of at
+    next-CPython-release time.
+    """
+
+    MODELS = ["core", "odbc", "python"]
+
+    def _is_valid_function(self, model_name: str):
+        import ast
+        path = gm.MODELS_DIR / f"{model_name}.py"
+        tree = ast.parse(path.read_text())
+        funcs = [n for n in tree.body
+                 if isinstance(n, ast.FunctionDef) and n.name == "is_valid"]
+        self.assertEqual(
+            len(funcs), 1,
+            f"{path}: expected exactly one top-level `is_valid` function; got {len(funcs)}",
+        )
+        return path, funcs[0]
+
+    def test_returns_only_bool_literals(self) -> None:
+        import ast
+        for model in self.MODELS:
+            with self.subTest(model=model):
+                path, fn = self._is_valid_function(model)
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Return):
+                        continue
+                    self.assertIsInstance(
+                        node.value, ast.Constant,
+                        f"{path}:{node.lineno} `return <expression>` violates "
+                        f"block-list discipline (returns must be `return False` "
+                        f"or `return True`)",
+                    )
+                    self.assertIsInstance(
+                        node.value.value, bool,
+                        f"{path}:{node.lineno} `return` value is "
+                        f"{node.value.value!r}, expected bool literal",
+                    )
+
+    def test_only_trailing_return_true(self) -> None:
+        import ast
+        for model in self.MODELS:
+            with self.subTest(model=model):
+                path, fn = self._is_valid_function(model)
+                # Last top-level statement must be `return True`.
+                last = fn.body[-1]
+                self.assertIsInstance(
+                    last, ast.Return,
+                    f"{path}:{fn.name} must end with `return True`",
+                )
+                self.assertTrue(
+                    isinstance(last.value, ast.Constant) and last.value.value is True,
+                    f"{path}:{last.lineno} trailing return must be `return True`",
+                )
+                # All other returns must be `return False` (early-exit forbids).
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Return) or node is last:
+                        continue
+                    self.assertTrue(
+                        isinstance(node.value, ast.Constant) and node.value.value is False,
+                        f"{path}:{node.lineno} early `return True` short-circuits "
+                        f"later forbidding rules — use `return False` to block "
+                        f"specific combos and let the trailing `return True` allow "
+                        f"by default",
+                    )
+
+
+class ApplyConstraintsTests(unittest.TestCase):
+    """
+    apply_constraints just runs every predicate over the combo and ANDs the
+    results. These tests lock in the contract: True iff every predicate
+    returns True; an empty constraint list always passes.
+    """
+
+    def test_empty_constraints_passes(self) -> None:
+        self.assertTrue(gm.apply_constraints({"OS": "macos"}, []))
+
+    def test_single_predicate(self) -> None:
+        # Block-list predicate: forbid macos+x64, allow everything else.
+        c = lambda x: False if x["OS"] == "macos" and x["Arch"] == "x64" else True
+        self.assertTrue(gm.apply_constraints({"OS": "macos", "Arch": "arm"}, [c]))
+        self.assertFalse(gm.apply_constraints({"OS": "macos", "Arch": "x64"}, [c]))
+        # Non-macos: predicate falls through to True.
+        self.assertTrue(gm.apply_constraints({"OS": "ubuntu", "Arch": "x64"}, [c]))
+
+    def test_multi_clause_predicate(self) -> None:
+        # Forbidden combo: windows + arm + 3.10. Anything else → True.
+        c = lambda x: (
+            False
+            if x["OS"] == "windows" and x["Arch"] == "arm" and x["PyVersion"] == "3.10"
+            else True
+        )
+        self.assertFalse(gm.apply_constraints(
+            {"OS": "windows", "Arch": "arm", "PyVersion": "3.10"}, [c],
+        ))
+        self.assertTrue(gm.apply_constraints(
+            {"OS": "windows", "Arch": "arm", "PyVersion": "3.11"}, [c],
+        ))
+        # Antecedent doesn't match → fall through to True.
+        self.assertTrue(gm.apply_constraints(
+            {"OS": "windows", "Arch": "x64", "PyVersion": "3.10"}, [c],
+        ))
+        self.assertTrue(gm.apply_constraints(
+            {"OS": "ubuntu", "Arch": "arm", "PyVersion": "3.10"}, [c],
+        ))
+
+    def test_all_predicates_must_pass(self) -> None:
+        # Two block-list predicates: each independently forbids one combo.
+        c1 = lambda x: False if x["OS"] == "macos" and x["Arch"] == "x64" else True
+        c2 = lambda x: False if x["Arch"] == "x64" else True
+        self.assertFalse(gm.apply_constraints({"OS": "ubuntu", "Arch": "x64"}, [c1, c2]))
+        self.assertTrue(gm.apply_constraints({"OS": "macos", "Arch": "arm"}, [c1, c2]))
+
+
+# ---------------------------------------------------------------------------
+# Generator end-to-end
+# ---------------------------------------------------------------------------
+
+ODBC_PATH = gm.MODELS_DIR / "odbc.py"
+PYTHON_PATH = gm.MODELS_DIR / "python.py"
+CORE_PATH = gm.MODELS_DIR / "core.py"
+
+
+class OdbcMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(ODBC_PATH, "odbc")
+
+    def test_pr_has_all_major_platforms(self) -> None:
+        pr_artifacts = {r["driver_artifact"] for r in self.gha if r["trigger_level"] == "pr"}
+        self.assertIn("Linux x64", pr_artifacts)
+        self.assertIn("macOS ARM64", pr_artifacts)
+        self.assertIn("Windows x64", pr_artifacts)
+        self.assertIn("Windows x86", pr_artifacts)
+
+    def test_windows_x86_present(self) -> None:
+        x86_rows = [r for r in self.gha if r.get("driver_artifact") == "Windows x86"]
+        self.assertTrue(x86_rows, "expected at least one Windows x86 ODBC cell")
+        for r in x86_rows:
+            self.assertEqual(r["driver_lib"], "sfodbc32.dll")
+            self.assertEqual(r["msvc_arch"], "x86")
+            self.assertEqual(r["vcpkg_triplet"], "x86-windows")
+            self.assertEqual(r["os"], "windows-latest")
+
+    def test_windows_x64_has_vcpkg_triplet(self) -> None:
+        # Regression test: test-odbc.yml's vcpkg install step uses
+        # ${{ matrix.vcpkg_triplet }} with no fallback. Every windows-x64
+        # ODBC cell must carry vcpkg_triplet=x64-windows or vcpkg install
+        # fails with "expected a triplet name here".
+        x64_rows = [r for r in self.gha if r.get("driver_artifact") == "Windows x64"]
+        self.assertTrue(x64_rows, "expected at least one Windows x64 ODBC cell")
+        for r in x64_rows:
+            self.assertEqual(r["vcpkg_triplet"], "x64-windows", r["name"])
+
+    def test_json_variant_present(self) -> None:
+        json_rows = [r for r in self.gha if r.get("result_format") == "json"]
+        self.assertEqual(len(json_rows), 1)
+        r = json_rows[0]
+        self.assertEqual(r["os"], "ubuntu-latest")
+        self.assertEqual(r["cloud_provider"], "aws")
+        self.assertEqual(r["driver_artifact"], "Linux x64")
+
+
+class PythonMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(PYTHON_PATH, "python")
+
+    def test_no_wheel_artifact_on_py310(self) -> None:
+        offenders = [r for r in self.gha if r["py"] == "3.10" and r.get("wheel_artifact")]
+        self.assertEqual(offenders, [])
+
+    def test_py310_present_on_main_platforms(self) -> None:
+        py310_os = {r["os"] for r in self.gha if r["py"] == "3.10"}
+        # py3.10 builds from sdist; should be on at least all wheel-target OSes
+        self.assertIn("ubuntu-latest", py310_os)
+        self.assertIn("macos-latest", py310_os)
+        self.assertIn("windows-latest", py310_os)
+
+    def test_macos_x64_present(self) -> None:
+        # Regression test: macOS Intel (macos-15-intel runner) coverage must
+        # remain in the matrix. Drop this row from PYTHON_PLATFORM and the
+        # release-build / nightly coverage gap reopens (see PR #1084 review).
+        intel_rows = [r for r in self.gha if r["os"] == "macos-15-intel"]
+        self.assertTrue(intel_rows, "expected macos-15-intel cells in the python matrix")
+        for r in intel_rows:
+            self.assertIn(r["py"], {"3.10", "3.11", "3.12", "3.13", "3.14"})
+            # py3.10 always sdist; every other py on macos-x64 must have a wheel.
+            if r["py"] != "3.10":
+                self.assertEqual(r.get("wheel_artifact"), "macosx_x86_64", r["name"])
+
+    def test_windows_arm_at_merge_scope(self) -> None:
+        # Regression test for the routing-aware pairwise solver. Without it,
+        # the abstract pairwise solver picks windows-arm × py3.13/3.14 (which
+        # have no wheel) to cover (windows, arm) pairs; those rows get
+        # dropped at row-build time, leaving zero windows-arm cells at merge
+        # level (only nightly). The routing-aware predicate restricts the
+        # candidate pool to combos that actually emit a row, so windows-arm
+        # gets a real merge-level cell.
+        warm_at_merge = [
+            r for r in self.gha
+            if r["os"] == "windows-11-arm"
+            and r["trigger_level"] in ("pr", "merge")
+        ]
+        self.assertTrue(
+            warm_at_merge,
+            "expected windows-11-arm cells at pr+merge scope; "
+            "if missing, the pairwise solver may have regressed to the "
+            "non-routing-aware path that picks routing-invalid combos.",
+        )
+
+    def test_windows_arm_excludes_py310(self) -> None:
+        # Regression test for the python.py constraint
+        #     IF [OS] = "windows" AND [Arch] = "arm" THEN [PyVersion] <> "3.10"
+        # CPython has no Windows-aarch64 build for 3.10 (Windows-on-ARM was
+        # first supported in 3.11, PEP 11 tier-3). uv fails with
+        # "No download found for request: cpython-3.10-windows-aarch64-none"
+        # if this combo reaches the matrix.
+        #
+        # Originally the constraint used `AND` in the IF clause which the
+        # in-house parser silently dropped (regex matched only single-condition
+        # IFs). A failing CI run on the merge_scope label shipped a real
+        # windows-11-arm/py3.10 cell because of that. This test guards the
+        # parser extension that supports AND clauses + `<>`/`NOT IN` ops.
+        offenders = [
+            r for r in self.gha
+            if r["os"] == "windows-11-arm" and r["py"] == "3.10"
+        ]
+        self.assertEqual(
+            offenders, [],
+            "windows-11-arm + py3.10 cells must be pruned from the matrix "
+            f"(no CPython 3.10 Windows-ARM64 build); got: {offenders}",
+        )
+
+    def test_windows_arm_excludes_test_pandas(self) -> None:
+        # Regression test for the python.py constraint
+        #     IF [OS] = "windows" AND [Arch] = "arm" THEN [HatchEnv] <> "test-pandas"
+        # pyarrow has no win_arm64 wheel for the Python versions we test, so
+        # uv source-builds it on the windows-11-arm runner. The build needs
+        # Apache Arrow C++ libs which aren't installed there; CMake fails at
+        # find_package(Arrow). See run 25662523089 / job 75331063502.
+        # The `test` hatch env is unaffected (no pyarrow dep).
+        offenders = [
+            r for r in self.gha
+            if r["os"] == "windows-11-arm" and r["hatch_env"] == "test-pandas"
+        ]
+        self.assertEqual(
+            offenders, [],
+            "windows-11-arm + test-pandas cells must be pruned from the matrix "
+            f"(pyarrow has no win_arm64 wheel); got: {offenders}",
+        )
+
+    def test_wheel_artifact_only_when_built(self) -> None:
+        # Reverse-lookup the (os, arch) producing this wheel artifact name.
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        for r in self.gha:
+            artifact = r.get("wheel_artifact")
+            if not artifact:
+                continue
+            pair = artifact_to_pair[artifact]
+            self.assertIn(
+                r["py"],
+                gm.PYTHON_PLATFORM[pair]["wheels"],
+                f"row {r['name']} has wheel_artifact {artifact} but py{r['py']} "
+                f"isn't in PYTHON_PLATFORM[{pair}]['wheels']",
+            )
+
+    def test_json_variants_present(self) -> None:
+        json_rows = [r for r in self.gha if r.get("result_format") == "json"]
+        envs = {r["hatch_env"] for r in json_rows}
+        self.assertEqual(envs, {"test", "test-pandas"})
+        for r in json_rows:
+            self.assertEqual(r["py"], "3.13")
+            self.assertEqual(r["os"], "ubuntu-latest")
+            self.assertEqual(r["cloud_provider"], "aws")
+
+    def test_required_keys_on_every_row(self) -> None:
+        required = {"name", "os", "cloud_provider", "trigger_level", "py", "hatch_env"}
+        for r in self.gha:
+            missing = required - r.keys()
+            self.assertFalse(missing, f"row {r} missing keys {missing}")
+
+    def test_no_duplicate_macos_rows_at_mq(self) -> None:
+        # Regression test for the python.py MERGE_VALID/PR_CELLS sync invariant.
+        # The merge_valid() predicate pins macos-arm to one combo and macos-x64
+        # to another. The macOS entry in PR_CELLS MUST match the macos-arm pin
+        # exactly; if they diverge, the PR cell ships at trigger_level=pr while
+        # pairwise ships a *different* macos-arm row at trigger_level=merge,
+        # giving two macOS-arm jobs at the merge queue (defeating the point of
+        # MERGE_VALID). This test fails loudly when the sync drifts.
+        mq_macos = [
+            r for r in self.gha
+            if r["os"] == "macos-latest" and r["trigger_level"] in ("pr", "merge")
+        ]
+        self.assertEqual(
+            len(mq_macos), 1,
+            f"expected exactly one macos-arm row at merge-queue scope; "
+            f"got {[r['name'] for r in mq_macos]}. "
+            f"This usually means the PR_CELLS macOS entry has drifted "
+            f"away from the macos-arm pin in merge_valid(): both reach "
+            f"the merge level and macOS runs twice per MQ build.",
+        )
+        mq_intel = [
+            r for r in self.gha
+            if r["os"] == "macos-15-intel" and r["trigger_level"] in ("pr", "merge")
+        ]
+        self.assertEqual(
+            len(mq_intel), 1,
+            f"expected exactly one macos-x64 row at merge-queue scope; "
+            f"got {[r['name'] for r in mq_intel]}",
+        )
+
+
+class CoreMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(CORE_PATH, "core")
+
+    def test_pr_has_all_four_cells(self) -> None:
+        names = {r["name"] for r in self.gha if r["trigger_level"] == "pr"}
+        self.assertEqual(
+            names,
+            {"ubuntu-x64", "macos-arm", "windows-arm-nonfips", "windows-x86"},
+        )
+
+    def test_no_cloud_provider_field(self) -> None:
+        # Core has no Cloud axis (single E2E_TLS_SERVER for every cell).
+        for r in self.gha:
+            self.assertNotIn("cloud_provider", r, r["name"])
+
+    def test_coverage_only_on_unix(self) -> None:
+        cov_runners = {r["os"] for r in self.gha if r.get("coverage")}
+        self.assertEqual(cov_runners, {"ubuntu-latest", "macos-latest"})
+        for r in self.gha:
+            if r["os"] in ("windows-11-arm", "windows-latest"):
+                self.assertFalse(r["coverage"], r["name"])
+
+    def test_targets_for_windows_only(self) -> None:
+        targets = {r["name"]: r.get("cargo_target") for r in self.gha}
+        self.assertEqual(targets["ubuntu-x64"], None)
+        self.assertEqual(targets["macos-arm"], None)
+        self.assertEqual(targets["windows-arm-nonfips"], "aarch64-pc-windows-msvc")
+        self.assertEqual(targets["windows-x86"], "i686-pc-windows-msvc")
+
+    def test_msvc_arch_for_windows_only(self) -> None:
+        msvc = {r["name"]: r.get("msvc_arch") for r in self.gha}
+        self.assertEqual(msvc["ubuntu-x64"], None)
+        self.assertEqual(msvc["macos-arm"], None)
+        self.assertEqual(msvc["windows-arm-nonfips"], "arm64")
+        self.assertEqual(msvc["windows-x86"], "x86")
+
+    def test_cargo_flags_per_platform(self) -> None:
+        flags = {r["name"]: r["cargo_flags"] for r in self.gha}
+        self.assertEqual(flags["ubuntu-x64"], "--all-features")
+        self.assertEqual(flags["macos-arm"], "--all-features")
+        self.assertEqual(flags["windows-arm-nonfips"], "")
+        self.assertEqual(
+            flags["windows-x86"],
+            "--no-default-features --features protobuf,vendored-openssl",
+        )
+
+    def test_cache_keys_match_legacy(self) -> None:
+        # Cache shared-keys must stay identical to the pre-consolidation values
+        # in test-rust-core.yml so warm caches survive the refactor.
+        keys = {r["name"]: r["cache_key"] for r in self.gha}
+        self.assertEqual(keys["ubuntu-x64"], "core-test")
+        self.assertEqual(keys["macos-arm"], "core-test")
+        self.assertEqual(keys["windows-arm-nonfips"], "arm64-nonfips")
+        self.assertEqual(keys["windows-x86"], "x86-core-test")
+
+    def test_required_keys_on_every_row(self) -> None:
+        required = {"name", "os", "trigger_level", "cargo_flags", "coverage", "cache_key"}
+        for r in self.gha:
+            missing = required - r.keys()
+            self.assertFalse(missing, f"row {r['name']} missing keys {missing}")
+
+
+# ---------------------------------------------------------------------------
+# Validation paths
+# ---------------------------------------------------------------------------
+
+class ValidationTests(unittest.TestCase):
+    def test_pr_cell_violating_constraint_warns(self) -> None:
+        path = _write_model(
+            "PARAMS = {'OS': ['ubuntu', 'macos'], 'Arch': ['x64', 'arm'], 'Cloud': ['aws']}\n"
+            "CONSTRAINTS = [lambda x: False if x['OS'] == 'macos' and x['Arch'] == 'x64' else True]\n"
+            # macos+x64+aws violates the constraint above.
+            "PR_CELLS = [{'OS': 'macos', 'Arch': 'x64', 'Cloud': 'aws'}]\n"
+            "JSON_CELLS = {'pr': [], 'merge': [], 'nightly': []}\n"
+        )
+        # Use a tiny model that won't hit other validation paths.
+        try:
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                # We only want loader/constraint behavior; sidestep validate_mappings
+                # by calling internals.
+                params, constraints, _mv, pr_cells, _json_cells = gm.load_model(path)
+                all_combos = [
+                    c for c in (
+                        dict(zip(params.keys(), v))
+                        for v in itertools.product(*params.values())
+                    )
+                    if gm.apply_constraints(c, constraints)
+                ]
+                valid_keys = {tuple(c.values()) for c in all_combos}
+                for cell in pr_cells:
+                    if tuple(cell.values()) not in valid_keys:
+                        print(
+                            f"WARNING: [pr] cell {cell} violates constraints",
+                            file=sys.stderr,
+                        )
+            self.assertIn("violates constraints", buf.getvalue())
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_validate_mappings_raises_on_missing_pair(self) -> None:
+        # Force a (OS, Arch) the model allows but no mapping table contains.
+        all_combos = [{"OS": "freebsd", "Arch": "x64", "Cloud": "aws"}]
+        with self.assertRaises(RuntimeError) as ctx:
+            gm.validate_mappings("odbc", all_combos)
+        self.assertIn("freebsd", str(ctx.exception))
+
+    def test_validate_mappings_raises_on_python_missing_platform(self) -> None:
+        # macos-x64 is in GHA_RUNNER (so the first check passes) but if it
+        # were missing from PYTHON_PLATFORM, py3.11+ rows would silently drop.
+        # Simulate that drift by reaching past PYTHON_PLATFORM with a synthetic
+        # combo on a runner that exists in GHA_RUNNER but a fictional arch
+        # combination not in PYTHON_PLATFORM.
+        original = gm.PYTHON_PLATFORM.pop(("macos", "x64"), None)
+        try:
+            all_combos = [{"OS": "macos", "Arch": "x64", "Cloud": "aws",
+                           "PyVersion": "3.13", "HatchEnv": "test"}]
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.validate_mappings("python", all_combos)
+            self.assertIn("PYTHON_PLATFORM", str(ctx.exception))
+            self.assertIn("macos", str(ctx.exception))
+        finally:
+            if original is not None:
+                gm.PYTHON_PLATFORM[("macos", "x64")] = original
+
+
+# ---------------------------------------------------------------------------
+# JSON variants — cross-driver regression
+# ---------------------------------------------------------------------------
+
+class JsonVariantRegressionTests(unittest.TestCase):
+    """
+    Locks the JSON cell count at the merge trigger level across odbc + python.
+
+    Main has 1 ODBC json cell (every PR — appears at merge cumulatively) plus
+    2 Python json cells (gated on merge). This test pins the combined merge-
+    level JSON count at 3 so future model edits don't silently change the
+    JSON-format coverage.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.odbc_gha = gm.generate(ODBC_PATH, "odbc")
+        cls.py_gha = gm.generate(PYTHON_PATH, "python")
+
+    def test_combined_json_count_at_merge_level(self) -> None:
+        # `merge` is cumulative — it includes pr cells plus rows whose
+        # trigger_level is `pr` or `merge`.
+        active_levels = {"pr", "merge"}
+        json_at_merge = [
+            r for r in (self.odbc_gha + self.py_gha)
+            if r.get("result_format") == "json" and r["trigger_level"] in active_levels
+        ]
+        self.assertEqual(
+            len(json_at_merge), 3,
+            f"expected 3 json cells active at merge, got {len(json_at_merge)}: "
+            f"{[r['name'] for r in json_at_merge]}",
+        )
+
+    def test_json_names_unchanged(self) -> None:
+        json_names = sorted(
+            r["name"] for r in (self.odbc_gha + self.py_gha)
+            if r.get("result_format") == "json"
+        )
+        self.assertEqual(
+            json_names,
+            [
+                "ubuntu-x64-aws-json",
+                "ubuntu-x64-aws-py3.13-json",
+                "ubuntu-x64-aws-py3.13-test-pandas-json",
+            ],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Build targets — wheel-build alignment
+# ---------------------------------------------------------------------------
+
+# Helper: reverse-lookup cibw_key -> (OS, Arch) for build-target tests.
+PYTHON_PLATFORM_BY_CIBW = {p["cibw_key"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+
+
+class BuildTargetsTests(unittest.TestCase):
+    """
+    Coverage for the --emit-build-targets generator mode that drives
+    _build-python-wheels.yml's `targets:` input.
+
+    Locks in three invariants:
+      * Coverage equivalence — every active test row with a wheel_artifact
+        has a corresponding (cibw_key, py) entry in build_targets.
+      * No over-build — every (cibw_key, py) in build_targets traces back
+        to at least one active test row at the same trigger level.
+      * Per-trigger contraction — PR build targets are a subset of merge,
+        which is a subset of nightly. PR builds at most as many wheels as
+        tests need.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(PYTHON_PATH, "python")
+        cls.targets_pr      = gm.build_targets("python", "pull_request")
+        cls.targets_merge   = gm.build_targets("python", "merge_group")
+        cls.targets_nightly = gm.build_targets("python", "schedule")
+
+    def _active_wheel_rows(self, level: str) -> list:
+        return [
+            r for r in gm.filter_active(self.gha, level)
+            if r.get("wheel_artifact")
+        ]
+
+    def _expected_targets(self, level: str) -> dict[str, set[str]]:
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        out: dict[str, set[str]] = {}
+        for r in self._active_wheel_rows(level):
+            pair = artifact_to_pair[r["wheel_artifact"]]
+            out.setdefault(gm.PYTHON_PLATFORM[pair]["cibw_key"], set()).add(r["py"])
+        return out
+
+    def test_only_python_driver_supported(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            gm.build_targets("odbc", "pull_request")
+        self.assertIn("python", str(ctx.exception))
+
+    def test_pr_targets_match_active_wheel_rows(self) -> None:
+        expected = self._expected_targets("pr")
+        actual = {k: set(v) for k, v in self.targets_pr.items()}
+        self.assertEqual(actual, expected)
+
+    def test_merge_targets_match_active_wheel_rows(self) -> None:
+        expected = self._expected_targets("merge")
+        actual = {k: set(v) for k, v in self.targets_merge.items()}
+        self.assertEqual(actual, expected)
+
+    def test_nightly_targets_match_active_wheel_rows(self) -> None:
+        expected = self._expected_targets("nightly")
+        actual = {k: set(v) for k, v in self.targets_nightly.items()}
+        self.assertEqual(actual, expected)
+
+    def test_pr_subset_of_merge_subset_of_nightly(self) -> None:
+        # Per-trigger contraction: PR ⊆ merge ⊆ nightly.
+        for cibw_key, versions in self.targets_pr.items():
+            self.assertIn(
+                cibw_key, self.targets_merge,
+                f"PR builds {cibw_key} but merge does not — every PR cell "
+                f"must also be active at merge level (cumulative trigger filter).",
+            )
+            self.assertTrue(
+                set(versions).issubset(self.targets_merge[cibw_key]),
+                f"PR-level {cibw_key} versions {versions} not a subset of merge {self.targets_merge[cibw_key]}",
+            )
+        for cibw_key, versions in self.targets_merge.items():
+            self.assertIn(
+                cibw_key, self.targets_nightly,
+                f"merge builds {cibw_key} but nightly does not — full cartesian "
+                f"product should always cover merge cells.",
+            )
+            self.assertTrue(
+                set(versions).issubset(self.targets_nightly[cibw_key]),
+                f"merge-level {cibw_key} versions {versions} not a subset of nightly {self.targets_nightly[cibw_key]}",
+            )
+
+    def test_no_overbuild(self) -> None:
+        # Every (cibw_key, py) in build_targets must correspond to >=1 active
+        # test row at the same level. Catches "we build wheels nothing tests".
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        for level, targets in [
+            ("pr", self.targets_pr),
+            ("merge", self.targets_merge),
+            ("nightly", self.targets_nightly),
+        ]:
+            active = self._active_wheel_rows(level)
+            for cibw_key, versions in targets.items():
+                target_pair = PYTHON_PLATFORM_BY_CIBW[cibw_key]
+                for v in versions:
+                    matches = [
+                        r for r in active
+                        if artifact_to_pair[r["wheel_artifact"]] == target_pair
+                        and r["py"] == v
+                    ]
+                    self.assertTrue(
+                        matches,
+                        f"[{level}] {cibw_key}/py{v} in build_targets but no test row consumes it",
+                    )
+
+    def test_no_underbuild(self) -> None:
+        # Every active test row with a wheel_artifact has a (cibw_key, py)
+        # entry in build_targets. Catches "test row references a wheel that
+        # won't be built", which would 404 actions/download-artifact at runtime.
+        artifact_to_pair = {p["wheel_artifact"]: pair for pair, p in gm.PYTHON_PLATFORM.items()}
+        for level, targets in [
+            ("pr", self.targets_pr),
+            ("merge", self.targets_merge),
+            ("nightly", self.targets_nightly),
+        ]:
+            for r in self._active_wheel_rows(level):
+                pair = artifact_to_pair[r["wheel_artifact"]]
+                cibw_key = gm.PYTHON_PLATFORM[pair]["cibw_key"]
+                self.assertIn(
+                    cibw_key, targets,
+                    f"[{level}] test row {r['name']} needs wheel for {cibw_key} "
+                    f"but build_targets has no entry for that platform",
+                )
+                self.assertIn(
+                    r["py"], targets[cibw_key],
+                    f"[{level}] test row {r['name']} needs py{r['py']} on {cibw_key} "
+                    f"but build_targets[{cibw_key}] = {targets[cibw_key]}",
+                )
+
+    def test_sdist_py_excluded_from_targets(self) -> None:
+        # py3.10 always installs from sdist; rows have no wheel_artifact and
+        # must NOT appear in build_targets at any level.
+        for level, targets in [
+            ("pr", self.targets_pr),
+            ("merge", self.targets_merge),
+            ("nightly", self.targets_nightly),
+        ]:
+            for cibw_key, versions in targets.items():
+                self.assertNotIn(
+                    "3.10", versions,
+                    f"[{level}] py3.10 listed under {cibw_key} in build_targets, "
+                    f"but py3.10 is sdist-only (SDIST_PY) and shouldn't be wheel-built",
+                )
+
+    def test_nightly_targets_match_legacy_hardcoded_json(self) -> None:
+        # Regression guard: at nightly scope the generator output must match
+        # the JSON literal previously hardcoded in test-python.yml. Pins the
+        # migration so a future PR can't silently shrink wheel coverage at
+        # nightly without a corresponding model edit.
+        legacy = {
+            "linux_x86":   {"3.13"},
+            "linux_aarch": {"3.11", "3.14"},
+            "macos_arm":   {"3.12", "3.14"},
+            "macos_x86":   {"3.11", "3.12", "3.13", "3.14"},
+            "windows_x86": {"3.11", "3.12", "3.14"},
+            "windows_arm": {"3.11", "3.12"},
+        }
+        actual = {k: set(v) for k, v in self.targets_nightly.items()}
+        self.assertEqual(
+            actual, legacy,
+            "nightly build_targets diverged from the legacy test-python.yml "
+            "hardcoded targets JSON. If this is intentional (e.g. a PARAMS edit), "
+            "update the `legacy` dict in this test to match.",
+        )
+
+    def test_emit_build_targets_cli_format(self) -> None:
+        # CLI emits exactly one line of the form `targets=<json>`.
+        import contextlib
+        import io
+        import json as _json
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gm.emit_build_targets("python", "pull_request")
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.startswith("targets="))
+        payload = _json.loads(line[len("targets="):])
+        self.assertEqual(payload, self.targets_pr)
+
+    def test_python_platform_has_cibw_key(self) -> None:
+        # Every PYTHON_PLATFORM row must declare cibw_key. validate_mappings
+        # enforces this at generate() time; this test pins it independently.
+        for pair, meta in gm.PYTHON_PLATFORM.items():
+            self.assertIn(
+                "cibw_key", meta,
+                f"PYTHON_PLATFORM[{pair}] missing 'cibw_key' — "
+                f"--emit-build-targets cannot translate this platform.",
+            )
+
+    def test_validate_mappings_raises_on_missing_cibw_key(self) -> None:
+        # Drift simulation: pop cibw_key from one row, validate_mappings
+        # must fail loud rather than silently degrade.
+        original = gm.PYTHON_PLATFORM[("ubuntu", "x64")].copy()
+        gm.PYTHON_PLATFORM[("ubuntu", "x64")].pop("cibw_key")
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.generate(PYTHON_PATH, "python")
+            self.assertIn("cibw_key", str(ctx.exception))
+        finally:
+            gm.PYTHON_PLATFORM[("ubuntu", "x64")] = original
+
+
+# ---------------------------------------------------------------------------
+# Build matrix — ODBC driver-build alignment
+# ---------------------------------------------------------------------------
+
+class OdbcBuildMatrixTests(unittest.TestCase):
+    """
+    Coverage for the --emit-build-matrix generator mode that drives
+    test-odbc.yml's build_odbc_driver matrix.
+
+    Locks in:
+      * Coverage equivalence — every active test row with driver_artifact
+        has a corresponding build matrix entry.
+      * No over-build / under-build — the build matrix is a deduplicated
+        projection of active test rows' driver_artifact.
+      * Per-trigger contraction — PR ⊆ merge ⊆ nightly.
+      * Legacy parity — at nightly the matrix matches the previously
+        hardcoded include block in test-odbc.yml.
+      * Schema — required fields are present, optional fields appear only
+        where applicable, output is alphabetically ordered.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(ODBC_PATH, "odbc")
+        cls.matrix_pr      = gm.build_matrix("odbc", "pull_request")
+        cls.matrix_merge   = gm.build_matrix("odbc", "merge_group")
+        cls.matrix_nightly = gm.build_matrix("odbc", "schedule")
+
+    def _active_artifact_rows(self, level: str) -> list:
+        return [
+            r for r in gm.filter_active(self.gha, level)
+            if r.get("driver_artifact")
+        ]
+
+    def test_only_odbc_driver_supported(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            gm.build_matrix("python", "pull_request")
+        self.assertIn("odbc", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            gm.build_matrix("core", "pull_request")
+        self.assertIn("odbc", str(ctx.exception))
+
+    def test_pr_matches_active_rows(self) -> None:
+        expected_names = {r["driver_artifact"] for r in self._active_artifact_rows("pr")}
+        actual_names = {entry["name"] for entry in self.matrix_pr}
+        self.assertEqual(actual_names, expected_names)
+
+    def test_merge_matches_active_rows(self) -> None:
+        expected_names = {r["driver_artifact"] for r in self._active_artifact_rows("merge")}
+        actual_names = {entry["name"] for entry in self.matrix_merge}
+        self.assertEqual(actual_names, expected_names)
+
+    def test_nightly_matches_active_rows(self) -> None:
+        expected_names = {r["driver_artifact"] for r in self._active_artifact_rows("nightly")}
+        actual_names = {entry["name"] for entry in self.matrix_nightly}
+        self.assertEqual(actual_names, expected_names)
+
+    def test_pr_subset_of_merge_subset_of_nightly(self) -> None:
+        names_pr      = {e["name"] for e in self.matrix_pr}
+        names_merge   = {e["name"] for e in self.matrix_merge}
+        names_nightly = {e["name"] for e in self.matrix_nightly}
+        self.assertTrue(names_pr.issubset(names_merge),
+                        f"PR names {names_pr} not subset of merge {names_merge}")
+        self.assertTrue(names_merge.issubset(names_nightly),
+                        f"merge names {names_merge} not subset of nightly {names_nightly}")
+
+    def test_no_duplicates_per_level(self) -> None:
+        for level, matrix in [
+            ("pr", self.matrix_pr),
+            ("merge", self.matrix_merge),
+            ("nightly", self.matrix_nightly),
+        ]:
+            names = [e["name"] for e in matrix]
+            self.assertEqual(
+                len(names), len(set(names)),
+                f"[{level}] build_matrix has duplicate entries: {names}",
+            )
+
+    def test_nightly_matches_legacy_hardcoded_matrix(self) -> None:
+        # Regression guard: at nightly scope the generator output must be the
+        # set previously hardcoded as build_odbc_driver:matrix:include in
+        # test-odbc.yml. If a future PR shrinks ODBC_PLATFORM, this test
+        # signals the change so the workflow assumption (nightly builds all 5
+        # driver flavours) can be updated deliberately.
+        legacy = {
+            "Linux x64":     {"os": "ubuntu-latest", "driver_lib": "libsfodbc.so",
+                              "cache_key": "odbc"},
+            "macOS ARM64":   {"os": "macos-latest", "driver_lib": "libsfodbc.dylib",
+                              "cache_key": "odbc"},
+            "Windows x64":   {"os": "windows-latest", "driver_lib": "sfodbc.dll",
+                              "cargo_extra": "--features vendored-openssl",
+                              "cache_key": "odbc-x64",
+                              "vcpkg_triplet": "x64-windows"},
+            "Windows x86":   {"os": "windows-latest", "driver_lib": "sfodbc32.dll",
+                              "cargo_target": "i686-pc-windows-msvc",
+                              "cargo_extra": "--no-default-features --features vendored-openssl",
+                              "cache_key": "odbc-x86",
+                              "msvc_arch": "x86", "vcpkg_triplet": "x86-windows"},
+            "Windows ARM64": {"os": "windows-11-arm", "driver_lib": "sfodbc.dll",
+                              "cargo_extra": "--features vendored-openssl",
+                              "cache_key": "odbc-arm64",
+                              "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows"},
+        }
+        actual = {e["name"]: {k: v for k, v in e.items() if k not in ("name", "driver_artifact")}
+                  for e in self.matrix_nightly}
+        self.assertEqual(
+            actual, legacy,
+            "nightly build_matrix diverged from the legacy test-odbc.yml "
+            "hardcoded build_odbc_driver matrix. If this is intentional, "
+            "update the `legacy` dict in this test to match.",
+        )
+
+    def test_required_keys_on_every_entry(self) -> None:
+        required = {"name", "os", "driver_lib", "driver_artifact", "cache_key"}
+        for level, matrix in [
+            ("pr", self.matrix_pr),
+            ("merge", self.matrix_merge),
+            ("nightly", self.matrix_nightly),
+        ]:
+            for entry in matrix:
+                missing = required - entry.keys()
+                self.assertFalse(
+                    missing,
+                    f"[{level}] build_matrix entry {entry['name']} missing keys {missing}",
+                )
+
+    def test_optional_keys_only_where_applicable(self) -> None:
+        # cargo_target only on Windows x86; msvc_arch only on Windows non-x64;
+        # vcpkg_triplet only on Windows; cargo_extra only on Windows.
+        for entry in self.matrix_nightly:
+            name = entry["name"]
+            if name == "Windows x86":
+                self.assertEqual(entry.get("cargo_target"), "i686-pc-windows-msvc")
+            elif name in ("Windows x64", "Windows ARM64"):
+                self.assertNotIn("cargo_target", entry, name)
+            else:  # Linux / macOS lanes
+                self.assertNotIn("cargo_target", entry, name)
+                self.assertNotIn("cargo_extra", entry, name)
+                self.assertNotIn("msvc_arch", entry, name)
+                self.assertNotIn("vcpkg_triplet", entry, name)
+
+    def test_pr_count_at_4(self) -> None:
+        # Pin the post-MERGE_VALID PR-level count: 4 driver flavours
+        # (Linux x64, macOS ARM64, Windows x64, Windows x86).
+        # Windows ARM64 is only at merge level via pairwise.
+        self.assertEqual(
+            len(self.matrix_pr), 4,
+            f"expected 4 PR-level driver builds; got {len(self.matrix_pr)}: "
+            f"{[e['name'] for e in self.matrix_pr]}",
+        )
+        self.assertEqual(
+            {e["name"] for e in self.matrix_pr},
+            {"Linux x64", "macOS ARM64", "Windows x64", "Windows x86"},
+        )
+
+    def test_merge_includes_windows_arm(self) -> None:
+        # Windows ARM64 is added at merge via pairwise (no PR cell uses it),
+        # so the merge build matrix must include it.
+        names = {e["name"] for e in self.matrix_merge}
+        self.assertIn("Windows ARM64", names)
+
+    def test_emit_build_matrix_cli_format(self) -> None:
+        # CLI emits exactly one line of the form `matrix=<json>`.
+        import contextlib
+        import io
+        import json as _json
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gm.emit_build_matrix("odbc", "pull_request")
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.startswith("matrix="))
+        payload = _json.loads(line[len("matrix="):])
+        self.assertEqual(payload, self.matrix_pr)
+
+    def test_validate_mappings_raises_on_missing_cache_key(self) -> None:
+        # Drift simulation: pop cache_key from a built lane, generate() must
+        # fail loud rather than silently emit a build entry without a cache
+        # key.
+        original = gm.ODBC_PLATFORM[("ubuntu", "x64")].copy()
+        gm.ODBC_PLATFORM[("ubuntu", "x64")].pop("cache_key")
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                gm.generate(ODBC_PATH, "odbc")
+            self.assertIn("cache_key", str(ctx.exception))
+        finally:
+            gm.ODBC_PLATFORM[("ubuntu", "x64")] = original
+
+    def test_alphabetical_order(self) -> None:
+        # Reproducibility: output is sorted by name regardless of which test
+        # row triggered the lane's inclusion first.
+        for level, matrix in [
+            ("pr", self.matrix_pr),
+            ("merge", self.matrix_merge),
+            ("nightly", self.matrix_nightly),
+        ]:
+            names = [e["name"] for e in matrix]
+            self.assertEqual(
+                names, sorted(names),
+                f"[{level}] build_matrix entries not in alphabetical order: {names}",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Trigger-level filtering
+# ---------------------------------------------------------------------------
+
+class FilterTests(unittest.TestCase):
+    def test_level_for_event(self) -> None:
+        self.assertEqual(gm.level_for_event("pull_request"), "pr")
+        self.assertEqual(gm.level_for_event("push"), "merge")
+        self.assertEqual(gm.level_for_event("merge_group"), "merge")
+        self.assertEqual(gm.level_for_event("schedule"), "nightly")
+        self.assertEqual(gm.level_for_event("unknown"), "pr")
+        self.assertEqual(gm.level_for_event(None), "pr")
+
+    def test_filter_active_cumulative(self) -> None:
+        rows = [
+            {"trigger_level": "pr"},
+            {"trigger_level": "merge"},
+            {"trigger_level": "nightly"},
+        ]
+        self.assertEqual(len(gm.filter_active(rows, "pr")), 1)
+        self.assertEqual(len(gm.filter_active(rows, "merge")), 2)
+        self.assertEqual(len(gm.filter_active(rows, "nightly")), 3)
+
+
+class LabelResolutionTests(unittest.TestCase):
+    """
+    Lock in the scope-up label semantics: PR labels can upgrade the trigger
+    level above what the event would produce, but never downgrade it. Multiple
+    scope-up labels: highest wins. Unknown labels are ignored.
+    """
+
+    def test_empty_labels_falls_back_to_event(self) -> None:
+        self.assertEqual(gm.level_for_event_and_labels("pull_request", []), "pr")
+        self.assertEqual(gm.level_for_event_and_labels("pull_request", None), "pr")
+        self.assertEqual(gm.level_for_event_and_labels("merge_group", []), "merge")
+
+    def test_scope_merge_label_upgrades_pr_to_merge(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels("pull_request", ["ci:scope-merge"]),
+            "merge",
+        )
+
+    def test_scope_nightly_label_upgrades_pr_to_nightly(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels("pull_request", ["ci:scope-nightly"]),
+            "nightly",
+        )
+
+    def test_multiple_scope_labels_highest_wins(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels(
+                "pull_request", ["ci:scope-merge", "ci:scope-nightly"]
+            ),
+            "nightly",
+        )
+
+    def test_unknown_labels_ignored(self) -> None:
+        self.assertEqual(
+            gm.level_for_event_and_labels("pull_request", ["bug", "enhancement"]),
+            "pr",
+        )
+
+    def test_label_cannot_downgrade_event(self) -> None:
+        # ci:scope-merge on a merge_group event stays at merge (not downgraded).
+        self.assertEqual(
+            gm.level_for_event_and_labels("merge_group", ["ci:scope-merge"]),
+            "merge",
+        )
+        # And cannot pull schedule (nightly) down to merge.
+        self.assertEqual(
+            gm.level_for_event_and_labels("schedule", ["ci:scope-merge"]),
+            "nightly",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

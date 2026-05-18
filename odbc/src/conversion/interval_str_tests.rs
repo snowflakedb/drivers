@@ -115,14 +115,15 @@ fn second_with_fraction_round_trips_fraction() {
 fn second_truncates_extra_fraction_digits() {
     // ODBC normalises fractional seconds to 6 digits (microseconds).
     // When dropped digits are non-zero we owe the application a 01S07
-    // (`StringDataTruncated`) warning, mirroring
-    // `numeric_helpers::compute_interval_fraction`'s `was_truncated`.
+    // (`NumericValueTruncated` → `FractionalTruncation`) warning,
+    // mirroring `numeric_helpers::compute_interval_fraction`'s
+    // `was_truncated`.
     let (iv, r) = run("0.1234567", CDataType::IntervalSecond);
     let warnings = r.expect("parse should succeed");
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning, got {warnings:?}"
     );
     unsafe {
@@ -165,7 +166,7 @@ fn year_to_month_into_year_truncates_month() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning, got {warnings:?}"
     );
     unsafe {
@@ -266,7 +267,7 @@ fn day_to_second_truncates_into_day_target() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning, got {warnings:?}"
     );
     unsafe {
@@ -466,7 +467,7 @@ fn day_to_second_truncated_fraction_warns() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning for sub-microsecond loss in D-S, got {warnings:?}"
     );
     unsafe {
@@ -481,7 +482,7 @@ fn hour_to_second_truncated_fraction_warns() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "{warnings:?}"
     );
     unsafe {
@@ -496,7 +497,7 @@ fn minute_to_second_truncated_fraction_warns() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "{warnings:?}"
     );
     unsafe {
@@ -591,7 +592,7 @@ fn day_to_second_truncates_into_day_to_hour() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning, got {warnings:?}"
     );
     unsafe {
@@ -609,7 +610,7 @@ fn hour_to_second_truncates_into_hour_to_minute() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning, got {warnings:?}"
     );
     unsafe {
@@ -628,7 +629,7 @@ fn year_to_month_truncates_into_month_target() {
     assert!(
         warnings
             .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
+            .any(|w| matches!(w, Warning::NumericValueTruncated)),
         "expected 01S07 truncation warning, got {warnings:?}"
     );
     unsafe {
@@ -700,153 +701,261 @@ fn outer_whitespace_is_trimmed_for_composite() {
 }
 
 // ============================================================================
-// Out-of-range trailing-field rejection (MS ODBC spec)
+// Strict ANSI range enforcement on TRAILING composite-interval fields.
 //
-// Per the MS ODBC spec ("Trailing fields must follow the usual constraints
-// of the Gregorian calendar"), composite interval qualifiers reject
-// out-of-range trailing fields with SQLSTATE 22015 (IntervalFieldOverflow).
-// The leading field stays unconstrained (already covered by the precision
-// suite above). Only the *consumed* trailing fields are validated; fields
-// the qualifier discards via 01S07 truncation are not checked.
+// A trailing-field magnitude outside the canonical ANSI range surfaces
+// SQLSTATE 22015 ("Interval field overflow") — the `SQLGetData`
+// diagnostics table defines 22015 as fired when "there was no
+// representation of the value of the SQL type in the interval C type",
+// which an out-of-Gregorian-range trailing field is. This also keeps
+// the file's own `field_overflow` helper consistent: it fires 22015
+// when day/hour/minute/second overflow `u32::MAX`, and emitting a
+// different SQLSTATE for the smaller-magnitude form of the same
+// problem (minute=61 vs. minute=4_294_967_295) would be incongruent.
+//
+// Leading fields keep the precision-based 22015 check (covered above)
+// since ANSI permits a leading field to be arbitrarily large within
+// its declared `SQL_DESC_DATETIME_INTERVAL_PRECISION`.
+//
+// Enforced trailing ranges:
+//   YEAR_TO_MONTH   trailing MONTH  : 0..=11
+//   *_TO_HOUR       trailing HOUR   : 0..=23
+//   *_TO_MINUTE     trailing MINUTE : 0..=59
+//   *_TO_SECOND     trailing SECOND : 0..=59
 // ============================================================================
 
-fn assert_rejects_with_overflow(input: &str, target: CDataType) {
-    let (_iv, r) = run(input, target);
-    let err = r.expect_err(&format!("{input} must be rejected for {target:?}"));
+/// Variant of `run` that lets the test set
+/// `SQL_DESC_DATETIME_INTERVAL_PRECISION` on the binding. The default in
+/// `make_binding` is `None`, which `check_leading_precision` treats as
+/// precision = 2 — too narrow to exercise the leading vs. trailing
+/// asymmetry on its own.
+fn run_with_precision(
+    value: &str,
+    target: CDataType,
+    precision: i16,
+) -> (sql::IntervalStruct, Result<Vec<Warning>, WriteOdbcError>) {
+    let mut buf = make_buffer();
+    let mut binding = make_binding(target, &mut buf);
+    binding.datetime_interval_precision = Some(precision);
+    let r = varchar_to_interval(value, target, &binding);
+    (*buf, r)
+}
+
+fn assert_trailing_field_overflow(err: WriteOdbcError, msg: &str) {
     assert!(
         matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
-        "expected 22015 IntervalFieldOverflow for {input:?} -> {target:?}, got {err:?}"
+        "{msg}: expected IntervalFieldOverflow (22015), got {err:?}"
     );
 }
 
 #[test]
-fn year_to_month_rejects_month_above_11() {
-    assert_rejects_with_overflow("3-12", CDataType::IntervalYearToMonth);
-    assert_rejects_with_overflow("3-13", CDataType::IntervalYearToMonth);
-    assert_rejects_with_overflow("0-99", CDataType::IntervalYearToMonth);
+fn hour_to_minute_trailing_minute_above_59_returns_22015() {
+    let (_, r) = run("5:60", CDataType::IntervalHourToMinute);
+    assert_trailing_field_overflow(
+        r.expect_err("minute=60 is out of range 0..=59"),
+        "'5:60' -> IntervalHourToMinute",
+    );
 }
 
 #[test]
-fn year_to_month_accepts_month_eleven() {
-    let (iv, r) = run("3-11", CDataType::IntervalYearToMonth);
-    let warnings = r.expect("month=11 is the spec maximum and must be accepted");
-    assert!(warnings.is_empty(), "{warnings:?}");
+fn hour_to_minute_minute_99_returns_22015() {
+    let (_, r) = run("5:99", CDataType::IntervalHourToMinute);
+    assert_trailing_field_overflow(
+        r.expect_err("minute=99 is out of range 0..=59"),
+        "'5:99' -> IntervalHourToMinute",
+    );
+}
+
+#[test]
+fn hour_to_second_trailing_second_above_59_returns_22015() {
+    let (_, r) = run("5:59:60", CDataType::IntervalHourToSecond);
+    assert_trailing_field_overflow(
+        r.expect_err("second=60 is out of range 0..=59"),
+        "'5:59:60' -> IntervalHourToSecond",
+    );
+}
+
+#[test]
+fn hour_to_second_trailing_minute_above_59_returns_22015() {
+    let (_, r) = run("5:60:0", CDataType::IntervalHourToSecond);
+    assert_trailing_field_overflow(
+        r.expect_err("minute=60 is out of range 0..=59"),
+        "'5:60:0' -> IntervalHourToSecond",
+    );
+}
+
+#[test]
+fn day_to_hour_trailing_hour_above_23_returns_22015() {
+    // "5 24" → day=5 (leading), hour=24 (trailing). The leading day
+    // field is unconstrained by the ANSI range; the trailing hour
+    // must satisfy 0..=23.
+    let (_, r) = run("5 24", CDataType::IntervalDayToHour);
+    assert_trailing_field_overflow(
+        r.expect_err("hour=24 is out of range 0..=23"),
+        "'5 24' -> IntervalDayToHour",
+    );
+}
+
+#[test]
+fn day_to_hour_via_three_component_time_rejects_hour_above_23() {
+    // Wider input ('5 24:0:0') routed to a narrower target still
+    // applies the trailing-field range check before any 01S07
+    // truncation handling.
+    let (_, r) = run("5 24:0:0", CDataType::IntervalDayToHour);
+    assert_trailing_field_overflow(
+        r.expect_err("hour=24 is out of range 0..=23"),
+        "'5 24:0:0' -> IntervalDayToHour",
+    );
+}
+
+#[test]
+fn day_to_minute_trailing_minute_above_59_returns_22015() {
+    let (_, r) = run("5 0:60:0", CDataType::IntervalDayToMinute);
+    assert_trailing_field_overflow(
+        r.expect_err("minute=60 is out of range 0..=59"),
+        "'5 0:60:0' -> IntervalDayToMinute",
+    );
+}
+
+#[test]
+fn day_to_second_trailing_second_above_59_returns_22015() {
+    let (_, r) = run("5 0:0:60", CDataType::IntervalDayToSecond);
+    assert_trailing_field_overflow(
+        r.expect_err("second=60 is out of range 0..=59"),
+        "'5 0:0:60' -> IntervalDayToSecond",
+    );
+}
+
+#[test]
+fn day_to_second_trailing_hour_above_23_returns_22015() {
+    let (_, r) = run("5 25:0:0", CDataType::IntervalDayToSecond);
+    assert_trailing_field_overflow(
+        r.expect_err("hour=25 is out of range 0..=23"),
+        "'5 25:0:0' -> IntervalDayToSecond",
+    );
+}
+
+#[test]
+fn year_to_month_trailing_month_12_returns_22015() {
+    let (_, r) = run("3-12", CDataType::IntervalYearToMonth);
+    assert_trailing_field_overflow(
+        r.expect_err("month=12 is out of range 0..=11"),
+        "'3-12' -> IntervalYearToMonth",
+    );
+}
+
+#[test]
+fn year_to_month_trailing_month_99_returns_22015() {
+    let (_, r) = run("3-99", CDataType::IntervalYearToMonth);
+    assert_trailing_field_overflow(
+        r.expect_err("month=99 is out of range 0..=11"),
+        "'3-99' -> IntervalYearToMonth",
+    );
+}
+
+#[test]
+fn minute_to_second_trailing_second_60_returns_22015() {
+    // Without fraction: parse_any_shape stores "M:S" as (hour=M,
+    // minute=S); build_composite re-interprets for MinuteToSecond.
+    // The leading minute (45) is precision-driven; the trailing
+    // second (60) must satisfy 0..=59.
+    let (_, r) = run("45:60", CDataType::IntervalMinuteToSecond);
+    assert_trailing_field_overflow(
+        r.expect_err("second=60 is out of range 0..=59"),
+        "'45:60' -> IntervalMinuteToSecond",
+    );
+}
+
+#[test]
+fn minute_to_second_with_fraction_rejects_second_60() {
+    // Fraction-bearing path: parse_any_shape stores directly as
+    // (minute=M, second=S, frac). The trailing second still gets
+    // range-checked.
+    let (_, r) = run("45:60.5", CDataType::IntervalMinuteToSecond);
+    assert_trailing_field_overflow(
+        r.expect_err("second=60 is out of range 0..=59"),
+        "'45:60.5' -> IntervalMinuteToSecond",
+    );
+}
+
+#[test]
+fn minute_to_second_leading_minute_unchecked_against_ansi_range() {
+    // The LEADING minute slot in MINUTE_TO_SECOND is precision-driven,
+    // not range-checked: with a wide enough precision a value above 59
+    // is accepted as long as the trailing second stays canonical. This
+    // pins the asymmetry between leading and trailing slots.
+    let (iv, r) = run_with_precision("99:30", CDataType::IntervalMinuteToSecond, 3);
+    r.expect("leading minute=99 fits precision=3 and is not range-checked");
     unsafe {
+        assert_eq!(iv.interval_value.day_second.minute, 99);
+        assert_eq!(iv.interval_value.day_second.second, 30);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Boundary cases: the ANSI ceiling is exclusive (24/60/12 reject) and the
+// max value (23/59/11) is accepted.
+// ----------------------------------------------------------------------------
+
+#[test]
+fn hour_to_minute_minute_59_accepted_at_boundary() {
+    let (iv, r) = run("5:59", CDataType::IntervalHourToMinute);
+    r.expect("minute=59 is the inclusive max");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.hour, 5);
+        assert_eq!(iv.interval_value.day_second.minute, 59);
+    }
+}
+
+#[test]
+fn hour_to_second_minute_and_second_59_accepted_at_boundary() {
+    let (iv, r) = run("5:59:59", CDataType::IntervalHourToSecond);
+    r.expect("minute=59 and second=59 are the inclusive max");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.hour, 5);
+        assert_eq!(iv.interval_value.day_second.minute, 59);
+        assert_eq!(iv.interval_value.day_second.second, 59);
+    }
+}
+
+#[test]
+fn year_to_month_month_11_accepted_at_boundary() {
+    let (iv, r) = run("3-11", CDataType::IntervalYearToMonth);
+    r.expect("month=11 is the inclusive max");
+    unsafe {
+        assert_eq!(iv.interval_value.year_month.year, 3);
         assert_eq!(iv.interval_value.year_month.month, 11);
     }
 }
 
 #[test]
-fn day_to_hour_rejects_hour_above_23() {
-    assert_rejects_with_overflow("5 24", CDataType::IntervalDayToHour);
-    assert_rejects_with_overflow("5 99", CDataType::IntervalDayToHour);
-}
-
-#[test]
-fn day_to_minute_rejects_out_of_range_components() {
-    assert_rejects_with_overflow("5 24:30", CDataType::IntervalDayToMinute);
-    assert_rejects_with_overflow("5 10:60", CDataType::IntervalDayToMinute);
-}
-
-#[test]
-fn day_to_second_rejects_out_of_range_components() {
-    assert_rejects_with_overflow("5 24:30:45", CDataType::IntervalDayToSecond);
-    assert_rejects_with_overflow("5 10:60:00", CDataType::IntervalDayToSecond);
-    assert_rejects_with_overflow("5 10:30:60", CDataType::IntervalDayToSecond);
-}
-
-#[test]
-fn hour_to_minute_rejects_minute_above_59() {
-    // Leading "hour" is unconstrained (subject to precision); trailing
-    // "minute" must be <= 59. "25:61" therefore fails on minute, not hour.
-    assert_rejects_with_overflow("25:61", CDataType::IntervalHourToMinute);
-    assert_rejects_with_overflow("10:60", CDataType::IntervalHourToMinute);
-}
-
-#[test]
-fn hour_to_minute_accepts_unconstrained_leading_hour() {
-    // Hour can exceed 23 — it's the leading field and only the precision
-    // check applies. Use an explicit precision so the value fits.
-    let mut buf = make_buffer();
-    let binding = make_binding_with_precision(CDataType::IntervalHourToMinute, &mut buf, 3);
-    let r = crate::conversion::interval_str::varchar_to_interval(
-        "100:30",
-        CDataType::IntervalHourToMinute,
-        &binding,
-    );
-    let warnings = r.expect("leading hour is unconstrained");
-    assert!(warnings.is_empty(), "{warnings:?}");
-    unsafe {
-        assert_eq!(buf.interval_value.day_second.hour, 100);
-        assert_eq!(buf.interval_value.day_second.minute, 30);
-    }
-}
-
-#[test]
-fn hour_to_second_rejects_out_of_range_components() {
-    assert_rejects_with_overflow("12:60:30", CDataType::IntervalHourToSecond);
-    assert_rejects_with_overflow("12:30:60", CDataType::IntervalHourToSecond);
-}
-
-#[test]
-fn minute_to_second_rejects_second_above_59() {
-    assert_rejects_with_overflow("30:60", CDataType::IntervalMinuteToSecond);
-    assert_rejects_with_overflow("30:61", CDataType::IntervalMinuteToSecond);
-    // Same rejection on the fraction-bearing path.
-    assert_rejects_with_overflow("30:75.5", CDataType::IntervalMinuteToSecond);
-}
-
-#[test]
-fn minute_to_second_accepts_unconstrained_leading_minute() {
-    // Minute is the leading field of MINUTE_TO_SECOND and is unconstrained;
-    // the spec applies only to the trailing seconds.
-    let mut buf = make_buffer();
-    let binding = make_binding_with_precision(CDataType::IntervalMinuteToSecond, &mut buf, 4);
-    let r = crate::conversion::interval_str::varchar_to_interval(
-        "1234:30",
-        CDataType::IntervalMinuteToSecond,
-        &binding,
-    );
-    let warnings = r.expect("leading minute is unconstrained");
-    assert!(warnings.is_empty(), "{warnings:?}");
-    unsafe {
-        assert_eq!(buf.interval_value.day_second.minute, 1234);
-        assert_eq!(buf.interval_value.day_second.second, 30);
-    }
-}
-
-#[test]
-fn truncated_trailing_field_does_not_validate_discarded_components() {
-    // For IntervalDayToHour the qualifier consumes only day+hour, so the
-    // out-of-range minute/second in the input are dropped with 01S07 and
-    // their values do NOT trigger 22015. The hour itself is in range.
-    let (iv, r) = run("5 10:99:99", CDataType::IntervalDayToHour);
-    let warnings = r.expect("hour is in range; trailing fields are discarded");
-    assert!(
-        warnings
-            .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
-        "expected 01S07 truncation warning, got {warnings:?}"
-    );
+fn day_to_hour_hour_23_accepted_at_boundary() {
+    let (iv, r) = run("5 23", CDataType::IntervalDayToHour);
+    r.expect("hour=23 is the inclusive max");
     unsafe {
         assert_eq!(iv.interval_value.day_second.day, 5);
-        assert_eq!(iv.interval_value.day_second.hour, 10);
+        assert_eq!(iv.interval_value.day_second.hour, 23);
     }
 }
 
 #[test]
-fn single_field_target_does_not_validate_discarded_trailing_fields() {
-    // IntervalYear consumes only the year — the month=99 in the input
-    // is discarded via 01S07 and is not range-checked.
-    let (iv, r) = run("3-99", CDataType::IntervalYear);
-    let warnings = r.expect("year is in range; month is discarded");
-    assert!(
-        warnings
-            .iter()
-            .any(|w| matches!(w, Warning::StringDataTruncated)),
-        "expected 01S07 truncation warning, got {warnings:?}"
-    );
+fn day_to_second_full_boundary_accepted() {
+    let (iv, r) = run("5 23:59:59", CDataType::IntervalDayToSecond);
+    r.expect("hour=23, minute=59, second=59 are the inclusive max");
     unsafe {
-        assert_eq!(iv.interval_value.year_month.year, 3);
+        assert_eq!(iv.interval_value.day_second.day, 5);
+        assert_eq!(iv.interval_value.day_second.hour, 23);
+        assert_eq!(iv.interval_value.day_second.minute, 59);
+        assert_eq!(iv.interval_value.day_second.second, 59);
+    }
+}
+
+#[test]
+fn minute_to_second_second_59_accepted_at_boundary() {
+    let (iv, r) = run("45:59", CDataType::IntervalMinuteToSecond);
+    r.expect("second=59 is the inclusive max");
+    unsafe {
+        assert_eq!(iv.interval_value.day_second.minute, 45);
+        assert_eq!(iv.interval_value.day_second.second, 59);
     }
 }

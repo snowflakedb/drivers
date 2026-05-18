@@ -2,21 +2,21 @@
 Base cursor class and supporting decorators.
 
 This module defines the abstract base cursor class (``SnowflakeCursorBase``)
-and its associated helpers: ``FetchMode``, type aliases, and decorator
-functions for precondition checks.
+and its associated helpers: type aliases, and decorator functions for
+precondition checks.
 """
 
 from __future__ import annotations
 
 import abc
 import ctypes
-import enum
 import functools
 import logging
 
 from collections.abc import Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
+from .._internal.api_client.client_api import core_driver
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
     create_row_iterator,
@@ -34,30 +34,20 @@ from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
-    ConnectionAbortQueryRequest,
-    ConnectionGetQueryResultRequest,
-    ConnectionGetResultSetRequest,
-    ConnectionResultChunksRequest,
     ExecuteQueryResponse,
     MultiStatementResult,
     PrepareResult,
     QueryBindings,
-    ResultChunksResult,
     ResultSetResponse,
-    StatementExecuteAsyncRequest,
-    StatementExecuteQueryRequest,
-    StatementGetResultSetRequest,
     StatementHandle,
-    StatementPrepareRequest,
-    StatementResultChunksRequest,
-    StatementSetOptionsRequest,
 )
-from .._internal.statement_utils import new_stmt, release_stmt, set_query, statement
+from .._internal.statement_utils import statement
 from ..errors import Error, ErrorValue, InterfaceError, NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._query_result import _MultiStatementQueryResultState, _QueryResult
 from ._query_result_waiter import QueryResultWaiter
 from ._result_metadata import QueryResultStats, ResultMetadata
+from ._result_set_wrapper import _ResultSetWrapper
 
 
 if TYPE_CHECKING:
@@ -75,17 +65,6 @@ DictRow = dict[str, Any]
 
 F = TypeVar("F", bound=Callable[..., Any])
 T = TypeVar("T", bound=Sequence[Any])
-
-
-class FetchMode(enum.Enum):
-    """Distinguishes row-by-row fetching from Arrow/Pandas fetching.
-
-    Once a cursor begins consuming results with one mode, switching to
-    the other is disallowed until a new ``execute()`` resets state.
-    """
-
-    ROW = "row"
-    ARROW = "arrow"
 
 
 def _requires_open(func: F) -> F:
@@ -129,28 +108,6 @@ def _with_prefetch_hook(func: F) -> F:
     return cast(F, wrapper)
 
 
-def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
-    """Validate and lock the cursor's fetch mode before entering the wrapped method."""
-
-    def decorator(func: F) -> F:
-        @functools.wraps(func)
-        def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-            if self._fetch_mode and self._fetch_mode != mode:
-                if mode == FetchMode.ARROW:
-                    raise ProgrammingError(msg="Cannot use arrow/pandas fetch methods after row-by-row fetching")
-                elif mode == FetchMode.ROW:
-                    raise ProgrammingError(msg="Cannot use row-by-row fetch methods after arrow/pandas fetching")
-                else:
-                    raise ProgrammingError(msg=f"Unexpected fetch mode: {mode}")
-            self._fetch_mode = mode
-
-            return func(self, *args, **kwargs)
-
-        return cast(F, wrapper)
-
-    return decorator
-
-
 class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
@@ -182,16 +139,14 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         # Cursor navigation position — mutable to avoid allocation per fetchone
         self._rownumber: int = -1
 
-        # -- Statement handle (set by _execute, cleared on reset) --
-        # needed for get_result_batches as the first (inline) chunk is cached on stmt in core
-        self._stmt_handle: StatementHandle | None = None
+        # -- ResultSet guard (set by _execute, cleared on reset) --
+        self._result_set = _ResultSetWrapper()
 
         # -- Multi-statement navigation (set by _handle_multi_statement_response, cleared on reset) --
         self._multi_statement: _MultiStatementQueryResultState | None = None
 
         # -- Active iteration state (cleared on reset) --
         self._iterator: ArrowStreamIterator | None = None
-        self._fetch_mode: FetchMode | None = None
 
         # -- Statement parameters (persists until explicitly changed) --
         self._statement_parameters: dict[str, Any] = {}
@@ -452,7 +407,11 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
                     errno=ER_INVALID_VALUE,
                 )
             # Client-side binding: interpolate parameters into SQL string
-            query = ClientSideBindingConverter.interpolate_query(operation, parameters)
+            query = ClientSideBindingConverter.interpolate_query(
+                operation,
+                parameters,
+                interpolate_empty_sequences=self._connection._interpolate_empty_sequences,
+            )
             return query, None
         else:
             # Server-side binding: qmark or numeric
@@ -511,23 +470,16 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
         query, bindings = self._prepare_query(operation, parameters)
 
-        stmt_handle = new_stmt(self.connection)
-        self._stmt_handle = stmt_handle
-
-        try:
-            set_query(self.connection, stmt_handle, query)
+        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             if self._statement_parameters:
                 self._apply_statement_parameters(stmt_handle)
 
             response = self._execute_query(stmt_handle, bindings)
 
             if response.HasField("multi"):
-                self._handle_multi_statement_response(response.multi, stmt_handle, query)
+                self._handle_multi_statement_response(response.multi, query)
             else:
-                self._fetch_and_handle_result_set(response.single.query_id, stmt_handle, query)
-        except Exception:
-            self._stmt_handle = release_stmt(self.connection, stmt_handle)
-            raise
+                self._apply_result_set(response.single, query)
 
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
         return self
@@ -547,22 +499,17 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             if setting is not None:
                 options[key] = setting
 
-        # Send single RPC with all options
-        request = StatementSetOptionsRequest(stmt_handle=stmt_handle, options=options)
-        self._connection.db_api.statement_set_options(request)
+        core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
 
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
         """Execute query and return ExecuteQueryResponse (single or multi)."""
         try:
-            request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
-            return self._connection.db_api.statement_execute_query(request)
+            return core_driver.statement_execute_query(stmt_handle=stmt_handle, bindings=bindings)
         except ProgrammingError as exc:
             self._query_result = _QueryResult.from_programming_error(exc)
             raise
 
-    def _handle_multi_statement_response(
-        self, result: MultiStatementResult, stmt_handle: StatementHandle, query: str
-    ) -> None:
+    def _handle_multi_statement_response(self, result: MultiStatementResult, query: str) -> None:
         self._multi_statement = _MultiStatementQueryResultState.from_result(result)
 
         # Edge case: empty multi-statement result
@@ -571,33 +518,21 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             return
 
         first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
-        self._fetch_and_handle_result_set(first_qid, stmt_handle, query)  # type: ignore[arg-type]
+        # already populate cursor with first child query results
+        rs_response = self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
+        self._apply_result_set(rs_response, query)
 
-    def _fetch_and_handle_result_set(self, query_id: str, stmt_handle: StatementHandle, query: str) -> None:
-        # Fetch the result set (metadata + arrow stream)
-        # TODO: consider lazy results fetch (i.e., don't statement_get_result_set on execute)
-        result_set_response = self._fetch_result_set(stmt_handle, query_id)
-        self._query_result = _QueryResult.from_result_set_response(result_set_response, query)
+    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
+        self._result_set.replace(rs_response.result_set_handle)
+        self._query_result = _QueryResult.from_result_set_response(rs_response, query)
 
-    def _fetch_result_set(self, stmt_handle: StatementHandle, query_id: str) -> ResultSetResponse:
-        """Fetch a result set by query ID via StatementGetResultSet RPC.
-
-        Args:
-            stmt_handle: Active statement handle.
-            query_id: Query ID to fetch.
-
-        Returns:
-            ResultSetResponse containing descriptor and arrow stream.
-
-        Raises:
-            ProgrammingError: If the fetch fails.
-        """
+    def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
+        """Fetch a ResultSetResponse (handle + descriptor) for a given query ID."""
         try:
-            request = StatementGetResultSetRequest(
-                stmt_handle=stmt_handle,
+            return core_driver.connection_get_result_set(
+                conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
                 query_id=query_id,
             )
-            return self._connection.db_api.statement_get_result_set(request)
         except Exception as exc:
             if isinstance(exc, ProgrammingError):
                 raise
@@ -605,8 +540,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
     def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult | None:
         try:
-            request = StatementPrepareRequest(stmt_handle=stmt_handle)
-            return self._connection.db_api.statement_prepare(request).result
+            return core_driver.statement_prepare(stmt_handle=stmt_handle).result
         except ProgrammingError as exc:
             self._query_result = _QueryResult.from_programming_error(exc)
             raise
@@ -705,7 +639,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         query, bindings = self._prepare_query(operation, parameters)
 
         prepare_result: PrepareResult | None = None
-        with statement(self.connection, query) as stmt_handle:
+        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             prepare_result = self._prepare(stmt_handle)
 
         self._query_result = _QueryResult.from_prepare_result(prepare_result)
@@ -721,7 +655,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
@@ -745,7 +678,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @pep249
     @api_telemetry
     @_requires_open_cursor_not_connection
-    @_requires_fetch_mode(FetchMode.ROW)
+    @_with_prefetch_hook
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -780,7 +713,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ROW)
     def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -800,7 +732,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
     def _create_row_iterator(self) -> ArrowStreamIterator:
         return create_row_iterator(
-            stream_ptr=self._query_result.consume_stream(),
+            stream_ptr=self._result_set.get_arrow_stream_ptr(),
             connection=self._connection,
             use_dict_result=self._use_dict_result,
             use_numpy=bool(self._connection.config.numpy),
@@ -880,13 +812,8 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         self.reset()
         self._multi_statement = ms
 
-        # TODO: consider lazy results fetch (i.e., don't statement_get_result_set on execute)
-        request = ConnectionGetResultSetRequest(
-            conn_handle=self._connection.conn_handle,
-            query_id=query_id,
-        )
-        result_set_response = self._connection.db_api.connection_get_result_set(request)
-        self._query_result = _QueryResult.from_result_set_response(result_set_response)
+        rs_response = self._fetch_result_set_by_query_id(query_id)
+        self._apply_result_set(rs_response, query=None)
         self._rownumber = -1
 
         return self
@@ -930,12 +857,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """Exit the runtime context for the cursor."""
         self.close()
 
-    def __del__(self) -> None:
-        try:
-            release_stmt(self._connection, self._stmt_handle)
-        except Exception:
-            pass
-
     def is_closed(self) -> bool:
         """
         Check if the cursor is closed.
@@ -964,9 +885,8 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """
         del self._messages[:]
         self._query_result.reset(closing=closing)
-        self._stmt_handle = release_stmt(self.connection, self._stmt_handle)
+        self._result_set.release()
         self._iterator = None
-        self._fetch_mode = None
         self._binding_data = None
         self._prefetch_hook = None
         # Clear multistatement state
@@ -1074,14 +994,13 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_batches(
         self,
         force_microsecond_precision: bool = False,
     ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
         iterator = create_table_iterator(
-            stream_ptr=self._query_result.consume_stream(),
+            stream_ptr=self._result_set.get_arrow_stream_ptr(),
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -1093,7 +1012,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_all(
         self,
         force_return_table: bool = False,
@@ -1101,7 +1019,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         iterator = create_table_iterator(
-            stream_ptr=self._query_result.consume_stream(),
+            stream_ptr=self._result_set.get_arrow_stream_ptr(),
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -1143,7 +1061,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @_with_prefetch_hook
     def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
-        result_chunks = self._fetch_result_chunks()
+        result_chunks = self._result_set.get_chunks()
         if result_chunks is None:
             return None
         return ResultBatch.from_chunks(
@@ -1153,27 +1071,6 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             list(result_chunks.columns),
         )
 
-    def _fetch_result_chunks(self) -> ResultChunksResult | None:
-        if self._multi_statement is None:
-            # single stmt - we have to fetch by statement handle as the first (inline) chunk is cached on statement
-            if self._stmt_handle:  # unless no stmt handle, then no result available (not executed yet)
-                stmt_req = StatementResultChunksRequest(stmt_handle=self._stmt_handle)
-                stmt_resp = self._connection.db_api.statement_result_chunks(stmt_req)
-                if stmt_resp.HasField("result"):
-                    return stmt_resp.result
-        else:
-            # multistatement - no stmt handle - chunks are fetched by query ids
-            query_id = self._multi_statement.current_child_query_id()
-            if query_id:  # unless no query_id (e.g. iteration over stmts already finished)
-                conn_req = ConnectionResultChunksRequest(
-                    conn_handle=self._connection.conn_handle,
-                    query_id=query_id,
-                )
-                conn_resp = self._connection.db_api.connection_result_chunks(conn_req)
-                if conn_resp.HasField("result"):
-                    return conn_resp.result
-        return None
-
     # ------------------------------------------------------------------
     # Async query support
     # ------------------------------------------------------------------
@@ -1181,7 +1078,8 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     def query_result(self, qid: str) -> SnowflakeCursorBase:
-        """Fetch the result of a previously executed query by its Snowflake Query ID.
+        """
+        Fetch the result of a previously executed query by its Snowflake Query ID.
 
         Resets the cursor and populates it with the results from the specified
         query, making them available through the standard fetch methods
@@ -1199,34 +1097,23 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """
         self.reset()
 
-        request = ConnectionGetQueryResultRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_get_query_result(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        response = self._connection.db_api.connection_get_query_result(request)
 
         # Handle single or multi-statement response
         if response.HasField("multi"):
-            # For async, we only support fetching the first result of multi-statement
             multi_result = response.multi
             if multi_result.query_ids:
                 first_qid = multi_result.query_ids[0]
-                result_request = ConnectionGetResultSetRequest(
-                    conn_handle=self._connection.conn_handle,
-                    query_id=first_qid,
-                )
-                result_set = self._connection.db_api.connection_get_result_set(result_request)
-                self._query_result = _QueryResult.from_result_set_response(result_set)
+                rs_response = self._fetch_result_set_by_query_id(first_qid)
+                self._apply_result_set(rs_response, query=None)
             else:
                 self._query_result = _QueryResult()
         else:
-            # Single statement
-            result_request = ConnectionGetResultSetRequest(
-                conn_handle=self._connection.conn_handle,
-                query_id=response.single.query_id,
-            )
-            result_set = self._connection.db_api.connection_get_result_set(result_request)
-            self._query_result = _QueryResult.from_result_set_response(result_set)
+            rs_response = response.single
+            self._apply_result_set(rs_response, query=None)
 
         self._rownumber = -1
 
@@ -1304,9 +1191,8 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         query, bindings = self._prepare_query(command, params)
 
         response = None
-        with statement(self._connection, query) as stmt_handle:
-            request = StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
-            response = self._connection.db_api.statement_execute_async(request)
+        with statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
+            response = core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
 
         query_id = (response.query_id if response.query_id else None) if response else None
         self._query_result = _QueryResult(sfqid=query_id)
@@ -1317,9 +1203,8 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @_requires_open
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
-        request = ConnectionAbortQueryRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_abort_query(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             query_id=qid,
         )
-        response = self._connection.db_api.connection_abort_query(request)
         return response.success

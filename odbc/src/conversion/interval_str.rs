@@ -32,10 +32,44 @@
 //!      SQLSTATE 22015.
 //!   4. Not a valid interval value. SQL_ERROR, SQLSTATE 22018.
 //!
-//! This parser is intentionally lenient: it accepts the canonical
-//! ANSI literal for the *target* qualifier, plus any literal that
-//! carries *more* trailing fields than the target wants — which is
-//! the truncation case (#2). Any other shape is a format error (#4).
+//! Shape handling: the parser accepts the canonical ANSI literal
+//! for the *target* qualifier, plus any literal that carries *more*
+//! trailing fields than the target wants — the latter is the
+//! truncation case (#2). Any other shape is a format error (#4).
+//!
+//! Range handling: trailing composite fields are validated against
+//! their canonical ANSI SQL ranges and a violation surfaces 22015
+//! ("Interval field overflow"). The enforced ranges for *trailing*
+//! slots in a composite literal are:
+//!
+//!   * MONTH (in `YEAR_TO_MONTH`)        : 0..=11
+//!   * HOUR  (in `*_TO_HOUR/MINUTE/SECOND`) : 0..=23
+//!   * MINUTE (in `*_TO_MINUTE/SECOND`)  : 0..=59
+//!   * SECOND (in `*_TO_SECOND`)         : 0..=59
+//!
+//! 22015 is the spec-mandated state for this case via two reinforcing
+//! readings of the ODBC reference:
+//!
+//!   * The `SQLGetData` diagnostics table defines 22015 as fired when
+//!     "there was no representation of the value of the SQL type in
+//!     the interval C type" — a trailing field outside its Gregorian
+//!     range has no representation in the interval C structure, whose
+//!     trailing fields are constrained by Gregorian rules per the
+//!     "Constraints of the Gregorian Calendar" appendix.
+//!   * The driver already uses `IntervalFieldOverflow` (→ 22015) for
+//!     analogous field-level overflows: `numeric_helpers::push_field_value`
+//!     fires it for trailing-field `u32::MAX` overflow, and this file's
+//!     own `field_overflow` helper fires it for day/hour/minute/second
+//!     overflow when the parsed value won't fit `u32`. Using 22018 for
+//!     a value of 61 while using 22015 for a value of 4_294_967_295
+//!     would be internally inconsistent — 22015 covers both ends.
+//!
+//! The *leading* field of any single-field or composite target keeps
+//! the precision-driven check (`SQL_DESC_DATETIME_INTERVAL_PRECISION`,
+//! also 22015 on overflow) and is *not* range-checked, because per
+//! ANSI a leading field can be arbitrarily large within its declared
+//! precision. For `MINUTE_TO_SECOND`, the leading slot is the minute,
+//! so only the trailing second is range-checked against 0..=59.
 
 use odbc_sys as sql;
 
@@ -119,7 +153,7 @@ struct SecondParse {
     /// `true` when the source carried more than 6 fractional digits
     /// AND at least one of the dropped digits was non-zero. Mirrors
     /// `numeric_helpers::compute_interval_fraction`'s `was_truncated`
-    /// flag and lets the caller surface 01S07 / `StringDataTruncated`.
+    /// flag and lets the caller surface 01S07 / `NumericValueTruncated`.
     fraction_was_truncated: bool,
 }
 
@@ -444,13 +478,13 @@ fn build_composite(
         IntervalYearToMonth => {
             let y = read(parts.year, "year")?;
             let m = read(parts.month, "month")?;
-            check_trailing_gregorian("month", m, 11, target)?;
+            check_trailing_field_range("month", m, 11)?;
             (sql::Interval::YearToMonth as i32, y, None, Some((y, m)))
         }
         IntervalDayToHour => {
             let d = read(parts.day, "day")?;
             let h = read(parts.hour, "hour")?;
-            check_trailing_gregorian("hour", h, 23, target)?;
+            check_trailing_field_range("hour", h, 23)?;
             (
                 sql::Interval::DayToHour as i32,
                 d,
@@ -462,8 +496,8 @@ fn build_composite(
             let d = read(parts.day, "day")?;
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
-            check_trailing_gregorian("hour", h, 23, target)?;
-            check_trailing_gregorian("minute", m, 59, target)?;
+            check_trailing_field_range("hour", h, 23)?;
+            check_trailing_field_range("minute", m, 59)?;
             (
                 sql::Interval::DayToMinute as i32,
                 d,
@@ -476,9 +510,9 @@ fn build_composite(
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
             let s = read(parts.second, "second")?;
-            check_trailing_gregorian("hour", h, 23, target)?;
-            check_trailing_gregorian("minute", m, 59, target)?;
-            check_trailing_gregorian("second", s, 59, target)?;
+            check_trailing_field_range("hour", h, 23)?;
+            check_trailing_field_range("minute", m, 59)?;
+            check_trailing_field_range("second", s, 59)?;
             (
                 sql::Interval::DayToSecond as i32,
                 d,
@@ -489,7 +523,7 @@ fn build_composite(
         IntervalHourToMinute => {
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
-            check_trailing_gregorian("minute", m, 59, target)?;
+            check_trailing_field_range("minute", m, 59)?;
             (
                 sql::Interval::HourToMinute as i32,
                 h,
@@ -501,8 +535,8 @@ fn build_composite(
             let h = read(parts.hour, "hour")?;
             let m = read(parts.minute, "minute")?;
             let s = read(parts.second, "second")?;
-            check_trailing_gregorian("minute", m, 59, target)?;
-            check_trailing_gregorian("second", s, 59, target)?;
+            check_trailing_field_range("minute", m, 59)?;
+            check_trailing_field_range("second", s, 59)?;
             (
                 sql::Interval::HourToSecond as i32,
                 h,
@@ -540,7 +574,10 @@ fn build_composite(
                     .fail();
                 }
             };
-            check_trailing_gregorian("second", s, 59, target)?;
+            // Range check the trailing SECOND slot only. The leading
+            // MINUTE slot (`m`) is governed by the precision-based
+            // 22015 check below, not the canonical 0..=59 range.
+            check_trailing_field_range("second", s, 59)?;
             (
                 sql::Interval::MinuteToSecond as i32,
                 m,
@@ -606,24 +643,27 @@ fn field_overflow(name: &str, value: u128) -> WriteOdbcError {
     .build()
 }
 
-/// Validates that a *trailing* field value falls inside the Gregorian
-/// calendar range required by the Microsoft ODBC specification
-/// ("Trailing fields must follow the usual constraints of the
-/// Gregorian calendar"). The leading field of an interval qualifier
-/// is unconstrained — that case is covered by `check_leading_precision`.
-///
-/// Out-of-range trailing fields surface as SQLSTATE 22015
-/// (`IntervalFieldOverflow`).
-fn check_trailing_gregorian(
-    field: &str,
+/// Validate a *trailing* composite-interval field against its
+/// canonical ANSI SQL range. Returns `IntervalFieldOverflow` (mapped
+/// to SQLSTATE 22015, "Interval field overflow") when the magnitude
+/// exceeds `max_inclusive`. Per the `SQLGetData` diagnostics table
+/// 22015 fires when "there was no representation of the value of the
+/// SQL type in the interval C type", and an interval C structure has
+/// no representation for a trailing field outside its Gregorian range
+/// (HOUR > 23, MINUTE/SECOND > 59, MONTH > 11). This also matches the
+/// existing `field_overflow` helper below, which uses 22015 for the
+/// catastrophic `u32::MAX`-overflow form of the same problem. Leading
+/// fields use a precision-based 22015 check elsewhere and must NOT be
+/// passed through this helper.
+fn check_trailing_field_range(
+    name: &'static str,
     value: u128,
-    max: u128,
-    target: CDataType,
+    max_inclusive: u32,
 ) -> Result<(), WriteOdbcError> {
-    if value > max {
+    if value > u128::from(max_inclusive) {
         IntervalFieldOverflowSnafu {
             reason: format!(
-                "{field} field value {value} is out of Gregorian range 0..={max} for {target:?}"
+                "trailing '{name}' field magnitude {value} is outside the canonical ANSI range 0..={max_inclusive}"
             ),
         }
         .fail()
@@ -632,10 +672,22 @@ fn check_trailing_gregorian(
     }
 }
 
-/// Returns 01S07 (`StringDataTruncated`) if the parsed input carried any
-/// non-zero field that the target qualifier cannot represent OR if the
-/// parser already discarded non-zero fractional digits past the 6-digit
-/// microsecond cap.
+/// Returns 01S07 (`Warning::NumericValueTruncated` →
+/// `SqlState::FractionalTruncation`) when either:
+///
+///   * the parsed input carried a non-zero field that the target
+///     qualifier cannot represent (classic trailing-field truncation —
+///     Appendix D "Character to Interval" outcome #2), or
+///   * the parser already discarded non-zero fractional digits past
+///     the 6-digit microsecond cap (sub-microsecond loss; independent
+///     of which qualifier the target asks for).
+///
+/// Per ODBC Appendix D outcome #2 the spec-mandated SQLSTATE for
+/// interval-conversion truncation is 01S07, *not* 01004
+/// (`StringDataRightTruncated`). `Warning::StringDataTruncated` maps
+/// to 01004 in `odbc/src/api/diagnostic.rs`, which would mis-classify
+/// the diagnostic, so this function uses `Warning::NumericValueTruncated`
+/// throughout.
 fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings {
     use CDataType::*;
 
@@ -644,15 +696,17 @@ fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings
     // the dropped digits, so we always surface 01S07 when the
     // parser saw non-zero data past the 6-digit microsecond cap.
     if parts.fraction_was_truncated {
-        return vec![Warning::StringDataTruncated];
+        return vec![Warning::NumericValueTruncated];
     }
 
     // Bare-numeric inputs ("5" or "5.5") populate every field with
     // the same value as a convenience for single-field targets; do
     // NOT treat that as truncation. The only meaningful loss is a
-    // non-zero fraction sent to an integer-only target.
+    // non-zero fraction sent to an integer-only target — a zero
+    // fraction (e.g. "5.0") loses no information and must not warn.
     if parts.is_single_int_input {
         if parts.has_fraction
+            && parts.fraction_micros.unwrap_or(0) > 0
             && !matches!(
                 target,
                 IntervalSecond
@@ -661,7 +715,7 @@ fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings
                     | IntervalMinuteToSecond
             )
         {
-            return vec![Warning::StringDataTruncated];
+            return vec![Warning::NumericValueTruncated];
         }
         return vec![];
     }
@@ -712,7 +766,7 @@ fn trailing_field_warnings(parts: &IntervalParts, target: CDataType) -> Warnings
         || (!consumes_fraction && parts.has_fraction && parts.fraction_micros.unwrap_or(0) > 0);
 
     if lost {
-        vec![Warning::StringDataTruncated]
+        vec![Warning::NumericValueTruncated]
     } else {
         vec![]
     }

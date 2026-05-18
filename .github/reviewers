@@ -1,0 +1,42 @@
+# Reviewer pool for the PR review bot (see .github/workflows/pr-review-bot.yml
+# and scripts/pr_review_bot.py).
+#
+# Format: `<label>  @login1 @login2 ...`. The first token is a GitHub
+# PR-label name (case-insensitive); the rest are individual @logins.
+# Team references (`@org/team-slug`) are NOT supported — the bot needs
+# the individual list so it doesn't require the `read:org` scope.
+# Blank lines and `#` comments are ignored.
+#
+# Selection algorithm:
+#
+#   1. The bot reads the PR's labels (e.g. `python`, `odbc`, `jdbc`).
+#   2. Every rule whose label is on the PR contributes its reviewers
+#      to the candidate pool (union across matched rules — a PR
+#      labeled both `python` and `odbc` pools the experts from both).
+#   3. If no rule matched, the reserved `all` rule below is used as
+#      the fallback pool of generalists. `all` is not a real PR label
+#      anyone applies — it is just a more readable spelling of "no
+#      match" than `*` would be in a file of label names.
+#   4. PR author and already-requested reviewers are removed.
+#   5. Reviewers whose Slack status signals OOO are removed (unless
+#      that would empty the pool).
+#   6. One reviewer is picked at random.
+#
+# Why labels instead of file paths?
+#   * PRs are already triaged with `python` / `odbc` / `jdbc` /
+#     `nodejs` labels, so we get domain routing for free without
+#     having to maintain glob patterns that drift from the on-disk
+#     layout.
+#   * Multi-domain PRs naturally union the right experts.
+#   * Labels are on the PR payload the bot already fetches — no extra
+#     API call.
+#
+# .github/CODEOWNERS is independent: it stays on the team alias so
+# GitHub's native code-owner request fires once against the whole
+# team. Domain-specific routing lives here.
+
+all @sfc-gh-daniszewski @sfc-gh-boler
+jdbc @sfc-gh-pfus @sfc-gh-dheyman @sfc-gh-rkowalski
+nodejs @sfc-gh-rsavenok @sfc-gh-rkowalski @sfc-gh-pbulawa
+odbc @sfc-gh-mcepiga @sfc-gh-mhofman @sfc-gh-jszczerbinski @sfc-gh-ddas @sfc-gh-makowalski @sfc-gh-rkowalski @sfc-gh-pbulawa
+python @sfc-gh-asolarski @sfc-gh-fpawlowski @sfc-gh-pczajka @sfc-gh-turbaszek

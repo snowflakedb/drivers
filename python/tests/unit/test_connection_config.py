@@ -62,19 +62,53 @@ class TestFromKwargs:
         assert config._extra == {"custom_param": "value"}
 
     def test_legacy_rewrite_private_key_file_pwd(self):
-        config = ConnectionConfig.from_kwargs(private_key_file_pwd="secret")
+        with pytest.warns(DeprecationWarning, match="private_key_file_pwd"):
+            config = ConnectionConfig.from_kwargs(private_key_file_pwd="secret")
         assert config.private_key_password == "secret"
 
     def test_legacy_rewrite_client_request_mfa_token(self):
-        config = ConnectionConfig.from_kwargs(client_request_mfa_token=True)
+        with pytest.warns(DeprecationWarning, match="client_request_mfa_token"):
+            config = ConnectionConfig.from_kwargs(client_request_mfa_token=True)
         assert config.client_store_temporary_credential is True
 
     def test_legacy_rewrite_does_not_override_canonical(self):
-        config = ConnectionConfig.from_kwargs(
-            client_request_mfa_token=True,
-            client_store_temporary_credential=False,
-        )
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(
+                client_request_mfa_token=True,
+                client_store_temporary_credential=False,
+            )
         assert config.client_store_temporary_credential is False
+
+    def test_client_fetch_threads_maps_to_prefetch_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="client_fetch_threads"):
+            config = ConnectionConfig.from_kwargs(client_fetch_threads=8)
+        assert config.client_prefetch_threads == 8
+
+    def test_client_fetch_threads_does_not_override_canonical(self):
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(
+                client_fetch_threads=8,
+                client_prefetch_threads=2,
+            )
+        assert config.client_prefetch_threads == 2
+
+    def test_client_fetch_use_mp_is_dropped_with_warning(self):
+        with pytest.warns(DeprecationWarning, match="client_fetch_use_mp"):
+            config = ConnectionConfig.from_kwargs(user="u", client_fetch_use_mp=True)
+        assert config.user == "u"
+        assert "client_fetch_use_mp" not in config._extra
+
+    def test_client_session_keep_alive_kwargs(self):
+        config = ConnectionConfig.from_kwargs(
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=600,
+        )
+        assert config.client_session_keep_alive is True
+        assert config.client_session_keep_alive_heartbeat_frequency == 600
+
+    def test_client_session_keep_alive_upper_case_alias(self):
+        config = ConnectionConfig.from_kwargs(CLIENT_SESSION_KEEP_ALIVE=True)
+        assert config.client_session_keep_alive is True
 
 
 class TestFromConnectionArgs:
@@ -157,7 +191,7 @@ class TestFromConnectionArgs:
     def test_private_key_normalization(self):
         """Private key is normalized via normalize_private_key."""
         with patch(
-            "snowflake.connector.connection_config.normalize_private_key",
+            "snowflake.connector._internal.connection_config_mixin.normalize_private_key",
             return_value="normalized",
         ):
             config = ConnectionConfig.from_connection_args(user="u", private_key="raw_key")
@@ -184,6 +218,24 @@ class TestToOptions:
         opts = config.to_options()
         assert "passcodeInPassword" in opts
         assert "passcode_in_password" not in opts
+
+    def test_client_session_keep_alive_forwarded(self):
+        config = ConnectionConfig(
+            client_session_keep_alive=True,
+            client_session_keep_alive_heartbeat_frequency=1200,
+        )
+        opts = config.to_options()
+        assert opts["CLIENT_SESSION_KEEP_ALIVE"] is True
+        assert opts["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"] == 1200
+
+    def test_client_session_keep_alive_defaults(self):
+        config = ConnectionConfig()
+        opts = config.to_options()
+        # Default is False (forwarded so the server sees the explicit choice).
+        assert opts["CLIENT_SESSION_KEEP_ALIVE"] is False
+        # Frequency stays None: the heartbeat scheduler computes the default
+        # from master_token_validity at runtime.
+        assert "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY" not in opts
 
     def test_includes_extra(self):
         config = ConnectionConfig(user="u")
@@ -248,4 +300,4 @@ class TestClassVariables:
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY
 
     def test_all_fields_superset_of_python_only(self):
-        assert ConnectionConfig._PYTHON_ONLY.issubset(ConnectionConfig._ALL_FIELDS)
+        assert ConnectionConfig._PYTHON_ONLY.issubset(ConnectionConfig._all_field_names())

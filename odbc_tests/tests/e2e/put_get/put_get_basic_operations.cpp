@@ -2,7 +2,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -101,6 +100,10 @@ TEST_CASE("should return correct rowset for PUT", "[put_get]") {
   auto stmt = conn.execute_fetch(put_sql);
 
   // Then Rowset for PUT command should be correct
+  SQLSMALLINT num_cols = 0;
+  REQUIRE_ODBC(SQLNumResultCols(stmt.getHandle(), &num_cols), stmt);
+  CHECK(num_cols == PUT_ROW_NUM_COLS);
+
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
   CHECK(get_data<SQL_C_LONG>(stmt, PUT_ROW_SOURCE_SIZE_IDX) == 6);
@@ -111,8 +114,8 @@ TEST_CASE("should return correct rowset for PUT", "[put_get]") {
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == "UPLOADED");
 
-  OLD_DRIVER_ONLY("BD#3") { CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX) == "ENCRYPTED"); }
-  NEW_DRIVER_ONLY("BD#3") { CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX) == ""); }
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_ENCRYPTION_IDX) == "ENCRYPTED");
+  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX).empty());
 }
 
 TEST_CASE("should return correct rowset for GET", "[put_get]") {
@@ -131,6 +134,10 @@ TEST_CASE("should return correct rowset for GET", "[put_get]") {
   auto stmt = conn.execute_fetch(get_sql);
 
   // Then Rowset for GET command should be correct
+  SQLSMALLINT num_cols = 0;
+  REQUIRE_ODBC(SQLNumResultCols(stmt.getHandle(), &num_cols), stmt);
+  CHECK(num_cols == GET_ROW_NUM_COLS);
+
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_FILE_IDX) == filename + ".gz");
 
   OLD_DRIVER_ONLY("BD#4") { CHECK(get_data<SQL_C_LONG>(stmt, GET_ROW_SIZE_IDX) == 32); }
@@ -138,6 +145,5 @@ TEST_CASE("should return correct rowset for GET", "[put_get]") {
 
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_STATUS_IDX) == "DOWNLOADED");
 
-  OLD_DRIVER_ONLY("BD#3") { CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_MESSAGE_IDX) == "DECRYPTED"); }
-  NEW_DRIVER_ONLY("BD#3") { CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_MESSAGE_IDX) == ""); }
+  CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_ENCRYPTION_IDX) == "DECRYPTED");
 }

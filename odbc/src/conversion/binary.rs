@@ -66,7 +66,7 @@ fn hex_digit_to_ascii(nibble: u8) -> u8 {
 /// separators), and odd-length / non-hex input must surface as
 /// SQLSTATE 22018.
 fn hex_decode_ascii(input: &str) -> Result<Vec<u8>, JsonBindingError> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return InvalidHexLiteralSnafu {
             reason: format!(
                 "hex literal must contain an even number of digits (got {} chars)",

@@ -24,9 +24,13 @@ use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
-/// Controls how FIXED numeric columns are reported to ODBC applications.
-/// These settings match the Snowflake server-side session parameters
-/// `ODBC_TREAT_DECIMAL_AS_INT` and `ODBC_TREAT_BIG_NUMBER_AS_STRING`.
+/// Controls how FIXED numeric columns are reported to ODBC applications,
+/// plus a small handful of other session-derived settings the converter
+/// pipeline needs to read once per `RecordBatch`. The struct is named for
+/// historical reasons; new fields that are *not* numeric (e.g.
+/// `tz_offset_format`) live here too because every `make_converter` call
+/// already accepts an `&NumericSettings` and threading another parameter
+/// through every type-specific converter would be much more invasive.
 #[derive(Debug, Clone, Copy)]
 pub struct NumericSettings {
     /// When true, FIXED columns with scale=0 are reported as SQL_BIGINT
@@ -40,6 +44,13 @@ pub struct NumericSettings {
     /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Used as the default
     /// `column_size` in auto-populated IPD records for untyped `?` markers.
     pub max_varchar_size: u64,
+    /// Parsed `TIMESTAMP_TZ_OUTPUT_FORMAT` for the current session. `None`
+    /// means "not set, or set to a value without a TZH/TZM/TZHTZM token";
+    /// the TZ -> CHAR/WCHAR fetch path keeps its legacy UTC-only behaviour.
+    /// `Some(_)` means the customer asked for the offset to be preserved
+    /// in CHAR/WCHAR output (mirrors what the legacy 3.16.0 driver does
+    /// when handed the same format).
+    pub tz_offset_format: Option<crate::conversion::timestamp::TzOffsetFormat>,
 }
 
 /// Snowflake default max VARCHAR size (16 MB). Overridden by the server's
@@ -52,6 +63,7 @@ impl Default for NumericSettings {
             treat_decimal_as_int: false,
             treat_big_number_as_string: false,
             max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
+            tz_offset_format: None,
         }
     }
 }

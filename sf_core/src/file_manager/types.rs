@@ -1,3 +1,4 @@
+use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,10 @@ pub struct UploadData {
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
+    /// Wrapper-specific shape of the PUT result set. Forwarded into each
+    /// `SingleUploadData` so that `upload_single_file` can populate the
+    /// `message` column according to the active wrapper's contract.
+    pub flavor: PutGetResultsetFlavor,
 }
 
 pub struct SingleUploadData {
@@ -38,6 +43,7 @@ pub struct SingleUploadData {
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
+    pub flavor: PutGetResultsetFlavor,
 }
 
 #[derive(Debug)]

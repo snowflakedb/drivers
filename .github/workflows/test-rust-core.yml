@@ -1,24 +1,86 @@
 name: Rust Core CI
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
+    # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
+    # a PR re-runs the workflow at the upgraded scope without needing a new
+    # commit. Unrelated labels are filtered by the `scope-label-gate` job
+    # below; concurrency keeps in-flight runs alive for those.
+    types: [opened, synchronize, reopened, labeled]
   merge_group:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
-  # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
+  # Group by PR number for PRs; fall back to run ID for merge_group runs
+  # (each run is unique so they won't cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  # Don't cancel an in-flight run when an unrelated label is added/removed —
+  # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
+  # push/synchronize/reopen events should replace the running matrix.
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Filter out PR runs triggered solely by adding an unrelated label
+  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
+  # evaluates to false on those events, this job is skipped, and every
+  # downstream job that `needs:` it is skipped too. Scope-up labels
+  # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
+  # workflow at the upgraded scope.
+  scope-label-gate:
+    if: |
+      github.event.action != 'labeled' ||
+      contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+
   detect-changes:
+    needs: scope-label-gate
     uses: ./.github/workflows/detect-changes.yml
+
+  # Generate the test matrix from ci/test_matrix/models/core.pict at workflow
+  # run time. Pattern mirrors load-odbc-matrix in test-odbc.yml and
+  # load-python-matrix in test-python.yml. Outputs:
+  #   - matrix:              full active set (unfiltered, JSON array). Useful
+  #                          for diagnostics; not directly consumed below.
+  #   - test_matrix:         JSON array filtered to ubuntu-latest / macos-latest
+  #                          lanes, fed into the `test` job's strategy.matrix.include.
+  #                          Each entry has rust-version='stable' merged in so the
+  #                          existing matrix dimension is preserved.
+  #   - windows_arm_active:  'true' if pict includes the windows-arm-nonfips lane.
+  #   - windows_x86_active:  'true' if pict includes the windows-x86 lane.
+  load-core-matrix:
+    needs: scope-label-gate
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+      test_matrix: ${{ steps.split.outputs.test_matrix }}
+      windows_arm_active: ${{ steps.split.outputs.windows_arm_active }}
+      windows_x86_active: ${{ steps.split.outputs.windows_x86_active }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          python ci/test_matrix/generate_matrix.py \
+            --driver core --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
+            >> "$GITHUB_OUTPUT"
+      - id: split
+        env:
+          FULL: ${{ steps.read.outputs.matrix }}
+        run: |
+          # Linux/macOS lanes feed `test` job's strategy.matrix.include. Inject
+          # rust-version='stable' so the existing matrix dimension survives the
+          # switch from the static `os: [...] × rust-version: [...]` shape.
+          echo "test_matrix=$(printf '%s' "$FULL" | jq -c '[.[] | select(.os == "ubuntu-latest" or .os == "macos-latest") | . + {"rust-version": "stable"}]')" >> "$GITHUB_OUTPUT"
+          # Per-lane boolean gates for the dedicated Windows jobs (no matrix; we
+          # just skip the whole job if pict didn't include the lane on this trigger).
+          echo "windows_arm_active=$(printf '%s' "$FULL" | jq -r '[.[] | select(.name == "windows-arm-nonfips")] | length > 0')" >> "$GITHUB_OUTPUT"
+          echo "windows_x86_active=$(printf '%s' "$FULL" | jq -r '[.[] | select(.name == "windows-x86")] | length > 0')" >> "$GITHUB_OUTPUT"
 
   # Format job intentionally has no Rust target cache: `cargo fmt --check` does not
   # compile the crate, it only parses source files. A cache would add restore overhead
@@ -120,13 +182,14 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    needs: [detect-changes, load-core-matrix]
+    if: |
+      (github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true')
+      && needs.load-core-matrix.outputs.test_matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust-version: ['stable']
+        include: ${{ fromJSON(needs.load-core-matrix.outputs.test_matrix) }}
     runs-on: ${{ matrix.os }}
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
@@ -147,7 +210,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "core-test"
+          shared-key: ${{ matrix.cache_key }}
 
       - name: Capture rustc version for coverage tool cache key
         id: rustc-version
@@ -209,13 +272,13 @@ jobs:
         continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --no-report --no-fail-fast --package sf_core --all-features
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Rerun tests with coverage
         if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --no-report --no-fail-fast --package sf_core --all-features
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
 
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
@@ -223,8 +286,8 @@ jobs:
       # "not found *.profraw files". The shell guard checks first and emits a clean
       # skip message instead.
       #
-      # Scoping the report to `--package sf_core --all-features` mirrors the build/run
-      # invocation. Without it, llvm-cov walks the entire workspace's source files,
+      # Scoping the report to `--package sf_core ${{ matrix.cargo_flags }}` mirrors the
+      # build/run invocation. Without it, llvm-cov walks the entire workspace's source files,
       # including crates we never instrumented (jdbc_bridge, odbc, sf_core_macros,
       # proto_generator) — they appear at 0% coverage and deflate the aggregate number
       # parsed by the Jenkins coverage pipeline.
@@ -233,20 +296,12 @@ jobs:
         continue-on-error: true
         run: |
           if find target/llvm-cov-target -name '*.profraw' 2>/dev/null | grep -q .; then
-            cargo llvm-cov report --package sf_core --all-features --lcov --output-path lcov.info
-            echo "lcov report written to lcov.info (scoped to sf_core --all-features)"
+            cargo llvm-cov report --package sf_core ${{ matrix.cargo_flags }} --lcov --output-path lcov.info
+            echo "lcov report written to lcov.info (scoped to sf_core ${{ matrix.cargo_flags }})"
           else
             echo "No *.profraw files in target/llvm-cov-target — skipping report"
             echo "(this is expected if the build failed before any test executed)"
           fi
-
-      - name: Cleanup test PATs
-        if: always()
-        continue-on-error: true
-        run: |
-          python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_env.py \
-            --parameter-path $(pwd)/parameters.json
 
       # NOTE: profraw/profdata cleanup and llvm-cov-target/ removal happen inside
       # the cargo-cache action's slim step (with slim-mode: aggressive below).
@@ -265,7 +320,7 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "core-test"
+          shared-key: ${{ matrix.cache_key }}
           # Aggressive slim: this is the coverage job, where instrumented test
           # binaries dominate target/ size. Drop them before save; deps remain
           # cached so the next run rebuilds workspace tests in 1-2 min.
@@ -286,8 +341,10 @@ jobs:
   # behind cfg(feature = "fips"). Only the linked TLS crypto backend differs
   # (aws-lc-sys vs aws-lc-fips-sys).
   test_windows_arm64_nonfips:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    needs: [detect-changes, load-core-matrix]
+    if: |
+      (github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true')
+      && needs.load-core-matrix.outputs.windows_arm_active == 'true'
     runs-on: windows-11-arm
     name: test (Windows ARM64, non-FIPS)
     env:
@@ -456,19 +513,6 @@ jobs:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: windows-11-arm-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
-      - name: Cleanup test PATs
-        if: always()
-        continue-on-error: true
-        shell: bash
-        env:
-          OPENSSL_DIR: C:\vcpkg\installed\arm64-windows-static-md
-          OPENSSL_LIB_DIR: C:\vcpkg\installed\arm64-windows-static-md\lib
-          OPENSSL_STATIC: "1"
-        run: |
-          python -m pip install --no-binary cryptography snowflake-connector-python -q
-          python scripts/cleanup_env.py \
-            --parameter-path "${{ github.workspace }}/parameters.json"
-
       - name: Save Rust cache
         if: always()
         # timeout-minutes is enforced here because it isn't supported on
@@ -484,8 +528,10 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test_windows_x86:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    needs: [detect-changes, load-core-matrix]
+    if: |
+      (github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true')
+      && needs.load-core-matrix.outputs.windows_x86_active == 'true'
     runs-on: windows-latest
     name: test (Windows x86)
     env:
@@ -594,15 +640,6 @@ jobs:
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
 
-      - name: Cleanup test PATs
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_test_pats.py \
-            --parameter-path "${{ github.workspace }}/parameters.json"
-
       - name: Save Rust cache
         if: always()
         uses: ./.github/actions/cargo-cache
@@ -612,8 +649,29 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
+  cleanup_rust_core:
+    needs: [detect-changes, test, test_windows_arm64_nonfips, test_windows_x86]
+    if: always() && (needs.test.result != 'skipped' || needs.test_windows_arm64_nonfips.result != 'skipped' || needs.test_windows_x86.result != 'skipped')
+    runs-on: ubuntu-latest
+    name: cleanup_rust_core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
+
+      - name: Cleanup test PATs
+        continue-on-error: true
+        run: |
+          python -m pip install snowflake-connector-python -q
+          python scripts/cleanup_env.py \
+            --parameter-path "${{ github.workspace }}/parameters.json"
+
   rust-core-status:
-    needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86]
+    needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
     if: always()
     runs-on: ubuntu-latest
     steps:

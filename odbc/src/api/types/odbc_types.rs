@@ -259,19 +259,70 @@ impl TryFrom<sql::ULen> for CursorType {
     }
 }
 
+/// ODBC statement attribute value constants.
+/// `SQL_CONCUR_READ_ONLY` (1) — read-only cursor concurrency (default).
+pub const SQL_CONCUR_READ_ONLY: sql::ULen = 1;
+/// `SQL_CONCUR_LOCK` (2) — cursor concurrency with locking.
+pub const SQL_CONCUR_LOCK: sql::ULen = 2;
+/// `SQL_CONCUR_ROWVER` (3) — cursor concurrency with row versioning.
+#[allow(dead_code)] // Covered by SQL_CONCUR_LOCK..=SQL_CONCUR_VALUES range pattern
+pub const SQL_CONCUR_ROWVER: sql::ULen = 3;
+/// `SQL_CONCUR_VALUES` (4) — cursor concurrency with optimistic values.
+pub const SQL_CONCUR_VALUES: sql::ULen = 4;
+/// `SQL_NONSCROLLABLE` (0) — non-scrollable cursor (default).
+pub const SQL_NONSCROLLABLE: sql::ULen = 0;
+/// `SQL_SCROLLABLE` (1) — scrollable cursor.
+pub const SQL_SCROLLABLE: sql::ULen = 1;
+/// `SQL_UNSPECIFIED` (0) — unspecified cursor sensitivity (default).
+pub const SQL_UNSPECIFIED: sql::ULen = 0;
+/// `SQL_INSENSITIVE` (1) — insensitive cursor.
+pub const SQL_INSENSITIVE: sql::ULen = 1;
+/// `SQL_SENSITIVE` (2) — sensitive cursor.
+pub const SQL_SENSITIVE: sql::ULen = 2;
+/// `SQL_NOSCAN_OFF` (0) — scan for escape sequences (default).
+pub const SQL_NOSCAN_OFF: sql::ULen = 0;
+/// `SQL_NOSCAN_ON` (1) — do not scan for escape sequences.
+pub const SQL_NOSCAN_ON: sql::ULen = 1;
+/// `SQL_SC_NON_UNIQUE` (0) — simulate non-unique cursors (default).
+pub const SQL_SC_NON_UNIQUE: sql::ULen = 0;
+/// `SQL_RD_OFF` (0) — do not retrieve data after positioned update.
+pub const SQL_RD_OFF: sql::ULen = 0;
+/// `SQL_RD_ON` (1) — retrieve data after positioned update (default).
+pub const SQL_RD_ON: sql::ULen = 1;
+
 /// ODBC statement attribute identifiers (matching `SQL_ATTR_*` constants from `sql.h`).
 #[repr(i32)]
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StmtAttr {
+    /// `SQL_ATTR_CURSOR_SCROLLABLE` (-1) — whether the cursor is scrollable.
+    CursorScrollable = -1,
+    /// `SQL_ATTR_CURSOR_SENSITIVITY` (-2) — cursor sensitivity to changes.
+    CursorSensitivity = -2,
+    /// `SQL_ATTR_QUERY_TIMEOUT` (0) — query timeout in seconds (0 = no timeout).
+    QueryTimeout = 0,
+    /// `SQL_ATTR_MAX_ROWS` (1) — maximum rows returned (0 = no limit).
+    MaxRows = 1,
+    /// `SQL_ATTR_NOSCAN` (2) — whether to scan for ODBC escape sequences.
+    Noscan = 2,
     /// `SQL_ATTR_MAX_LENGTH` (3) — maximum amount of data returned from character/binary columns.
     MaxLength = 3,
     /// `SQL_ATTR_ROW_BIND_TYPE` (5) — row-wise vs column-wise binding.
     RowBindType = 5,
     /// `SQL_ATTR_CURSOR_TYPE` (6) — type of cursor.
     CursorType = 6,
+    /// `SQL_ATTR_CONCURRENCY` (7) — cursor concurrency.
+    Concurrency = 7,
+    /// `SQL_ATTR_KEYSET_SIZE` (8) — keyset size for keyset-driven cursors.
+    KeysetSize = 8,
+    /// `SQL_ATTR_SIMULATE_CURSOR` (10) — how to simulate positioned update/delete statements.
+    SimulateCursor = 10,
+    /// `SQL_ATTR_RETRIEVE_DATA` (11) — whether to retrieve data after a positioned update.
+    RetrieveData = 11,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
+    /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
+    EnableAutoIpd = 15,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
@@ -293,9 +344,8 @@ pub enum StmtAttr {
     /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — last query ID (read-only string).
     /// Platform-dependent: 1263 (Windows/MDAC) or 16647 (Unix/iODBC).
     SnowflakeLastQueryId = 16647,
-    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — number of statements in multi-statement query.
-    /// Platform-dependent: 1264 (Windows/MDAC) or 16648 (Unix/iODBC).
-    MultiStatementCount = 16648,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` (0x4108 = 16648) — multi-statement count.
+    SnowflakeMultiStatementCount = 16648,
 }
 
 impl TryFrom<i32> for StmtAttr {
@@ -303,10 +353,20 @@ impl TryFrom<i32> for StmtAttr {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
+            -2 => Ok(StmtAttr::CursorSensitivity),
+            -1 => Ok(StmtAttr::CursorScrollable),
+            0 => Ok(StmtAttr::QueryTimeout),
+            1 => Ok(StmtAttr::MaxRows),
+            2 => Ok(StmtAttr::Noscan),
             3 => Ok(StmtAttr::MaxLength),
             5 => Ok(StmtAttr::RowBindType),
             6 => Ok(StmtAttr::CursorType),
+            7 => Ok(StmtAttr::Concurrency),
+            8 => Ok(StmtAttr::KeysetSize),
+            10 => Ok(StmtAttr::SimulateCursor),
+            11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
+            15 => Ok(StmtAttr::EnableAutoIpd),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
@@ -318,10 +378,10 @@ impl TryFrom<i32> for StmtAttr {
             10014 => Ok(StmtAttr::MetadataId),
             // Windows/Microsoft ODBC (SQL_DRIVER_STMT_ATTR_BASE = 1000)
             1263 => Ok(StmtAttr::SnowflakeLastQueryId),
-            1264 => Ok(StmtAttr::MultiStatementCount),
+            1264 => Ok(StmtAttr::SnowflakeMultiStatementCount),
             // Mac/iODBC (SQL_DRIVER_STMT_ATTR_BASE = 16384)
             16647 => Ok(StmtAttr::SnowflakeLastQueryId),
-            16648 => Ok(StmtAttr::MultiStatementCount),
+            16648 => Ok(StmtAttr::SnowflakeMultiStatementCount),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
                 Err(OdbcError::UnknownAttribute {
@@ -546,6 +606,24 @@ pub enum SqlType {
     // sqlext.h
     Guid = -11, // SQL_GUID
 
+    // Snowflake-specific vendor SQL type codes for TIMESTAMP variants.
+    //
+    // Defined here so applications can pass them as the `ParameterType`
+    // argument to `SQLBindParameter` and explicitly request that a bound
+    // value round-trip as `TIMESTAMP_LTZ` / `_TZ` / `_NTZ` instead of being
+    // routed by the standard `SQL_TYPE_TIMESTAMP` (93) which has no way to
+    // distinguish the three. The values match the legacy 3.16.0 Snowflake
+    // ODBC driver (`Source/sf_odbc.h`) for application compatibility.
+    //
+    // These are *not* returned from `SQLDescribeCol` or
+    // `SQLColAttribute(SQL_DESC_CONCISE_TYPE)`: per the MS ODBC spec, those
+    // descriptors must report the standard `SQL_TYPE_TIMESTAMP` (93) for
+    // ODBC 3.x output. Applications distinguish the three subtypes via
+    // `SQLColAttribute(SQL_DESC_TYPE_NAME)`.
+    SqlSfTimestampLtz = 2000, // SQL_SF_TIMESTAMP_LTZ
+    SqlSfTimestampTz = 2001,  // SQL_SF_TIMESTAMP_TZ
+    SqlSfTimestampNtz = 2002, // SQL_SF_TIMESTAMP_NTZ
+
     // sqlext.h — ODBC 3.x interval types (100 + subcode)
     IntervalYear = 101,
     IntervalMonth = 102,
@@ -608,6 +686,9 @@ impl TryFrom<sql::SmallInt> for SqlType {
             111 => Ok(SqlType::IntervalHourToMinute),
             112 => Ok(SqlType::IntervalHourToSecond),
             113 => Ok(SqlType::IntervalMinuteToSecond),
+            2000 => Ok(SqlType::SqlSfTimestampLtz),
+            2001 => Ok(SqlType::SqlSfTimestampTz),
+            2002 => Ok(SqlType::SqlSfTimestampNtz),
             _ => {
                 tracing::error!("Invalid SQL data type: {value}");
                 Err(OdbcError::InvalidSqlDataType {
@@ -622,6 +703,49 @@ impl TryFrom<sql::SmallInt> for SqlType {
 impl From<SqlType> for sql::SqlDataType {
     fn from(value: SqlType) -> Self {
         sql::SqlDataType(value as i16)
+    }
+}
+
+/// Snowflake vendor SQL type codes as `odbc_sys::SqlDataType` constants. Match
+/// the legacy 3.16.0 driver's macros from `Source/sf_odbc.h` and the
+/// corresponding `SqlType::SqlSfTimestamp{Ltz,Tz,Ntz}` enum variants. Use
+/// these forms in `match` patterns against `sql::SqlDataType` (e.g. when
+/// dispatching by the `ParameterType` argument of `SQLBindParameter`).
+pub const SQL_SF_TIMESTAMP_LTZ: sql::SqlDataType = sql::SqlDataType(2000);
+pub const SQL_SF_TIMESTAMP_TZ: sql::SqlDataType = sql::SqlDataType(2001);
+pub const SQL_SF_TIMESTAMP_NTZ: sql::SqlDataType = sql::SqlDataType(2002);
+
+/// Snowflake-specific timestamp subtype carried alongside the standard ODBC
+/// `SQL_TYPE_TIMESTAMP` (93) on the IPD. Set by `SQLBindParameter` when the
+/// application uses one of the vendor codes `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}`,
+/// so the binding pipeline knows which Snowflake logical type to emit on the
+/// wire while `SQLDescribeParam` and `SQLGetDescField(IPD, SQL_DESC_TYPE)`
+/// keep returning the spec-mandated 93. `None` means "no vendor opt-in";
+/// the converter dispatch falls back to the default for the SQL type
+/// (which for `SQL_TYPE_TIMESTAMP` is NTZ, mirroring the legacy driver).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampSubtype {
+    /// Vendor code 2002: explicit opt-in to TIMESTAMP_NTZ on the wire.
+    Ntz,
+    /// Vendor code 2000: TIMESTAMP_LTZ — naive datetime interpreted in the
+    /// session timezone (matches legacy 3.16.0 wall-clock-string semantics).
+    Ltz,
+    /// Vendor code 2001: TIMESTAMP_TZ — preserves the offset on the wire.
+    Tz,
+}
+
+impl TimestampSubtype {
+    /// Map a `SQLBindParameter` `ParameterType` argument to its Snowflake
+    /// timestamp subtype, if it is one of the vendor codes 2000/2001/2002.
+    /// Returns `None` for every other SQL type — including the standard
+    /// `SQL_TYPE_TIMESTAMP` (93), which has no vendor opt-in associated.
+    pub fn from_parameter_type(parameter_type: sql::SqlDataType) -> Option<Self> {
+        match parameter_type {
+            SQL_SF_TIMESTAMP_NTZ => Some(Self::Ntz),
+            SQL_SF_TIMESTAMP_LTZ => Some(Self::Ltz),
+            SQL_SF_TIMESTAMP_TZ => Some(Self::Tz),
+            _ => None,
+        }
     }
 }
 
@@ -976,6 +1100,15 @@ impl Default for ApdRecord {
 /// Stores the implementation-side view of a bound parameter: the SQL data type,
 /// column size, decimal digits, and parameter direction. Populated by
 /// `SQLBindParameter` or `SQLSetDescField` on the IPD handle.
+///
+/// `sql_data_type` always holds a *standard* ODBC SQL type code (1..=12,
+/// 91..=95, 101..=113, etc.) so that `SQLDescribeParam` and
+/// `SQLGetDescField(IPD, SQL_DESC_TYPE)` echo spec-conformant values back
+/// to the application. When `SQLBindParameter` is called with one of the
+/// Snowflake vendor codes (`SQL_SF_TIMESTAMP_LTZ` / `_TZ` / `_NTZ`), the
+/// vendor opt-in is normalised: `sql_data_type` becomes
+/// `SQL_TYPE_TIMESTAMP` (93) and the chosen subtype is stashed on
+/// `sf_subtype` for the bind-time converter dispatch.
 #[derive(Debug)]
 pub struct IpdRecord {
     pub sql_data_type: sql::SqlDataType,
@@ -983,6 +1116,10 @@ pub struct IpdRecord {
     pub decimal_digits: sql::SmallInt,
     pub direction: sql::SmallInt,
     pub nullable: sql::SmallInt,
+    /// Snowflake-specific timestamp subtype, set when the application binds
+    /// with `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}` to opt in to a non-default
+    /// Snowflake logical type for the wire. `None` for every other binding.
+    pub sf_subtype: Option<TimestampSubtype>,
 }
 
 impl IpdRecord {
@@ -995,6 +1132,7 @@ impl IpdRecord {
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
             nullable: 1, // SQL_NULLABLE — per ODBC spec
+            sf_subtype: None,
         }
     }
 }
@@ -1014,6 +1152,10 @@ pub struct ParameterBinding {
     pub parameter_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
     pub str_len_or_ind_ptr: *mut sql::Len,
+    /// Mirrors `IpdRecord::sf_subtype`. Lets the converter dispatch route a
+    /// `SQL_TYPE_TIMESTAMP` bind to the right Snowflake logical type
+    /// (NTZ / LTZ / TZ) when the application opted in via a vendor code.
+    pub sf_subtype: Option<TimestampSubtype>,
 }
 
 impl ParameterBinding {
@@ -1024,6 +1166,7 @@ impl ParameterBinding {
             parameter_value_ptr: apd.data_ptr,
             buffer_length: apd.buffer_length,
             str_len_or_ind_ptr: apd.str_len_or_ind_ptr,
+            sf_subtype: ipd.sf_subtype,
         }
     }
 }
@@ -1273,12 +1416,43 @@ pub struct StatementInner {
     /// parameters (e.g. DAE detection for "SELECT 1" with a bound param).
     /// `None` before the first prepare or after exec-direct.
     pub prepared_param_count: Option<u16>,
+    /// `SQL_ATTR_QUERY_TIMEOUT` — query timeout in seconds (default 0 = no timeout).
+    pub query_timeout: sql::ULen,
+    /// `SQL_ATTR_NOSCAN` — whether to scan for ODBC escape sequences (default SQL_NOSCAN_OFF = 0).
+    pub noscan: sql::ULen,
+    /// `SQL_ATTR_MAX_ROWS` — maximum rows returned (default 0 = no limit).
+    pub max_rows: sql::ULen,
+    /// Rows returned to the application so far in the current result set.
+    /// Reset to 0 on each execution. Used to enforce `max_rows`.
+    pub rows_returned: sql::ULen,
+    /// SQL text stored at `SQLPrepare` time. Used in `SQLExecute` to inject
+    /// `LIMIT N` for SELECT queries when `SQL_ATTR_MAX_ROWS` is set.
+    pub sql_text: Option<String>,
+    /// `SQL_ATTR_CONCURRENCY` — cursor concurrency (default SQL_CONCUR_READ_ONLY = 1).
+    pub concurrency: sql::ULen,
+    /// `SQL_ATTR_CURSOR_SCROLLABLE` — cursor scrollability (default SQL_NONSCROLLABLE = 0).
+    pub cursor_scrollable: sql::ULen,
+    /// `SQL_ATTR_CURSOR_SENSITIVITY` — cursor sensitivity (default SQL_UNSPECIFIED = 0).
+    pub cursor_sensitivity: sql::ULen,
+    /// `SQL_ATTR_KEYSET_SIZE` — keyset size for keyset-driven cursors (default 0).
+    pub keyset_size: sql::ULen,
+    /// `SQL_ATTR_SIMULATE_CURSOR` — simulate positioned update/delete (default SQL_SC_NON_UNIQUE = 0).
+    pub simulate_cursor: sql::ULen,
+    /// `SQL_ATTR_RETRIEVE_DATA` — whether to retrieve data after positioned update (default SQL_RD_ON = 1).
+    pub retrieve_data: sql::ULen,
+    /// The `max_rows` value last sent to the server via `statement_set_sql_query`.
+    /// `None` = never sent. Used to detect when a LIMIT must be added, removed,
+    /// or changed on re-execution of a prepared statement.
+    pub last_sent_max_rows: Option<sql::ULen>,
     /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
     pub last_query_id: Option<String>,
     /// Child query IDs for multi-statement execution (consumed by SQLMoreResults).
     pub multi_query_ids: Vec<String>,
     /// Index of the next child result to fetch in `multi_query_ids`.
     pub multi_current_idx: usize,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — multi-statement execution count.
+    /// -1 = auto-detect (default), 0 = single statement, N > 0 = expect exactly N statements.
+    pub multi_statement_count: i16,
 }
 
 // Safety: StatementInner contains raw pointers (descriptor fields like bind_offset_ptr,
@@ -1307,9 +1481,22 @@ impl Statement {
                 used_extended_fetch: false,
                 prepared_param_count: None,
                 metadata_id,
+                query_timeout: 0,
+                noscan: SQL_NOSCAN_OFF,
+                max_rows: 0,
+                rows_returned: 0,
+                sql_text: None,
+                concurrency: SQL_CONCUR_READ_ONLY,
+                cursor_scrollable: SQL_NONSCROLLABLE,
+                cursor_sensitivity: SQL_UNSPECIFIED,
+                keyset_size: 0,
+                simulate_cursor: SQL_SC_NON_UNIQUE,
+                retrieve_data: SQL_RD_ON,
+                last_sent_max_rows: None,
                 last_query_id: None,
                 multi_query_ids: Vec::new(),
                 multi_current_idx: 0,
+                multi_statement_count: -1,
             }),
             active_cancel: parking_lot::Mutex::new(None),
         }
@@ -1349,4 +1536,54 @@ pub fn stmt_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Statement
         .context(OdbcRuntimeSnafu)?
         .stmt_registry
         .get(handle_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the Snowflake-vendor-code → standard-ODBC-type normalisation that
+    /// `bind_parameter` relies on to keep `SQLDescribeParam` and
+    /// `SQLGetDescField(IPD, SQL_DESC_TYPE)` returning spec-mandated codes.
+    #[test]
+    fn from_parameter_type_recognises_vendor_codes() {
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(SQL_SF_TIMESTAMP_NTZ),
+            Some(TimestampSubtype::Ntz)
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(SQL_SF_TIMESTAMP_LTZ),
+            Some(TimestampSubtype::Ltz)
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(SQL_SF_TIMESTAMP_TZ),
+            Some(TimestampSubtype::Tz)
+        );
+    }
+
+    /// Standard ODBC SQL type codes -- and TIMESTAMP in particular -- must
+    /// not be classified as vendor opt-ins. `None` here is what keeps the
+    /// dispatch in `make_converter` defaulting to NTZ for backward-compat
+    /// callers that bind via the standard `SQL_TYPE_TIMESTAMP`.
+    #[test]
+    fn from_parameter_type_returns_none_for_standard_codes() {
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType::TIMESTAMP),
+            None
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType::INTEGER),
+            None
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType::VARCHAR),
+            None
+        );
+        // SQL_TYPE_TIMESTAMP_WITH_TIMEZONE (95) is a standard ODBC type, not
+        // the Snowflake vendor TZ code (2001), and must not be treated as one.
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType(95)),
+            None
+        );
+    }
 }

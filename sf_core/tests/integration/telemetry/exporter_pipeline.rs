@@ -26,6 +26,8 @@ fn test_query_parameters(server_url: &str) -> QueryParameters {
         server_url: server_url.to_string(),
         client_info: test_client_info(),
         log_max_query_length: 80,
+        log_query_text: false,
+        log_query_parameters: false,
     }
 }
 
@@ -44,6 +46,7 @@ fn make_active_session(server_url: &str) -> Arc<ExporterSession> {
         session_id: SESSION_ID,
         session_expires_at: None,
         master_expires_at: None,
+        master_validity: None,
     };
     make_session(server_url, Some(tokens))
 }
@@ -156,6 +159,7 @@ async fn span_exporter_handles_token_revoked_between_calls() {
         session_id: SESSION_ID,
         session_expires_at: None,
         master_expires_at: None,
+        master_validity: None,
     };
     let token_store = Arc::new(AsyncRwLock::new(Some(tokens)));
 
@@ -194,6 +198,7 @@ async fn span_exporter_uses_refreshed_token() {
         session_id: SESSION_ID,
         session_expires_at: None,
         master_expires_at: None,
+        master_validity: None,
     };
     let token_store = Arc::new(AsyncRwLock::new(Some(initial_tokens)));
 
@@ -218,6 +223,7 @@ async fn span_exporter_uses_refreshed_token() {
         session_id: SESSION_ID,
         session_expires_at: None,
         master_expires_at: None,
+        master_validity: None,
     };
     *token_store.write().await = Some(new_tokens);
 

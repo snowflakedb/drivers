@@ -413,12 +413,8 @@ account = "file_account"
             panic!("Expected account setting");
         }
 
-        // Registry default for protocol should be present
-        if let Some(Setting::String(protocol)) = resolved.get(param_names::PROTOCOL) {
-            assert_eq!(protocol, "https");
-        } else {
-            panic!("Expected default protocol setting");
-        }
+        // protocol has no registry default (handled by consumption code)
+        assert_eq!(resolved.get(param_names::PROTOCOL), None);
     }
 
     fn get_str(map: &ParamStore, key: crate::config::param_registry::ParamKey) -> Option<String> {
@@ -480,9 +476,7 @@ database = "conn_db"
             get_str(&resolved, param_names::WAREHOUSE),
             Some("config_wh".to_owned())
         );
-        assert_eq!(
-            get_str(&resolved, param_names::PROTOCOL),
-            Some("https".to_owned())
-        );
+        // protocol has no registry default
+        assert_eq!(get_str(&resolved, param_names::PROTOCOL), None);
     }
 }

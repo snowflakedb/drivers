@@ -48,6 +48,7 @@ pub mod param_names {
     pub const HOST: ParamKey = ParamKey("host");
     pub const PORT: ParamKey = ParamKey("port");
     pub const PROTOCOL: ParamKey = ParamKey("protocol");
+    pub const SSL: ParamKey = ParamKey("ssl");
     pub const SERVER_URL: ParamKey = ParamKey("server_url");
     pub const PRESERVE_UNDERSCORES_IN_HOSTNAME: ParamKey =
         ParamKey("preserve_underscores_in_hostname");
@@ -85,7 +86,24 @@ pub mod param_names {
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
     pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
+    pub const LOG_QUERY_TEXT: ParamKey = ParamKey("log_query_text");
+    pub const LOG_QUERY_PARAMETERS: ParamKey = ParamKey("log_query_parameters");
     pub const CLIENT_TELEMETRY_ENABLED: ParamKey = ParamKey("CLIENT_TELEMETRY_ENABLED");
+    pub const CLIENT_SESSION_KEEP_ALIVE: ParamKey = ParamKey("CLIENT_SESSION_KEEP_ALIVE");
+    pub const CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY: ParamKey =
+        ParamKey("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY");
+    // ── OAuth (analysis_feature_oauth.md §9) ───────────────────────────────
+    pub const OAUTH_CLIENT_ID: ParamKey = ParamKey("oauth_client_id");
+    pub const OAUTH_CLIENT_SECRET: ParamKey = ParamKey("oauth_client_secret");
+    pub const OAUTH_AUTHORIZATION_URL: ParamKey = ParamKey("oauth_authorization_url");
+    pub const OAUTH_TOKEN_REQUEST_URL: ParamKey = ParamKey("oauth_token_request_url");
+    pub const OAUTH_REDIRECT_URI: ParamKey = ParamKey("oauth_redirect_uri");
+    pub const OAUTH_SCOPE: ParamKey = ParamKey("oauth_scope");
+    pub const OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS: ParamKey =
+        ParamKey("oauth_enable_single_use_refresh_tokens");
+    pub const OAUTH_DISABLE_PKCE: ParamKey = ParamKey("oauth_disable_pkce");
+    pub const OAUTH_ENABLE_DPOP: ParamKey = ParamKey("oauth_enable_dpop");
+    pub const OAUTH_DISABLE_CONSOLE_LOGIN: ParamKey = ParamKey("oauth_disable_console_login");
     // Logout configuration
     pub const SERVER_SESSION_KEEP_ALIVE: ParamKey = ParamKey("server_session_keep_alive");
     pub const ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: ParamKey =
@@ -98,6 +116,7 @@ pub mod param_names {
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
+    pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -223,10 +242,24 @@ static PARAM_DEFS: &[ParamDef] = &[
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::String("https".to_string())),
+        default: None,
         sensitive: false,
         description: "Connection protocol (http or https)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::SSL.as_str(),
+        aliases: &["SSL"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Enable or disable SSL/TLS (sets protocol to https or http)",
+        deprecated_by: Some("protocol"),
         scope: ParamScope::Connection,
         used_at_connect: true,
         mutable_after_connect: false,
@@ -296,7 +329,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: None,
         sensitive: false,
-        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)",
+        description: "Authenticator type for the connection",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -352,7 +385,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::WhenAuthMethod("PROGRAMMATIC_ACCESS_TOKEN"),
         default: None,
         sensitive: true,
-        description: "Programmatic access token",
+        description: "Pre-acquired bearer token (PAT or legacy OAUTH)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -437,6 +470,150 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
         description: "Skip the Okta SAML URL host-match safety check",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // ── OAuth ───────────────────────────────────────────────────────────
+    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`
+    // (analysis_feature_oauth.md §9). All OAuth params are connect-time
+    // and immutable for the life of the connection.
+    ParamDef {
+        canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
+        aliases: &["OAUTH_CLIENT_ID"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_CLIENT_SECRET.as_str(),
+        aliases: &["OAUTH_CLIENT_SECRET"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "OAuth client secret (redacted from logs)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_AUTHORIZATION_URL.as_str(),
+        aliases: &["OAUTH_AUTHORIZATION_URL"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "IdP authorization endpoint (defaults to https://{host}/oauth/authorize)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_TOKEN_REQUEST_URL.as_str(),
+        aliases: &["OAUTH_TOKEN_REQUEST_URL"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"),
+        default: None,
+        sensitive: false,
+        description: "IdP token endpoint (CC only; defaults to https://{host}/oauth/token-request for AC)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_REDIRECT_URI.as_str(),
+        aliases: &["OAUTH_REDIRECT_URI"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_SCOPE.as_str(),
+        aliases: &["OAUTH_SCOPE"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "OAuth scope (space-separated; defaults to session:role:<role>)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str(),
+        aliases: &["OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Request single-use refresh-token rotation (Snowflake-IdP only)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_DISABLE_PKCE.as_str(),
+        aliases: &["OAUTH_DISABLE_PKCE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_ENABLE_DPOP.as_str(),
+        aliases: &["OAUTH_ENABLE_DPOP"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OAUTH_DISABLE_CONSOLE_LOGIN.as_str(),
+        aliases: &["OAUTH_DISABLE_CONSOLE_LOGIN"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -684,6 +861,34 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: false,
         mutable_after_connect: false,
     },
+    ParamDef {
+        canonical_name: param_names::LOG_QUERY_TEXT.as_str(),
+        aliases: &["LOG_QUERY_TEXT"],
+        value_type: ValueType::Bool,
+        additional_value_type: Some(ValueType::String),
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Include the (truncated) SQL text in INFO query logs",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::LOG_QUERY_PARAMETERS.as_str(),
+        aliases: &["LOG_QUERY_PARAMETERS"],
+        value_type: ValueType::Bool,
+        additional_value_type: Some(ValueType::String),
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Include the (truncated) JSON bindings in INFO query logs (requires log_query_text)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
     // ── Logout ────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::SERVER_SESSION_KEEP_ALIVE.as_str(),
@@ -827,6 +1032,49 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: false,
         mutable_after_connect: true,
     },
+    ParamDef {
+        canonical_name: param_names::CLIENT_MEMORY_LIMIT.as_str(),
+        aliases: &["CLIENT_MEMORY_LIMIT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(1536)),
+        sensitive: false,
+        description: "Memory budget in MB for chunk prefetch buffer (0 = unlimited)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    // ── Session keep-alive ─────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Keep the session alive with periodic heartbeat requests",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str(),
+        aliases: &["CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
 ];
 
 impl ParamDef {
@@ -957,6 +1205,24 @@ mod tests {
     }
 
     #[test]
+    fn client_session_keep_alive_params_registered() {
+        let r = registry();
+        let keep_alive = r
+            .resolve("CLIENT_SESSION_KEEP_ALIVE")
+            .expect("CLIENT_SESSION_KEEP_ALIVE should resolve");
+        assert_eq!(keep_alive.value_type, ValueType::Bool);
+        assert_eq!(keep_alive.scope, ParamScope::Session);
+        assert!(keep_alive.used_at_connect);
+
+        let freq = r
+            .resolve("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY")
+            .expect("heartbeat frequency param should resolve");
+        assert_eq!(freq.value_type, ValueType::Int);
+        assert_eq!(freq.scope, ParamScope::Session);
+        assert!(freq.used_at_connect);
+    }
+
+    #[test]
     fn unknown_key_returns_none() {
         let r = registry();
         assert!(r.resolve("nonexistent_param").is_none());
@@ -1032,6 +1298,56 @@ mod tests {
         assert!(!def.used_at_connect);
         assert!(!def.mutable_after_connect);
         assert_eq!(def.default.unwrap()(), Setting::Int(80));
+    }
+
+    #[test]
+    fn log_query_text_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_query_text")
+            .expect("log_query_text should be registered");
+        assert_eq!(def.canonical_name, "log_query_text");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert_eq!(def.additional_value_type, Some(ValueType::String));
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+        assert_eq!(def.default.unwrap()(), Setting::Bool(false));
+    }
+
+    #[test]
+    fn log_query_parameters_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_query_parameters")
+            .expect("log_query_parameters should be registered");
+        assert_eq!(def.canonical_name, "log_query_parameters");
+        assert_eq!(def.value_type, ValueType::Bool);
+        assert_eq!(def.additional_value_type, Some(ValueType::String));
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert!(!def.sensitive);
+        assert_eq!(def.default.unwrap()(), Setting::Bool(false));
+    }
+
+    #[test]
+    fn log_query_text_resolves_uppercase_alias() {
+        let r = registry();
+        let def = r
+            .resolve("LOG_QUERY_TEXT")
+            .expect("LOG_QUERY_TEXT alias should resolve");
+        assert_eq!(def.canonical_name, "log_query_text");
+    }
+
+    #[test]
+    fn log_query_parameters_resolves_uppercase_alias() {
+        let r = registry();
+        let def = r
+            .resolve("LOG_QUERY_PARAMETERS")
+            .expect("LOG_QUERY_PARAMETERS alias should resolve");
+        assert_eq!(def.canonical_name, "log_query_parameters");
     }
 
     #[test]

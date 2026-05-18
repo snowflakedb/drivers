@@ -16,33 +16,37 @@ from snowflake.connector.cursor import DictCursor
 from .compatibility import IS_UNIVERSAL_DRIVER
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .private_key_helper import get_test_private_key_path
+from .wiremock_client import WiremockClient
 
 
 # Type alias for a single row returned from cursor
 Row = tuple[Any, ...]
-
-_MIN_XDIST_WORKERS = 8
 
 
 def pytest_configure(config):
     # scripts/ is not a Python package (no __init__.py, not on sys.path), so
     # load setup_local_reg.py by file path via importlib. bootstrap() is a
     # no-op unless SNOWFLAKE_TEST_HOST points at a *.reg.local instance.
+    #
+    # Unit tests must not require parameters.json: when the file is absent
+    # we simply skip the bootstrap step — only integ / e2e suites need
+    # credentials, and those will fail with a clearer error downstream.
     import importlib.util
     import pathlib
 
     repo_root = pathlib.Path(__file__).resolve().parents[2]
+    param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
+    if not param_path.is_file():
+        return
+
     spec = importlib.util.spec_from_file_location("setup_local_reg", repo_root / "scripts" / "setup_local_reg.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-
-    param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
     module.bootstrap(parameters_path=param_path)
 
 
 def pytest_xdist_auto_num_workers(config):
-    num_cpus = os.cpu_count() or _MIN_XDIST_WORKERS
-    return max(num_cpus, _MIN_XDIST_WORKERS)
+    return os.cpu_count() or 1
 
 
 @pytest.mark.optionalhook
@@ -71,16 +75,31 @@ def with_paramstyle(style: str):
     return pytest.mark.parametrize("connection", [style], indirect=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def connection(request, connector_adapter):
-    """Create a test connection using the configured connector adapter.
+    """Module-scoped test connection; shared across tests in the same module.
 
-    Use ``@with_paramstyle(...)`` to enable parameter binding on the
-    connection.  When the decorator is absent the connection has no
-    paramstyle set.
+    Use ``@with_paramstyle(...)`` to enable parameter binding. When a paramstyle
+    is supplied via indirect parametrize, a distinct instance is created per
+    paramstyle so tests with different paramstyles don't collide.
+
+    Tests that mutate connection state (close, autocommit, commit/rollback,
+    set_autocommit, etc.) must use ``function_connection`` instead — this
+    fixture is reused across tests in a module and must remain untouched.
     """
     paramstyle = getattr(request, "param", None)
     with create_connection_with_adapter(connector_adapter, paramstyle=paramstyle) as conn:
+        yield conn
+
+
+@pytest.fixture
+def function_connection(connector_adapter):
+    """Function-scoped connection for tests that mutate connection state.
+
+    Required for tests that call ``close()``, ``autocommit()``, ``commit()``,
+    ``rollback()``, or similar methods that invalidate the session.
+    """
+    with create_connection_with_adapter(connector_adapter) as conn:
         yield conn
 
 
@@ -202,6 +221,27 @@ def int_test_connection_factory(connector_adapter):
         return create_connection_with_adapter(connector_adapter, **integration_params)
 
     return _create_connection
+
+
+@pytest.fixture(scope="session")
+def _wiremock_session():
+    """Start one Wiremock JVM per xdist worker and reuse it across tests."""
+    client = WiremockClient().start()
+    try:
+        yield client
+    finally:
+        client.stop()
+
+
+@pytest.fixture
+def wiremock(_wiremock_session):
+    """Per-test Wiremock handle backed by a session-scoped JVM.
+
+    Mappings and captured requests are cleared before each test; the JVM itself
+    stays up, saving ~1–3 s of startup per test.
+    """
+    _wiremock_session.reset()
+    return _wiremock_session
 
 
 def pytest_runtest_setup(item):

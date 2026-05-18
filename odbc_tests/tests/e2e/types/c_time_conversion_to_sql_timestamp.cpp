@@ -1,5 +1,5 @@
-// ODBC E2E: SQL_C_TYPE_TIME bound via SQLBindParameter to ODBC 3.x
-// SQL_TYPE_TIMESTAMP across all three Snowflake variants.
+// ODBC E2E: SQL_C_TYPE_TIME bound via SQLBindParameter to a TIMESTAMP target
+// across all three Snowflake variants.
 //
 // Per ODBC Appendix D ("C to SQL: Time"): "The date fields of the
 // timestamp structure are set to the current date, and the fractional
@@ -9,10 +9,17 @@
 // To stay deterministic across midnight rollover, the date assertion
 // captures the local date both before and after the bind and accepts
 // any value within that window.
+//
+// Per ODBC Appendix G ("Driver Guidelines for Backward Compatibility"),
+// the ODBC 3.x code SQL_TYPE_TIMESTAMP (93) and its ODBC 2.x predecessor
+// SQL_TIMESTAMP (11) must be accepted as identical at the SQLBindParameter
+// boundary. Each TEST_CASE below is parametrized over both spellings using
+// Catch2 GENERATE so the alias contract is pinned for every scenario.
 
 #include <ctime>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
@@ -51,17 +58,19 @@ bool ymd_gte(const LocalYmd& a, const SQL_TIMESTAMP_STRUCT& b) {
   return a.day >= b.day;
 }
 
-void bind_time_and_execute(StatementHandleWrapper& stmt, SQL_TIME_STRUCT& val, SQLLEN& ind) {
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_TYPE_TIMESTAMP, 0, 0,
-                                   &val, sizeof(val), &ind);
+void bind_time_and_execute(StatementHandleWrapper& stmt, SQLSMALLINT target_sql_type, SQL_TIME_STRUCT& val,
+                           SQLLEN& ind) {
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, target_sql_type, 0, 0, &val,
+                                   sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 }
 
-SQLRETURN bind_time_and_try_execute(StatementHandleWrapper& stmt, SQL_TIME_STRUCT& val, SQLLEN& ind) {
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_TYPE_TIMESTAMP, 0, 0,
-                                   &val, sizeof(val), &ind);
+SQLRETURN bind_time_and_try_execute(StatementHandleWrapper& stmt, SQLSMALLINT target_sql_type, SQL_TIME_STRUCT& val,
+                                    SQLLEN& ind) {
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, target_sql_type, 0, 0, &val,
+                                   sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   return SQLExecute(stmt.getHandle());
 }
@@ -74,18 +83,21 @@ SQLRETURN bind_time_and_try_execute(StatementHandleWrapper& stmt, SQL_TIME_STRUC
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_NTZ with current local date",
                  "[c_time][conversion][sql_timestamp]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given a TIMESTAMP_NTZ column
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
-  // When SQL_C_TYPE_TIME 14:30:45 is bound to SQL_TYPE_TIMESTAMP and inserted
+  // When SQL_C_TYPE_TIME 14:30:45 is bound to the TIMESTAMP target and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   SQL_TIME_STRUCT val = {14, 30, 45};
   SQLLEN ind = sizeof(val);
   LocalYmd today_before = local_today();
-  bind_time_and_execute(stmt, val, ind);
+  bind_time_and_execute(stmt, sql_type, val, ind);
   LocalYmd today_after = local_today();
 
   // Then the time round-trips exactly the fraction is zero and the date falls within the local clock window at bind
@@ -109,6 +121,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_NT
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_LTZ with current local date",
                  "[c_time][conversion][sql_timestamp]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given a TIMESTAMP_LTZ column with a known session timezone
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_LTZ)");
@@ -119,7 +134,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_LT
   REQUIRE_ODBC(ret, stmt);
   SQL_TIME_STRUCT val = {14, 30, 45};
   SQLLEN ind = sizeof(val);
-  bind_time_and_execute(stmt, val, ind);
+  bind_time_and_execute(stmt, sql_type, val, ind);
 
   // Then the bind succeeds and the time component round-trips
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
@@ -136,6 +151,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_LT
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_TZ with current local date",
                  "[c_time][conversion][sql_timestamp]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given a TIMESTAMP_TZ column with a known session timezone
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_TZ)");
@@ -146,7 +164,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_TZ
   REQUIRE_ODBC(ret, stmt);
   SQL_TIME_STRUCT val = {14, 30, 45};
   SQLLEN ind = sizeof(val);
-  bind_time_and_execute(stmt, val, ind);
+  bind_time_and_execute(stmt, sql_type, val, ind);
 
   // Then the bind succeeds and the time component round-trips
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
@@ -161,8 +179,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to TIMESTAMP_TZ
 // NULL indicator
 // ============================================================================
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME with NULL indicator to SQL_TYPE_TIMESTAMP",
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME with NULL indicator to TIMESTAMP target",
                  "[c_time][conversion][sql_timestamp]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
@@ -171,8 +192,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME with NULL indic
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   SQLLEN ind = SQL_NULL_DATA;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_TYPE_TIMESTAMP, 0, 0, nullptr, 0,
-                         &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, sql_type, 0, 0, nullptr, 0, &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -190,8 +210,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME with NULL indic
 // second not in 0..59) must surface SQL_ERROR with SQLSTATE 22007.
 // ============================================================================
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with hour=24 bound to SQL_TYPE_TIMESTAMP",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with hour=24 bound to TIMESTAMP target",
                  "[c_time][conversion][sql_timestamp][invalid]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
@@ -201,14 +224,17 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with hour=24 
   REQUIRE_ODBC(ret, stmt);
   SQL_TIME_STRUCT val = {24, 0, 0};
   SQLLEN ind = sizeof(val);
-  ret = bind_time_and_try_execute(stmt, val, ind);
+  ret = bind_time_and_try_execute(stmt, sql_type, val, ind);
 
   // Then SQLExecute fails with SQLSTATE 22007
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with minute=60 bound to SQL_TYPE_TIMESTAMP",
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with minute=60 bound to TIMESTAMP target",
                  "[c_time][conversion][sql_timestamp][invalid]") {
+  const SQLSMALLINT sql_type = GENERATE(SQL_TIMESTAMP, SQL_TYPE_TIMESTAMP);
+  CAPTURE(sql_type);
+
   // Given a TIMESTAMP_NTZ column
   conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
@@ -218,7 +244,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME with minute=6
   REQUIRE_ODBC(ret, stmt);
   SQL_TIME_STRUCT val = {12, 60, 0};
   SQLLEN ind = sizeof(val);
-  ret = bind_time_and_try_execute(stmt, val, ind);
+  ret = bind_time_and_try_execute(stmt, sql_type, val, ind);
 
   // Then SQLExecute fails with SQLSTATE 22007
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22007"));

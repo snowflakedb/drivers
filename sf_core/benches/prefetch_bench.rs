@@ -11,9 +11,9 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use pprof::criterion::{Output, PProfProfiler};
 #[cfg(not(target_os = "windows"))]
 use pprof::flamegraph::Options as FlamegraphOptions;
-use sf_core::chunks::ChunkDownloadData;
 use sf_core::chunks::mock::FileChunkDownloader;
 use sf_core::chunks::prefetch::{ArrowChunkParser, JsonChunkParser, PrefetchChunkReader};
+use sf_core::chunks::{ChunkDownloadData, PrefetchConfig};
 use sf_core::query_types::RowType;
 
 const DEFAULT_TEXT_MAX_LENGTH: u64 = 16_777_216; // 16 MiB
@@ -212,13 +212,17 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
 
                     let downloader = FileChunkDownloader;
                     let parser = ArrowChunkParser;
+                    let config = PrefetchConfig {
+                        prefetch_threads: concurrency,
+                        memory_limit_mb: 0,
+                    };
                     let mut reader = rt
                         .block_on(PrefetchChunkReader::reader(
                             initial_reader,
                             chunks,
                             downloader,
                             parser,
-                            concurrency,
+                            &config,
                         ))
                         .expect("failed to create prefetch reader");
 
@@ -309,13 +313,17 @@ fn bench_json_prefetch(c: &mut Criterion) {
                     let parser = JsonChunkParser {
                         row_types: row_types.clone(),
                     };
+                    let config = PrefetchConfig {
+                        prefetch_threads: concurrency,
+                        memory_limit_mb: 0,
+                    };
                     let mut reader = rt
                         .block_on(PrefetchChunkReader::reader(
                             initial_reader,
                             chunks,
                             downloader,
                             parser,
-                            concurrency,
+                            &config,
                         ))
                         .expect("failed to create prefetch reader");
 

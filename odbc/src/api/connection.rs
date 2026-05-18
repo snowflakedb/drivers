@@ -29,6 +29,7 @@ const SQL_FALSE: sql::UInteger = 0;
 
 const ODBC_DRIVER_NAME: &str = "ODBC";
 const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const ODBC_API_VERSION: &str = env!("SF_ODBC_API_VER");
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
@@ -83,7 +84,7 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
-        // Forward other keys (e.g. SERVER, UID) for `sf_core` alias resolution; do not
+        // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
     }
@@ -236,6 +237,11 @@ fn connect_with_params(
         })?;
         options.insert("port".to_owned(), port_int.into());
     }
+
+    // Legacy ODBC silently swallows all logout errors (destructor catch-all).
+    options
+        .entry("LOGOUT_ERROR_STRATEGY".to_owned())
+        .or_insert_with(|| "best_effort".to_owned().into());
 
     let dbc = conn_from_handle(connection_handle)?;
     // Read pre-connection data under lock, then release before the async call.
@@ -755,11 +761,20 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::TxnIsolation => {
-            // Snowflake supports only READ_COMMITTED. Accept it silently; substitute any
-            // other requested level with READ_COMMITTED and return 01S02 per ODBC spec.
-            // NOTE: HY011 when a transaction is open is deferred to SNOW-3240589.
-            if value_ptr as sql::UInteger != SQL_TXN_READ_COMMITTED {
+            // Snowflake always runs at READ COMMITTED. Full isolation-level support
+            // (HY011 when a transaction is open) is deferred to SNOW-3240589.
+            // Per ODBC spec §SQLSetConnectAttr: emit 01S02 whenever the driver
+            // substitutes the requested value.  READ_COMMITTED is accepted as-is;
+            // every other level is silently substituted so pools / ORMs that
+            // read-then-restore the isolation level see the expected warning.
+            let requested = value_ptr as sql::UInteger;
+            if requested != SQL_TXN_READ_COMMITTED {
+                tracing::debug!(
+                    "set_connect_attr: TxnIsolation={requested} substituted with READ_COMMITTED"
+                );
                 warnings.push(Warning::OptionValueChanged);
+            } else {
+                tracing::debug!("set_connect_attr: TxnIsolation=READ_COMMITTED accepted");
             }
             Ok(())
         }
@@ -1215,7 +1230,7 @@ pub fn get_info<E: OdbcEncoding>(
             // claim: every API the driver currently implements is
             // available at that level.
             write_string_bytes::<E>(
-                "03.80",
+                ODBC_API_VERSION,
                 info_value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,

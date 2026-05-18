@@ -32,7 +32,7 @@ reqwest = { version = "0.12.23", features = ["json", "rustls-tls", "gzip"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
-tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 tokio-util = { version = "0.7", features = ["time"] }
 tokio-stream = "0.1"
 toml = "0.8"
@@ -43,6 +43,10 @@ arrow-ipc = "56.0.0"
 flate2 = "1.1.2"
 openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
+oauth2 = { version = "5", features = ["timing-resistant-secret-traits"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+webbrowser = "1"
+http = "1"
 infer = "0.19.0"
 
 # Proto
@@ -150,6 +154,10 @@ path = "tests/logging_level_filtering_tests.rs"
 [[test]]
 name = "logging_custom_file_tests"
 path = "tests/logging_custom_file_tests.rs"
+
+[[test]]
+name = "logging_query_tests"
+path = "tests/logging_query_tests.rs"
 
 [[test]]
 name = "e2e_tests"

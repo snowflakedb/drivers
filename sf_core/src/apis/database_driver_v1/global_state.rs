@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 
 use super::connection::Connection;
 use super::database::Database;
+use super::result_set::ResultSet;
 use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
@@ -73,6 +74,7 @@ pub struct DatabaseDriverV1 {
     pub(super) databases: HandleManager<Mutex<Database>>,
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
+    pub(super) results: HandleManager<Mutex<ResultSet>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -96,6 +98,7 @@ impl DatabaseDriverV1 {
             databases: HandleManager::new(),
             connections: HandleManager::new(),
             statements: HandleManager::new(),
+            results: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
@@ -127,6 +130,22 @@ impl DatabaseDriverV1 {
         self.log_manager
             .as_ref()
             .and_then(|lm| lm.os_details().as_ref())
+    }
+
+    /// Process-wide default for `log_query_text`, sourced from the
+    /// `LogManager` if one was injected (e.g. parsed from `sf.odbc.ini` or the
+    /// `[log]` TOML section). `None` means "no global default; let the param
+    /// registry default win".
+    pub(crate) fn log_query_text(&self) -> Option<bool> {
+        self.log_manager.as_ref().and_then(|lm| lm.log_query_text())
+    }
+
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`] for precedence semantics.
+    pub(crate) fn log_query_parameters(&self) -> Option<bool> {
+        self.log_manager
+            .as_ref()
+            .and_then(|lm| lm.log_query_parameters())
     }
 }
 

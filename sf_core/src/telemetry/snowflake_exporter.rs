@@ -189,6 +189,8 @@ mod tests {
             server_url: server_url.to_string(),
             client_info: test_client_info(),
             log_max_query_length: 80,
+            log_query_text: false,
+            log_query_parameters: false,
         }
     }
 
@@ -210,6 +212,7 @@ mod tests {
             session_id: 1,
             session_expires_at: None,
             master_expires_at: None,
+            master_validity: None,
         };
 
         Arc::new(ExporterSession {

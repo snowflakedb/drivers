@@ -7,6 +7,11 @@ use snafu::{Location, Snafu};
 
 use crate::{api::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError};
 
+/// SQL DATE / TIMESTAMP year range. Values outside this range cannot be
+/// represented as a SQL DATE or TIMESTAMP and surface as
+/// [`ConversionError::DatetimeOutOfSqlRange`] (SQLSTATE 22007).
+pub const SQL_DATETIME_YEAR_RANGE: std::ops::RangeInclusive<i32> = 1..=9999;
+
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ReadArrowError {
@@ -92,6 +97,14 @@ pub enum ConversionError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Datetime out of SQL range: {reason}"))]
+    DatetimeOutOfSqlRange {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to write ODBC value"))]
     WriteOdbcValue {
         source: WriteOdbcError,
@@ -255,6 +268,31 @@ pub enum JsonBindingError {
     #[snafu(display("Invalid hex literal: {reason}"))]
     InvalidHexLiteral {
         reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// The character input failed to parse against the format(s) the SQL
+    /// target type accepts. Use this for bind paths where the C buffer
+    /// holds a string that doesn't match the spec-prescribed grammar for
+    /// the target -- e.g. SQL_C_CHAR / SQL_C_WCHAR bound to
+    /// SQL_SF_TIMESTAMP_TZ with neither a `+/-HH:MM` offset suffix nor an
+    /// offset-less `YYYY-MM-DD HH:MM:SS[.fff]` shape. Maps to SQLSTATE
+    /// 22018 ("Invalid character value for cast specification"), the same
+    /// class as `InvalidNumericLiteral` / `InvalidBooleanValue`, so apps
+    /// that switch on the SQLSTATE class can distinguish "bad input data"
+    /// from 07006 ("unsupported binding shape").
+    ///
+    /// `value` is truncated to a safe length before storage so an
+    /// adversarial caller can't blow up diagnostic-record buffers; the
+    /// `expected_format` is a static template the user can compare against.
+    #[snafu(display(
+        "Invalid character value for cast: {c_type:?} input {value:?} does not match expected format {expected_format:?}"
+    ))]
+    InvalidCharacterValueForCast {
+        c_type: CDataType,
+        value: String,
+        expected_format: &'static str,
         #[snafu(implicit)]
         location: Location,
     },

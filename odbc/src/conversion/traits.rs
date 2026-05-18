@@ -482,6 +482,12 @@ pub trait WriteODBCType: SnowflakeType {
 
 pub trait SnowflakeType {
     type Representation<'a>: Sized;
+
+    /// Apply post-decode SQL-level constraints on the materialised value.
+    /// Default: no constraints.
+    fn validate_value(&self, _value: &Self::Representation<'_>) -> Result<(), ConversionError> {
+        Ok(())
+    }
 }
 
 pub trait ReadArrowType<ArrowArrayType>: SnowflakeType {
@@ -505,6 +511,12 @@ pub(crate) enum SnowflakeLogicalType {
     Date,
     Time,
     TimestampNtz,
+    /// Result-side only: GS emits `TIMESTAMP_LTZ` as the logical type of
+    /// LTZ columns in the IRD/result-set metadata. On the bind side,
+    /// LTZ binds are tagged as `Text` (matching legacy 3.16.0 behaviour),
+    /// so this variant is only constructed by `SnowflakeFieldType::FromStr`
+    /// when reading the column metadata from the server.
+    #[allow(dead_code)]
     TimestampLtz,
     TimestampTz,
     /// Year-month interval logical type. Mirrors the result-side

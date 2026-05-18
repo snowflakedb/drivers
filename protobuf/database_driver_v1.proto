@@ -150,8 +150,6 @@ message QueryStats {
 }
 
 // Describes one result set from a (possibly multi-statement) execution.
-// For single statements, returned inline in the execute response.
-// For multi-statement children, fetched lazily via StatementGetResultSet.
 message ResultSetDescriptor {
   string query_id = 1;
   repeated ColumnMetadata columns = 2;
@@ -159,6 +157,11 @@ message ResultSetDescriptor {
   optional int64 statement_type_id = 4;
   optional string sql_state = 5;
   optional QueryStats stats = 6;
+}
+
+message ResultSetResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
 }
 
 // Multi-statement execution: child query IDs and their statement types.
@@ -191,6 +194,12 @@ message ConnectionHandle {
 
 // Statement handle
 message StatementHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// ResultSet handle
+message ResultSetHandle {
   int64 id = 1;
   int64 magic = 2;
 }
@@ -470,11 +479,6 @@ message ConnectionGetQueryResultRequest {
   string query_id = 2;
 }
 
-message ResultSetResponse {
-  ResultSetDescriptor result_descriptor = 1;
-  ArrowArrayStreamPtr stream = 2;
-}
-
 message ConnectionGetResultSetRequest {
   ConnectionHandle conn_handle = 1;
   string query_id = 2;
@@ -552,22 +556,16 @@ message StatementGetParameterSchemaResponse {
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
   optional QueryBindings bindings = 2;  // None = no bindings
+  optional uint32 timeout_seconds = 3;  // 0 / absent = no timeout override
 }
 
 message ExecuteQueryResponse {
   oneof result {
-    // Single statement — metadata available immediately.
-    ResultSetDescriptor single = 1;
+    // Single statement — descriptor + result_set_handle for stream/chunks access.
+    ResultSetResponse single = 1;
     // Multi-statement — child query IDs only, fetch metadata lazily.
     MultiStatementResult multi = 2;
   }
-}
-
-// Fetch a result set by query_id: returns metadata + Arrow stream.
-// For multi-statement children, this triggers a lazy fetch in sf_core.
-message StatementGetResultSetRequest {
-  StatementHandle stmt_handle = 1;
-  string query_id = 2;
 }
 
 // Async query execution: submit and return immediately with query_id
@@ -625,45 +623,43 @@ message ResultChunk {
   int32 row_count = 4;
 }
 
-message ResultChunksResult {
-  repeated ResultChunk chunks = 1;
-  // Result column metadata. Required for CHUNK_FORMAT_JSON (forward verbatim on DatabaseFetchChunkRequest); ignored for CHUNK_FORMAT_ARROW_IPC.
-  repeated ColumnMetadata columns = 2;
-}
-
-// Fetch raw result chunks for a query executed on this statement.
-// query_id identifies which query's chunks to return; for single-statement
-// executions this is the query_id from ExecuteQueryResponse, for
-// multi-statement children it is one of the query_ids from MultiStatementResult.
-message StatementResultChunksRequest {
-  StatementHandle stmt_handle = 1;
-  string query_id = 2;
-}
-
-message StatementResultChunksResponse {
-  ResultChunksResult result = 1;
-}
-
-// Fetch raw result chunks by query_id using the connection (no statement handle required).
-// Useful for multi-statement children after the batch statement handle has been released.
-message ConnectionResultChunksRequest {
-  ConnectionHandle conn_handle = 1;
-  string query_id = 2;
-}
-
-message ConnectionResultChunksResponse {
-  ResultChunksResult result = 1;
-}
 
 message DatabaseFetchChunkRequest {
   DatabaseHandle db_handle = 1;
   ResultChunk chunk = 2;
-  // Required when chunk.format == CHUNK_FORMAT_JSON (forward verbatim from ResultChunksResult.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
+  // Required when chunk.format == CHUNK_FORMAT_JSON (forward from ResultSetGetChunksResponse.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
   repeated ColumnMetadata columns = 3;
 }
 
 message DatabaseFetchChunkResponse {
   ArrowArrayStreamPtr stream = 1;
+}
+
+// ResultSet RPCs
+
+message ResultSetGetStreamRequest {
+  ResultSetHandle result_set_handle = 1;
+}
+
+message ResultSetGetStreamResponse {
+  ArrowArrayStreamPtr stream = 1;
+}
+
+message ResultSetGetChunksRequest {
+  ResultSetHandle result_set_handle = 1;
+}
+
+message ResultSetGetChunksResponse {
+  repeated ResultChunk chunks = 1;
+  // Column metadata. Required for CHUNK_FORMAT_JSON (forward on DatabaseFetchChunkRequest); ignored for CHUNK_FORMAT_ARROW_IPC.
+  repeated ColumnMetadata columns = 2;
+}
+
+message ResultSetReleaseRequest {
+  ResultSetHandle result_set_handle = 1;
+}
+
+message ResultSetReleaseResponse {
 }
 
 // Validation issue reported during set or validate operations.
@@ -830,6 +826,7 @@ service DatabaseDriver {
   rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
   // Heartbeat to validate connection and session are still alive
   rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
+
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
@@ -839,12 +836,14 @@ service DatabaseDriver {
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (ExecuteQueryResponse);
-  rpc StatementGetResultSet(StatementGetResultSetRequest) returns (ResultSetResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
-  rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
-  rpc ConnectionResultChunks(ConnectionResultChunksRequest) returns (ConnectionResultChunksResponse);
   rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
+
+  // ResultSet operations
+  rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse);
+  rpc ResultSetGetChunks(ResultSetGetChunksRequest) returns (ResultSetGetChunksResponse);
+  rpc ResultSetRelease(ResultSetReleaseRequest) returns (ResultSetReleaseResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);

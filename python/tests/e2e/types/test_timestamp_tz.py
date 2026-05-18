@@ -89,7 +89,7 @@ class TestTimestampTzTypeCasting:
         assert_datetime_type(result)
 
         # And Values should have timezone info
-        assert_datetime_type(result)
+        assert result[0].utcoffset() == TS_2024_JAN.utcoffset()
 
 
 class TestTimestampTzLiteral:

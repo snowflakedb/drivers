@@ -6,6 +6,7 @@ import json
 
 from collections.abc import Iterable
 from datetime import datetime, time
+from datetime import tzinfo as tzinfo_type
 from math import isinf, isnan
 
 
@@ -50,6 +51,24 @@ def assert_datetime_type(values: Iterable, can_be_none: bool = False) -> None:
         assert isinstance(value, datetime), f"Value at index {i} should be datetime, got {type(value).__name__}"
 
 
+def iana_tz_name(tzinfo: tzinfo_type | None) -> str | None:
+    """Resolve an IANA timezone name from tzinfo.
+
+    ``pytz`` exposes ``tzinfo.zone``; :class:`zoneinfo.ZoneInfo` (often used by
+    pandas for ``datetime64[ns, tz]`` scalars) exposes ``tzinfo.key`` instead.
+    Fixed-offset tzinfos typically have neither.
+    """
+    if tzinfo is None:
+        return None
+    zone = getattr(tzinfo, "zone", None)
+    if isinstance(zone, str) and zone:
+        return zone
+    key = getattr(tzinfo, "key", None)
+    if isinstance(key, str) and key:
+        return key
+    return None
+
+
 def assert_timezone(values: Iterable, expected_tz: str | None, can_be_none: bool = False) -> None:
     """Assert all values have the expected timezone.
 
@@ -61,8 +80,9 @@ def assert_timezone(values: Iterable, expected_tz: str | None, can_be_none: bool
             continue
         if expected_tz:
             assert value.tzinfo is not None, f"Value at index {i} should have timezone info (tzinfo is None)"
-            assert value.tzinfo.zone == expected_tz, (
-                f"Value at index {i}: expected tz '{expected_tz}', got '{value.tzinfo.zone}'"
+            actual_tz = iana_tz_name(value.tzinfo)
+            assert actual_tz == expected_tz, (
+                f"Value at index {i}: expected tz '{expected_tz}', got '{actual_tz}' (tzinfo={value.tzinfo!r})"
             )
         else:
             assert value.tzinfo is None, f"Value at index {i} should not have timezone info, got {value.tzinfo}"

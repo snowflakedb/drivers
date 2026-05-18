@@ -2,9 +2,11 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+mod external_browser;
 pub mod heartbeat;
 pub mod logout;
 mod native_okta;
+mod oauth;
 pub mod query_request;
 pub mod query_response;
 pub mod sql_state;
@@ -16,27 +18,51 @@ use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
+use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
     AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::external_browser::{
+    DefaultBrowserOpener, external_browser_authenticate,
+};
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use crate::token_cache::{TokenCache, TokenType};
-use reqwest::{self, Method, header};
+use reqwest::{self, Method, StatusCode, header};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
+use uuid::Uuid;
 
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
+
+/// Send an HTTP request with retry and return `(StatusCode, body_text)`.
+///
+/// Shared by `native_okta` and `external_browser` authentication flows.
+async fn request_text_with_retry(
+    build: impl Fn() -> reqwest::RequestBuilder,
+    ctx: &HttpContext,
+    policy: &RetryPolicy,
+) -> Result<(StatusCode, String), HttpError> {
+    execute_with_retry(build, ctx, policy, |resp| async move {
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| HttpError::Transport {
+            source: e,
+            location: Location::new(file!(), line!(), column!()),
+        })?;
+        Ok((status, text))
+    })
+    .await
+}
 
 // ─── Snowflake GS protocol error codes ───────────────────────────────────────
 /// GS error code returned when a session no longer exists on the server.
@@ -45,6 +71,19 @@ pub const SESSION_GONE: i32 = 390111;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+/// GS error code returned when the OAuth access token presented at login is
+/// invalid (analysis_feature_oauth.md §8). Treated cross-driver as a signal
+/// to evict the cached access token and replay the OAuth flow.
+pub const OAUTH_ACCESS_TOKEN_INVALID: i32 = 390303;
+/// GS error code returned when the OAuth access token presented at login has
+/// expired (analysis_feature_oauth.md §8). Same eviction-and-retry behavior
+/// as [`OAUTH_ACCESS_TOKEN_INVALID`].
+pub const OAUTH_ACCESS_TOKEN_EXPIRED: i32 = 390318;
+/// GS error codes that indicate the cached OAuth access token (and any
+/// DPoP-bundled cache entry) must be evicted, after which the login is
+/// retried once. Mirrors JDBC/Go's `refreshOAuthTokenErrorCodes` set.
+const OAUTH_REFRESH_ERROR_CODES: [i32; 2] =
+    [OAUTH_ACCESS_TOKEN_INVALID, OAUTH_ACCESS_TOKEN_EXPIRED];
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -59,6 +98,10 @@ pub struct SessionTokens {
     pub session_expires_at: Option<std::time::Instant>,
     /// When the master token expires (after this, full re-auth is needed)
     pub master_expires_at: Option<std::time::Instant>,
+    /// Configured master-token TTL as returned by the server (`masterValidityInSeconds`).
+    /// Unlike the remaining time derived from `master_expires_at`, this does not shrink
+    /// as the token ages, so it is the right input for heartbeat-cadence computation.
+    pub master_validity: Option<std::time::Duration>,
 }
 
 /// Result of a successful login to Snowflake
@@ -177,6 +220,43 @@ impl<'a> QueryInput<'a> {
             query_parameters: None,
         }
     }
+}
+
+/// Build the optional `sql` and `bindings` fields used in query log lines,
+/// honoring the `log_query_text` / `log_query_parameters` opt-ins and the
+/// existing `log_max_query_length` truncation.
+///
+/// - `(None, None)` when `log_query_text` is `false`.
+/// - `(Some(prefix), None)` when only `log_query_text` is `true`.
+/// - `(Some(prefix), Some(bindings_prefix))` when both flags are `true`;
+///   `bindings_prefix` is the empty string when no bindings are attached.
+///
+/// Returning `None` lets callers pass the result straight to `tracing` macros
+/// where `Option::None` fields are skipped automatically.
+pub(crate) fn query_log_fields(
+    params: &QueryParameters,
+    input: &QueryInput<'_>,
+) -> (Option<String>, Option<String>) {
+    if !params.log_query_text {
+        return (None, None);
+    }
+    let sql = input
+        .sql
+        .chars()
+        .take(params.log_max_query_length)
+        .collect::<String>();
+    let bindings = params.log_query_parameters.then(|| {
+        input
+            .bindings
+            .map(|raw| {
+                raw.get()
+                    .chars()
+                    .take(params.log_max_query_length)
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    });
+    (Some(sql), bindings)
 }
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
@@ -321,6 +401,40 @@ fn remove_mfa_token_from_cache(
     }
 }
 
+/// Evict the cached OAuth access token (and DPoP-bundled entry, when
+/// present) for an Authorization Code login. Used by the
+/// `390303 / 390318` retry block in [`snowflake_login_with_client`]:
+/// after eviction the next call to `auth_request_data` will run the
+/// refresh-token leg or, if that also fails, the full interactive flow
+/// (analysis_feature_oauth.md §8 + §3.2 state machine).
+///
+/// The cache key host follows the cross-driver convention from analysis
+/// §7.3: prefer the IdP token URL host, otherwise fall back to the
+/// Snowflake server host. The synthetic `https://{host}` URL string
+/// passed to the eviction helpers parses cleanly into the same host the
+/// AC flow used when storing the token.
+fn evict_oauth_access_token_for_authorization_code(
+    cfg: &crate::config::rest_parameters::OAuthAuthorizationCodeConfig,
+    server_url: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let token_url_str = cfg
+        .token_url
+        .as_ref()
+        .map(|u| u.as_str().to_string())
+        .unwrap_or_default();
+    let Some(host) = oauth::host_from_token_url(&token_url_str, server_url) else {
+        tracing::warn!(
+            "Cannot evict cached OAuth access token: unable to derive IdP host from token_url or server_url"
+        );
+        return;
+    };
+    let synthetic_host_url = format!("https://{host}");
+    tracing::debug!(host = %host, "Evicting cached OAuth access token for IdP host");
+    oauth::remove_oauth_access_token(&synthetic_host_url, &cfg.username, token_cache);
+    oauth::remove_oauth_dpop_bundled(&synthetic_host_url, &cfg.username, token_cache);
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -350,6 +464,73 @@ pub async fn auth_request_data(
             data.authenticator = Some(okta_config.okta_url.to_string());
             data.raw_saml_response = Some(saml_html.into());
         }
+        LoginMethod::ExternalBrowser {
+            username,
+            authentication_timeout_secs,
+        } => {
+            // TODO: cache SSO tokens (same approach as MFA tokens)
+            let result = external_browser_authenticate(
+                client,
+                login_parameters,
+                username,
+                *authentication_timeout_secs,
+                &DefaultBrowserOpener,
+            )
+            .await
+            .context(ExternalBrowserSnafu)?;
+
+            data.login_name = Some(username.clone());
+            data.authenticator = Some("EXTERNALBROWSER".to_string());
+            data.token = Some(result.token);
+            data.proof_key = Some(result.proof_key);
+        }
+        // Authorization Code orchestration runs the PKCE/state/loopback flow
+        // (and any cache hits / refresh-token exchange) before forwarding the
+        // resulting access token to Snowflake under AUTHENTICATOR=OAUTH.
+        // Per analysis §10.1 / §14 #5, the body always uses uppercase
+        // "OAUTH" — never the user-supplied authenticator string verbatim —
+        // and tags the request with OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so
+        // GS knows which flow produced the token. LOGIN_NAME is always set
+        // (§14 #10).
+        LoginMethod::OAuthAuthorizationCode(cfg) => {
+            let server_url = url::Url::parse(&login_parameters.server_url)
+                .context(oauth::EndpointUrlParseSnafu {
+                    url: login_parameters.server_url.clone(),
+                })
+                .context(OAuthFlowSnafu)?;
+            let acquired =
+                oauth::run_oauth_authorization_code(client, &server_url, cfg, token_cache)
+                    .await
+                    .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some("OAUTH".to_string());
+            data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
+            // `dpop_jwk_json` is `Option<String>`: `Some` when DPoP was
+            // enabled, `None` otherwise, so the assignment is implicitly
+            // conditional. The JWK is carried through login data so the
+            // driver can build a DPoP proof header on the Snowflake login
+            // request; the server validates it statelessly against the
+            // thumbprint (`jkt`) already embedded in the access token
+            // (RFC 9449).
+            data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
+        // Client Credentials is external-IdP only (analysis §4) and tokens
+        // are intentionally not cached (§14 #12). On Snowflake error codes
+        // 390303/390318 the retry block in `snowflake_login_with_client`
+        // skips the AC eviction step and just replays the flow so the IdP
+        // token endpoint is re-hit.
+        LoginMethod::OAuthClientCredentials(cfg) => {
+            let acquired = oauth::acquire_client_credentials(client, cfg)
+                .await
+                .context(OAuthFlowSnafu)?;
+            data.login_name = Some(cfg.username.clone());
+            data.token = Some(acquired.access_token);
+            data.authenticator = Some("OAUTH".to_string());
+            data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
+            // See AC branch above for why dpop_jwk_json is carried here.
+            data.dpop_jwk_json = acquired.dpop_jwk_json;
+        }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
             Credentials::Password { username, password } => {
                 data.login_name = Some(username);
@@ -364,6 +545,18 @@ pub async fn auth_request_data(
                 data.login_name = Some(username);
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+            }
+            // Legacy pre-acquired access token: forward unchanged (analysis
+            // §6 / §10.1). LOGIN_NAME is always set (§14 #10) — never the
+            // .NET-only `loginName=""` quirk — and OAUTH_TYPE is omitted to
+            // distinguish the legacy flow from AC/CC.
+            Credentials::OAuth {
+                username,
+                access_token,
+            } => {
+                data.login_name = Some(username);
+                data.token = Some(access_token);
+                data.authenticator = Some("OAUTH".to_string());
             }
             Credentials::UserPasswordMfa {
                 username,
@@ -435,8 +628,30 @@ async fn send_login_request(
 
     let user_agent = user_agent(&login_parameters.client_info);
 
+    // Drift C.5: when the OAuth flow handed us a DPoP JWK alongside the
+    // access token, sign a DPoP proof JWT for the Snowflake login URL on
+    // every send (including retries — `proof_jwt` includes a fresh `jti`
+    // and `iat` per RFC 9449 §4.2). The key is parsed once up front so a
+    // malformed JWK fails the login fast instead of inside the retry
+    // closure. Snowflake's GS does not issue `use_dpop_nonce` for login,
+    // so we don't replicate the OAuth-token-endpoint nonce retry here
+    // (matches JDBC `SessionUtil.java:746-750`).
+    let dpop_signer: Option<DPoPSigner> =
+        if let Some(jwk_json) = login_request.data.dpop_jwk_json.as_deref() {
+            let key = oauth::dpop::DPoPKey::from_jwk_json(jwk_json).context(OAuthFlowSnafu)?;
+            let url = Url::parse(&login_url).context(UrlJoinSnafu {
+                path: "/session/v1/login-request",
+            })?;
+            Some(DPoPSigner {
+                key: std::sync::Arc::new(key),
+                url: std::sync::Arc::new(url),
+            })
+        } else {
+            None
+        };
+
     let build_request = || {
-        client
+        let mut builder = client
             .post(&login_url)
             .query(&[
                 (
@@ -460,7 +675,16 @@ async fn send_login_request(
             .header("accept", "application/snowflake")
             .header("User-Agent", &user_agent)
             .header("Authorization", "Snowflake Token=\"None\"")
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(30));
+        if let Some(signer) = dpop_signer.as_ref() {
+            // Signing is infallible once `from_jwk_json` succeeded above
+            // (only openssl primitive failures could surface here, which
+            // would have already failed the validation step).
+            let proof = oauth::dpop::proof_jwt(&signer.key, "POST", &signer.url, None)
+                .expect("DPoP proof generation must succeed for a pre-validated key");
+            builder = builder.header("DPoP", proof.reveal());
+        }
+        builder
     };
 
     let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
@@ -472,9 +696,18 @@ async fn send_login_request(
             context: "login request",
         })?;
 
-    read_response_json::<AuthResponse>(response)
+    read_response_json::<auth::AuthResponseMain>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)
+}
+
+/// Drift C.5: per-request DPoP signing context for `send_login_request`.
+/// Holds an `Arc`-shared key and login URL so the `build_request`
+/// closure (called once per retry attempt) can stamp a fresh proof JWT
+/// without moving values out of the surrounding scope.
+struct DPoPSigner {
+    key: std::sync::Arc<oauth::dpop::DPoPKey>,
+    url: std::sync::Arc<Url>,
 }
 
 #[tracing::instrument(
@@ -522,11 +755,12 @@ pub async fn snowflake_login_with_client(
 
     let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
 
+    // TODO: cache SSO tokens (same approach as MFA tokens)
     // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
     // via the normal DUO push/passcode flow.
     if !auth_response.success && used_cached_mfa_token {
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
@@ -547,13 +781,69 @@ pub async fn snowflake_login_with_client(
         }
     }
 
+    // OAuth refresh-on-failure (analysis_feature_oauth.md §8 / §14 #9):
+    // when GS rejects the OAuth access token with 390303 / 390318, replay
+    // the login once. For Authorization Code we first evict the cached
+    // access token (and any DPoP-bundled entry) so the replay exercises
+    // the refresh-token leg or, failing that, the interactive flow. For
+    // Client Credentials there is no cache to evict (analysis §4 / §14
+    // #12), so the replay re-hits the IdP token endpoint to fetch a
+    // fresh access token. Cross-driver consensus per analysis §8 (JDBC,
+    // ODBC, .NET, Go all retry both flows). Legacy `OAuthAccessToken`
+    // bubbles the error since the caller supplies the token directly.
+    if !auth_response.success {
+        let code = auth_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        if OAUTH_REFRESH_ERROR_CODES.contains(&code) {
+            let mut should_retry = false;
+            match &login_parameters.login_method {
+                LoginMethod::OAuthAuthorizationCode(cfg) => {
+                    tracing::debug!(
+                        code = code,
+                        oauth_type = "OAUTH_AUTHORIZATION_CODE",
+                        "OAuth access token cache eviction triggered by Snowflake error code {code}"
+                    );
+                    evict_oauth_access_token_for_authorization_code(
+                        cfg,
+                        &login_parameters.server_url,
+                        token_cache,
+                    );
+                    should_retry = true;
+                }
+                LoginMethod::OAuthClientCredentials(_) => {
+                    // No cache to evict for CC (analysis §4 / §14 #12);
+                    // the replay re-acquires from the IdP token endpoint.
+                    tracing::debug!(
+                        code = code,
+                        oauth_type = "OAUTH_CLIENT_CREDENTIALS",
+                        "Re-acquiring OAuth client-credentials access token after Snowflake error code {code}"
+                    );
+                    should_retry = true;
+                }
+                _ => {}
+            }
+            if should_retry {
+                tracing::debug!("Retrying login after OAuth refresh");
+                let retry_data =
+                    auth_request_data(client, login_parameters, session_parameters, token_cache)
+                        .await?;
+                let retry_request = AuthRequest { data: retry_data };
+                auth_response =
+                    send_login_request(client, login_parameters, &retry_request).await?;
+            }
+        }
+    }
+
     if !auth_response.success {
         let message = auth_response
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
@@ -571,6 +861,7 @@ pub async fn snowflake_login_with_client(
 
     tracing::debug!("Login successful, extracting session tokens");
 
+    // TODO: cache SSO tokens (same approach as MFA tokens)
     // Cache MFA token from response if caching is enabled
     if let LoginMethod::UserPasswordMfa {
         username,
@@ -666,6 +957,7 @@ pub async fn snowflake_login_with_client(
             session_id,
             session_expires_at,
             master_expires_at,
+            master_validity: auth_response.data.master_validity,
         },
         session_parameters: session_params,
         database_name,
@@ -771,6 +1063,7 @@ pub async fn refresh_session(
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
+        master_validity: data.master_validity,
     })
 }
 
@@ -974,12 +1267,15 @@ async fn execute_async_with_fallback<'a>(
                 ..
             },
         ) => {
+            let RestError::AsyncQuery { request_id, .. } = &e else {
+                unreachable!()
+            };
+            // guarded with: query_log_text, query_log_parameters
+            let (sql, bindings) = query_log_fields(query_parameters, &query_input);
             tracing::error!(
-                sql_prefix = query_input
-                    .sql
-                    .chars()
-                    .take(query_parameters.log_max_query_length)
-                    .collect::<String>(),
+                request_id = ?request_id,
+                sql = sql,
+                bindings = bindings,
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -1037,12 +1333,6 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
 
-    tracing::debug!(
-        request_id = %request_id,
-        sql_prefix = query_input.sql.chars().take(query_parameters.log_max_query_length).collect::<String>(),
-        "Executing sync query"
-    );
-
     execute_sync_query(
         client,
         query_parameters,
@@ -1097,6 +1387,15 @@ async fn execute_sync_query<'a>(
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     use crate::http::retry::{HttpContext, execute_with_retry};
+
+    // guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(query_parameters, query_input);
+    tracing::info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing sync query"
+    );
 
     let query_request = query_request::Request {
         sql_text: query_input.sql.clone(),
@@ -1154,7 +1453,7 @@ async fn execute_sync_query<'a>(
             context: "query request",
         })?;
 
-    let query_response = read_response_json::<query_response::Response>(response)
+    let query_response = read_response_json::<query_response::Data>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1176,7 +1475,14 @@ async fn execute_sync_query<'a>(
             retry_policy,
         )
         .await
-        .context(AsyncQuerySnafu)?
+        .context(AsyncQuerySnafu {
+            request_id: Some(request_id),
+            query_id: query_response
+                .data
+                .query_id
+                .as_deref()
+                .and_then(|s| Uuid::parse_str(s).ok()),
+        })?
     } else {
         query_response
     };
@@ -1206,7 +1512,10 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu)
+    .context(AsyncQuerySnafu {
+        request_id: Some(request_id),
+        query_id: None,
+    })
 }
 
 /// Fetch the result of a previously executed query by its Snowflake Query ID.
@@ -1222,10 +1531,13 @@ pub async fn snowflake_get_query_result(
     query_id: &str,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
+    tracing::info!(query_id = query_id, "Fetching query result");
+
     let result_url = format!(
         "{}/queries/{}/result",
         query_parameters.server_url, query_id
     );
+    let uuid = Uuid::parse_str(query_id).expect("Failed to parse query_id");
     let query_response = async_exec::poll_query_status(
         client,
         &query_parameters.client_info,
@@ -1234,7 +1546,10 @@ pub async fn snowflake_get_query_result(
         retry_policy,
     )
     .await
-    .context(AsyncQuerySnafu)?;
+    .context(AsyncQuerySnafu {
+        request_id: None,
+        query_id: Some(uuid),
+    })?;
 
     into_query_result(query_response)
 }
@@ -1289,7 +1604,7 @@ pub async fn get_query_status(
             context: "query status",
         })?;
 
-    let body: QueryStatusResponse = read_response_json(response)
+    let body: QueryStatusResponse = read_response_json::<Option<QueryStatusResponseData>>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1336,13 +1651,7 @@ pub async fn get_query_status(
     })
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct QueryStatusResponse {
-    success: bool,
-    message: Option<String>,
-    code: Option<String>,
-    data: Option<QueryStatusResponseData>,
-}
+type QueryStatusResponse = SnowflakeResponse<Option<QueryStatusResponseData>>;
 
 #[derive(Debug, serde::Deserialize)]
 struct QueryStatusResponseData {
@@ -1412,7 +1721,7 @@ pub async fn snowflake_abort_query(
         context: "Failed to execute abort query request",
     })?;
 
-    let abort_response = read_response_json::<query_response::AbortQueryResponse>(response)
+    let abort_response = read_response_json::<serde_json::Value>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -1431,11 +1740,30 @@ pub async fn snowflake_abort_query(
     Ok(())
 }
 
+/// Standard Snowflake JSON response envelope: `{success, code, message, data: T}`.
+///
+/// Every REST endpoint parsed by [`read_response_json`] returns this shape; the
+/// generic `T` is the endpoint-specific payload. Keeping the envelope uniform
+/// lets `read_response_json` inspect `success` + `code` centrally and map
+/// body-level `390112` (session-token expired) to `SessionExpired` for the
+/// single-flight `RefreshContext` refresh path — without each caller having
+/// to re-implement that check.
+#[derive(Debug, serde::Deserialize)]
+pub struct SnowflakeResponse<T> {
+    pub success: bool,
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub data: T,
+}
+
 pub(crate) async fn read_response_json<T>(
     response: reqwest::Response,
-) -> Result<T, SnowflakeResponseError>
+) -> Result<SnowflakeResponse<T>, SnowflakeResponseError>
 where
-    T: serde::de::DeserializeOwned,
+    T: serde::de::DeserializeOwned + Default,
 {
     let response_status = response.status();
     let response_text = response.text().await;
@@ -1465,9 +1793,19 @@ where
     let response_text = response_text.context(ResponseTextSnafu)?;
 
     tracing::debug!(response_len = response_text.len(), "Received HTTP response");
-    let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
+    let parsed: SnowflakeResponse<T> =
+        serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
-    Ok(response_data)
+    // 2xx with `success:false, code:"390112"` means the session token expired.
+    // Surface it as SessionExpired so the RefreshContext can refresh and retry,
+    // matching the HTTP 401 branch above.
+    if !parsed.success
+        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(SESSION_TOKEN_EXPIRED)
+    {
+        return SessionExpiredSnafu.fail();
+    }
+
+    Ok(parsed)
 }
 
 #[track_caller]
@@ -1513,6 +1851,18 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("External browser SSO failed"))]
+    ExternalBrowser {
+        source: external_browser::ExternalBrowserError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("OAuth flow failed"))]
+    OAuthFlow {
+        source: oauth::OAuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid Snowflake response"))]
     InvalidSnowflakeResponse {
         source: SnowflakeResponseError,
@@ -1549,6 +1899,8 @@ pub enum RestError {
     #[snafu(display("Async Snowflake query failed"))]
     AsyncQuery {
         source: SfError,
+        request_id: Option<Uuid>,
+        query_id: Option<Uuid>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2264,6 +2616,110 @@ mod tests {
         }
     }
 
+    mod query_log_fields_tests {
+        use super::*;
+        use serde_json::value::RawValue;
+
+        fn make_params(log_max_query_length: usize, text: bool, params: bool) -> QueryParameters {
+            QueryParameters {
+                server_url: "https://example.test".into(),
+                client_info: test_client_info(),
+                log_max_query_length,
+                log_query_text: text,
+                log_query_parameters: params,
+            }
+        }
+
+        #[test]
+        fn flags_off_returns_none_none() {
+            let params = make_params(80, false, false);
+            let input = QueryInput::new("SELECT 1");
+            assert_eq!(query_log_fields(&params, &input), (None, None));
+        }
+
+        #[test]
+        fn bindings_flag_without_text_flag_is_noop() {
+            let params = make_params(80, false, true);
+            let input = QueryInput::new("SELECT 1");
+            assert_eq!(query_log_fields(&params, &input), (None, None));
+        }
+
+        #[test]
+        fn text_only_returns_full_sql_when_within_limit() {
+            let params = make_params(80, true, false);
+            let input = QueryInput::new("SELECT 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT 1"));
+            assert!(bindings.is_none());
+        }
+
+        #[test]
+        fn text_only_truncates_to_log_max_query_length() {
+            let params = make_params(6, true, false);
+            let input = QueryInput::new("SELECT * FROM t WHERE x = 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT"));
+            assert!(bindings.is_none());
+        }
+
+        #[test]
+        fn text_only_truncates_at_char_boundary_for_multibyte() {
+            // "héllo" — 'é' is 2 bytes in UTF-8 but a single `char`. With limit
+            // 3 we expect "hél" (3 chars), not bytes.
+            let params = make_params(3, true, false);
+            let input = QueryInput::new("héllo world");
+            let (sql, _) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("hél"));
+        }
+
+        #[test]
+        fn text_and_params_includes_bindings_json() {
+            let params = make_params(80, true, true);
+            let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
+                "1": {"type": "TEXT", "value": "hello"}
+            }))
+            .unwrap();
+            let mut input = QueryInput::new("SELECT ?");
+            input.bindings = Some(&raw);
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT ?"));
+            assert!(bindings.is_some());
+            let bindings = bindings.unwrap();
+            assert!(
+                bindings.contains("hello"),
+                "expected bindings JSON to contain the value, got {bindings}"
+            );
+        }
+
+        #[test]
+        fn text_and_params_truncates_bindings_to_log_max_query_length() {
+            let params = make_params(8, true, true);
+            let raw: Box<RawValue> = serde_json::value::to_raw_value(&serde_json::json!({
+                "1": {"type": "TEXT", "value": "abcdefghijklmnop"}
+            }))
+            .unwrap();
+            let mut input = QueryInput::new("SELECT ?");
+            input.bindings = Some(&raw);
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref().map(str::len), Some(8));
+            let bindings = bindings.expect("bindings field should be present");
+            assert_eq!(bindings.chars().count(), 8);
+            assert!(
+                raw.get().starts_with(&bindings),
+                "truncated bindings should be the prefix of the raw JSON: {bindings}"
+            );
+        }
+
+        #[test]
+        fn text_and_params_returns_empty_string_when_no_bindings() {
+            let params = make_params(80, true, true);
+            let input = QueryInput::new("SELECT 1");
+            let (sql, bindings) = query_log_fields(&params, &input);
+            assert_eq!(sql.as_deref(), Some("SELECT 1"));
+            assert_eq!(bindings.as_deref(), Some(""));
+        }
+    }
+
     mod execute_sync_query_retry_tests {
         use super::*;
         use std::sync::Arc;
@@ -2305,6 +2761,8 @@ mod tests {
                 server_url: server.uri(),
                 client_info: test_client_info(),
                 log_max_query_length: 1024,
+                log_query_text: false,
+                log_query_parameters: false,
             };
             let query_input = QueryInput::new("SELECT 1");
 
@@ -2360,5 +2818,37 @@ mod tests {
                 request_ids
             );
         }
+    }
+
+    /// 2xx response carrying `success:false, code:"390112"` must be surfaced as
+    /// `SessionExpired` so the RefreshContext can refresh and retry — the only
+    /// behavior this envelope refactor introduces beyond the existing HTTP 401 path.
+    #[tokio::test]
+    async fn read_response_json_maps_body_390112_to_session_expired() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": false,
+                "code": "390112",
+                "message": "Session token expired",
+            })))
+            .mount(&server)
+            .await;
+
+        let response = reqwest::Client::new()
+            .post(server.uri())
+            .send()
+            .await
+            .expect("mock request sends");
+
+        let result = read_response_json::<serde_json::Value>(response).await;
+        assert!(
+            matches!(result, Err(SnowflakeResponseError::SessionExpired { .. })),
+            "expected SessionExpired, got {result:?}"
+        );
     }
 }

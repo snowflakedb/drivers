@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from datetime import datetime
+
 import pandas as pd
 
 from tests.compatibility import is_old_driver
+from tests.e2e.types.utils import iana_tz_name
 
 
 is_bool = pd.api.types.is_bool_dtype
@@ -63,3 +67,30 @@ def get_row(df: pd.DataFrame, idx: int) -> list:
 def get_column(df: pd.DataFrame, idx: int) -> list:
     # use list() instead of .tolist(), as tolist() converts np/pandas types to native python types
     return list(df.iloc[:, idx])
+
+
+def assert_datetime_type(values: Iterable, can_be_none: bool = False) -> None:
+    """Assert all values are datetime instances (NaT skipped when can_be_none)."""
+    for i, value in enumerate(values):
+        if can_be_none and pd.isna(value):
+            continue
+        assert isinstance(value, datetime), f"Value at index {i} should be datetime, got {type(value).__name__}"
+
+
+def assert_timezone(values: Iterable, expected_tz: str | None, can_be_none: bool = False) -> None:
+    """Assert all values have the expected timezone (NaT skipped when can_be_none).
+
+    When expected_tz is set, every value must carry matching tzinfo.
+    When expected_tz is None, every value must be naive (tzinfo is None).
+    """
+    for i, value in enumerate(values):
+        if can_be_none and pd.isna(value):
+            continue
+        if expected_tz:
+            assert value.tzinfo is not None, f"Value at index {i} should have timezone info (tzinfo is None)"
+            actual_tz = iana_tz_name(value.tzinfo)
+            assert actual_tz == expected_tz, (
+                f"Value at index {i}: expected tz '{expected_tz}', got '{actual_tz}' (tzinfo={value.tzinfo!r})"
+            )
+        else:
+            assert value.tzinfo is None, f"Value at index {i} should not have timezone info, got {value.tzinfo}"

@@ -27,7 +27,7 @@ def release_arrow_stream(stream_ptr: int | None) -> None:
     If the stream is in a bad state (already released, corrupt), the
     ArrowStreamIterator constructor will fail.  We catch that to avoid
     propagating errors into callers that are doing best-effort cleanup
-    (e.g. _QueryResult.__del__ or reset()).
+    (e.g. from_prepare_result cleanup).
     """
     if not stream_ptr:
         return

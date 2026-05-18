@@ -10,6 +10,7 @@ pub use self::types::*;
 pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::download_from_gcs;
 
+use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
@@ -22,6 +23,14 @@ use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
+
+/// Message string emitted in the PUT result's `message` column when the
+/// upload outcome is `Skipped` under `PutGetResultsetFlavor::Odbc`. Mirrors
+/// `#define MESSAGE_SKIPPED "File with same name already exists. SKIPPED"`
+/// from legacy libsnowflakeclient's `FileTransferExecutionResult.cpp`. The
+/// `Python` flavor leaves the `message` column empty for skipped uploads,
+/// matching the historical universal-driver behaviour.
+const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIPPED";
 
 pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
@@ -47,6 +56,7 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
             auto_compress: data.auto_compress,
             source_compression: data.source_compression.clone(),
             overwrite: data.overwrite,
+            flavor: data.flavor.clone(),
         };
 
         let result = upload_single_file(single_upload_data).await?;
@@ -91,9 +101,10 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
         .context(AzureUploadSnafu)?,
     };
 
-    // TODO: Right now empty message is hardcoded, because any error in the upload process will
-    // result in an error before this point and an ERROR status is never returned.
-    // We should adjust this after we have more tests in different wrappers to ensure error handling is consistent.
+    // TODO: Right now the message column is only populated for the `Skipped` outcome under
+    // the ODBC wrapper preset. Any failure in the upload process today returns an error before
+    // this point, so an `ERROR` status is never produced. Revisit when error handling is
+    // unified across wrappers.
     Ok(UploadResult {
         source: file_metadata.source,
         target: file_metadata.target,
@@ -107,9 +118,21 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             .target_compression
             .get_snowflake_representation()
             .to_string(),
+        message: upload_result_message(status, &data.flavor).to_string(),
         status: status.to_string(),
-        message: "".to_string(),
     })
+}
+
+/// Returns the `message` column value for a completed upload, gated on the
+/// active wrapper flavor. Legacy ODBC always populates the message with
+/// `ODBC_PUT_MESSAGE_SKIPPED` for skipped uploads (overwrite=false +
+/// target already exists); every other (flavor, status) combination uses
+/// an empty string.
+fn upload_result_message(status: UploadStatus, flavor: &PutGetResultsetFlavor) -> &'static str {
+    match (status, flavor) {
+        (UploadStatus::Skipped, PutGetResultsetFlavor::Odbc) => ODBC_PUT_MESSAGE_SKIPPED,
+        _ => "",
+    }
 }
 
 /// Sets file metadata, compresses the file if needed, and optionally encrypts the data.
@@ -353,4 +376,52 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_result_message_odbc_skipped_uses_legacy_literal() {
+        assert_eq!(
+            upload_result_message(UploadStatus::Skipped, &PutGetResultsetFlavor::Odbc),
+            ODBC_PUT_MESSAGE_SKIPPED,
+        );
+    }
+
+    #[test]
+    fn upload_result_message_python_skipped_is_empty() {
+        assert_eq!(
+            upload_result_message(UploadStatus::Skipped, &PutGetResultsetFlavor::Python),
+            "",
+        );
+    }
+
+    #[test]
+    fn upload_result_message_odbc_uploaded_is_empty() {
+        assert_eq!(
+            upload_result_message(UploadStatus::Uploaded, &PutGetResultsetFlavor::Odbc),
+            "",
+        );
+    }
+
+    #[test]
+    fn upload_result_message_python_uploaded_is_empty() {
+        assert_eq!(
+            upload_result_message(UploadStatus::Uploaded, &PutGetResultsetFlavor::Python),
+            "",
+        );
+    }
+
+    #[test]
+    fn odbc_put_message_skipped_matches_legacy_libsnowflakeclient() {
+        // The exact string is part of the wrapper contract — every ODBC
+        // application that parses the `message` column will key off this
+        // value verbatim. Pinning it in a test prevents silent rewording.
+        assert_eq!(
+            ODBC_PUT_MESSAGE_SKIPPED,
+            "File with same name already exists. SKIPPED",
+        );
+    }
 }

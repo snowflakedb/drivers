@@ -1,27 +1,21 @@
 #ifndef PUT_GET_UTILS_HPP
 #define PUT_GET_UTILS_HPP
 
-#include <sql.h>
-#include <sqlext.h>
-#include <stdio.h>
 #include <zlib.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
-#include "odbc_matchers.hpp"
 
 namespace pg_utils {
 
@@ -36,13 +30,23 @@ static constexpr int PUT_ROW_TARGET_SIZE_IDX = 4;
 static constexpr int PUT_ROW_SOURCE_COMPRESSION_IDX = 5;
 static constexpr int PUT_ROW_TARGET_COMPRESSION_IDX = 6;
 static constexpr int PUT_ROW_STATUS_IDX = 7;
-static constexpr int PUT_ROW_MESSAGE_IDX = 8;
+static constexpr int PUT_ROW_ENCRYPTION_IDX = 8;
+static constexpr int PUT_ROW_MESSAGE_IDX = 9;
+static constexpr int PUT_ROW_NUM_COLS = 9;
+
+// Literal emitted in the PUT result's `message` column when the upload
+// outcome is SKIPPED (overwrite=false + file exists). Mirrors
+// `ODBC_PUT_MESSAGE_SKIPPED` in `sf_core::apis::database_driver_v1` and the
+// legacy libsnowflakeclient `MESSAGE_SKIPPED` macro.
+inline constexpr auto PUT_ROW_MESSAGE_SKIPPED = "File with same name already exists. SKIPPED";
 
 // Indices for GET output rowset
 static constexpr int GET_ROW_FILE_IDX = 1;
 static constexpr int GET_ROW_SIZE_IDX = 2;
 static constexpr int GET_ROW_STATUS_IDX = 3;
-static constexpr int GET_ROW_MESSAGE_IDX = 4;
+static constexpr int GET_ROW_ENCRYPTION_IDX = 4;
+static constexpr int GET_ROW_MESSAGE_IDX = 5;
+static constexpr int GET_ROW_NUM_COLS = 5;
 
 // Generate a random hex string for temporary directory names
 inline std::string random_hex(size_t num_bytes = 8) {
@@ -51,9 +55,9 @@ inline std::string random_hex(size_t num_bytes = 8) {
   std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
 
   std::stringstream ss;
-  const char* hex = "0123456789abcdef";
   for (size_t i = 0; i < num_bytes; ++i) {
-    uint8_t v = static_cast<uint8_t>(dist(gen) & 0xFF);
+    const auto hex = "0123456789abcdef";
+    const auto v = static_cast<uint8_t>(dist(gen) & 0xFF);
     ss << hex[(v >> 4) & 0x0F] << hex[v & 0x0F];
   }
   return ss.str();
@@ -109,9 +113,9 @@ class TempTestDir {
     std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
 
     std::stringstream ss;
-    const char* hex = "0123456789abcdef";
     for (size_t i = 0; i < num_bytes; ++i) {
-      uint8_t v = static_cast<uint8_t>(dist(gen) & 0xFF);
+      const auto hex = "0123456789abcdef";
+      const auto v = static_cast<uint8_t>(dist(gen) & 0xFF);
       ss << hex[(v >> 4) & 0x0F] << hex[v & 0x0F];
     }
     return ss.str();
@@ -141,6 +145,8 @@ inline std::string expected_put_source(const std::filesystem::path& file_path) {
     NEW_DRIVER_ONLY("BD#17") { return file_path.filename().string(); }
   }
   UNIX_ONLY { return file_path.filename().string(); }
+  throw std::logic_error("expected_put_source: unsupported platform");
+  ;
 }
 
 // Convert a path into a URI-safe string for Snowflake file:// usage

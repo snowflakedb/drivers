@@ -4,21 +4,23 @@ use tokio::sync::Mutex;
 use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
-use super::query::process_query_response;
+use super::multistatement;
+use super::query::perform_put_get_transfer;
+use super::result_set::{
+    ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
+    response_to_descriptor,
+};
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
     validate_statement_option_write,
 };
-use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
 use crate::config::ParamStore;
 use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::query_response::{Data, Stats};
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, snowflake_abort_query, snowflake_get_query_result,
-    snowflake_query_with_client,
+    QueryExecutionMode, QueryInput, snowflake_abort_query, snowflake_query_with_client,
 };
 
 use crate::config::rest_parameters::QueryParameters;
@@ -82,92 +84,6 @@ pub enum BindingType<'a> {
 /// Result returned from async query submission (non-blocking).
 pub struct AsyncExecuteResult {
     pub query_id: String,
-}
-
-/// Column names whose values are summed to compute DML rows-affected (exact match).
-const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
-    "number of rows updated",
-    "number of multi-joined rows updated",
-    "number of rows deleted",
-];
-
-/// Column name prefixes whose values are summed to compute DML rows-affected.
-const DML_AFFECTED_ROWS_COLUMN_PREFIXES: &[&str] = &["number of rows inserted"];
-
-// Statement type ID constants for DML detection
-const STATEMENT_TYPE_ID_DML: i64 = 0x3000;
-const STATEMENT_TYPE_ID_INSERT: i64 = 0x3100;
-const STATEMENT_TYPE_ID_UPDATE: i64 = 0x3200;
-const STATEMENT_TYPE_ID_DELETE: i64 = 0x3300;
-const STATEMENT_TYPE_ID_MERGE: i64 = 0x3400;
-const STATEMENT_TYPE_ID_MULTI_TABLE_INSERT: i64 = 0x3500;
-
-// Statement type IDs for PUT / GET, mirroring `odbc::api::query_type::QueryType`.
-// Snowflake's REST response for these commands does not always carry a
-// `statementTypeId`, so `response_to_descriptor` falls back to these when
-// the `command` field indicates an UPLOAD / DOWNLOAD.
-const STATEMENT_TYPE_ID_GET_FILES: i64 = 0x7101;
-const STATEMENT_TYPE_ID_PUT_FILES: i64 = 0x7102;
-
-/// Check if a statement type ID represents a DML operation
-fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
-    if let Some(type_id) = statement_type_id {
-        matches!(
-            type_id,
-            STATEMENT_TYPE_ID_DML
-                | STATEMENT_TYPE_ID_INSERT
-                | STATEMENT_TYPE_ID_UPDATE
-                | STATEMENT_TYPE_ID_DELETE
-                | STATEMENT_TYPE_ID_MERGE
-                | STATEMENT_TYPE_ID_MULTI_TABLE_INSERT
-        )
-    } else {
-        false
-    }
-}
-
-/// Calculate rows affected based on statement type.
-///
-/// Returns `Some(count)` when rows affected is known, `None` when it is not
-/// (when the statement type is unknown).
-///
-/// - For DML: Parse rowset columns to sum affected rows
-/// - For SELECT and other queries: Use total field
-/// - For unknown: Return None
-pub(crate) fn calculate_rows_affected(data: &Data) -> Option<i64> {
-    // Check if this is a DML statement
-    if is_dml_statement(data.statement_type_id) {
-        // For DML, parse the rowset to get affected rows
-        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type)
-            && !rowset.is_empty()
-            && !rowset[0].is_empty()
-        {
-            let mut affected_rows = 0i64;
-
-            // Look for specific column names that indicate affected rows
-            for (idx, col) in row_types.iter().enumerate() {
-                let col_name = col.name.to_lowercase();
-
-                if (DML_AFFECTED_ROWS_COLUMNS.contains(&col_name.as_str())
-                    || DML_AFFECTED_ROWS_COLUMN_PREFIXES
-                        .iter()
-                        .any(|p| col_name.starts_with(p)))
-                    && let Some(Some(value)) = rowset[0].get(idx)
-                    && let Ok(count) = value.parse::<i64>()
-                {
-                    affected_rows += count;
-                }
-            }
-
-            return Some(affected_rows);
-        }
-        // DML with no affected rows
-        return Some(0);
-    }
-
-    // For SELECT and other queries, use total field.
-    // Return None if total is not available.
-    data.total
 }
 
 impl DatabaseDriverV1 {
@@ -286,90 +202,39 @@ pub struct PrepareResult {
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
         let result = self
-            .execute_query_internal(stmt_handle, None, Some(true))
+            .execute_query_internal(stmt_handle, None, Some(true), None)
             .await?;
-        let descriptor = result.into_descriptor();
 
-        // For describe_only, use prebuilt stream from execute
+        // Multi-statement query prepare is not supported.
+        let ExecuteQueryResult::Single(rs_info) = result else {
+            return Err(InvalidArgumentSnafu {
+                argument: "Multi-statement queries cannot be prepared".to_string(),
+            }
+            .build());
+        };
+        let stream = self.result_set_get_stream(rs_info.handle).await?;
+        self.result_set_release(rs_info.handle)?;
+
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Statement handle not found".to_string(),
             }
             .build()
         })?;
-        let mut stmt = stmt_ptr.lock().await;
-        let chunk_info = stmt.chunk_info.as_mut().ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "No chunk info available; execute a query first".to_string(),
-            }
-            .build()
-        })?;
-        let stream = chunk_info.prebuilt_stream.take().ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "No prebuilt stream available".to_string(),
-            }
-            .build()
-        })?;
+        // TODO: re-lock the statement to just copy the query
+        //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
+        let stmt = stmt_ptr.lock().await;
         let query = stmt.query.clone().unwrap_or_default();
 
         Ok(PrepareResult {
             stream,
-            query_id: descriptor.query_id,
-            columns: descriptor.columns,
-            number_of_binds: descriptor.number_of_binds,
+            query_id: rs_info.descriptor.query_id,
+            columns: rs_info.descriptor.columns,
+            number_of_binds: rs_info.descriptor.number_of_binds,
             query,
-            sql_state: descriptor.sql_state,
+            sql_state: rs_info.descriptor.sql_state,
         })
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ColumnMetadata {
-    pub name: String,
-    pub r#type: String,
-    pub precision: Option<i64>,
-    pub scale: Option<i64>,
-    pub length: Option<i64>,
-    pub byte_length: Option<i64>,
-    pub nullable: bool,
-}
-
-/// Metadata for a single result set (maps to proto ResultSetDescriptor).
-#[derive(Clone)]
-pub struct ResultSetDescriptor {
-    pub query_id: String,
-    pub columns: Vec<ColumnMetadata>,
-    pub rows_affected: Option<i64>,
-    pub statement_type_id: Option<i64>,
-    pub sql_state: Option<String>,
-    pub stats: Option<Stats>,
-    pub number_of_binds: i32,
-}
-
-/// Result of executing a query (maps to proto ExecuteQueryResponse).
-pub enum ExecuteQueryResult {
-    Single(ResultSetDescriptor),
-    Multi {
-        parent: ResultSetDescriptor,
-        query_ids: Vec<String>,
-        statement_type_ids: Vec<i64>,
-    },
-}
-
-impl ExecuteQueryResult {
-    /// Extract the descriptor regardless of single/multi variant.
-    pub fn into_descriptor(self) -> ResultSetDescriptor {
-        match self {
-            ExecuteQueryResult::Single(d) => d,
-            ExecuteQueryResult::Multi { parent, .. } => parent,
-        }
-    }
-}
-
-/// A fully resolved result set with data (maps to proto ResultSetResponse).
-pub struct ResolvedResultSet {
-    pub descriptor: ResultSetDescriptor,
-    pub stream: Box<FFI_ArrowArrayStream>,
 }
 
 impl DatabaseDriverV1 {
@@ -377,8 +242,9 @@ impl DatabaseDriverV1 {
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
+        timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        self.execute_query_internal(stmt_handle, bindings, None)
+        self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
             .await
     }
 
@@ -387,6 +253,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
+        timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
@@ -408,7 +275,7 @@ impl DatabaseDriverV1 {
             sql: query.clone(),
             bindings: query_bindings,
             describe_only,
-            query_parameters: build_query_parameters(&stmt.settings),
+            query_parameters: build_query_parameters_with_timeout(&stmt.settings, timeout_seconds),
         };
 
         let conn_arc = stmt.conn.clone();
@@ -450,55 +317,26 @@ impl DatabaseDriverV1 {
             .await;
         }
 
-        let descriptor = response_to_descriptor(&response.data, &self.wrapper_presets);
-
-        let prefetch_config = resolve_prefetch_config(&conn_arc).await;
-
-        // Build the Arrow stream eagerly — this handles all result formats
-        // (Arrow, JSON, PUT/GET file transfers) via process_query_response.
-        // Skip for multi-statement parents (they only contain metadata).
-        let prebuilt_stream = if super::multistatement::is_multistatement(&response.data) {
-            None
-        } else {
-            let query_result = process_query_response(
-                &response.data,
-                &http_client,
-                &prefetch_config,
-                &self.wrapper_presets,
-            )
-            .await
-            .context(QueryResponseProcessingSnafu)?;
-            Some(Box::new(FFI_ArrowArrayStream::new(query_result.reader)))
-        };
-
-        // Re-acquire lock to store results
+        // Re-acquire lock to set the state
         let mut stmt = stmt_ptr.lock().await;
-        let format = response_chunk_format(&response.data)?;
-        stmt.chunk_info = Some(StoredChunkInfo {
-            query_id: descriptor.query_id.clone(),
-            descriptor: descriptor.clone(),
-            format,
-            inline: response_inline_data(&response.data, format),
-            chunks: response.data.to_chunk_download_data().unwrap_or_default(),
-            prebuilt_stream,
-            number_of_binds: response.data.number_of_binds.unwrap_or(0),
-            stream_consumed: false,
-        });
-
         stmt.state = StatementState::Executed;
+        drop(stmt);
 
-        if super::multistatement::is_multistatement(&response.data) {
-            let query_ids = super::multistatement::child_query_ids(&response.data);
-            let statement_type_ids =
-                super::multistatement::child_statement_type_ids(&response.data);
-            Ok(ExecuteQueryResult::Multi {
-                parent: descriptor,
-                query_ids,
-                statement_type_ids,
-            })
-        } else {
-            Ok(ExecuteQueryResult::Single(descriptor))
+        let data = response.data;
+        let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
+
+        if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+            return Ok(multi);
         }
+
+        let rowset_data = match data.command.as_deref() {
+            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets)
+                .await
+                .context(QueryResponseProcessingSnafu)?,
+            None => data.into_rowset_data(),
+        };
+        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
     }
 
     /// Execute query asynchronously (non-blocking) — returns immediately with query_id.
@@ -546,6 +384,8 @@ impl DatabaseDriverV1 {
                     Err(e) => {
                         last_error = Some(RestError::AsyncQuery {
                             source: e,
+                            request_id: Some(request_id),
+                            query_id: None,
                             location: snafu::Location::new(file!(), line!(), 0),
                         });
                     }
@@ -565,48 +405,6 @@ impl DatabaseDriverV1 {
         Ok(AsyncExecuteResult { query_id })
     }
 
-    pub async fn statement_result_chunks(
-        &self,
-        stmt_handle: Handle,
-        query_id: &str,
-    ) -> Result<StoredChunkInfo, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        let stmt = stmt_ptr.lock().await;
-        let chunk_info = stmt.chunk_info.as_ref().ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "No chunk info available; execute a query first".to_string(),
-            }
-            .build()
-        })?;
-
-        if !query_id.is_empty() && chunk_info.query_id != query_id {
-            return Err(InvalidArgumentSnafu {
-                argument: format!(
-                    "query_id mismatch: requested '{}' but statement has '{}'",
-                    query_id, chunk_info.query_id
-                ),
-            }
-            .build());
-        }
-
-        Ok(StoredChunkInfo {
-            query_id: chunk_info.query_id.clone(),
-            descriptor: chunk_info.descriptor.clone(),
-            format: chunk_info.format,
-            inline: chunk_info.inline.clone(),
-            chunks: chunk_info.chunks.clone(),
-            prebuilt_stream: None, // prebuilt stream is not cloneable; chunks path only
-            number_of_binds: chunk_info.number_of_binds,
-            stream_consumed: chunk_info.stream_consumed,
-        })
-    }
-
     pub async fn connection_get_query_result(
         &self,
         conn_handle: Handle,
@@ -619,54 +417,21 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
+        let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
+        let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
 
-        let response = with_valid_session(&conn_ptr, |token| {
-            let http_client = &http_client;
-            let query_parameters = &query_parameters;
-            let query_id = &query_id;
-            let retry_policy = &retry_policy;
-            async move {
-                snowflake_get_query_result(
-                    http_client,
-                    query_parameters,
-                    token.reveal(),
-                    query_id,
-                    retry_policy,
-                )
+        if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+            return Ok(multi);
+        }
+
+        let rowset_data = match data.command.as_deref() {
+            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets)
                 .await
-            }
-        })
-        .await?;
-
-        if response.success {
-            let conn = conn_ptr.lock().await;
-            conn.update_session_params_cache(
-                "",
-                response.data.parameters.as_ref(),
-                &super::connection::FinalSessionNames {
-                    database: response.data.final_database_name.clone(),
-                    schema: response.data.final_schema_name.clone(),
-                    warehouse: response.data.final_warehouse_name.clone(),
-                    role: response.data.final_role_name.clone(),
-                },
-            )
-            .await;
-        }
-
-        let descriptor = response_to_descriptor(&response.data, &self.wrapper_presets);
-        if super::multistatement::is_multistatement(&response.data) {
-            let query_ids = super::multistatement::child_query_ids(&response.data);
-            let statement_type_ids =
-                super::multistatement::child_statement_type_ids(&response.data);
-            Ok(ExecuteQueryResult::Multi {
-                parent: descriptor,
-                query_ids,
-                statement_type_ids,
-            })
-        } else {
-            Ok(ExecuteQueryResult::Single(descriptor))
-        }
+                .context(QueryResponseProcessingSnafu)?,
+            None => data.into_rowset_data(),
+        };
+        let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
     }
 
     pub async fn connection_abort_query(
@@ -726,310 +491,11 @@ fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
     })
 }
 
-/// Map the server's `queryResultFormat` onto `ChunkFormatKind`; absent field defaults to Arrow IPC, unknown values error.
-fn response_chunk_format(data: &Data) -> Result<ChunkFormatKind, ApiError> {
-    match data.query_result_format.as_deref() {
-        Some(s) if s.eq_ignore_ascii_case("json") => Ok(ChunkFormatKind::Json),
-        Some(s) if s.eq_ignore_ascii_case("arrow") => Ok(ChunkFormatKind::ArrowIpc),
-        None => Ok(ChunkFormatKind::ArrowIpc),
-        Some(other) => UnsupportedQueryResultFormatSnafu {
-            format: other.to_string(),
-        }
-        .fail(),
-    }
-}
-
-/// Extract the inline initial chunk from the response; empty/missing payloads collapse to `InlineData::None`.
-fn response_inline_data(data: &Data, format: ChunkFormatKind) -> InlineData {
-    match format {
-        ChunkFormatKind::Json => match data.rowset.as_ref() {
-            Some(rowset) if !rowset.is_empty() => InlineData::Json(rowset.clone()),
-            _ => InlineData::None,
-        },
-        ChunkFormatKind::ArrowIpc => match data.to_initial_base64_opt() {
-            Some(b) => InlineData::ArrowIpc(b.to_string()),
-            None => InlineData::None,
-        },
-    }
-}
-
-/// Extract metadata from a Snowflake query response into a `ResultSetDescriptor`.
-fn response_to_descriptor(
-    data: &Data,
-    wrapper_presets: &super::global_state::WrapperPresets,
-) -> ResultSetDescriptor {
-    let query_id = data.query_id.clone().unwrap_or_default();
-    let rows_affected = calculate_rows_affected(data);
-    let columns = data
-        .row_type
-        .as_ref()
-        .map(|row_types| {
-            row_types
-                .iter()
-                .map(|rt| ColumnMetadata {
-                    name: rt.name.clone(),
-                    r#type: rt
-                        .ext_type_name
-                        .as_ref()
-                        .filter(|s| !s.is_empty())
-                        .cloned()
-                        .unwrap_or_else(|| rt.type_.clone()),
-                    precision: rt.precision.map(|v| v as i64),
-                    scale: rt.scale.map(|v| v as i64),
-                    length: rt.length.map(|v| v as i64),
-                    byte_length: rt.byte_length.map(|v| v as i64),
-                    nullable: rt.nullable,
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| put_get_columns(data.command.as_deref(), wrapper_presets));
-
-    // Snowflake's REST response for PUT / GET does not always carry a `statementTypeId`,
-    // wrapper classifiers need a client-side fallback to recognise the synthesized PUT / GET cursor.
-    // Preserve any server-provided value and only infer it from the `command` field when absent.
-    let statement_type_id = data.statement_type_id.or(match data.command.as_deref() {
-        Some("UPLOAD") => Some(STATEMENT_TYPE_ID_PUT_FILES),
-        Some("DOWNLOAD") => Some(STATEMENT_TYPE_ID_GET_FILES),
-        _ => None,
-    });
-
-    ResultSetDescriptor {
-        query_id,
-        columns,
-        rows_affected,
-        statement_type_id,
-        sql_state: data.sql_state.clone(),
-        stats: data.stats.clone(),
-        number_of_binds: data.number_of_binds.unwrap_or(0),
-    }
-}
-
-/// Return client-synthesized column metadata for PUT/GET commands,
-/// which don't include `rowType` in the Snowflake response.
-fn put_get_columns(
-    command: Option<&str>,
-    wrapper_presets: &super::global_state::WrapperPresets,
-) -> Vec<ColumnMetadata> {
-    use super::query::{download_column_metadata, upload_column_metadata};
-    match command {
-        Some("UPLOAD") => upload_column_metadata(wrapper_presets),
-        Some("DOWNLOAD") => download_column_metadata(wrapper_presets),
-        _ => Vec::new(),
-    }
-}
-
-/// Read the `CLIENT_PREFETCH_THREADS` session parameter from the connection
-/// and build a [`PrefetchConfig`].
-async fn resolve_prefetch_config(conn: &Arc<Mutex<Connection>>) -> PrefetchConfig {
-    let conn_guard = conn.lock().await;
-    let threads = conn_guard
-        .session_parameters
-        .read()
-        .await
-        .get(param_names::CLIENT_PREFETCH_THREADS.as_str())
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(crate::chunks::DEFAULT_PREFETCH_THREADS);
-    PrefetchConfig {
-        prefetch_threads: threads,
-    }
-}
-
-/// Fetch a query result from Snowflake by query_id via the connection,
-/// returning the raw response `Data` for further processing.
-async fn fetch_query_response_data(
-    conn_ptr: &Arc<Mutex<Connection>>,
-    query_id: &str,
-) -> Result<(Data, reqwest::Client), ApiError> {
-    let (query_parameters, http_client, retry_policy) = {
-        let conn = conn_ptr.lock().await;
-        (
-            conn.query_transport_parameters()?,
-            conn.http_client
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?,
-            conn.retry_policy.clone(),
-        )
-    };
-
-    let response = {
-        let mut ctx = RefreshContext::from_arc(conn_ptr).await?;
-        let mut last_error = None;
-        loop {
-            let session_token = ctx.refresh_token(last_error).await?;
-            match snowflake_get_query_result(
-                &http_client,
-                &query_parameters,
-                session_token.reveal(),
-                query_id,
-                &retry_policy,
-            )
-            .await
-            {
-                Ok(result) => break Ok(result),
-                Err(e) => last_error = Some(e),
-            }
-        }
-    }?;
-
-    if response.success {
-        let conn = conn_ptr.lock().await;
-        conn.update_session_params_cache(
-            "",
-            response.data.parameters.as_ref(),
-            &super::connection::FinalSessionNames {
-                database: response.data.final_database_name.clone(),
-                schema: response.data.final_schema_name.clone(),
-                warehouse: response.data.final_warehouse_name.clone(),
-                role: response.data.final_role_name.clone(),
-            },
-        )
-        .await;
-    }
-
-    Ok((response.data, http_client))
-}
-
-/// Build a `ResolvedResultSet` from a Snowflake HTTP response by fetching the query result by query_id and building the Arrow stream.
-async fn fetch_and_resolve_result_set(
-    conn_ptr: &Arc<Mutex<Connection>>,
-    query_id: &str,
-    wrapper_presets: &super::global_state::WrapperPresets,
-) -> Result<ResolvedResultSet, ApiError> {
-    let (data, http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
-    let prefetch_config = resolve_prefetch_config(conn_ptr).await;
-
-    let descriptor = response_to_descriptor(&data, wrapper_presets);
-    let query_result =
-        process_query_response(&data, &http_client, &prefetch_config, wrapper_presets)
-            .await
-            .context(QueryResponseProcessingSnafu)?;
-    let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
-
-    Ok(ResolvedResultSet { descriptor, stream })
-}
-
-/// Fetch chunk metadata for a query_id using the connection (no statement handle needed).
-async fn fetch_chunk_info_by_query_id(
-    conn_ptr: &Arc<Mutex<Connection>>,
-    query_id: &str,
-    wrapper_presets: &super::global_state::WrapperPresets,
-) -> Result<StoredChunkInfo, ApiError> {
-    let (data, _http_client) = fetch_query_response_data(conn_ptr, query_id).await?;
-
-    let descriptor = response_to_descriptor(&data, wrapper_presets);
-    let format = response_chunk_format(&data)?;
-
-    Ok(StoredChunkInfo {
-        query_id: descriptor.query_id.clone(),
-        descriptor,
-        format,
-        inline: response_inline_data(&data, format),
-        chunks: data.to_chunk_download_data().unwrap_or_default(),
-        prebuilt_stream: None, // prebuilt stream is not cloneable; chunks path only
-        number_of_binds: data.number_of_binds.unwrap_or(0),
-        stream_consumed: false,
-    })
-}
-
-impl DatabaseDriverV1 {
-    /// Fetch a result set by query_id using the statement's stored chunk info (fast path)
-    /// or by re-fetching from Snowflake (for multi-statement children).
-    pub async fn statement_get_result_set(
-        &self,
-        stmt_handle: Handle,
-        query_id: String,
-    ) -> Result<ResolvedResultSet, ApiError> {
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        let mut stmt = stmt_ptr.lock().await;
-
-        // Fast path: if the query_id matches stored chunk_info, use prebuilt stream
-        if let Some(ref mut info) = stmt.chunk_info
-            && info.query_id == query_id
-            && let Some(prebuilt) = info.prebuilt_stream.take()
-        {
-            let descriptor = info.descriptor.clone();
-            return Ok(ResolvedResultSet {
-                descriptor,
-                stream: prebuilt,
-            });
-        }
-
-        // Slow path: fetch from Snowflake by query_id (multi-statement children)
-        let conn = stmt.conn.clone();
-        drop(stmt);
-        fetch_and_resolve_result_set(&conn, &query_id, &self.wrapper_presets).await
-    }
-
-    /// Fetch a result set by query_id using the connection (stateless, always fetches from Snowflake).
-    pub async fn connection_get_result_set(
-        &self,
-        conn_handle: Handle,
-        query_id: String,
-    ) -> Result<ResolvedResultSet, ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        fetch_and_resolve_result_set(&conn_ptr, &query_id, &self.wrapper_presets).await
-    }
-
-    /// Fetch chunk metadata by query_id using the connection (no statement handle required).
-    pub async fn connection_result_chunks(
-        &self,
-        conn_handle: Handle,
-        query_id: String,
-    ) -> Result<StoredChunkInfo, ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
-
-        fetch_chunk_info_by_query_id(&conn_ptr, &query_id, &self.wrapper_presets).await
-    }
-}
-
-/// Inline initial chunk of a result set, if any.
-#[derive(Clone)]
-pub enum InlineData {
-    /// Base64-encoded Arrow IPC stream.
-    ArrowIpc(String),
-    /// JSON rowset (rows of nullable string cells).
-    Json(Vec<Vec<Option<String>>>),
-    None,
-}
-
-pub struct StoredChunkInfo {
-    pub query_id: String,
-    pub descriptor: ResultSetDescriptor,
-    /// Wire format reported by the server (`ARROW` or `JSON`).
-    pub format: ChunkFormatKind,
-    pub inline: InlineData,
-    pub chunks: Vec<ChunkDownloadData>,
-    /// Pre-built Arrow stream from execute. Consumed once by `statement_get_result_set`.
-    pub prebuilt_stream: Option<Box<FFI_ArrowArrayStream>>,
-    /// Number of bind parameters (only for prepared statements).
-    pub number_of_binds: i32,
-    /// Tracks whether the prebuilt stream was already consumed.
-    pub stream_consumed: bool,
-}
-
 pub struct Statement {
     pub state: StatementState,
     pub(crate) settings: ParamStore,
     pub query: Option<String>,
     pub conn: Arc<Mutex<Connection>>,
-    pub(crate) chunk_info: Option<StoredChunkInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -1045,7 +511,6 @@ impl Statement {
             state: StatementState::Initialized,
             query: None,
             conn,
-            chunk_info: None,
         }
     }
 
@@ -1084,6 +549,24 @@ fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde
         if let Some(setting) = settings.get(*key) {
             params.insert(server_name.to_string(), setting_to_json_value(setting));
         }
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(params)
+    }
+}
+
+fn build_query_parameters_with_timeout(
+    settings: &ParamStore,
+    timeout_seconds: Option<u32>,
+) -> Option<HashMap<String, serde_json::Value>> {
+    let mut params = build_query_parameters(settings).unwrap_or_default();
+    if let Some(t) = timeout_seconds.filter(|&t| t > 0) {
+        params.insert(
+            "STATEMENT_TIMEOUT_IN_SECONDS".to_string(),
+            serde_json::Value::Number(t.into()),
+        );
     }
     if params.is_empty() {
         None
@@ -1248,7 +731,9 @@ fn resolve_query_bindings<'a>(
 
 #[cfg(test)]
 mod tests {
+    use super::super::result_set;
     use super::*;
+    use crate::rest::snowflake::query_response::Data;
 
     #[test]
     fn parse_bool_setting_accepts_native_bool_values() {
@@ -1741,7 +1226,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(13));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(13));
     }
 
     #[test]
@@ -1756,7 +1241,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(5));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(5));
     }
 
     #[test]
@@ -1770,7 +1255,7 @@ mod tests {
                 ]
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(0));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(0));
     }
 
     #[test]
@@ -1780,7 +1265,7 @@ mod tests {
                 "total": 42
             }"#,
         );
-        assert_eq!(calculate_rows_affected(&data), Some(42));
+        assert_eq!(result_set::calculate_rows_affected(&data), Some(42));
     }
 
     #[test]

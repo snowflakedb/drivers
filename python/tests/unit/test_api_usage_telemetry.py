@@ -12,41 +12,46 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     DatabaseHandle,
     ExecuteQueryResponse,
     ResultSetDescriptor,
+    ResultSetHandle,
+    ResultSetResponse,
     StatementHandle,
 )
 
 
 def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
-    """Return an ExecuteQueryResponse with a single-statement descriptor."""
-    return ExecuteQueryResponse(single=ResultSetDescriptor(query_id=query_id))
+    """Return an ExecuteQueryResponse with a single-statement ResultSetResponse."""
+    return ExecuteQueryResponse(
+        single=ResultSetResponse(
+            result_set_handle=ResultSetHandle(id=1),
+            result_descriptor=ResultSetDescriptor(query_id=query_id),
+        )
+    )
 
 
 @pytest.fixture
 def mock_db_api():
-    """Create a mock DatabaseDriverClient with minimal stubs for Connection.__init__."""
+    """Create a mock DatabaseDriverClient patched into core_driver."""
+    from snowflake.connector._internal.api_client.client_api import core_driver
+
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
     db_api.connection_get_parameter.return_value = MagicMock(value="")
 
-    # connection_is_closed reports "closed" once the conn_handle has been
-    # released (Connection.close() swaps the handle to None, which ends up as
-    # id=0 after protobuf default initialization). Mirrors real Core behavior
-    # and lets tests call close() then assert is_closed() == True.
     def _connection_is_closed(request):
         return ConnectionIsClosedResponse(is_closed=request.conn_handle.id == 0)
 
     db_api.connection_is_closed.side_effect = _connection_is_closed
-    # Provide a real StatementHandle so protobuf field validation passes
     db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
-    # Mock the two-step execute flow: execute_query returns a descriptor,
-    # then get_result_set returns the result set (get_stream_ptr is patched).
     db_api.statement_execute_query.return_value = _make_execute_response()
-    db_api.statement_get_result_set.return_value = MagicMock(
+    db_api.connection_get_result_set.return_value = MagicMock(
         result_descriptor=ResultSetDescriptor(query_id="fake-qid"),
     )
-    db_api.statement_result_chunks.return_value = MagicMock(HasField=MagicMock(return_value=False))
-    return db_api
+
+    old_client = core_driver._client
+    core_driver.client = db_api
+    yield db_api
+    core_driver.client = old_client
 
 
 @pytest.fixture
@@ -54,11 +59,7 @@ def connection(mock_db_api):
     """Create a Connection with a mocked db_api."""
     from snowflake.connector.connection import Connection
 
-    # Return stream_ptr=0 so release_arrow_stream (called in __del__) is a no-op.
-    with (
-        patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api),
-        patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
-    ):
+    with patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0):
         conn = Connection(user="test_user", account="test_account")
         yield conn
 
@@ -181,7 +182,6 @@ class TestCursorApiTelemetry:
         # fetchone requires a prior execute — mock the iterator
         cursor._execute_result = MagicMock()
         cursor._iterator = iter([])
-        cursor._fetch_mode = None
         cursor.fetchone()
 
         methods = _get_api_methods(mock_db_api)
@@ -193,7 +193,6 @@ class TestCursorApiTelemetry:
         mock_iterator.fetch_many.return_value = [(1,), (2,)]
         cursor._execute_result = MagicMock()
         cursor._iterator = mock_iterator
-        cursor._fetch_mode = None
         cursor.fetchmany(2)
 
         methods = _get_api_methods(mock_db_api)
@@ -208,7 +207,6 @@ class TestCursorApiTelemetry:
 
         cur._execute_result = MagicMock()
         cur._iterator = iter([])
-        cur._fetch_mode = None
         cur.fetchone()
 
         methods = _get_api_methods(mock_db_api)

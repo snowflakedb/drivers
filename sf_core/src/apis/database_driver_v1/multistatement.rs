@@ -1,3 +1,4 @@
+use super::result_set::{ExecuteQueryResult, ResultSetDescriptor};
 use crate::rest::snowflake::query_response::Data;
 
 const STATEMENT_TYPE_MULTI: i64 = 0xA000;
@@ -5,6 +6,21 @@ const STATEMENT_TYPE_MULTI: i64 = 0xA000;
 /// Returns `true` if the response represents a multi-statement execution.
 pub fn is_multistatement(data: &Data) -> bool {
     data.statement_type_id == Some(STATEMENT_TYPE_MULTI)
+}
+
+/// If `data` is a multi-statement response, returns `ExecuteQueryResult::Multi`.
+pub fn try_into_multi_result(
+    data: &Data,
+    descriptor: ResultSetDescriptor,
+) -> Option<ExecuteQueryResult> {
+    if !is_multistatement(data) {
+        return None;
+    }
+    Some(ExecuteQueryResult::Multi {
+        parent: descriptor,
+        query_ids: child_query_ids(data),
+        statement_type_ids: child_statement_type_ids(data),
+    })
 }
 
 /// Parse comma-separated `resultIds` from a multi-statement response into individual query IDs.

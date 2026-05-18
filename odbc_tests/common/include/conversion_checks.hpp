@@ -94,10 +94,31 @@ static typename MetaOfSqlCType<SQL_C_TYPE>::type check_interval_trailing_truncat
   return value;
 }
 
-// Check for interval leading field precision loss (SQLSTATE 22015)
+// Check for interval leading field precision loss (SQLSTATE 22015).
+// See also `check_interval_field_overflow` below for the trailing-range
+// form of the same 22015 case; the two helpers carry distinct intent at
+// the call site but assert the same SQLSTATE.
 template <int SQL_C_TYPE>
 static void check_interval_precision_lost(const StatementHandleWrapper& stmt, int column) {
   INFO("Checking interval leading field precision lost for column " << column);
+  typename MetaOfSqlCType<SQL_C_TYPE>::type value;
+  SQLLEN indicator = -999;
+  SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(stmt);
+  CHECK(records.size() == 1);
+  CHECK(records[0].sqlState == "22015");
+}
+
+// Check for interval field overflow (SQLSTATE 22015) on a *trailing*
+// composite field that fell outside its canonical ANSI range (HOUR > 23,
+// MINUTE/SECOND > 59, MONTH > 11). Asserts the same SQLSTATE as
+// `check_interval_precision_lost` above; the distinct helper carries
+// intent at the call site and lets the diagnostic in the test output
+// point at the trailing-range case explicitly.
+template <int SQL_C_TYPE>
+static void check_interval_field_overflow(const StatementHandleWrapper& stmt, int column) {
+  INFO("Checking interval field overflow (22015) for column " << column);
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator = -999;
   SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);

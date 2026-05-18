@@ -38,6 +38,7 @@ add_odbc_test(e2e_query_sql_row_count query/sql_row_count.cpp)
 add_odbc_test(e2e_query_sql_set_pos query/sql_set_pos.cpp)
 add_odbc_test(e2e_query_sql_bulk_operations query/sql_bulk_operations.cpp)
 add_odbc_test(e2e_query_attr_error_handling query/attr_error_handling.cpp)
+add_odbc_test(e2e_query_last_query_id query/last_query_id.cpp)
 
 # tls
 add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
@@ -48,6 +49,7 @@ add_odbc_test(e2e_logging_odbc_logging logging/odbc_logging.cpp)
 # session
 add_odbc_test(e2e_session_session_parameters session/session_parameters.cpp)
 add_odbc_test(e2e_session_connection_params session/connection_params.cpp)
+add_odbc_test(e2e_session_logout session/logout.cpp)
 
 # types
 add_odbc_test(e2e_types_binary types/binary.cpp)
@@ -69,6 +71,7 @@ add_odbc_test(e2e_types_date_conversion_to_c_binary types/date_conversion_to_c_b
 add_odbc_test(e2e_types_date_conversion_to_c_date types/date_conversion_to_c_date.cpp)
 add_odbc_test(e2e_types_date_conversion_to_c_timestamp types/date_conversion_to_c_timestamp.cpp)
 add_odbc_test(e2e_types_date_incompatible_conversions types/date_incompatible_conversions.cpp)
+add_odbc_test(e2e_types_date_overflow types/date_overflow.cpp)
 add_odbc_test(e2e_types_decfloat types/decfloat.cpp)
 add_odbc_test(e2e_types_decfloat_conversion_to_c_binary types/decfloat_conversion_to_c_binary.cpp)
 add_odbc_test(e2e_types_decfloat_conversion_to_c_bit types/decfloat_conversion_to_c_bit.cpp)
@@ -133,11 +136,14 @@ add_odbc_test(e2e_types_timestamp_tz_conversion_to_c_date types/timestamp_tz_con
 add_odbc_test(e2e_types_timestamp_tz_conversion_to_c_time types/timestamp_tz_conversion_to_c_time.cpp)
 add_odbc_test(e2e_types_timestamp_tz_conversion_to_c_binary types/timestamp_tz_conversion_to_c_binary.cpp)
 add_odbc_test(e2e_types_timestamp_tz_conversion_to_c_wchar types/timestamp_tz_conversion_to_c_wchar.cpp)
+add_odbc_test(e2e_types_timestamp_tz_output_format types/timestamp_tz_output_format.cpp)
 add_odbc_test(e2e_types_timestamp_tz_incompatible_conversions types/timestamp_tz_incompatible_conversions.cpp)
+add_odbc_test(e2e_types_timestamp_overflow types/timestamp_overflow.cpp)
 add_odbc_test(e2e_types_timestamp_describe_col types/timestamp_describe_col.cpp)
 add_odbc_test(e2e_types_timestamp_ltz_timezone types/timestamp_ltz_timezone.cpp)
 add_odbc_test(e2e_types_timestamp_precision types/timestamp_precision.cpp)
 add_odbc_test(e2e_types_timestamp_bind_fetch types/timestamp_bind_fetch.cpp)
+add_odbc_test(e2e_types_timestamp_vendor_bindparam types/timestamp_vendor_bindparam.cpp)
 add_odbc_test(e2e_types_timestamp_historical types/timestamp_historical.cpp)
 add_odbc_test(e2e_types_timestamp_client_type_mapping types/timestamp_client_type_mapping.cpp)
 add_odbc_test(e2e_types_timestamp_connection_timezone types/timestamp_connection_timezone.cpp)

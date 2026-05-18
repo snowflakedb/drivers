@@ -58,6 +58,14 @@ pub struct LoggingConfig {
     pub rotation: LogRotation,
     pub open_telemetry: bool,
     pub stderr: bool,
+    /// Process-wide default for `log_query_text`, applied as a fallback when
+    /// neither a connection-string option nor a `connections.toml` /
+    /// `config.toml` setting is provided. `None` means "unset; fall through to
+    /// the registry default".
+    pub log_query_text: Option<bool>,
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`] for precedence semantics.
+    pub log_query_parameters: Option<bool>,
 }
 
 impl Default for LoggingConfig {
@@ -72,6 +80,8 @@ impl Default for LoggingConfig {
             rotation: LogRotation::default(),
             open_telemetry: false,
             stderr: false,
+            log_query_text: None,
+            log_query_parameters: None,
         }
     }
 }

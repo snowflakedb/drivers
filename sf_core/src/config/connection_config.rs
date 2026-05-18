@@ -65,6 +65,10 @@ pub enum AuthConfig {
         token: SensitiveString,
     },
     NativeOkta(NativeOktaConfig),
+    ExternalBrowser {
+        user: String,
+        authentication_timeout_secs: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -223,14 +227,26 @@ fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Opti
 // Server URL derivation (mirrored from rest_parameters::get_server_url)
 // ---------------------------------------------------------------------------
 
+/// Resolve the effective protocol from settings.
+///
+/// `ssl` takes precedence when present because it has no registry default
+/// and therefore is always an explicit user choice.  `protocol` serves as
+/// the fallback (the fallback `"https"` is hardcoded here).
+fn resolve_protocol(settings: &ParamStore) -> String {
+    if let Some(ssl_on) = settings.get_bool(SSL) {
+        return if ssl_on { "https" } else { "http" }.to_string();
+    }
+    settings
+        .get_string(PROTOCOL)
+        .unwrap_or_else(|| "https".to_string())
+}
+
 fn derive_server_url(settings: &ParamStore) -> Result<String, ConfigError> {
     if let Some(url) = settings.get_string(SERVER_URL) {
         return Ok(url);
     }
 
-    let protocol = settings
-        .get_string(PROTOCOL)
-        .unwrap_or_else(|| "https".to_string());
+    let protocol = resolve_protocol(settings);
     let host = settings.get_string(HOST).context(MissingParameterSnafu {
         parameter: String::from(HOST),
     })?;
@@ -313,6 +329,13 @@ fn build_tls_config(settings: &ParamStore) -> TlsConfig {
 // Auth config building (mirrored from rest_parameters::LoginMethod)
 // ---------------------------------------------------------------------------
 
+fn parse_authentication_timeout(settings: &ParamStore) -> u64 {
+    settings
+        .get_int(AUTHENTICATION_TIMEOUT)
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS)
+}
+
 fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
@@ -335,23 +358,23 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            password: settings.get_sensitive_string(PASSWORD)
+            password: settings
+                .get_sensitive_string(PASSWORD)
                 .filter(|s| !s.reveal().is_empty())
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
-                },
-            )?,
+                })?,
         }),
         "USERNAME_PASSWORD_MFA" => Ok(AuthConfig::Mfa {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            password: settings.get_sensitive_string(PASSWORD)
+            password: settings
+                .get_sensitive_string(PASSWORD)
                 .filter(|s| !s.reveal().is_empty())
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
-                },
-            )?,
+                })?,
             passcode_in_password: settings.get_bool(PASSCODE_IN_PASSWORD).unwrap_or(false),
             passcode: settings.get_sensitive_string(PASSCODE),
             client_store_temporary_credential: settings
@@ -362,7 +385,8 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            token: settings.get_sensitive_string(TOKEN)
+            token: settings
+                .get_sensitive_string(TOKEN)
                 .context(MissingParameterSnafu {
                     parameter: String::from(TOKEN),
                 })?,
@@ -377,11 +401,6 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .build()
             })?;
 
-            let authentication_timeout_secs = settings
-                .get_int(AUTHENTICATION_TIMEOUT)
-                .and_then(|v| u64::try_from(v).ok())
-                .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
-
             Ok(AuthConfig::NativeOkta(NativeOktaConfig {
                 username: non_empty_string(settings, USER).context(MissingParameterSnafu {
                     parameter: String::from(USER),
@@ -393,16 +412,20 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                     },
                 )?,
                 okta_url,
-                disable_saml_url_check: settings
-                    .get_bool(DISABLE_SAML_URL_CHECK)
-                    .unwrap_or(false),
-                authentication_timeout_secs,
+                disable_saml_url_check: settings.get_bool(DISABLE_SAML_URL_CHECK).unwrap_or(false),
+                authentication_timeout_secs: parse_authentication_timeout(settings),
             }))
         }
+        "EXTERNALBROWSER" => Ok(AuthConfig::ExternalBrowser {
+            user: non_empty_string(settings, USER).context(MissingParameterSnafu {
+                parameter: String::from(USER),
+            })?,
+            authentication_timeout_secs: parse_authentication_timeout(settings),
+        }),
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
             value: authenticator,
-            explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)".to_string(),
+            explanation: crate::config::AUTHENTICATOR_ALLOWED_VALUES.to_string(),
         }
         .fail(),
     }
@@ -498,6 +521,13 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             disable_saml_url_check: okta.disable_saml_url_check,
             authentication_timeout_secs: okta.authentication_timeout_secs,
         }),
+        AuthConfig::ExternalBrowser {
+            user,
+            authentication_timeout_secs,
+        } => LoginMethod::ExternalBrowser {
+            username: user.clone(),
+            authentication_timeout_secs: *authentication_timeout_secs,
+        },
     }
 }
 
@@ -622,6 +652,9 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 });
             }
         }
+        "EXTERNALBROWSER" => {
+            // no validation required; user is already validated above.
+        }
         _ if auth_upper.starts_with("HTTPS://") => {
             if Url::parse(&authenticator).is_err() {
                 issues.push(ValidationIssue {
@@ -649,7 +682,8 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 severity: ValidationSeverity::Error,
                 parameter: AUTHENTICATOR.into(),
                 message: format!(
-                    "Invalid authenticator '{}'. Allowed: snowflake, snowflake_password, snowflake_jwt, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)", authenticator
+                    "Invalid authenticator '{authenticator}'. {}",
+                    crate::config::AUTHENTICATOR_ALLOWED_VALUES
                 ),
                 code: ValidationCode::InvalidValue,
             });
@@ -663,6 +697,16 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             parameter: HOST.into(),
             message: "Missing required parameter 'host' (or 'server_url')".into(),
             code: ValidationCode::MissingRequired,
+        });
+    }
+
+    // --- ConflictingParameters: ssl + protocol ---
+    if settings.get_bool(SSL).is_some() && settings.get_string(PROTOCOL).is_some() {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: SSL.into(),
+            message: "Both 'ssl' and 'protocol' are set. Please provide only one.".into(),
+            code: ValidationCode::ConflictingParameters,
         });
     }
 
@@ -832,6 +876,57 @@ mod tests {
         ]);
         let config = ConnectionConfig::build(&settings).unwrap();
         assert_eq!(config.server.server_url, "https://custom.url");
+    }
+
+    #[test]
+    fn build_server_url_from_ssl_true() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("ssl", Setting::Bool(true)),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.server.server_url, "https://myhost.com");
+    }
+
+    #[test]
+    fn build_server_url_from_ssl_false() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("ssl", Setting::Bool(false)),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.server.server_url, "http://myhost.com");
+    }
+
+    #[test]
+    fn build_server_url_ssl_and_protocol_conflict() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("protocol", Setting::String("http".into())),
+            ("ssl", Setting::Bool(true)),
+        ]);
+        let err = ConnectionConfig::build(&settings).unwrap_err();
+        match err {
+            ConfigError::ValidationFailed { ref issues, .. } => {
+                assert!(
+                    issues
+                        .iter()
+                        .any(|i| i.code == ValidationCode::ConflictingParameters
+                            && i.parameter == "ssl"),
+                    "Expected ConflictingParameters for ssl + protocol, got: {issues:?}"
+                );
+            }
+            other => panic!("Expected ValidationFailed, got: {other}"),
+        }
     }
 
     #[test]

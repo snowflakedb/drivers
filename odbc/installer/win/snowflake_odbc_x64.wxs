@@ -1,18 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-	<Product Id="*"
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+	<Package
 		Name="Snowflake ODBC UD $(var.FullVersion) PrPr (x64)"
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
-		UpgradeCode="053DF3DF-4EB2-44E2-87BE-D3334ABDE4C6">
+		UpgradeCode="053DF3DF-4EB2-44E2-87BE-D3334ABDE4C6"
+		InstallerVersion="405"
+		Scope="perMachine">
 
-		<Package Id="*"
-			InstallerVersion="405"
-			Compressed="yes"
-			InstallScope="perMachine"
-			Manufacturer="Snowflake Computing"
-			Platform="x64"
+		<SummaryInformation
 			Description="Snowflake ODBC UD $(var.FullVersion) Private Preview (64-bit)"
 			Comments="Installs the Snowflake ODBC Driver (Private Preview) built on Universal Driver." />
 
@@ -33,12 +32,10 @@
 		<!-- ================================================================ -->
 		<!-- Install directory UI                                              -->
 		<!-- ================================================================ -->
-		<Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
-		<UIRef Id="WixUI_InstallDir" />
+		<ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLDIR" />
 		<UI>
-			<UIRef Id="WixUI_InstallDir" />
-			<Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
-			<Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+			<Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="1" />
+			<Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="1" />
 		</UI>
 
 		<!-- ================================================================ -->
@@ -49,60 +46,54 @@
 				Root="HKLM"
 				Key="Software\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
 				Name="Installed"
-				Type="raw"
-				Win64="yes" />
+				Type="raw" />
 		</Property>
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALTEXT" After="AppSearch"
-			Value="Visual C++ Redistributable for VS 2015-2022 is required. It will be installed on exit. Uncheck the box if you do not want to install it.">
-			<![CDATA[(NOT VCREDIST2015INSTALLED)]]>
-		</SetProperty>
+			Value="Visual C++ Redistributable for VS 2015-2022 is required. It will be installed on exit. Uncheck the box if you do not want to install it."
+			Condition="NOT VCREDIST2015INSTALLED" />
 		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" After="AppSearch"
-			Value="Install VC++ 2015-2022 Redistributable">
-			<![CDATA[(NOT VCREDIST2015INSTALLED)]]>
-		</SetProperty>
-		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1">
-			<![CDATA[(NOT VCREDIST2015INSTALLED)]]>
-		</SetProperty>
+			Value="Install VC++ 2015-2022 Redistributable"
+			Condition="NOT VCREDIST2015INSTALLED" />
+		<SetProperty Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" After="AppSearch" Value="1"
+			Condition="NOT VCREDIST2015INSTALLED" />
 		<SetProperty Id="WixShellExecTarget" Value="[INSTALLDIR]Redistributable\vc_redist.x64.exe" After="CostFinalize" Sequence="ui" />
-		<CustomAction Id="Install_vc_redist" BinaryKey="WixCA" DllEntry="WixShellExec" />
+		<CustomAction Id="Install_vc_redist" DllEntry="WixShellExec" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
 		<UI>
 			<Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
-				Value="Install_vc_redist"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1"]]></Publish>
+				Value="Install_vc_redist" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1" />
 			<Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog"
-				Value="Return"><![CDATA[WIXUI_EXITDIALOGOPTIONALCHECKBOX = "0"]]></Publish>
+				Value="Return" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 0" />
 		</UI>
 
 		<!-- ================================================================ -->
 		<!-- Directory layout                                                  -->
 		<!-- ================================================================ -->
-		<Directory Id="TARGETDIR" Name="SourceDir">
-			<Directory Id="ProgramFiles64Folder">
-				<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
-					<Directory Id="BinDir" Name="Bin" />
-					<Directory Id="IncludeDir" Name="include" />
-					<Directory Id="RedistDir" Name="Redistributable" />
-				</Directory>
+		<StandardDirectory Id="ProgramFiles6432Folder">
+			<Directory Id="INSTALLDIR" Name="SnowflakeODBCUDDriver">
+				<Directory Id="BinDir" Name="Bin" />
+				<Directory Id="IncludeDir" Name="include" />
+				<Directory Id="RedistDir" Name="Redistributable" />
 			</Directory>
-			<Directory Id="PersonalFolder">
-				<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
-					<Directory Id="LogDir" Name="log">
-						<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD" Win64="yes">
+		</StandardDirectory>
+		<StandardDirectory Id="PersonalFolder">
+			<Directory Id="SnowflakeODBCUDDriverLogs" Name="Snowflake ODBC UD">
+				<Directory Id="LogDir" Name="log">
+					<Component Id="LogDir" Guid="81D33977-BED5-49DE-9357-F7A2EA7EB4FD">
 						<CreateFolder />
-							<RemoveFolder Id="LogDir" On="uninstall" />
-							<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
+						<RemoveFolder Id="LogDir" On="uninstall" />
+						<RemoveFolder Id="RemoveODBCDriverLogParent" Directory="SnowflakeODBCUDDriverLogs" On="uninstall" />
 						<RegistryValue Root="HKCU" Key="Software\Snowflake\ODBCDriver"
 							Name="LogDirectory" Value="true" Type="string" KeyPath="yes" />
-						</Component>
-					</Directory>
+					</Component>
 				</Directory>
 			</Directory>
-		</Directory>
+		</StandardDirectory>
 
 		<!-- ================================================================ -->
 		<!-- Files: driver DLL                                                 -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="BinDir">
-			<Component Id="sfodbc.dll" Guid="25D9DF06-EB55-469C-8074-4356FD8E281D" Win64="yes" Permanent="no">
+			<Component Id="sfodbc.dll" Guid="25D9DF06-EB55-469C-8074-4356FD8E281D" Permanent="no">
 			<File Id="sfodbc.dll" KeyPath="yes"
 					Source="$(var.DriverBinDir)\sfodbc.dll" />
 			</Component>
@@ -112,7 +103,7 @@
 		<!-- Files: public header                                              -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="IncludeDir">
-			<Component Id="sf_odbc.h" Guid="7E678D91-F506-4CA3-90FA-F7247A2474A4" Win64="yes" Permanent="no">
+			<Component Id="sf_odbc.h" Guid="7E678D91-F506-4CA3-90FA-F7247A2474A4" Permanent="no">
 			<File Id="sf_odbc.h" KeyPath="yes"
 					Source="$(var.SourceDir)\odbc\include\sf_odbc.h" />
 			</Component>
@@ -122,7 +113,7 @@
 		<!-- Files: VC++ Redistributable                                       -->
 		<!-- ================================================================ -->
 		<DirectoryRef Id="RedistDir">
-			<Component Id="vc_redist.x64.exe" Guid="B55F8416-F349-4EA1-ABBB-46F46AA9E3AA" Win64="yes" Permanent="no">
+			<Component Id="vc_redist.x64.exe" Guid="B55F8416-F349-4EA1-ABBB-46F46AA9E3AA" Permanent="no">
 			<File Id="vc_redist.x64.exe" KeyPath="yes"
 					Source="$(var.VCRedistDir)\vc_redist.x64.exe" />
 			</Component>
@@ -131,8 +122,7 @@
 		<!-- ================================================================ -->
 		<!-- ODBC driver registration                                          -->
 		<!-- ================================================================ -->
-		<DirectoryRef Id="TARGETDIR">
-			<Component Id="RegistryEntries" Guid="46CDADA1-59D9-4E4A-9F29-BB1BCD2F3946" Win64="yes">
+		<Component Id="RegistryEntries" Directory="TARGETDIR" Guid="46CDADA1-59D9-4E4A-9F29-BB1BCD2F3946">
 			<RegistryKey Root="HKLM"
 				Key="SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers"
 				ForceCreateOnInstall="yes">
@@ -144,7 +134,7 @@
 				<RegistryValue Type="string" Name="Driver" Value="[INSTALLDIR]Bin\sfodbc.dll" KeyPath="yes" />
 				<RegistryValue Type="string" Name="Setup" Value="[INSTALLDIR]Bin\sfodbc.dll" />
 				<RegistryValue Type="string" Name="Description" Value="Snowflake ODBC UD" />
-				<RegistryValue Type="string" Name="DriverODBCVer" Value="03.52" />
+				<RegistryValue Type="string" Name="DriverODBCVer" Value="$(var.OdbcApiVer)" />
 				<RegistryValue Type="string" Name="CompanyName" Value="Snowflake Computing" />
 				<RegistryValue Type="string" Name="ConnectFunctions" Value="YYY" />
 				<RegistryValue Type="string" Name="APILevel" Value="1" />
@@ -152,8 +142,7 @@
 				<RegistryValue Type="string" Name="FileUsage" Value="0" />
 				<RegistryValue Type="string" Name="CPTimeout" Value="60" />
 			</RegistryKey>
-			</Component>
-		</DirectoryRef>
+		</Component>
 
 		<!-- ================================================================ -->
 		<!-- Feature tree                                                       -->
@@ -169,5 +158,5 @@
 			<ComponentRef Id="vc_redist.x64.exe" />
 		</Feature>
 
-	</Product>
+	</Package>
 </Wix>

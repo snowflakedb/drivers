@@ -1,29 +1,43 @@
 name: ODBC CI
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
+    # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
+    # a PR re-runs the workflow at the upgraded scope without needing a new
+    # commit. Unrelated labels are filtered by the `scope-label-gate` job
+    # below; concurrency keeps in-flight runs alive for those.
+    types: [opened, synchronize, reopened, labeled]
   # Allow stacked PRs to trigger this workflow.
   # detect-changes still decides whether ODBC jobs actually run.
   merge_group:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
-  # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
+  # Group by PR number for PRs; fall back to run ID for merge_group runs
+  # (each run is unique so they won't cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_MAXSIZE: 1G
-  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite"
+  # Don't cancel an in-flight run when an unrelated label is added/removed —
+  # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
+  # push/synchronize/reopen events should replace the running matrix.
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 jobs:
+  # Filter out PR runs triggered solely by adding an unrelated label
+  # (e.g. auto-labeler bot tagging `python` or `shared`). The `if:`
+  # evaluates to false on those events, this job is skipped, and every
+  # downstream job that `needs:` it is skipped too. Scope-up labels
+  # (ci:scope-merge, ci:scope-nightly) pass through and re-run the
+  # workflow at the upgraded scope.
+  scope-label-gate:
+    if: |
+      github.event.action != 'labeled' ||
+      contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+
   detect-changes:
+    needs: scope-label-gate
     uses: ./.github/workflows/detect-changes.yml
 
   odbc_unit_tests:
@@ -33,6 +47,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
 
       - name: Cache Rust dependencies
         id: rust-cache
@@ -80,1117 +97,71 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   odbc_tests_reference:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-    runs-on: ${{ matrix.os }}
-    name: odbc_reference_tests (${{ matrix.name }})
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_reference == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Restore test dependencies cache
-        id: test-deps-cache-ref
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-test-deps-
-
-      - name: Restore ccache
-        id: ccache-ref
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-odbc-
-
-      # Cache the reference Snowflake ODBC installer (MSI/DEB) keyed on the version file.
-      # The installer version changes rarely, so this skips the ~20MB download on every run.
-      - name: Cache reference ODBC installer
-        # Cache failures never fail the job — fall back to clean download.
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: .cache/reference-odbc
-          key: ${{ runner.os }}-ref-odbc-${{ hashFiles('ci/reference-odbc-version') }}
-
-      # See odbc_tests below for rationale: VCPKG_VER must be in the cache key
-      # because vcpkg's package ABI hashes change with the runner's vcpkg version.
-      - name: Capture vcpkg version (Windows)
-        if: matrix.os == 'windows-latest'
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Restore vcpkg binary cache (Windows)
-        if: matrix.os == 'windows-latest'
-        id: vcpkg-cache-ref
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-v3
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-
-            ${{ runner.os }}-vcpkg-x64-windows-
-
-      - name: Install dependencies (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
-            & $command
-            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
-          }
-
-          Invoke-Checked "python -m pip install cmake" { python -m pip install cmake>=4.0.3 }
-          cmake --version
-
-          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
-          New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
-          # VCPKG_BINARY_SOURCES (workflow-level env) points at this directory;
-          # vcpkg refuses to use a missing path silently — create it before install.
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
-
-          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
-
-          $referenceOdbcVersion = (Get-Content "ci/reference-odbc-version" -Raw).Trim()
-          $snowflakeOdbcMsi = "snowflake64_odbc-$referenceOdbcVersion.msi"
-          $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/win64/$referenceOdbcVersion/$snowflakeOdbcMsi"
-          $cacheDir = Join-Path $env:GITHUB_WORKSPACE ".cache\reference-odbc"
-          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-          $cachedMsi = Join-Path $cacheDir $snowflakeOdbcMsi
-          if (Test-Path $cachedMsi) {
-            Write-Host "Using cached Snowflake ODBC MSI: $cachedMsi"
-          } else {
-            Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
-            Invoke-Checked "Invoke-WebRequest download Snowflake ODBC MSI" { Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $cachedMsi }
-          }
-
-          # Verify Authenticode signature BEFORE handing the MSI to msiexec. The MSI can be restored
-          # from GHA's cache, which is a mutable bucket tied to the repo — defense in depth against
-          # cache tampering or repository-scoped compromise. Authenticode verification is the
-          # canonical Windows integrity check: it validates cryptographic signature + trust chain,
-          # and (with SignerCertificate.Subject matching) confirms the publisher is Snowflake.
-          $sig = Get-AuthenticodeSignature $cachedMsi
-          if ($sig.Status -ne 'Valid') {
-            throw "MSI Authenticode signature is not Valid (status: $($sig.Status), message: $($sig.StatusMessage)). Refusing to install possibly tampered MSI at $cachedMsi."
-          }
-          if ($sig.SignerCertificate.Subject -notlike "*Snowflake*") {
-            throw "MSI signer is not Snowflake (subject: $($sig.SignerCertificate.Subject)). Refusing to install MSI from unexpected publisher."
-          }
-          Write-Host "MSI Authenticode signature valid; signer: $($sig.SignerCertificate.Subject)"
-
-          $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i `"$cachedMsi`" /quiet" -Wait -PassThru
-          if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
-
-      - name: Install dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev ccache
-
-          python3 -m pip install 'cmake>=4.0.3'
-          cmake --version
-
-          # Install reference ODBC driver (downloaded installer is cached across runs keyed on ci/reference-odbc-version)
-          REFERENCE_ODBC_VERSION=$(cat ci/reference-odbc-version | tr -d '[:space:]')
-          . ci/reference-odbc-checksums
-          echo "Installing reference ODBC driver version: $REFERENCE_ODBC_VERSION"
-          DEB="snowflake-odbc-${REFERENCE_ODBC_VERSION}.x86_64.deb"
-          CACHE_DIR=".cache/reference-odbc"
-          mkdir -p "${CACHE_DIR}"
-          if [[ -f "${CACHE_DIR}/${DEB}" ]]; then
-            echo "Using cached installer: ${CACHE_DIR}/${DEB}"
-          else
-            curl -o "${CACHE_DIR}/${DEB}" "https://sfc-repo.snowflakecomputing.com/odbc/linux/${REFERENCE_ODBC_VERSION}/${DEB}"
-          fi
-          echo "${DEB_X86_64_SHA256}  ${CACHE_DIR}/${DEB}" | sha256sum -c -
-          sudo dpkg -i "${CACHE_DIR}/${DEB}"
-          sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-        shell: bash
-
-      - name: Run Old ODBC tests (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        id: run_odbc_ref_tests_linux
-        run: |
-          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
-          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
-        env:
-          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          DRIVER_TYPE: OLD
-
-      - name: Run flaky Old ODBC tests (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true
-        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
-        env:
-          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          DRIVER_TYPE: OLD
-
-      - name: Run Old ODBC tests (Windows)
-        if: matrix.os == 'windows-latest'
-        id: run_odbc_ref_tests_windows
-        shell: pwsh
-        run: |
-          $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
-          $env:PARAMETER_PATH = "$(pwd)\parameters.json"
-          $env:DRIVER_TYPE = "OLD"
-          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
-          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
-
-      - name: Run flaky Old ODBC tests (Windows)
-        if: matrix.os == 'windows-latest'
-        continue-on-error: true
-        shell: pwsh
-        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
-        env:
-          DRIVER_PATH: C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll
-          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          DRIVER_TYPE: OLD
-
-      - name: Cleanup orphaned test schemas
-        if: always() && matrix.os == 'ubuntu-latest'
-        run: |
-          TOOL="odbc_tests/cmake-build/tools/schema_tool"
-          if [[ -x "$TOOL" ]]; then
-            "$TOOL" cleanup --age-days 2
-          else
-            echo "schema_tool not found (build may have failed), skipping cleanup"
-          fi
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
-
-      - name: Save test dependencies cache
-        # Skip when the exact key was already restored.
-        if: always() && steps.test-deps-cache-ref.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-
-      - name: Save ccache
-        # Skip when the exact key was already restored.
-        if: always() && steps.ccache-ref.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-
-      - name: Save vcpkg binary cache (Windows)
-        if: always() && matrix.os == 'windows-latest' && steps.vcpkg-cache-ref.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-x64-windows-${{ env.VCPKG_VER }}-v3
-
-  # Build ODBC driver once per platform and share via artifact.
-  # Avoids rebuilding in each of the 9 test matrix cells (3 OSes × 3 cloud providers).
-  build_odbc_driver:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            cache_key: odbc
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            cache_key: odbc
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            cargo_extra: "--features vendored-openssl"
-            cache_key: odbc-x64
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            cargo_target: i686-pc-windows-msvc
-            cargo_extra: "--no-default-features --features vendored-openssl"
-            cache_key: odbc-x86
-    runs-on: ${{ matrix.os }}
-    name: build_odbc_driver (${{ matrix.name }})
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Cache Rust dependencies
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: ${{ matrix.cache_key }}
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y unixodbc-dev
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install unixodbc go
-          echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
-
-      - name: Install Rust target
-        if: matrix.cargo_target
-        run: rustup target add ${{ matrix.cargo_target }}
-
-      - name: Build ODBC driver (Linux)
-        if: runner.os == 'Linux'
-        run: cargo build --package odbc
-        env:
-          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
-
-      - name: Build ODBC driver (macOS)
-        if: runner.os == 'macOS'
-        run: cargo build --package odbc
-
-      - name: Build ODBC driver (Windows)
-        if: runner.os == 'Windows'
-        run: cargo build --package odbc ${{ matrix.cargo_extra }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
-        env:
-          RUSTFLAGS: "-C linker=rust-lld"
-
-      - name: Rename x86 driver DLL
-        if: matrix.cargo_target == 'i686-pc-windows-msvc'
-        shell: pwsh
-        run: |
-          $dir = "target/${{ matrix.cargo_target }}/debug"
-          Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
-          if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
-
-      - name: Save Rust cache
-        if: always()
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps. Bounds slim + registry save + target save.
-        timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          shared-key: ${{ matrix.cache_key }}
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
-
-      - name: Upload ODBC driver
-        uses: actions/upload-artifact@v4
-        with:
-          name: odbc-driver-${{ matrix.name }}
-          path: ${{ matrix.cargo_target && format('target/{0}/debug', matrix.cargo_target) || 'target/debug' }}/${{ matrix.driver_lib }}
+    uses: ./.github/workflows/_test-odbc-reference.yml
+    # secrets.PARAMETERS_SECRET is read by decode_secrets inside the
+    # reusable workflow; reusable workflows do NOT auto-inherit secrets
+    # even in the same repo.
+    secrets: inherit
 
   odbc_tests:
-    needs: [detect-changes, build_odbc_driver]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: aws
-          - os: ubuntu-latest
-            name: Linux x64 (JSON)
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: aws
-            result_format: json
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            driver_artifact: macOS ARM64
-            cloud_provider: aws
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_artifact: Windows x64
-            cloud_provider: aws
-            msvc_arch: amd64
-            vcpkg_triplet: x64-windows
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            driver_artifact: Windows x86
-            cloud_provider: aws
-            msvc_arch: x86
-            vcpkg_triplet: x86-windows
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: gcp
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            driver_artifact: macOS ARM64
-            cloud_provider: gcp
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_artifact: Windows x64
-            cloud_provider: gcp
-            msvc_arch: amd64
-            vcpkg_triplet: x64-windows
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            driver_artifact: Windows x86
-            cloud_provider: gcp
-            msvc_arch: x86
-            vcpkg_triplet: x86-windows
-          - os: ubuntu-latest
-            name: Linux x64
-            driver_lib: libsfodbc.so
-            driver_artifact: Linux x64
-            cloud_provider: azure
-          - os: macos-latest
-            name: macOS ARM64
-            driver_lib: libsfodbc.dylib
-            driver_artifact: macOS ARM64
-            cloud_provider: azure
-          - os: windows-latest
-            name: Windows x64
-            driver_lib: sfodbc.dll
-            driver_artifact: Windows x64
-            cloud_provider: azure
-            msvc_arch: amd64
-            vcpkg_triplet: x64-windows
-          - os: windows-latest
-            name: Windows x86
-            driver_lib: sfodbc32.dll
-            driver_artifact: Windows x86
-            cloud_provider: azure
-            msvc_arch: x86
-            vcpkg_triplet: x86-windows
-    runs-on: ${{ matrix.os }}
-    name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download pre-built ODBC driver
-        uses: actions/download-artifact@v4
-        with:
-          name: odbc-driver-${{ matrix.driver_artifact }}
-          path: target/debug
-
-      - name: Make driver executable (Unix)
-        if: runner.os != 'Windows'
-        run: chmod +x target/debug/${{ matrix.driver_lib }}
-
-      - name: Restore test dependencies cache
-        id: test-deps-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-
-
-      - name: Restore ccache
-        id: ccache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .ccache
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-
-
-      # vcpkg's binary cache stores prebuilt packages keyed by an ABI hash that
-      # depends on the vcpkg version. When the runner image bumps vcpkg the
-      # ABI hashes change, the cached binaries become unusable, and vcpkg
-      # rebuilds zlib/openssl from source (~7-8 min). Including VCPKG_VER in
-      # the key invalidates stale entries on vcpkg version changes so we
-      # always either get a usable cache or build fresh, never both.
-      - name: Capture vcpkg version (Windows)
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/vcpkg-version
-
-      - name: Restore vcpkg binary cache (Windows)
-        if: runner.os == 'Windows'
-        id: vcpkg-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-v3
-          restore-keys: |
-            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-
-            ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-
-
-      # Cache Homebrew bottle downloads to avoid re-fetching unixodbc/ccache on every run
-      # (brew install on GHA macOS runners is ~2-3 min uncached, <15s with bottles cached).
-      # Fixed key is fine — bottles are versioned inside, and Homebrew auto-resolves updates.
-      - name: Restore Homebrew cache (macOS)
-        if: runner.os == 'macOS'
-        id: brew-cache
-        # Cache restore failures never fail the job — fall back to clean install.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/Library/Caches/Homebrew
-          key: macos-brew-odbc-tests-v1
-          restore-keys: |
-            macos-brew-odbc-tests-
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache ninja-build
-          # odbc_tests/CMakeLists.txt requires CMake >= 4.0; ubuntu-latest ships ~3.30.
-          # Prefer `python3 -m pip` over bare `pip` so we don't depend on PATH resolution
-          # pointing at the expected Python. The pip wheel is an official Kitware artifact
-          # and installs in ~15s (vs ~60s for the .sh installer).
-          python3 -m pip install 'cmake>=4.0.3'
-          cmake --version
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        env:
-          # Skip Homebrew's self-update (~30-60s on every invocation) — we don't need bleeding-edge
-          # formulae, just a working unixodbc/ccache/ninja.
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-          HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: |
-          set -euxo pipefail
-          # cmake via pip (official Kitware wheel) — faster than brew and keeps Linux/macOS install symmetric.
-          # Use a dedicated venv rather than installing into the default python3: macos-latest's
-          # python3 is Homebrew-managed and marked as an externally-managed environment (PEP 668),
-          # so a bare `pip install` fails. A venv is the PEP-668-compliant way to isolate the install
-          # without system-wide side effects. The venv's bin dir is prepended to PATH via GITHUB_PATH
-          # so `cmake` resolves to the 4.0+ version in subsequent steps.
-          CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
-          python3 -m venv "$CMAKE_VENV"
-          "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
-          "$CMAKE_VENV/bin/pip" install 'cmake>=4.0.3'
-          echo "$CMAKE_VENV/bin" >> $GITHUB_PATH
-          # Verify against the venv's cmake explicitly — GITHUB_PATH isn't applied to this step.
-          "$CMAKE_VENV/bin/cmake" --version
-          # Only packages without pip wheels stay on brew. `ninja` is pre-installed on macos-latest,
-          # but listing it here is cheap (no-op if present) and self-documenting.
-          brew install unixodbc ccache ninja
-          echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
-
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
-            & $command
-            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
-          }
-
-          # install 4.0+ via pip (official Kitware wheel)
-          Invoke-Checked "pip install cmake" { python -m pip install "cmake>=4.0.3" }
-          $cmakePath = (Get-Command cmake.exe).Source | Split-Path
-          echo "CMAKE_DIR=$cmakePath" >> $env:GITHUB_ENV
-          cmake --version
-
-          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
-          New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
-
-          $triplet = "${{ matrix.vcpkg_triplet }}"
-          Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet openssl:$triplet }
-
-      - name: Setup MSVC environment (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          # Locate Visual Studio via vswhere (pre-installed on windows-latest)
-          $installPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          if (-not $installPath) { throw "vswhere could not locate a Visual Studio installation" }
-          $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
-          if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found at $vcvars" }
-
-          # Source vcvarsall.bat and capture its output. Capture to a variable first so we can
-          # inspect $LASTEXITCODE before any pipeline resets it: piping `cmd /c ... | ForEach-Object`
-          # would succeed as a pipeline even if vcvarsall.bat failed, leaving later steps running
-          # without cl.exe / link.exe on PATH.
-          $msvcArch = "${{ matrix.msvc_arch || 'amd64' }}"
-          $vcvarsOutput = cmd /c "`"$vcvars`" $msvcArch && set" 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "vcvarsall.bat output:"
-            $vcvarsOutput | ForEach-Object { Write-Host $_ }
-            throw "vcvarsall.bat $msvcArch failed with exit code $LASTEXITCODE"
-          }
-          # Propagate env vars to BOTH:
-          #   - $env:GITHUB_ENV: visible to subsequent steps in the job (the point of this step)
-          #   - the current PowerShell process: so the post-condition check below actually sees
-          #     the updated PATH. Writes to GITHUB_ENV are buffered and only applied at step
-          #     boundary — without updating the current process env, `Get-Command cl.exe` would
-          #     always fail here even on a perfectly good vcvarsall.bat run.
-          $vcvarsOutput | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') {
-              $name = $Matches[1]
-              $value = $Matches[2]
-              echo "$name=$value" >> $env:GITHUB_ENV
-              [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
-            }
-          }
-
-          # Post-condition: verify the MSVC toolchain is actually on PATH. vcvarsall.bat can exit 0
-          # while setting a broken environment (e.g., missing components, wrong host arch), so treat
-          # "cl.exe not found" as a hard failure rather than letting the next build step blow up
-          # with a confusing linker error.
-          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-            throw "MSVC environment setup completed but cl.exe is not on PATH"
-          }
-          if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
-            throw "MSVC environment setup completed but link.exe is not on PATH"
-          }
-
-          # vcvarsall.bat prepends VS's cmake 3.x to PATH; re-prepend the runner's 4.x
-          if ($env:CMAKE_DIR) {
-            $env:PATH = "$env:CMAKE_DIR;$env:PATH"
-            echo "PATH=$env:PATH" >> $env:GITHUB_ENV
-          }
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-        shell: bash
-
-      - name: Build and run ODBC tests (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          ls -l target/debug/
-          export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
-          export PARAMETER_PATH=$(pwd)/parameters.json
-          export DRIVER_TYPE=NEW
-          export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
-          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
-          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
-
-      - name: Run flaky ODBC tests (Unix)
-        if: runner.os != 'Windows'
-        continue-on-error: true
-        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
-        env:
-          DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          DRIVER_TYPE: NEW
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Build and run ODBC tests (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          dir target\debug\
-          $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
-          $env:PARAMETER_PATH = "$PWD\parameters.json"
-          $env:DRIVER_TYPE = "NEW"
-          $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
-          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
-          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
-
-      - name: Run flaky ODBC tests (Windows)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        shell: pwsh
-        run: ctest -L flaky -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
-        env:
-          DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
-          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          DRIVER_TYPE: NEW
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Cleanup test PATs
-        if: always()
-        continue-on-error: true
-        shell: bash
-        run: |
-          python -m pip install snowflake-connector-python -q
-          python scripts/cleanup_env.py \
-            --parameter-path "${{ github.workspace }}/parameters.json"
-
-      - name: Cleanup orphaned test schemas
-        if: always() && runner.os == 'Linux'
-        run: |
-          TOOL="odbc_tests/cmake-build/tools/schema_tool"
-          if [[ -x "$TOOL" ]]; then
-            "$TOOL" cleanup --age-days 2
-          else
-            echo "schema_tool not found (build may have failed), skipping cleanup"
-          fi
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
-
-      # Save caches unconditionally (not gated on matrix.cloud_provider == 'aws'): when multiple
-      # matrix cells finish near-simultaneously, GHA returns a benign "Unable to reserve cache"
-      # warning for the late writers. That's acceptable; it's better than losing save-on-failure,
-      # which the combined actions/cache@v5 does NOT support (save-always was removed in v5).
-      - name: Save test dependencies cache
-        if: always() && steps.test-deps-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-
-      - name: Save ccache
-        if: always() && steps.ccache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .ccache
-          key: ${{ runner.os }}-${{ matrix.msvc_arch || 'default' }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
-
-      - name: Save vcpkg binary cache (Windows)
-        if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ matrix.vcpkg_triplet || 'x64-windows' }}-${{ env.VCPKG_VER }}-v3
-
-      - name: Save Homebrew cache (macOS)
-        if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: ~/Library/Caches/Homebrew
-          key: macos-brew-odbc-tests-v1
-
-  build_msi:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Windows x64 Release
-            arch: x64
-            config: release
-            cargo_target: x86_64-pc-windows-msvc
-            cargo_profile: "--release"
-            cargo_extra: ""
-          - name: Windows x64 Debug
-            arch: x64
-            config: debug
-            cargo_target: x86_64-pc-windows-msvc
-            cargo_profile: ""
-            cargo_extra: ""
-          - name: Windows x86 Release
-            arch: x86
-            config: release
-            cargo_target: i686-pc-windows-msvc
-            cargo_profile: "--release"
-            cargo_extra: "--no-default-features"
-          - name: Windows x86 Debug
-            arch: x86
-            config: debug
-            cargo_target: i686-pc-windows-msvc
-            cargo_profile: ""
-            cargo_extra: "--no-default-features"
-    runs-on: windows-latest
-    name: build_msi (${{ matrix.name }})
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    uses: ./.github/workflows/_test-odbc.yml
+    # See odbc_tests_reference above for the secrets-inherit rationale.
+    secrets: inherit
 
-      - name: Restore Cargo registry cache (MSI build)
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-
-
-      - name: Restore Rust target cache (MSI build)
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .cargo-target-msi
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-
-
-      - name: Prepare cache directories
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path .cargo-cache/registry | Out-Null
-          New-Item -ItemType Directory -Force -Path .cargo-cache/git | Out-Null
-          New-Item -ItemType Directory -Force -Path .cargo-target-msi | Out-Null
-
-      - name: Install Rust target
-        if: matrix.cargo_target != 'x86_64-pc-windows-msvc'
-        run: rustup target add ${{ matrix.cargo_target }}
-
-      - name: Build ODBC driver
-        run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
-        env:
-          RUSTFLAGS: "-C linker=rust-lld"
-          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-msi
-
-      - name: Save Cargo registry cache (MSI build)
-        if: always()
-        # Cache failures never fail the job — see cargo-cache action for rationale.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Save Rust target cache (MSI build)
-        if: always()
-        # Cache failures never fail the job — target dirs can be multi-GB so give
-        # 15 min for tar+upload before timeout.
-        continue-on-error: true
-        timeout-minutes: 15
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .cargo-target-msi
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Rename x86 driver DLL
-        if: matrix.arch == 'x86'
-        shell: pwsh
-        run: |
-          $dir = ".cargo-target-msi/${{ matrix.cargo_target }}/${{ matrix.config }}"
-          Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
-          if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
-
-      - name: Compute ODBC version
-        id: odbc-version
-        shell: pwsh
-        run: |
-          $versionLine = Get-Content "odbc\version.sh" -Raw
-          if ($versionLine -match 'BASE_VERSION=(\S+)') { $base = $Matches[1] } else { throw "Could not parse BASE_VERSION" }
-          $hash = (git rev-parse --short HEAD)
-          $version = "${base}-${hash}"
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-
-      - name: Build MSI installer
-        shell: pwsh
-        run: |
-          .\odbc\installer\win\package.ps1 `
-            -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
-            -Arch ${{ matrix.arch }} `
-            -BuildConfig ${{ matrix.config }} `
-            -Version "${{ steps.odbc-version.outputs.version }}"
-
-      - name: Upload MSI
-        uses: actions/upload-artifact@v4
-        with:
-          name: snowflake-odbc-ud-${{ steps.odbc-version.outputs.version }}-${{ matrix.config }}-${{ matrix.arch }}
-          path: build/snowflake-odbc-ud-*.msi
-
-  build_rpm:
-    # RPM packaging is independent: it builds the driver from scratch in its own Docker image
-    # and does not consume artifacts from the test jobs. Running in parallel shaves ~10-15 minutes
-    # of wall time off the critical path for producing RPM artifacts.
+  build_odbc_packages:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux x64
-            target: x86_64-unknown-linux-gnu
-            platform: linux-x86_64-glibc
-            arch: x86_64
-          - os: ubuntu-24.04-arm
-            name: Linux ARM64
-            target: aarch64-unknown-linux-gnu
-            platform: linux-aarch64-glibc
-            arch: aarch64
-    runs-on: ${{ matrix.os }}
-    name: build_rpm (${{ matrix.name }})
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Restore Cargo registry cache (RPM build)
-        id: rpm-cargo-registry
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-
-
-      - name: Restore Rust target cache (RPM build)
-        id: rpm-cargo-target
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: actions/cache/restore@v5
-        with:
-          path: .cargo-target-rpm
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-
-
-      - name: Prepare cache directories
-        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-rpm
-
-      - name: Build Docker image
-        run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
-
-      - name: Build ODBC driver and package RPM
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            -v ${{ github.workspace }}/.cargo-cache/registry:/root/.cargo/registry \
-            -v ${{ github.workspace }}/.cargo-cache/git:/root/.cargo/git \
-            -v ${{ github.workspace }}/.cargo-target-rpm:/workspace/target \
-            -w /workspace \
-            -e PLATFORM=${{ matrix.platform }} \
-            -e COMMIT_HASH=$(git rev-parse --short HEAD) \
-            -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
-            rpm-build \
-            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
-
-      - name: Save Cargo registry cache (RPM build)
-        # Skip when the exact key was already restored.
-        if: steps.rpm-cargo-registry.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
-        continue-on-error: true
-        timeout-minutes: 10
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Save Rust target cache (RPM build)
-        # Skip when the exact key was already restored.
-        if: steps.rpm-cargo-target.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # Target dirs can be multi-GB; give 15 min instead of the 10 min default.
-        continue-on-error: true
-        timeout-minutes: 15
-        env:
-          ZSTD_NBTHREADS: '2'
-        uses: actions/cache/save@v5
-        with:
-          path: .cargo-target-rpm
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Upload RPM
-        uses: actions/upload-artifact@v4
-        with:
-          name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
-          path: build/snowflake-odbc-ud-*.rpm
-
-  build_dmg:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    runs-on: macos-latest
-    name: build_dmg (macOS Universal)
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Restore Cargo registry cache (DMG build)
-        uses: actions/cache/restore@v5
-        with:
-          path: .cargo-cache
-          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-universal-cargo-registry-dmg-
-
-      - name: Restore Rust target cache (DMG build)
-        uses: actions/cache/restore@v5
-        with:
-          path: .cargo-target-dmg
-          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-universal-rust-dmg-release-target-
-
-      - name: Prepare cache directories
-        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-dmg
-
-      - name: Install Rust targets
-        run: |
-          rustup target add x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin
-
-      - name: Create ODBC stub libraries for linking
-        run: |
-          mkdir -p .odbc-stub
-          echo "void _odbc_stub(void) {}" | clang -x c -arch x86_64 -arch arm64 -dynamiclib \
-            -Wl,-install_name,libodbc.dylib -o .odbc-stub/libodbc.dylib -
-
-      - name: Build ODBC driver (x86_64)
-        run: cargo build --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
-        env:
-          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
-          RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
-
-      - name: Build ODBC driver (aarch64)
-        run: cargo build --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
-        env:
-          CARGO_HOME: ${{ github.workspace }}/.cargo-cache
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
-          RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
-
-      - name: Save Cargo registry cache (DMG build)
-        if: always()
-        continue-on-error: true
-        timeout-minutes: 10
-        uses: actions/cache/save@v5
-        with:
-          path: .cargo-cache
-          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Save Rust target cache (DMG build)
-        if: always()
-        continue-on-error: true
-        timeout-minutes: 15
-        uses: actions/cache/save@v5
-        with:
-          path: .cargo-target-dmg
-          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Compute ODBC version
-        id: odbc-version
-        run: |
-          source ./odbc/version.sh
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Package DMG
-        run: ./odbc/installer/mac/package.sh
-        env:
-          DRIVER_X86_64: .cargo-target-dmg/x86_64-apple-darwin/release/libsfodbc.dylib
-          DRIVER_ARM64: .cargo-target-dmg/aarch64-apple-darwin/release/libsfodbc.dylib
-
-      - name: Upload DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: snowflake_odbc_ud-${{ steps.odbc-version.outputs.version }}-universal-macos
-          path: build/snowflake_odbc_ud-*.dmg
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_packaging == 'true'
+    uses: ./.github/workflows/_build-odbc-packages.yml
+    with:
+      # WiX Toolset git ref to build from source inside _build-odbc-packages.yml.
+      # Inlined here because GHA disallows env.* in `with:` of a reusable-workflow
+      # call. Bump in lock-step with the .wxs source compatibility.
+      wix-ref: v7.0.0
 
   odbc-status:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, build_odbc_driver, odbc_tests, build_msi, build_dmg]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests, build_odbc_packages]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check status
         run: |
           echo "=== ODBC CI Status ==="
-          
-          # Check if tests were skipped
+
+          # Check if tests were skipped. needs.odbc_tests is the reusable-
+          # workflow call (_test-odbc.yml) — when detect-changes says no
+          # relevant changes, the call is skipped and so is its aggregate
+          # result, which is the trigger for the "skipped" path here.
           if [[ "${{ needs.odbc_tests.result }}" == "skipped" ]]; then
             echo "✓ ODBC tests were SKIPPED (no relevant changes detected)"
             echo "  - run_odbc: ${{ needs.detect-changes.outputs.run_odbc }}"
             exit 0
           fi
-          
-          # Check if any job failed or was cancelled
+
+          # Each `needs.<X>.result` for a reusable-workflow call aggregates
+          # every job inside the called workflow:
+          #   needs.odbc_tests          → _test-odbc.yml
+          #                               (load-odbc-matrix, build_odbc_driver,
+          #                                odbc_tests, cleanup_odbc)
+          #   needs.odbc_tests_reference → _test-odbc-reference.yml
+          #   needs.build_odbc_packages → _build-odbc-packages.yml
+          #                               (build_wix, build_msi, build_rpm, build_dmg)
+          # — any internal failure surfaces here.
           if [[ "${{ needs.odbc_unit_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build_odbc_driver.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build_msi.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build_dmg.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.build_odbc_packages.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ ODBC tests were RUN and FAILED or CANCELLED"
             echo "  - odbc_unit_tests: ${{ needs.odbc_unit_tests.result }}"
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
-            echo "  - build_odbc_driver: ${{ needs.build_odbc_driver.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
-            echo "  - build_msi: ${{ needs.build_msi.result }}"
-            echo "  - build_dmg: ${{ needs.build_dmg.result }}"
+            echo "  - build_odbc_packages: ${{ needs.build_odbc_packages.result }}"
             exit 1
           fi
-          
+
           # Tests ran and passed
           echo "✓ ODBC tests were RUN and PASSED"
           exit 0

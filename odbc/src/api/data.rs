@@ -305,6 +305,18 @@ fn fetch_impl(
     } else {
         0
     };
+    let max_rows = inner.max_rows;
+
+    // Enforce SQL_ATTR_MAX_ROWS: if the limit has already been reached, stop.
+    if max_rows > 0 && inner.rows_returned >= max_rows {
+        if !rows_fetched_ptr.is_null() {
+            unsafe { *rows_fetched_ptr = 0 };
+        }
+        for row_index in 0..array_size {
+            write_row_status(row_status_ptr, row_index, RowStatus::NoRow);
+        }
+        return NoMoreDataSnafu.fail();
+    }
 
     let mut cache = FetchConverterCache::new();
     // Fast path: a single-row fetch propagates the conversion error to
@@ -328,6 +340,7 @@ fn fetch_impl(
         let outputs = execute_bindings_for_segment(&inner, &cache, arrow_start, 1, 0, 0, 0);
         match outputs.into_iter().next().unwrap_or_else(|| Ok(Vec::new())) {
             Ok(row_warnings) => {
+                inner.rows_returned += 1;
                 let status = if row_warnings.is_empty() {
                     RowStatus::Success
                 } else {
@@ -348,6 +361,13 @@ fn fetch_impl(
     let mut has_error = false;
 
     while rows_fetched < array_size {
+        // Stop if max_rows limit reached mid-rowset.
+        if max_rows > 0 && inner.rows_returned + rows_fetched as sql::ULen >= max_rows {
+            for remaining in rows_fetched..array_size {
+                write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+            }
+            break;
+        }
         match advance_cursor(&mut inner.state) {
             Ok(()) => {}
             Err(crate::api::OdbcError::NoMoreData { .. }) => {
@@ -417,8 +437,16 @@ fn fetch_impl(
                 }
                 .fail();
             }
-            let wanted = array_size - rows_fetched;
-            (*batch_idx, in_batch_remaining.min(wanted))
+            let mut wanted = array_size - rows_fetched;
+            if max_rows > 0 {
+                let remaining_quota = max_rows
+                    .saturating_sub(inner.rows_returned)
+                    .saturating_sub(rows_fetched as sql::ULen);
+                if (wanted as sql::ULen) > remaining_quota {
+                    wanted = remaining_quota;
+                }
+            }
+            (*batch_idx, in_batch_remaining.min(wanted).max(1))
         };
 
         let outputs = execute_bindings_for_segment(
@@ -457,6 +485,8 @@ fn fetch_impl(
             bump_batch_idx(&mut inner.state, segment_len - 1)?;
         }
     }
+
+    inner.rows_returned += rows_fetched as sql::ULen;
 
     if !rows_fetched_ptr.is_null() {
         unsafe { *rows_fetched_ptr = rows_fetched as sql::ULen };

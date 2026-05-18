@@ -26,6 +26,12 @@ add_library(common STATIC
     include/EnvOverride.hpp
 )
 
+if (WIN32)
+    target_sources(common PRIVATE src/SubprocessWindows.cpp)
+else()
+    target_sources(common PRIVATE src/SubprocessUnix.cpp)
+endif()
+
 target_include_directories(common PUBLIC ${picojson_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(common PUBLIC Catch2::Catch2WithMain ODBC::ODBC ZLIB::ZLIB OpenSSL::Crypto)
 

@@ -4,5 +4,12 @@ node_modules/
 # Build output
 dist/
 
+# Test output
+coverage/
+
 # Logs
+snowflake.log
 npm-debug.log*
+
+# We want CI/Devs to install latest available versions to catch issues early
+package-lock.json

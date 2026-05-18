@@ -12,7 +12,8 @@ use crate::config::settings::Setting;
 /// Parse an `sf.odbc.ini`-style INI file into a [`LoggingConfig`].
 ///
 /// Supported keys (case-insensitive):
-/// `LogLevel`, `LogPath`, `LogFile`, `LogMaxSize`, `LogMaxCount`, `LogEnabled`.
+/// `LogLevel`, `LogPath`, `LogFile`, `LogMaxSize`, `LogMaxCount`,
+/// `LogEnabled`, `LogQueryText`, `LogQueryParameters`.
 ///
 /// Checks file permissions before reading (rejects group/world-writable files
 /// on Unix).
@@ -58,6 +59,8 @@ fn apply_ini_section(props: &ini::Properties) -> Result<LoggingConfig, LogError>
             "logmaxcount" => config.max_file_count = Some(parse_u32(value)?),
             "logrotation" => config.rotation = parse_rotation(value)?,
             "logenabled" => config.enabled = parse_bool(value)?,
+            "logquerytext" => config.log_query_text = Some(parse_bool(value)?),
+            "logqueryparameters" => config.log_query_parameters = Some(parse_bool(value)?),
             other => eprintln!("ignoring unknown INI key: {other}"),
         }
     }
@@ -100,6 +103,12 @@ pub fn load_from_toml_section(section: &HashMap<String, Setting>) -> LoggingConf
     }
     if let Some(Setting::Bool(otel)) = section.get("opentelemetry") {
         config.open_telemetry = *otel;
+    }
+    if let Some(Setting::Bool(b)) = section.get("log_query_text") {
+        config.log_query_text = Some(*b);
+    }
+    if let Some(Setting::Bool(b)) = section.get("log_query_parameters") {
+        config.log_query_parameters = Some(*b);
     }
 
     config
@@ -337,6 +346,61 @@ LogPath=/tmp
     }
 
     #[test]
+    fn parse_ini_content_log_query_text_true() {
+        let config = parse_ini_content("LogQueryText=true").unwrap();
+        assert_eq!(config.log_query_text, Some(true));
+        assert_eq!(config.log_query_parameters, None);
+    }
+
+    #[test]
+    fn parse_ini_content_log_query_parameters_false() {
+        let config = parse_ini_content("LogQueryParameters=false").unwrap();
+        assert_eq!(config.log_query_parameters, Some(false));
+        assert_eq!(config.log_query_text, None);
+    }
+
+    #[test]
+    fn parse_ini_content_log_query_keys_default_to_none() {
+        let config = parse_ini_content("LogLevel=INFO").unwrap();
+        assert_eq!(config.log_query_text, None);
+        assert_eq!(config.log_query_parameters, None);
+    }
+
+    #[test]
+    fn parse_ini_content_log_query_keys_case_insensitive() {
+        let ini = "logquerytext=YES\nLOGQUERYPARAMETERS=on";
+        let config = parse_ini_content(ini).unwrap();
+        assert_eq!(config.log_query_text, Some(true));
+        assert_eq!(config.log_query_parameters, Some(true));
+    }
+
+    #[test]
+    fn parse_ini_content_log_query_text_bool_variants() {
+        for truthy in &["true", "1", "yes", "on", "True", "YES", "ON"] {
+            let ini = format!("LogQueryText={truthy}");
+            assert_eq!(
+                parse_ini_content(&ini).unwrap().log_query_text,
+                Some(true),
+                "expected Some(true) for {truthy}"
+            );
+        }
+        for falsy in &["false", "0", "no", "off", "False", "NO", "OFF"] {
+            let ini = format!("LogQueryParameters={falsy}");
+            assert_eq!(
+                parse_ini_content(&ini).unwrap().log_query_parameters,
+                Some(false),
+                "expected Some(false) for {falsy}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_ini_content_log_query_text_invalid_bool() {
+        let err = parse_ini_content("LogQueryText=maybe").unwrap_err();
+        assert!(format!("{err:?}").contains("Invalid boolean"));
+    }
+
+    #[test]
     fn parse_ini_content_bool_variants() {
         for truthy in &["true", "1", "yes", "on", "True", "YES", "ON"] {
             let ini = format!("LogEnabled={truthy}");
@@ -539,6 +603,34 @@ LOGENABLED=false
         let config = load_from_toml_section(&section);
         assert_eq!(config.level, LevelFilter::INFO);
         assert!(config.max_file_size.is_none());
+    }
+
+    #[test]
+    fn load_from_toml_section_log_query_keys_set() {
+        let mut section = HashMap::new();
+        section.insert("log_query_text".into(), Setting::Bool(true));
+        section.insert("log_query_parameters".into(), Setting::Bool(false));
+        let config = load_from_toml_section(&section);
+        assert_eq!(config.log_query_text, Some(true));
+        assert_eq!(config.log_query_parameters, Some(false));
+    }
+
+    #[test]
+    fn load_from_toml_section_log_query_keys_default_none() {
+        let section = HashMap::new();
+        let config = load_from_toml_section(&section);
+        assert_eq!(config.log_query_text, None);
+        assert_eq!(config.log_query_parameters, None);
+    }
+
+    #[test]
+    fn load_from_toml_section_log_query_keys_wrong_type_ignored() {
+        let mut section = HashMap::new();
+        section.insert("log_query_text".into(), Setting::String("true".into()));
+        section.insert("log_query_parameters".into(), Setting::Int(1));
+        let config = load_from_toml_section(&section);
+        assert_eq!(config.log_query_text, None);
+        assert_eq!(config.log_query_parameters, None);
     }
 
     // ---- find_odbc_ini ----

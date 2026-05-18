@@ -118,6 +118,16 @@ class WiremockClient:
             if response.status_code not in (200, 201):
                 raise RuntimeError(f"Failed to add mapping: {response.status_code} {response.text}")
 
+    def reset(self) -> None:
+        """Clear all mappings and captured requests via the admin API.
+
+        Equivalent to restarting the JVM but far cheaper — use this between
+        tests sharing a session-scoped Wiremock instance.
+        """
+        response = requests.post(f"{self.http_url()}/__admin/reset", timeout=5)
+        if response.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to reset Wiremock: {response.status_code} {response.text}")
+
     def get_all_requests(self) -> list:
         """Query admin API for all captured requests."""
         response = requests.get(f"{self.http_url()}/__admin/requests")

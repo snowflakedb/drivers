@@ -40,6 +40,13 @@ pub enum Credentials {
         passcode_in_password: bool,
         passcode: Option<SensitiveString>,
     },
+    /// Pre-acquired OAuth access token forwarded to Snowflake unchanged
+    /// (analysis §6 — legacy `AUTHENTICATOR=OAUTH` with raw `token=`).
+    /// Consumed by `auth_request_data` to populate the legacy login body.
+    OAuth {
+        username: String,
+        access_token: SensitiveString,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -127,11 +134,16 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             username: username.clone(),
             password: password.clone(),
         }),
-        // NativeOkta performs its own multi-step SAML flow in auth_request_data()
-        // and never reaches create_credentials(). Return an error rather than panicking
-        // to avoid a footgun if a future caller invokes this function directly.
+        // NativeOkta and ExternalBrowser perform their own multi-step flows in
+        // auth_request_data() and never reach create_credentials(). Return an error
+        // rather than panicking to avoid a footgun if a future caller invokes this
+        // function directly.
         LoginMethod::NativeOkta(_) => UnsupportedLoginMethodSnafu {
             method: "NativeOkta",
+        }
+        .fail(),
+        LoginMethod::ExternalBrowser { .. } => UnsupportedLoginMethodSnafu {
+            method: "ExternalBrowser",
         }
         .fail(),
         LoginMethod::PrivateKey {
@@ -166,6 +178,22 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             passcode: passcode.clone(),
             passcode_in_password: *passcode_in_password,
         }),
+        LoginMethod::OAuthAccessToken { username, token } => Ok(Credentials::OAuth {
+            username: username.clone(),
+            access_token: token.clone(),
+        }),
+        // OAuth Authorization Code and Client Credentials run their own multi-step
+        // flow (PKCE, browser/loopback, token exchange, refresh) outside of
+        // create_credentials — see analysis_feature_oauth.md §3 / §4. Mirror the
+        // NativeOkta arm above and surface a typed error rather than panicking.
+        LoginMethod::OAuthAuthorizationCode(_) => UnsupportedLoginMethodSnafu {
+            method: "OAuthAuthorizationCode",
+        }
+        .fail(),
+        LoginMethod::OAuthClientCredentials(_) => UnsupportedLoginMethodSnafu {
+            method: "OAuthClientCredentials",
+        }
+        .fail(),
     }
 }
 

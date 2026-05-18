@@ -323,7 +323,7 @@ class TestLogoutPythonWrapper:
 
     @pytest.mark.skip_reference(reason="core_proxy fixture imports _internal")
     def test_should_use_best_effort_error_handling_strategy_by_default(
-        self, int_test_connection_factory, core_proxy, tmp_path
+        self, int_test_connection_factory, core_proxy, caplog
     ):
         """Verify close() does not raise when server returns 500 on all logout attempts.
 
@@ -339,28 +339,12 @@ class TestLogoutPythonWrapper:
             # And Server will return 500 Internal Server Error on logout on all attempts
             wiremock.add_mapping("session/logout_500_always.json")
 
-            # Capture Core logs to a temp file. We use a file instead of pytest caplog
-            # because the Rust→Python FFI log bridge (sf_core_init_logger callback in
-            # c_api.py) writes to the snowflake.connector._core logger which has
-            # propagate=False and NullHandler by default — caplog can't intercept it
-            # without reconfiguring propagation. A FileHandler on the logger directly
-            # captures the FFI-bridged logs.
-            log_file = tmp_path / "core.log"
-            core_logger = logging.getLogger("snowflake.connector._core")
-            handler = logging.FileHandler(str(log_file))
-            handler.setLevel(logging.WARNING)
-            handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-            core_logger.addHandler(handler)
-            original_level = core_logger.level
-            core_logger.setLevel(logging.WARNING)
-
-            try:
+            # Capture Core logs via caplog. The Rust→Python FFI log bridge writes
+            # to the snowflake.connector._core logger which now propagates to
+            # the root logger by default, so caplog intercepts it directly.
+            with caplog.at_level(logging.WARNING, logger="snowflake.connector._core"):
                 # When Connection is closed
                 conn.close()  # Must NOT raise with best-effort strategy
-            finally:
-                core_logger.removeHandler(handler)
-                core_logger.setLevel(original_level)
-                handler.close()
 
             # Then Logout attempts are bounded by the default retry limit
             logout_requests = wiremock.get_logout_requests()
@@ -374,9 +358,12 @@ class TestLogoutPythonWrapper:
             )
 
             # And Error is logged as WARN
-            log_content = log_file.read_text()
-            assert "WARNING" in log_content and "Logout failed" in log_content, (
-                f"Expected WARNING log with 'Logout failed' from Core.\nCaptured:\n{log_content}"
+            core_warnings = [
+                r for r in caplog.records if r.name == "snowflake.connector._core" and r.levelno >= logging.WARNING
+            ]
+            assert any("Logout failed" in r.message for r in core_warnings), (
+                f"Expected WARNING log with 'Logout failed' from Core.\n"
+                f"Captured sf_core records: {[r.message for r in core_warnings]}"
             )
 
             # And close() method does not raise exception

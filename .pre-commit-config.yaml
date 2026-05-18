@@ -46,7 +46,7 @@ repos:
     -   id: python-checks
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files
-        entry: bash -c 'cd python && uv run hatch run precommit:check'
+        entry: bash -c 'cd python && hatch run precommit:check'
         pass_filenames: false
         files: ^python/.*\.py$
         language: system
@@ -69,6 +69,13 @@ repos:
         entry: bash -c 'cd jdbc && bash ./gradlew spotlessCheck'
         pass_filenames: false
         files: ^jdbc/
+        language: system
+    -   id: nodejs-code-format
+        name: Node.js code formatting & linting
+        description: Auto-format with oxfmt and lint with oxlint
+        entry: bash -c 'cd nodejs && npm run fmt:fix && npm run lint:check'
+        pass_filenames: false
+        files: ^nodejs/
         language: system
     -   id: behavior-differences-validator
         name: Behavioral Differences format check

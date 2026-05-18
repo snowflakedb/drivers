@@ -17,12 +17,7 @@ use crate::rest::snowflake::{
 const TELEMETRY_SEND_PATH: &str = "/telemetry/send";
 const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, serde::Deserialize)]
-struct TelemetryResponse {
-    success: bool,
-    message: Option<String>,
-    code: Option<String>,
-}
+type TelemetryResponse = crate::rest::snowflake::SnowflakeResponse<serde_json::Value>;
 
 /// POST a batch of telemetry events to the Snowflake in-band endpoint.
 ///
@@ -83,7 +78,7 @@ pub async fn send_telemetry(
         context: "Failed to execute telemetry request",
     })?;
 
-    let parsed: TelemetryResponse = read_response_json(response)
+    let parsed: TelemetryResponse = read_response_json::<serde_json::Value>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
 
@@ -111,6 +106,8 @@ mod tests {
             server_url: server_url.to_string(),
             client_info: test_client_info(),
             log_max_query_length: 80,
+            log_query_text: false,
+            log_query_parameters: false,
         }
     }
 
