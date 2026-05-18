@@ -19,6 +19,13 @@ const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
 ];
 const QUERY_SEQUENCE_ID: u64 = 1;
 
+/// Maximum wall-clock time the driver will spend polling for a single
+/// statement's completion. `None` means unbounded — poll until Snowflake
+/// returns data or a terminal error.
+///
+/// TODO: plumb a caller-supplied `statement_timeout` (e.g. configuration) so users can cap long-running queries.
+const STATEMENT_POLL_DEADLINE: Option<Duration> = None;
+
 /// Metrics for async query execution phases, logged for monitoring and debugging.
 ///
 /// Async execution follows this flow:
@@ -420,9 +427,11 @@ async fn inline_poll_for_completion(
 /// Poll Snowflake for completion, starting with a burst of short delays
 /// and then degrading into retry-policy-driven exponential backoff.
 /// Each HTTP poll flows through the shared retry helper so transport
-/// or retryable status failures are retried automatically. We stop
-/// polling once tabular data arrives, Snowflake returns a terminal
-/// error, or the overall deadline / retry budget is exhausted.
+/// or retryable status failures are retried automatically.
+///
+/// The outer loop is bounded only by [`STATEMENT_POLL_DEADLINE`] (unbounded
+/// by default). `policy.max_elapsed` bounds each individual HTTP poll's
+/// internal retry budget — it does NOT cap total query wall-clock time.
 async fn wait_for_completion(
     client: &reqwest::Client,
     client_info: &ClientInfo,
@@ -436,13 +445,15 @@ async fn wait_for_completion(
     let mut polls: usize = 0;
 
     loop {
-        let elapsed = start.elapsed();
-        if elapsed >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed,
-                location: current_location(),
-            });
+        if let Some(deadline) = STATEMENT_POLL_DEADLINE {
+            let elapsed = start.elapsed();
+            if elapsed >= deadline {
+                return Err(SfError::DeadlineExceeded {
+                    configured: deadline,
+                    elapsed,
+                    location: current_location(),
+                });
+            }
         }
 
         let delay = if attempt < INLINE_SHORT_POLL_DELAYS.len() {
@@ -454,36 +465,21 @@ async fn wait_for_completion(
         attempt += 1;
 
         if !delay.is_zero() {
-            let sleep_deadline = start.elapsed() + delay;
-            if sleep_deadline >= policy.max_elapsed {
-                return Err(SfError::DeadlineExceeded {
-                    configured: policy.max_elapsed,
-                    elapsed,
-                    location: current_location(),
-                });
+            if let Some(deadline) = STATEMENT_POLL_DEADLINE {
+                let would_wake = start.elapsed() + delay;
+                if would_wake >= deadline {
+                    return Err(SfError::DeadlineExceeded {
+                        configured: deadline,
+                        elapsed: start.elapsed(),
+                        location: current_location(),
+                    });
+                }
             }
             tokio::time::sleep(delay).await;
         }
 
-        let elapsed_after_sleep = start.elapsed();
-        if elapsed_after_sleep >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed: elapsed_after_sleep,
-                location: current_location(),
-            });
-        }
-
-        let remaining = policy
-            .max_elapsed
-            .checked_sub(elapsed_after_sleep)
-            .unwrap_or_default()
-            .max(Duration::from_millis(1));
-
-        let mut poll_policy = policy.clone();
-        poll_policy.max_elapsed = remaining;
         let response =
-            poll_query_status(client, client_info, session_token, result_url, &poll_policy).await?;
+            poll_query_status(client, client_info, session_token, result_url, policy).await?;
         polls += 1;
 
         if let Some(done) = handle_poll_response(response, false)? {
