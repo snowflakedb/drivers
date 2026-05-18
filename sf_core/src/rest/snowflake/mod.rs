@@ -793,7 +793,7 @@ pub async fn snowflake_login_with_client(
     // bubbles the error since the caller supplies the token directly.
     if !auth_response.success {
         let code = auth_response
-            ._code
+            .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
