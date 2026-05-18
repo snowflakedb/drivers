@@ -478,17 +478,17 @@ mod tests {
     // derivation. The cases below are exercised through the public
     // `host_from_token_url` wrapper, since that is the only caller. The
     // parameter set targets URL shapes that have historically tripped
-    // up token-cache key derivation in other drivers (analysis §7.3,
-    // §14 #3).
+    // up token-cache key derivation in other drivers (JDBC/Python/.NET
+    // use the parsed hostname; Go diverges with the full URL string).
 
     #[test]
     fn host_from_token_url_treats_url_with_empty_host_as_no_host() {
         // The url crate normalizes `https:///path` to `https://path/`,
         // so to truly exercise the empty-host fallback branch we lean
         // on `data:` URLs (which have no host segment at all). The
-        // cross-driver `host_from_token_url` contract (analysis §7.3)
-        // is "fall back to the Snowflake server URL host whenever the
-        // primary URL exposes no usable host".
+        // cross-driver `host_from_token_url` contract: fall back to the
+        // Snowflake server URL host whenever the primary URL exposes no
+        // usable host.
         let host = host_from_token_url("data:,", "https://acct.example.com");
         assert_eq!(host.as_deref(), Some("acct.example.com"));
     }

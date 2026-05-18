@@ -1284,7 +1284,7 @@ mod tests {
         // Bare authenticator + user; ensures the Snowflake-as-IdP wiring
         // path can still construct the config with default URLs / empty
         // client credentials (LOCAL_APPLICATION substitution happens at
-        // flow time, analysis §1 / §9).
+        // flow time when Snowflake is the IdP).
         let settings = create_test_settings(vec![
             ("user", Setting::String("alice".to_string())),
             (
@@ -1402,9 +1402,8 @@ mod tests {
         // `test_oauth_authorization_code_minimal_uses_defaults` covers the
         // bare-minimum case (Snowflake-as-IdP). This sibling test pins
         // the same default with a fully-populated external-IdP config so
-        // we don't regress the cross-driver default (analysis §9 / §3.3:
-        // PKCE is on for everybody except Python's opt-out, and we are
-        // not Python).
+        // we don't regress the cross-driver default (PKCE is on for
+        // everybody except Python's opt-out, and we are not Python).
         let settings = create_test_settings(vec![
             ("user", Setting::String("alice".to_string())),
             (

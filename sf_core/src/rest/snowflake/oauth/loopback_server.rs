@@ -79,10 +79,10 @@ struct RedirectQuery {
 pub(crate) async fn bind(redirect_uri_hint: Option<&Url>) -> Result<LoopbackBinding, OAuthError> {
     let (ip, port, path) = match redirect_uri_hint {
         Some(url) => {
-            // Hard-enforce the cross-driver invariant from analysis §3.5
-            // and §14 #11: only ever bind a loopback interface, even if
-            // the supplied `oauth_redirect_uri` carries a different host.
-            // A misconfigured (or malicious) hint must not widen the
+            // Hard-enforce the cross-driver invariant: only ever bind a
+            // loopback interface, even if the supplied `oauth_redirect_uri`
+            // carries a different host (do not replicate Node's `0.0.0.0`
+            // bind). A misconfigured (or malicious) hint must not widen the
             // listener's exposure beyond the local machine.
             let host = url.host();
             let ip = match host {
@@ -90,13 +90,13 @@ pub(crate) async fn bind(redirect_uri_hint: Option<&Url>) -> Result<LoopbackBind
                 Some(url::Host::Ipv6(v6)) if v6.is_loopback() => IpAddr::V6(v6),
                 Some(url::Host::Ipv4(_)) => {
                     tracing::warn!(
-                        "OAuth redirect_uri specified non-loopback IPv4 host; binding to 127.0.0.1 instead (analysis §14 #11)"
+                        "OAuth redirect_uri specified non-loopback IPv4 host; binding to 127.0.0.1 instead"
                     );
                     IpAddr::V4(Ipv4Addr::LOCALHOST)
                 }
                 Some(url::Host::Ipv6(_)) => {
                     tracing::warn!(
-                        "OAuth redirect_uri specified non-loopback IPv6 host; binding to ::1 instead (analysis §14 #11)"
+                        "OAuth redirect_uri specified non-loopback IPv6 host; binding to ::1 instead"
                     );
                     IpAddr::V6(Ipv6Addr::LOCALHOST)
                 }
@@ -328,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn bind_with_non_loopback_ipv4_hint_falls_back_to_loopback() {
-        // Per analysis §14 #11 the listener must always bind a loopback
+        // The listener must always bind a loopback
         // interface, even when the user-supplied `oauth_redirect_uri`
         // carries a non-loopback host (mistake or attack). 192.0.2.0/24 is
         // the RFC 5737 documentation block — it is guaranteed not to be
@@ -366,7 +366,7 @@ mod tests {
         // the RFC 3849 documentation prefix and is guaranteed not to be
         // assigned on any local interface, so a naive bind would fail
         // with EADDRNOTAVAIL. We deliberately fall back to a loopback
-        // bind (analysis §14 #11) — the resulting socket must still be
+        // bind — the resulting socket must still be
         // on a loopback interface.
         let hint = Url::parse("http://[2001:db8::1]:0/cb").expect("parse hint");
         let Ok(b) = bind(Some(&hint)).await else {

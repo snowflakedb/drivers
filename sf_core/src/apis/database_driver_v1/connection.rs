@@ -258,9 +258,10 @@ impl DatabaseDriverV1 {
                 // (a) short-circuit the interactive flow with a cached
                 // access token, (b) exchange a cached refresh token, and
                 // (c) drive 390303/390318 refresh-on-failure eviction
-                // (analysis_feature_oauth.md §3.2 / §7 / §8). Client
+                // (AC state machine: cache → refresh → interactive;
+                // cross-driver eviction on 390303/390318). Client
                 // Credentials intentionally never persists tokens
-                // (analysis §14 #12) and the legacy pre-acquired
+                // (CC stateless by design) and the legacy pre-acquired
                 // `OAUTH` flow forwards a caller-supplied token, so
                 // neither needs the cache wired here.
                 let oauth_caching_requested = matches!(

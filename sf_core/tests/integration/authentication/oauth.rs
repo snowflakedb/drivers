@@ -7,8 +7,7 @@
 //! * authorization code with PKCE and token caching (AC), and
 //! * client credentials (CC).
 //!
-//! The behavioral spec lives in `analysis_feature_oauth.md`. Cross-driver
-//! conventions referenced in this module:
+//! Cross-driver conventions referenced in this module:
 //!
 //! * §6 / §10.1 — legacy `OAUTH` body shape.
 //! * §3.2 / §7   — AC cache short-circuit + refresh-token exchange.
@@ -227,8 +226,8 @@ impl Drop for OAuthTestFixture {
 
 /// Extract the bare host (no port) from a URL string. Mirrors
 /// `host_from_token_url` in `sf_core::rest::snowflake::oauth::token`,
-/// which the production code uses to derive the cache key (analysis
-/// §7.3).
+/// which the production code uses to derive the cache key (prefers
+/// IdP token URL host, falls back to Snowflake host).
 fn host_from(url: &str) -> String {
     url::Url::parse(url)
         .expect("valid mock URL")
@@ -284,7 +283,7 @@ fn should_login_with_legacy_oauth_using_pre_acquired_token() {
     // Then Login is successful
     OAuthTestFixture::assert_success(result, "legacy OAUTH login to succeed");
     // And the IdP token endpoint must NOT have been hit (legacy flow
-    // forwards the caller-supplied token unchanged — analysis §6).
+    // forwards the caller-supplied token unchanged).
     assert_eq!(
         count_token_endpoint_requests(&fixture.mock),
         0,
@@ -305,8 +304,8 @@ fn should_fail_legacy_oauth_when_snowflake_returns_390303() {
     let result = fixture.connect();
 
     // Then Connection fails with a login error (legacy flow has no
-    // cache to evict, so the error is surfaced unchanged — analysis
-    // §6 / §8).
+    // cache to evict, so the error is surfaced unchanged — legacy
+    // flow has no refresh-on-failure semantics).
     OAuthTestFixture::assert_error(
         result,
         &["390303", "OAuth", "login", "auth"],
@@ -322,7 +321,7 @@ fn should_fail_legacy_oauth_when_snowflake_returns_390303() {
 fn should_login_with_authorization_code_using_cached_access_token() {
     // Given Wiremock is running and an OAuth access token is already
     // cached for the user (so the AC flow short-circuits before binding
-    // the loopback — analysis §3.2)
+    // the loopback — AC state machine short-circuits on cache hit)
     let user = unique_user("oauth_ac_cached_at");
     let cached_at = "ac-cached-access-token-canary";
     let fixture = OAuthTestFixture::with_authorization_code(&user);
@@ -363,7 +362,7 @@ fn should_login_with_authorization_code_using_cached_refresh_token() {
 
     // Then Login is successful, the IdP refresh endpoint was hit
     // exactly once, and the rotated tokens replaced the cached values
-    // (analysis §7.4).
+    // (refresh-token rotation persists rotated tokens).
     OAuthTestFixture::assert_success(result, "AC cached-RT login to succeed");
     assert_eq!(
         count_token_endpoint_requests(&fixture.mock),
@@ -408,7 +407,7 @@ fn should_evict_cached_at_and_retry_via_refresh_token_on_390303() {
     let result = fixture.connect();
 
     // Then Login eventually succeeds (after eviction + refresh +
-    // retry — analysis §8 / §14 #9), and the originally seeded AT is
+    // retry — 390303/390318 refresh-on-failure), and the originally seeded AT is
     // no longer present in the cache.
     OAuthTestFixture::assert_success(result, "AC 390303 retry to succeed");
     let stored_at = fixture.cached_access_token();
@@ -459,7 +458,7 @@ fn should_evict_cached_at_and_retry_via_refresh_token_on_390318() {
 }
 
 // =============================================================================
-// Authorization Code — single-use refresh tokens (analysis §7.4)
+// Authorization Code — single-use refresh tokens
 // =============================================================================
 
 #[test]
@@ -484,7 +483,7 @@ fn should_omit_single_use_refresh_flag_from_refresh_grant_body() {
     // Then Login succeeds and the refresh-grant body did NOT carry the
     // single-use flag (the flag is only meaningful on the AC token
     // exchange — `authorization_code.rs` adds it to that grant only,
-    // analysis §7.4).
+    // single-use flag is only meaningful on the AC token exchange).
     OAuthTestFixture::assert_success(result, "single-use refresh grant to succeed");
     let bodies = token_endpoint_bodies(&fixture.mock);
     assert_eq!(bodies.len(), 1, "expected exactly one IdP token request");
@@ -525,7 +524,7 @@ fn should_evict_refresh_token_when_idp_returns_invalid_grant() {
     // browser) and the refresh token is evicted from the cache. Per
     // `authorization_code.rs`, an IdP refresh-exchange failure evicts
     // the cached refresh token before falling through to the
-    // interactive leg (analysis §7.4 / §13).
+    // interactive leg (evicts RT, then falls back to full flow).
     OAuthTestFixture::assert_error(
         result,
         &[
@@ -565,15 +564,15 @@ fn should_login_with_client_credentials_using_external_idp() {
     let result = fixture.connect();
 
     // Then Login is successful and CC tokens are NOT cached
-    // (analysis §14 #12).
+    // (CC is stateless by design — tokens are never cached).
     OAuthTestFixture::assert_success(result, "CC happy path to succeed");
     assert!(
         fixture.cached_access_token().is_none(),
-        "CC must not cache access tokens (analysis §14 #12)"
+        "CC must not cache access tokens"
     );
     assert!(
         fixture.cached_refresh_token().is_none(),
-        "CC must not cache refresh tokens (analysis §14 #12)"
+        "CC must not cache refresh tokens"
     );
 }
 
@@ -590,7 +589,7 @@ fn should_fail_client_credentials_when_idp_returns_500() {
     let result = fixture.connect();
 
     // Then Connection fails with a transport / token-exchange error and
-    // the cache is untouched (CC never writes to it — analysis §14 #12)
+    // the cache is untouched (CC never writes to it)
     OAuthTestFixture::assert_error(
         result,
         &["TokenExchange", "OAuth", "500", "OAuthFlow"],
@@ -617,7 +616,7 @@ fn should_fail_client_credentials_when_idp_returns_invalid_scope() {
 
     // Then Connection fails with a redacted IdP-error message that
     // names the OAuth error code but never echoes the client secret
-    // (analysis §11 / §13). The error class is `OAuthFlow → IdpError`.
+    // (redacted IdP error; client secret must never leak). The error class is `OAuthFlow → IdpError`.
     let err = result.expect_err("CC invalid_scope must fail");
     let pattern_hit = [
         "IdpError",
@@ -647,7 +646,7 @@ fn should_fail_client_credentials_when_idp_response_is_missing_access_token() {
     // When Trying to Connect
     let result = fixture.connect();
 
-    // Then Connection fails with `MissingAccessToken` (analysis §13 —
+    // Then Connection fails with `MissingAccessToken` (
     // empty access tokens are treated as missing to avoid forwarding
     // a useless Bearer token to GS).
     OAuthTestFixture::assert_error(

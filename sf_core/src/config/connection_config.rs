@@ -71,15 +71,15 @@ pub enum AuthConfig {
         authentication_timeout_secs: u64,
     },
     /// Legacy pre-acquired OAuth access token (`AUTHENTICATOR=OAUTH` +
-    /// raw `token=`). Forwarded unchanged to Snowflake (analysis
-    /// `analysis_feature_oauth.md` §6 / §10.1).
+    /// raw `token=`). Forwarded unchanged to Snowflake
+    /// (`AUTHENTICATOR=OAUTH`, `TOKEN=<access_token>`, no `OAUTH_TYPE`).
     OAuthAccessToken {
         user: String,
         token: SensitiveString,
     },
-    /// OAuth 2.0 Authorization Code (with PKCE) flow (analysis §3).
+    /// OAuth 2.0 Authorization Code (with PKCE) flow.
     OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
-    /// OAuth 2.0 Client Credentials flow, external IdP only (analysis §4).
+    /// OAuth 2.0 Client Credentials flow, external IdP only.
     OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
 
@@ -407,7 +407,7 @@ fn build_oauth_authorization_code_config(
     })?;
     // For Snowflake-as-IdP we let the AC provider substitute
     // LOCAL_APPLICATION at flow time when client_id/client_secret are
-    // empty (analysis §1, §9). Rest of the config is taken straight
+    // empty (Snowflake-as-IdP auto-substitutes LOCAL_APPLICATION). Rest of the config is taken straight
     // from settings.
     let client_id = non_empty_string(settings, OAUTH_CLIENT_ID).unwrap_or_default();
     let client_secret = non_empty_string(settings, OAUTH_CLIENT_SECRET).unwrap_or_default();
@@ -534,9 +534,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 })?,
         }),
         // ─── OAuth: legacy pre-acquired access token ─────────────────────
-        // analysis_feature_oauth.md §6 — `AUTHENTICATOR=OAUTH` + raw
-        // `token=`. Forwarded unchanged to Snowflake; LOGIN_NAME is
-        // always set (gotcha §14 #10).
+        // `AUTHENTICATOR=OAUTH` + raw `token=`. Forwarded unchanged to
+        // Snowflake; LOGIN_NAME is always set (cross-driver consensus:
+        // JDBC/Go/Python set username; .NET's empty-string quirk is not ported).
         "OAUTH" => Ok(AuthConfig::OAuthAccessToken {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
@@ -548,15 +548,14 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 })?,
         }),
         // ─── OAuth: Authorization Code (with PKCE) ───────────────────────
-        // analysis_feature_oauth.md §3, §9. Snowflake-as-IdP defaults
-        // (LOCAL_APPLICATION substitution + default endpoints) are
-        // applied at flow time.
+        // Snowflake-as-IdP defaults (LOCAL_APPLICATION substitution +
+        // default endpoints) are applied at flow time.
         "OAUTH_AUTHORIZATION_CODE" => Ok(AuthConfig::OAuthAuthorizationCode(
             build_oauth_authorization_code_config(settings)?,
         )),
         // ─── OAuth: Client Credentials (external IdP only) ───────────────
-        // analysis_feature_oauth.md §4. client_id/client_secret/token_url
-        // are mandatory because Snowflake's GS does not issue tokens for
+        // client_id/client_secret/token_url are mandatory because
+        // Snowflake's GS does not issue tokens for
         // grant_type=client_credentials.
         "OAUTH_CLIENT_CREDENTIALS" => Ok(AuthConfig::OAuthClientCredentials(
             build_oauth_client_credentials_config(settings)?,
@@ -858,10 +857,9 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             }
         }
         "OAUTH" => {
-            // Legacy OAuth (analysis_feature_oauth.md §6) forwards a
-            // pre-acquired access token verbatim; the only required
-            // payload-side parameter is `token`. user/account are
-            // already validated above.
+            // Legacy OAuth forwards a pre-acquired access token
+            // verbatim; the only required payload-side parameter is
+            // `token`. user/account are already validated above.
             if settings.get_string(TOKEN).is_none_or(|s| s.is_empty()) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
@@ -872,16 +870,15 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             }
         }
         "OAUTH_AUTHORIZATION_CODE" => {
-            // AC flow (analysis_feature_oauth.md §3) defaults to
-            // Snowflake-as-IdP when client_id/secret are absent, so we
+            // AC flow defaults to Snowflake-as-IdP when
+            // client_id/secret are absent, so we
             // only require user here. URL-shape validation is performed
             // by `LoginMethod::from_settings` at build time.
         }
         "OAUTH_CLIENT_CREDENTIALS" => {
-            // CC flow (analysis_feature_oauth.md §4) is external-IdP
-            // only: client_id, client_secret, and oauth_token_request_url
-            // must be provided up-front (Snowflake's GS does not mint
-            // CC tokens).
+            // CC flow is external-IdP only: client_id, client_secret,
+            // and oauth_token_request_url must be provided up-front
+            // (Snowflake's GS does not mint CC tokens).
             if settings
                 .get_string(OAUTH_CLIENT_ID)
                 .is_none_or(|s| s.is_empty())

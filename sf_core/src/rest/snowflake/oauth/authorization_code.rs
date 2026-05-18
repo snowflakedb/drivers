@@ -322,15 +322,15 @@ async fn try_cache_short_circuit(
                 if refreshed.refresh_token.is_some() {
                     persist_refresh_token(config, cache_host_url, token_cache, &refreshed);
                 } else {
-                    // Cross-driver convention (.NET / Node — analysis
-                    // §7.4 #4 / #6): when the IdP omits a new refresh
+                    // Cross-driver convention (.NET / Node): when the
+                    // IdP omits a new refresh
                     // token, evict the cached one. It has either been
                     // single-use-rotated server-side (Snowflake-IdP with
                     // `enable_single_use_refresh_tokens=true`) or
                     // otherwise invalidated, and re-presenting it on the
                     // next refresh would fail.
                     tracing::debug!(
-                        "Refresh response omitted refresh_token; evicting cached refresh token (analysis §7.4)"
+                        "Refresh response omitted refresh_token; evicting cached refresh token"
                     );
                     token::remove_oauth_refresh_token(
                         cache_host_url,
@@ -1080,17 +1080,16 @@ mod tests {
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
     }
     // ─── Step 2.4 coverage additions ─────────────────────────────────────
-    // The block below extends the inline tests with the gaps called out
-    // in `analysis_feature_oauth.md` §3.5, §5.1, §7.4, §11 and §14: token
-    // redaction in tracing, DPoP nonce retry, single-use refresh token
-    // body opt-in, refresh-token rotation persistence, eviction when the
-    // refresh response omits a new RT, scope-default behavior, and the
-    // non-fatal-ness of token-cache failures.
+    // The block below extends the inline tests with cross-driver gaps:
+    // token redaction in tracing, DPoP nonce retry, single-use refresh
+    // token body opt-in, refresh-token rotation persistence, eviction
+    // when the refresh response omits a new RT, scope-default behavior,
+    // and the non-fatal-ness of token-cache failures.
 
     /// `TokenCache` whose mutating operations always fail. Used to prove
     /// that `OAuthError::Cache`-equivalent failures inside the cache
     /// callees are reduced to WARN logs rather than aborting the flow
-    /// (analysis §13 last column / §14 #6).
+    /// (cross-driver: token-cache I/O is best-effort).
     struct FaultingTokenCache;
     impl crate::token_cache::TokenCache for FaultingTokenCache {
         fn add_token(
@@ -1301,7 +1300,7 @@ mod tests {
     async fn refresh_response_with_new_refresh_token_persists_rotated_rt_in_cache() {
         // Sibling to `cached_refresh_token_is_exchanged_for_fresh_access_token`
         // — that test only checks the AT got rotated; this one pins the
-        // RT side of the rotation (analysis §7.4 #1/#2/#5/#6).
+        // RT side of the rotation (single-use refresh-token rotation).
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
@@ -1335,8 +1334,8 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_response_without_refresh_token_evicts_cached_rt() {
-        // Cross-driver convention (.NET / Node — analysis §7.4 #4 / #6):
-        // when the IdP omits a new `refresh_token`, the old one must be
+        // Cross-driver convention (.NET / Node): when the IdP omits a
+        // new `refresh_token`, the old one must be
         // evicted because it has either been single-use-rotated server
         // side or otherwise invalidated.
         let server = MockServer::start().await;
@@ -1374,7 +1373,7 @@ mod tests {
     async fn cache_add_token_failure_does_not_abort_the_flow() {
         // Wire a faulting cache into a successful AC exchange and assert
         // we still get the access token back. Mirrors the cross-driver
-        // expectation that token-cache I/O is best-effort (analysis §13).
+        // expectation that token-cache I/O is best-effort.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
@@ -1481,7 +1480,7 @@ mod tests {
         // secret-shaped strings on every spot a leak could plausibly
         // occur (client secret, authorization code, token-endpoint
         // response body) and assert NONE of them appear in the captured
-        // logs (analysis §11).
+        // logs (cross-driver redaction requirement).
         async fn body() {
             const ACCESS_TOKEN: &str = "AT-LEAK-CANARY-AAAAAAAAAAAA";
             const REFRESH_TOKEN: &str = "RT-LEAK-CANARY-BBBBBBBBBBBB";

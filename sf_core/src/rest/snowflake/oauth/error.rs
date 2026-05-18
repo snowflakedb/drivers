@@ -14,9 +14,9 @@ use snafu::{Location, Snafu};
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum OAuthError {
-    /// `state` mismatch on the loopback redirect (potential XSS attack). The
-    /// display string is the verbatim ODBC/JDBC message (analysis §13 /
-    /// §14 #7); SREs grep for it. Equality is enforced via
+    /// `state` mismatch on the loopback redirect. The display string is
+    /// the verbatim ODBC/JDBC message ("It might indicate an XSS attack");
+    /// SREs grep for it. Equality is enforced via
     /// `oauth2::CsrfToken`'s timing-safe `PartialEq` (the
     /// `timing-resistant-secret-traits` feature derives a SHA-256-based
     /// comparator).
@@ -180,7 +180,7 @@ pub enum OAuthError {
 
 #[cfg(test)]
 mod tests {
-    //! Redaction tests covering analysis §11. The `OAuthError` variants
+    //! Redaction tests. The `OAuthError` variants
     //! deliberately do NOT carry tokens, refresh tokens, client secrets,
     //! PKCE verifiers, IdP authorization codes, or DPoP private keys —
     //! these belong in [`SensitiveString`] which redacts in `Display`/`Debug`.
@@ -250,7 +250,7 @@ mod tests {
     }
 
     /// The canonical state-mismatch wording is grep'd by SREs across
-    /// drivers (analysis §13 / §14 #7). Pin the exact prefix so accidental
+    /// drivers. Pin the exact prefix so accidental
     /// paraphrasing is caught immediately.
     #[test]
     fn state_mismatch_display_carries_canonical_xss_warning() {

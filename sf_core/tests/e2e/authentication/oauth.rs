@@ -31,8 +31,8 @@
 //! particular field either `expect()` it (hard fail when the parameter
 //! is genuinely required) or `eprintln!` and early-return when the
 //! parameter is only sometimes available (e.g. the CC-flow token URL,
-//! which requires an external IdP). The cross-driver names follow
-//! `analysis_feature_oauth.md` §9:
+//! which requires an external IdP). The cross-driver parameter names
+//! follow JDBC `SFSessionProperty.OAUTH_*` conventions:
 //!
 //! | parameters.json key                           | drives                                       |
 //! |-----------------------------------------------|----------------------------------------------|
@@ -50,7 +50,7 @@ use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::token_cache::{KeyringTokenCache, TokenCache, TokenType};
 
 // =============================================================================
-// Legacy `AUTHENTICATOR=OAUTH` (analysis §6 / §10.1)
+// Legacy `AUTHENTICATOR=OAUTH` (pre-acquired access token)
 // =============================================================================
 
 #[test]
@@ -92,7 +92,7 @@ fn oauth_should_fail_legacy_authentication_with_invalid_token() {
 }
 
 // =============================================================================
-// OAuth Authorization Code (AC) flow (analysis §3 / §10.2)
+// OAuth Authorization Code (AC) flow
 // =============================================================================
 
 #[test]
@@ -106,7 +106,7 @@ fn oauth_should_authenticate_using_authorization_code_flow() {
     //       and `https://{host}/oauth/token-request`).
     //       `client_store_temporary_credential=true` lets the AC flow
     //       short-circuit on subsequent runs by re-using the cached
-    //       access / refresh token (analysis §3.2 / §7).
+    //       access / refresh token (AC state machine: cache → refresh → interactive).
     let client = SnowflakeTestClient::with_default_params();
     let client_id = client
         .parameters
@@ -142,7 +142,7 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
     //       under the (host, user, OAUTH_ACCESS_TOKEN) cache key. The
     //       host is derived from `oauth_token_request_url` — falling
     //       back to the Snowflake server URL — exactly like
-    //       `host_from_token_url` in production code (analysis §7.3).
+    //       `host_from_token_url` in production code (prefers IdP token URL host, falls back to Snowflake host).
     let client = SnowflakeTestClient::with_default_params();
     let client_id = client
         .parameters
@@ -201,7 +201,7 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
 }
 
 // =============================================================================
-// OAuth Client Credentials (CC) flow (analysis §4 / §10.3)
+// OAuth Client Credentials (CC) flow
 // =============================================================================
 
 #[test]
@@ -209,7 +209,7 @@ fn oauth_should_short_circuit_authorization_code_flow_with_cached_access_token()
 fn oauth_should_authenticate_using_client_credentials_flow() {
     // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS with a
     //       valid client id / secret and an external IdP token URL.
-    //       Snowflake's GS does not mint CC tokens (analysis §4), so
+    //       Snowflake's GS does not mint CC tokens, so
     //       `oauth_token_request_url` is required up-front.
     let client = SnowflakeTestClient::with_default_params();
     let client_id = client
@@ -246,7 +246,7 @@ fn oauth_should_authenticate_using_client_credentials_flow() {
 }
 
 // =============================================================================
-// AC flow — bad client secret (analysis §13: IdP-error surface)
+// AC flow — bad client secret (IdP-error surface)
 // =============================================================================
 
 #[test]
@@ -320,7 +320,7 @@ fn set_optional_oauth_endpoints(client: &SnowflakeTestClient) {
 /// Mirror of `sf_core::rest::snowflake::oauth::host_from_token_url`:
 /// the OAuth token cache keys off the IdP token endpoint host when
 /// available, otherwise the Snowflake server URL host (Python-style
-/// `urlparse(token_request_url).hostname`, analysis §7.3). Kept private
+/// `urlparse(token_request_url).hostname`). Kept private
 /// to this test file so the production helper does not need to be
 /// promoted to `pub`.
 fn derive_cache_host(parameters: &Parameters) -> Option<String> {
