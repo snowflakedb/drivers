@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import threading
 
@@ -106,7 +107,10 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
 from ..protobuf_gen.database_driver_v1_pb2 import (
     MissingParameter as ProtoMissingParameter,
 )
-from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
+from ..protobuf_gen.database_driver_v1_services import (
+    DatabaseDriverBlockingClient,
+    DatabaseDriverClient,
+)
 from ..protobuf_gen.proto_exception import (
     ProtoApplicationException,
     ProtoTransportException,
@@ -268,7 +272,10 @@ def _derive_sqlstate(driver_exception: Any) -> str | None:
 
 
 class ProtoTransport:
-    def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
+    async def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
+        return await asyncio.to_thread(self._handle_message_sync, api, method, message)
+
+    def _handle_message_sync(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
         response = ctypes.POINTER(ctypes.c_ubyte)()
         response_len = ctypes.c_size_t()
         api_bytes: c_char_p = ctypes.c_char_p(api.encode("utf-8"))
@@ -291,6 +298,37 @@ class ProtoTransport:
         raise ProtoTransportException(f"Unknown error code: {code}")
 
 
+_background_loop: asyncio.AbstractEventLoop | None = None
+_background_loop_lock = threading.Lock()
+
+
+def get_background_loop() -> asyncio.AbstractEventLoop:
+    """Return the process-wide background event loop for sync-over-async bridging.
+
+    The loop is created lazily on first call and runs in a daemon thread for
+    the lifetime of the process. All blocking wrappers
+    (:class:`DatabaseDriverBlockingClient`, :class:`BlockingImmutableCursor`,
+    etc.) submit coroutines to this loop.
+    """
+    global _background_loop
+    loop = _background_loop
+    if loop is not None:
+        return loop
+    with _background_loop_lock:
+        loop = _background_loop
+        if loop is not None:
+            return loop
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(
+            target=loop.run_forever,
+            name="sf-background-event-loop",
+            daemon=True,
+        )
+        thread.start()
+        _background_loop = loop
+        return loop
+
+
 class CoreDriver:
     """Process-wide facade over ``DatabaseDriverClient``.
 
@@ -298,25 +336,31 @@ class CoreDriver:
     (thread-safe, double-checked lock) and exposes domain-level methods that
     encapsulate all protobuf request construction so that callers never touch
     ``*Request`` objects directly.
+
+    The held client is a :class:`DatabaseDriverBlockingClient` that wraps the
+    async-first :class:`DatabaseDriverClient`. This keeps every CoreDriver
+    method synchronous for existing callers while the underlying transport
+    runs the FFI call off-loop via ``asyncio.to_thread``.
     """
 
     def __init__(self) -> None:
-        self._client: DatabaseDriverClient | None = None
+        self._client: DatabaseDriverBlockingClient | None = None
         self._lock = threading.Lock()
 
     @property
-    def client(self) -> DatabaseDriverClient:
+    def client(self) -> DatabaseDriverBlockingClient:
         if self._client is not None:
             return self._client
 
         with self._lock:
             if self._client is None:
-                self._client = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
+                async_client = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
+                self._client = DatabaseDriverBlockingClient(async_client, get_background_loop())
 
         return self._client
 
     @client.setter
-    def client(self, client: DatabaseDriverClient | None) -> None:
+    def client(self, client: DatabaseDriverBlockingClient | None) -> None:
         self._client = client
 
     # =====================================================================
