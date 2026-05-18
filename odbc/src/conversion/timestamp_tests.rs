@@ -16,7 +16,7 @@ mod tests {
     };
     use crate::conversion::warning::Warning;
     use crate::conversion::{
-        NumericSettings, ReadArrowType, WriteODBCType, decimal_digits_from_field,
+        NumericSettings, ReadArrowType, SnowflakeType, WriteODBCType, decimal_digits_from_field,
         sql_type_from_field,
     };
 
@@ -1172,5 +1172,48 @@ mod tests {
             let sn = tz_with_format(scale, TzOffsetFormat::Colon);
             assert_eq!(sn.column_size(), base + 7);
         }
+    }
+
+    // =========================================================================
+    // Year-range guard: timestamps decoded from the wire must fall within SQL
+    // TIMESTAMP's 0001..9999 range.
+    // =========================================================================
+
+    fn epoch_secs(year: i32, month: u32, day: u32, h: u32, m: u32, s: u32) -> i64 {
+        chrono::NaiveDate::from_ymd_opt(year, month, day)
+            .unwrap()
+            .and_hms_opt(h, m, s)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+    }
+
+    #[test]
+    fn ntz_year_10000_rejected() {
+        // Decode succeeds (chrono can hold year 10000); the SQL-range
+        // policy check in validate_value rejects it.
+        let sn = ntz(0);
+        let array =
+            PrimitiveArray::<Int64Type>::from(vec![Some(epoch_secs(9999, 12, 31, 23, 59, 59) + 1)]);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        let err = sn.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn tz_year_10000_rejected_struct_form() {
+        // Same split as ntz: decode produces a TzInstant; validate_value
+        // checks the embedded UTC year against SQL TIMESTAMP's range.
+        let sn = tz(0);
+        let array = make_tz_struct_array_2col(epoch_secs(9999, 12, 31, 23, 59, 59) + 1, 0);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        let err = sn.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
     }
 }

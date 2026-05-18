@@ -7,6 +7,11 @@ use snafu::{Location, Snafu};
 
 use crate::{api::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError};
 
+/// SQL DATE / TIMESTAMP year range. Values outside this range cannot be
+/// represented as a SQL DATE or TIMESTAMP and surface as
+/// [`ConversionError::DatetimeOutOfSqlRange`] (SQLSTATE 22007).
+pub const SQL_DATETIME_YEAR_RANGE: std::ops::RangeInclusive<i32> = 1..=9999;
+
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ReadArrowError {
@@ -92,6 +97,14 @@ pub enum ConversionError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Datetime out of SQL range: {reason}"))]
+    DatetimeOutOfSqlRange {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to write ODBC value"))]
     WriteOdbcValue {
         source: WriteOdbcError,

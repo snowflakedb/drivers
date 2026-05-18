@@ -595,6 +595,7 @@ impl OdbcError {
                         SqlState::RestrictedDataTypeAttributeViolation
                     }
                 },
+                ConversionError::DatetimeOutOfSqlRange { .. } => SqlState::InvalidDatetimeFormat,
                 ConversionError::ReadArrowValue { .. } => SqlState::GeneralError,
                 _ => SqlState::GeneralError,
             },

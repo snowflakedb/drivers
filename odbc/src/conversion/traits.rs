@@ -482,6 +482,12 @@ pub trait WriteODBCType: SnowflakeType {
 
 pub trait SnowflakeType {
     type Representation<'a>: Sized;
+
+    /// Apply post-decode SQL-level constraints on the materialised value.
+    /// Default: no constraints.
+    fn validate_value(&self, _value: &Self::Representation<'_>) -> Result<(), ConversionError> {
+        Ok(())
+    }
 }
 
 pub trait ReadArrowType<ArrowArrayType>: SnowflakeType {

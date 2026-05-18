@@ -2,7 +2,7 @@ use odbc_sys as sql;
 
 use crate::conversion::{
     Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType,
-    error::{ReadArrowError, WriteOdbcError},
+    error::{ConversionError, ReadArrowError, WriteOdbcError},
     warning::Warnings,
 };
 
@@ -12,6 +12,13 @@ pub(crate) struct Nullable<T> {
 
 impl<T: SnowflakeType> SnowflakeType for Nullable<T> {
     type Representation<'a> = Option<T::Representation<'a>>;
+
+    fn validate_value(&self, value: &Self::Representation<'_>) -> Result<(), ConversionError> {
+        match value {
+            Some(inner) => self.value.validate_value(inner),
+            None => Ok(()),
+        }
+    }
 }
 
 impl<R, T: SnowflakeType + ReadArrowType<R>> ReadArrowType<R> for Nullable<T> {

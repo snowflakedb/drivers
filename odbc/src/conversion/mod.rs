@@ -176,6 +176,7 @@ impl<
             .snowflake_type
             .read_arrow_type(arrow_array, row_idx)
             .context(ReadArrowValueSnafu)?;
+        self.snowflake_type.validate_value(&value)?;
         self.snowflake_type
             .write_odbc_type(value, binding, get_data_offset)
             .context(WriteOdbcValueSnafu)
@@ -224,6 +225,7 @@ impl<
                 .read_arrow_type(arrow_array, batch_idx)
                 .context(ReadArrowValueSnafu)
                 .and_then(|value| {
+                    self.snowflake_type.validate_value(&value)?;
                     self.snowflake_type
                         .write_odbc_type(value, &binding, &mut None)
                         .context(WriteOdbcValueSnafu)
