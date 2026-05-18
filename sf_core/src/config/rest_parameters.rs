@@ -1184,6 +1184,260 @@ mod tests {
     }
 
     #[test]
+    fn test_oauth_legacy_authenticator_resolves_to_oauth_access_token() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            ("token", Setting::String("legacy-bearer".to_string())),
+            ("authenticator", Setting::String("OAUTH".to_string())),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAccessToken { username, token } => {
+                assert_eq!(username, "alice");
+                assert_eq!(token.reveal(), "legacy-bearer");
+            }
+            other => panic!("Expected OAuthAccessToken, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_legacy_requires_token() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            ("authenticator", Setting::String("oauth".to_string())),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Missing required parameter") && msg.contains("token"),
+            "Expected missing-token error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_oauth_authorization_code_authenticator_parses_config() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("client-x".to_string())),
+            (
+                "oauth_client_secret",
+                Setting::String("super-secret".to_string()),
+            ),
+            (
+                "oauth_authorization_url",
+                Setting::String("https://idp.example.com/oauth/authorize".to_string()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/oauth/token".to_string()),
+            ),
+            (
+                "oauth_redirect_uri",
+                Setting::String("http://127.0.0.1:9090/".to_string()),
+            ),
+            (
+                "oauth_scope",
+                Setting::String("session:role:DEV".to_string()),
+            ),
+            (
+                "oauth_enable_single_use_refresh_tokens",
+                Setting::Bool(true),
+            ),
+            ("oauth_disable_pkce", Setting::Bool(false)),
+            ("oauth_enable_dpop", Setting::Bool(true)),
+            ("client_store_temporary_credential", Setting::Bool(true)),
+            ("authentication_timeout", Setting::Int(45)),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAuthorizationCode(cfg) => {
+                assert_eq!(cfg.username, "alice");
+                assert_eq!(cfg.client_id, "client-x");
+                assert_eq!(cfg.client_secret.reveal(), "super-secret");
+                assert_eq!(
+                    cfg.authorization_url.as_ref().map(Url::as_str),
+                    Some("https://idp.example.com/oauth/authorize")
+                );
+                assert_eq!(
+                    cfg.token_url.as_ref().map(Url::as_str),
+                    Some("https://idp.example.com/oauth/token")
+                );
+                assert_eq!(
+                    cfg.redirect_uri.as_ref().map(Url::as_str),
+                    Some("http://127.0.0.1:9090/")
+                );
+                assert_eq!(cfg.scope.as_deref(), Some("session:role:DEV"));
+                assert!(cfg.enable_single_use_refresh_tokens);
+                assert!(!cfg.disable_pkce);
+                assert!(cfg.flow_options.enable_dpop);
+                assert!(cfg.client_store_temporary_credential);
+                assert_eq!(cfg.flow_options.authentication_timeout_secs, 45);
+            }
+            other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_authorization_code_minimal_uses_defaults() {
+        // Bare authenticator + user; ensures the Snowflake-as-IdP wiring
+        // path can still construct the config with default URLs / empty
+        // client credentials (LOCAL_APPLICATION substitution happens at
+        // flow time, analysis §1 / §9).
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("oauth_authorization_code".to_string()),
+            ),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAuthorizationCode(cfg) => {
+                assert!(cfg.client_id.is_empty(), "client_id default is empty");
+                assert!(cfg.client_secret.reveal().is_empty());
+                assert!(cfg.authorization_url.is_none());
+                assert!(cfg.token_url.is_none());
+                assert!(cfg.redirect_uri.is_none());
+                assert!(cfg.scope.is_none());
+                assert!(!cfg.enable_single_use_refresh_tokens);
+                assert!(!cfg.disable_pkce);
+                assert!(!cfg.flow_options.enable_dpop);
+                assert!(!cfg.client_store_temporary_credential);
+                assert_eq!(
+                    cfg.flow_options.authentication_timeout_secs,
+                    DEFAULT_AUTHENTICATION_TIMEOUT_SECS
+                );
+            }
+            other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_client_credentials_requires_token_url() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            ("oauth_client_secret", Setting::String("sss".to_string())),
+            // oauth_token_request_url intentionally omitted
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Missing required parameter") && msg.contains("oauth_token_request_url"),
+            "Expected missing token URL error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_oauth_client_credentials_authenticator_parses_config() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("svc-account".to_string())),
+            (
+                "authenticator",
+                Setting::String("oauth_client_credentials".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            ("oauth_client_secret", Setting::String("sss".to_string())),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/oauth/token".to_string()),
+            ),
+            (
+                "oauth_scope",
+                Setting::String("session:role:READER".to_string()),
+            ),
+            ("oauth_enable_dpop", Setting::String("true".to_string())),
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthClientCredentials(cfg) => {
+                assert_eq!(cfg.username, "svc-account");
+                assert_eq!(cfg.client_id, "cid");
+                assert_eq!(cfg.client_secret.reveal(), "sss");
+                assert_eq!(
+                    cfg.token_url.as_str(),
+                    "https://idp.example.com/oauth/token"
+                );
+                assert_eq!(cfg.scope.as_deref(), Some("session:role:READER"));
+                assert!(
+                    cfg.flow_options.enable_dpop,
+                    "string \"true\" should resolve to true"
+                );
+                assert_eq!(
+                    cfg.flow_options.authentication_timeout_secs,
+                    DEFAULT_AUTHENTICATION_TIMEOUT_SECS
+                );
+            }
+            other => panic!("Expected OAuthClientCredentials, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oauth_authenticator_with_invalid_url_fails_fast() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            (
+                "oauth_authorization_url",
+                Setting::String("not a url".to_string()),
+            ),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("oauth_authorization_url") && msg.contains("Could not parse URL"),
+            "Expected URL parse error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_oauth_disable_pkce_defaults_false_when_setting_omitted_with_real_idp_params() {
+        // `test_oauth_authorization_code_minimal_uses_defaults` covers the
+        // bare-minimum case (Snowflake-as-IdP). This sibling test pins
+        // the same default with a fully-populated external-IdP config so
+        // we don't regress the cross-driver default (analysis §9 / §3.3:
+        // PKCE is on for everybody except Python's opt-out, and we are
+        // not Python).
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("alice".to_string())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".to_string()),
+            ),
+            ("oauth_client_id", Setting::String("cid".to_string())),
+            (
+                "oauth_client_secret",
+                Setting::String("super-secret".to_string()),
+            ),
+            (
+                "oauth_authorization_url",
+                Setting::String("https://idp.example.com/oauth/authorize".to_string()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/oauth/token".to_string()),
+            ),
+            // NOTE: oauth_disable_pkce intentionally omitted.
+        ]);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::OAuthAuthorizationCode(cfg) => {
+                assert!(
+                    !cfg.disable_pkce,
+                    "disable_pkce must default to false when the setting is omitted"
+                );
+            }
+            other => panic!("Expected OAuthAuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_detect_os_version_not_empty() {
         let version = crate::telemetry::environment::detect_os_version();
         assert!(!version.is_empty());

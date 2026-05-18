@@ -50,6 +50,20 @@ pub struct Parameters {
     pub okta_account: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_OKTA_HOST")]
     pub okta_host: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_CLIENT_ID")]
+    pub oauth_client_id: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_CLIENT_SECRET")]
+    pub oauth_client_secret: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_AUTHORIZATION_URL")]
+    pub oauth_authorization_url: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_TOKEN_REQUEST_URL")]
+    pub oauth_token_request_url: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_REDIRECT_URI")]
+    pub oauth_redirect_uri: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_SCOPE")]
+    pub oauth_scope: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN")]
+    pub oauth_access_token: Option<String>,
 }
 
 impl Parameters {

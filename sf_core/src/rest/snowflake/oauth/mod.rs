@@ -29,3 +29,21 @@ pub(crate) use client_credentials::acquire_client_credentials;
 pub(crate) use error::EndpointUrlParseSnafu;
 pub use error::OAuthError;
 pub(crate) use token::{host_from_token_url, remove_oauth_access_token, remove_oauth_dpop_bundled};
+
+/// Suppress the real OS browser launcher process-wide. Test-only.
+///
+/// Integration tests in `sf_core/tests/` that drive the AC flow against
+/// a wiremock IdP must call this before the first `connect()` — without
+/// it, the AC interactive leg spawns `xdg-open` / `/usr/bin/open` /
+/// `cmd /C start` against the mock IdP URL and pops a real browser
+/// window. The flag defaults to `false` so production code is
+/// unaffected.
+///
+/// Gated by `cfg(any(test, feature = "test-utils"))` so it's reachable
+/// from `sf_core`'s in-tree integration / e2e binaries (which depend on
+/// `sf_core` with `features = ["test-utils"]`) without leaking into
+/// downstream consumers' release builds.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn disable_browser_launch_for_tests() {
+    authorization_code::BROWSER_LAUNCH_DISABLED.store(true, std::sync::atomic::Ordering::SeqCst);
+}

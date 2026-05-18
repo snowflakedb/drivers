@@ -254,8 +254,22 @@ impl DatabaseDriverV1 {
                         ..
                     }
                 );
+                // OAuth Authorization Code uses the same token cache to
+                // (a) short-circuit the interactive flow with a cached
+                // access token, (b) exchange a cached refresh token, and
+                // (c) drive 390303/390318 refresh-on-failure eviction
+                // (analysis_feature_oauth.md §3.2 / §7 / §8). Client
+                // Credentials intentionally never persists tokens
+                // (analysis §14 #12) and the legacy pre-acquired
+                // `OAUTH` flow forwards a caller-supplied token, so
+                // neither needs the cache wired here.
+                let oauth_caching_requested = matches!(
+                    &login_parameters.login_method,
+                    LoginMethod::OAuthAuthorizationCode(cfg)
+                        if cfg.client_store_temporary_credential
+                );
 
-                let token_cache = if mfa_caching_requested {
+                let token_cache = if mfa_caching_requested || oauth_caching_requested {
                     Some(self.token_cache().context(TokenCacheInitializationSnafu)?)
                 } else {
                     None

@@ -12,7 +12,8 @@ use url::Url;
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
-    ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters, NativeOktaConfig,
+    ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
+    NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
 };
 use crate::config::settings::Setting;
 use crate::config::{
@@ -69,6 +70,17 @@ pub enum AuthConfig {
         user: String,
         authentication_timeout_secs: u64,
     },
+    /// Legacy pre-acquired OAuth access token (`AUTHENTICATOR=OAUTH` +
+    /// raw `token=`). Forwarded unchanged to Snowflake (analysis
+    /// `analysis_feature_oauth.md` §6 / §10.1).
+    OAuthAccessToken {
+        user: String,
+        token: SensitiveString,
+    },
+    /// OAuth 2.0 Authorization Code (with PKCE) flow (analysis §3).
+    OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
+    /// OAuth 2.0 Client Credentials flow, external IdP only (analysis §4).
+    OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
 
 #[derive(Debug)]
@@ -336,6 +348,136 @@ fn parse_authentication_timeout(settings: &ParamStore) -> u64 {
         .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS)
 }
 
+/// Read a boolean parameter that wrappers may submit as a typed bool,
+/// a string (`"true"`/`"1"`), or an int (`0`/`1`). Mirrors
+/// `LoginMethod::get_flexible_bool` so OAuth knobs behave identically
+/// regardless of which path constructed the auth config.
+fn get_flexible_bool(settings: &ParamStore, key: crate::config::ParamKey) -> bool {
+    settings
+        .get_bool(key)
+        .or_else(|| {
+            settings
+                .get_string(key)
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        })
+        .or_else(|| settings.get_int(key).map(|v| v != 0))
+        .unwrap_or(false)
+}
+
+fn parse_optional_url(
+    settings: &ParamStore,
+    key: crate::config::ParamKey,
+) -> Result<Option<Url>, ConfigError> {
+    let Some(raw) = non_empty_string(settings, key) else {
+        return Ok(None);
+    };
+    let url = Url::parse(&raw).map_err(|e| {
+        InvalidParameterValueSnafu {
+            parameter: String::from(key),
+            value: raw,
+            explanation: format!("Could not parse URL: {e}"),
+        }
+        .build()
+    })?;
+    Ok(Some(url))
+}
+
+fn parse_required_url(
+    settings: &ParamStore,
+    key: crate::config::ParamKey,
+) -> Result<Url, ConfigError> {
+    let raw = non_empty_string(settings, key).context(MissingParameterSnafu {
+        parameter: String::from(key),
+    })?;
+    Url::parse(&raw).map_err(|e| {
+        InvalidParameterValueSnafu {
+            parameter: String::from(key),
+            value: raw,
+            explanation: format!("Could not parse URL: {e}"),
+        }
+        .build()
+    })
+}
+
+fn build_oauth_authorization_code_config(
+    settings: &ParamStore,
+) -> Result<OAuthAuthorizationCodeConfig, ConfigError> {
+    let username = non_empty_string(settings, USER).context(MissingParameterSnafu {
+        parameter: String::from(USER),
+    })?;
+    // For Snowflake-as-IdP we let the AC provider substitute
+    // LOCAL_APPLICATION at flow time when client_id/client_secret are
+    // empty (analysis §1, §9). Rest of the config is taken straight
+    // from settings.
+    let client_id = non_empty_string(settings, OAUTH_CLIENT_ID).unwrap_or_default();
+    let client_secret = non_empty_string(settings, OAUTH_CLIENT_SECRET).unwrap_or_default();
+    let authorization_url = parse_optional_url(settings, OAUTH_AUTHORIZATION_URL)?;
+    let token_url = parse_optional_url(settings, OAUTH_TOKEN_REQUEST_URL)?;
+    let redirect_uri = parse_optional_url(settings, OAUTH_REDIRECT_URI)?;
+    let scope = non_empty_string(settings, OAUTH_SCOPE);
+    let enable_single_use_refresh_tokens =
+        get_flexible_bool(settings, OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS);
+    let disable_pkce = get_flexible_bool(settings, OAUTH_DISABLE_PKCE);
+    let enable_dpop = get_flexible_bool(settings, OAUTH_ENABLE_DPOP);
+    let client_store_temporary_credential =
+        get_flexible_bool(settings, CLIENT_STORE_TEMPORARY_CREDENTIAL);
+    let authentication_timeout_secs = settings
+        .get_int(AUTHENTICATION_TIMEOUT)
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+    Ok(OAuthAuthorizationCodeConfig {
+        username,
+        client_id,
+        client_secret: client_secret.into(),
+        authorization_url,
+        token_url,
+        redirect_uri,
+        scope,
+        enable_single_use_refresh_tokens,
+        disable_pkce,
+        client_store_temporary_credential,
+        flow_options: OAuthFlowOptions {
+            enable_dpop,
+            authentication_timeout_secs,
+        },
+    })
+}
+
+fn build_oauth_client_credentials_config(
+    settings: &ParamStore,
+) -> Result<OAuthClientCredentialsConfig, ConfigError> {
+    let username = non_empty_string(settings, USER).context(MissingParameterSnafu {
+        parameter: String::from(USER),
+    })?;
+    let client_id = non_empty_string(settings, OAUTH_CLIENT_ID).context(MissingParameterSnafu {
+        parameter: String::from(OAUTH_CLIENT_ID),
+    })?;
+    let client_secret =
+        non_empty_string(settings, OAUTH_CLIENT_SECRET).context(MissingParameterSnafu {
+            parameter: String::from(OAUTH_CLIENT_SECRET),
+        })?;
+    let token_url = parse_required_url(settings, OAUTH_TOKEN_REQUEST_URL)?;
+    let scope = non_empty_string(settings, OAUTH_SCOPE);
+    let enable_dpop = get_flexible_bool(settings, OAUTH_ENABLE_DPOP);
+    let authentication_timeout_secs = settings
+        .get_int(AUTHENTICATION_TIMEOUT)
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+    Ok(OAuthClientCredentialsConfig {
+        username,
+        client_id,
+        client_secret: client_secret.into(),
+        token_url,
+        scope,
+        flow_options: OAuthFlowOptions {
+            enable_dpop,
+            authentication_timeout_secs,
+        },
+    })
+}
+
 fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
@@ -391,6 +533,34 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                     parameter: String::from(TOKEN),
                 })?,
         }),
+        // ─── OAuth: legacy pre-acquired access token ─────────────────────
+        // analysis_feature_oauth.md §6 — `AUTHENTICATOR=OAUTH` + raw
+        // `token=`. Forwarded unchanged to Snowflake; LOGIN_NAME is
+        // always set (gotcha §14 #10).
+        "OAUTH" => Ok(AuthConfig::OAuthAccessToken {
+            user: non_empty_string(settings, USER).context(MissingParameterSnafu {
+                parameter: String::from(USER),
+            })?,
+            token: settings
+                .get_sensitive_string(TOKEN)
+                .context(MissingParameterSnafu {
+                    parameter: String::from(TOKEN),
+                })?,
+        }),
+        // ─── OAuth: Authorization Code (with PKCE) ───────────────────────
+        // analysis_feature_oauth.md §3, §9. Snowflake-as-IdP defaults
+        // (LOCAL_APPLICATION substitution + default endpoints) are
+        // applied at flow time.
+        "OAUTH_AUTHORIZATION_CODE" => Ok(AuthConfig::OAuthAuthorizationCode(
+            build_oauth_authorization_code_config(settings)?,
+        )),
+        // ─── OAuth: Client Credentials (external IdP only) ───────────────
+        // analysis_feature_oauth.md §4. client_id/client_secret/token_url
+        // are mandatory because Snowflake's GS does not issue tokens for
+        // grant_type=client_credentials.
+        "OAUTH_CLIENT_CREDENTIALS" => Ok(AuthConfig::OAuthClientCredentials(
+            build_oauth_client_credentials_config(settings)?,
+        )),
         _ if auth_upper.starts_with("HTTPS://") => {
             let okta_url = Url::parse(&authenticator).map_err(|_| {
                 InvalidParameterValueSnafu {
@@ -528,6 +698,41 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             username: user.clone(),
             authentication_timeout_secs: *authentication_timeout_secs,
         },
+        AuthConfig::OAuthAccessToken { user, token } => LoginMethod::OAuthAccessToken {
+            username: user.clone(),
+            token: token.clone(),
+        },
+        AuthConfig::OAuthAuthorizationCode(cfg) => {
+            LoginMethod::OAuthAuthorizationCode(OAuthAuthorizationCodeConfig {
+                username: cfg.username.clone(),
+                client_id: cfg.client_id.clone(),
+                client_secret: cfg.client_secret.clone(),
+                authorization_url: cfg.authorization_url.clone(),
+                token_url: cfg.token_url.clone(),
+                redirect_uri: cfg.redirect_uri.clone(),
+                scope: cfg.scope.clone(),
+                enable_single_use_refresh_tokens: cfg.enable_single_use_refresh_tokens,
+                disable_pkce: cfg.disable_pkce,
+                client_store_temporary_credential: cfg.client_store_temporary_credential,
+                flow_options: OAuthFlowOptions {
+                    enable_dpop: cfg.flow_options.enable_dpop,
+                    authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
+                },
+            })
+        }
+        AuthConfig::OAuthClientCredentials(cfg) => {
+            LoginMethod::OAuthClientCredentials(OAuthClientCredentialsConfig {
+                username: cfg.username.clone(),
+                client_id: cfg.client_id.clone(),
+                client_secret: cfg.client_secret.clone(),
+                token_url: cfg.token_url.clone(),
+                scope: cfg.scope.clone(),
+                flow_options: OAuthFlowOptions {
+                    enable_dpop: cfg.flow_options.enable_dpop,
+                    authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
+                },
+            })
+        }
     }
 }
 
@@ -648,6 +853,71 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     severity: ValidationSeverity::Error,
                     parameter: TOKEN.into(),
                     message: "Missing required parameter 'token' for PAT authentication".into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+        }
+        "OAUTH" => {
+            // Legacy OAuth (analysis_feature_oauth.md §6) forwards a
+            // pre-acquired access token verbatim; the only required
+            // payload-side parameter is `token`. user/account are
+            // already validated above.
+            if settings.get_string(TOKEN).is_none_or(|s| s.is_empty()) {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: TOKEN.into(),
+                    message: "Missing required parameter 'token' for OAuth authentication".into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+        }
+        "OAUTH_AUTHORIZATION_CODE" => {
+            // AC flow (analysis_feature_oauth.md §3) defaults to
+            // Snowflake-as-IdP when client_id/secret are absent, so we
+            // only require user here. URL-shape validation is performed
+            // by `LoginMethod::from_settings` at build time.
+        }
+        "OAUTH_CLIENT_CREDENTIALS" => {
+            // CC flow (analysis_feature_oauth.md §4) is external-IdP
+            // only: client_id, client_secret, and oauth_token_request_url
+            // must be provided up-front (Snowflake's GS does not mint
+            // CC tokens).
+            if settings
+                .get_string(OAUTH_CLIENT_ID)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: OAUTH_CLIENT_ID.into(),
+                    message: "Missing required parameter 'oauth_client_id' for OAuth client \
+                              credentials authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+            if settings
+                .get_string(OAUTH_CLIENT_SECRET)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: OAUTH_CLIENT_SECRET.into(),
+                    message: "Missing required parameter 'oauth_client_secret' for OAuth client \
+                              credentials authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+            if settings
+                .get_string(OAUTH_TOKEN_REQUEST_URL)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: OAUTH_TOKEN_REQUEST_URL.into(),
+                    message: "Missing required parameter 'oauth_token_request_url' for OAuth \
+                              client credentials authentication"
+                        .into(),
                     code: ValidationCode::MissingRequired,
                 });
             }
@@ -1432,7 +1702,10 @@ mod tests {
         let settings = settings_from(&[
             ("account", Setting::String("acct".into())),
             ("user", Setting::String("u".into())),
-            ("authenticator", Setting::String("OAUTH".into())),
+            (
+                "authenticator",
+                Setting::String("BOGUS_AUTHENTICATOR".into()),
+            ),
         ]);
         let issues = validate_settings(&settings);
         let auth_issues: Vec<_> = issues
@@ -1470,7 +1743,10 @@ mod tests {
         let settings = settings_from(&[
             ("account", Setting::String("acct".into())),
             ("user", Setting::String("u".into())),
-            ("authenticator", Setting::String("OAUTH".into())),
+            (
+                "authenticator",
+                Setting::String("BOGUS_AUTHENTICATOR".into()),
+            ),
             ("host", Setting::String("h.com".into())),
         ]);
 

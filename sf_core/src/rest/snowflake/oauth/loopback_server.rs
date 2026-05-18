@@ -9,7 +9,7 @@
 //! ownership of the bind decision and the single-shot semantics
 //! (oneshot channel + graceful shutdown).
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -79,10 +79,27 @@ struct RedirectQuery {
 pub(crate) async fn bind(redirect_uri_hint: Option<&Url>) -> Result<LoopbackBinding, OAuthError> {
     let (ip, port, path) = match redirect_uri_hint {
         Some(url) => {
+            // Hard-enforce the cross-driver invariant from analysis §3.5
+            // and §14 #11: only ever bind a loopback interface, even if
+            // the supplied `oauth_redirect_uri` carries a different host.
+            // A misconfigured (or malicious) hint must not widen the
+            // listener's exposure beyond the local machine.
             let host = url.host();
             let ip = match host {
-                Some(url::Host::Ipv4(v4)) => IpAddr::V4(v4),
-                Some(url::Host::Ipv6(v6)) => IpAddr::V6(v6),
+                Some(url::Host::Ipv4(v4)) if v4.is_loopback() => IpAddr::V4(v4),
+                Some(url::Host::Ipv6(v6)) if v6.is_loopback() => IpAddr::V6(v6),
+                Some(url::Host::Ipv4(_)) => {
+                    tracing::warn!(
+                        "OAuth redirect_uri specified non-loopback IPv4 host; binding to 127.0.0.1 instead (analysis §14 #11)"
+                    );
+                    IpAddr::V4(Ipv4Addr::LOCALHOST)
+                }
+                Some(url::Host::Ipv6(_)) => {
+                    tracing::warn!(
+                        "OAuth redirect_uri specified non-loopback IPv6 host; binding to ::1 instead (analysis §14 #11)"
+                    );
+                    IpAddr::V6(Ipv6Addr::LOCALHOST)
+                }
                 _ => IpAddr::V4(Ipv4Addr::LOCALHOST),
             };
             let port = url.port().unwrap_or(0);
@@ -310,6 +327,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bind_with_non_loopback_ipv4_hint_falls_back_to_loopback() {
+        // Per analysis §14 #11 the listener must always bind a loopback
+        // interface, even when the user-supplied `oauth_redirect_uri`
+        // carries a non-loopback host (mistake or attack). 192.0.2.0/24 is
+        // the RFC 5737 documentation block — it is guaranteed not to be
+        // configured on any interface, so attempting to bind it directly
+        // would fail with EADDRNOTAVAIL. We rely on the coercion instead.
+        let hint = Url::parse("http://192.0.2.1:0/cb").unwrap();
+        let b = bind(Some(&hint)).await.expect("bind must succeed");
+        let addr = b.listener.local_addr().unwrap();
+        assert!(
+            addr.ip().is_loopback(),
+            "non-loopback hint must be coerced to loopback, got {}",
+            addr.ip()
+        );
+        assert_eq!(b.redirect_uri.host_str(), Some("127.0.0.1"));
+        assert_eq!(b.redirect_uri.path(), "/cb");
+    }
+
+    #[tokio::test]
     async fn missing_code_surfaces_specific_error() {
         let b = bind(None).await.expect("bind");
         let addr = b.listener.local_addr().unwrap();
@@ -321,5 +358,51 @@ mod tests {
             .unwrap();
         let err = join.await.unwrap().expect_err("must fail");
         assert!(matches!(err, OAuthError::MissingAuthorizationCode { .. }));
+    }
+
+    #[tokio::test]
+    async fn bind_with_non_loopback_ipv6_hint_falls_back_to_loopback() {
+        // The literal example called out in the task. 2001:db8::/32 is
+        // the RFC 3849 documentation prefix and is guaranteed not to be
+        // assigned on any local interface, so a naive bind would fail
+        // with EADDRNOTAVAIL. We deliberately fall back to a loopback
+        // bind (analysis §14 #11) — the resulting socket must still be
+        // on a loopback interface.
+        let hint = Url::parse("http://[2001:db8::1]:0/cb").expect("parse hint");
+        let Ok(b) = bind(Some(&hint)).await else {
+            eprintln!("skipping: IPv6 loopback unavailable on this host");
+            return;
+        };
+        let addr = b.listener.local_addr().unwrap();
+        assert!(
+            addr.ip().is_loopback(),
+            "non-loopback ipv6 hint must be coerced to loopback, got {addr}"
+        );
+        assert!(
+            matches!(b.redirect_uri.host_str(), Some("127.0.0.1") | Some("[::1]")),
+            "redirect_uri host must be loopback, got {:?}",
+            b.redirect_uri.host_str()
+        );
+        assert_eq!(b.redirect_uri.path(), "/cb", "path must be preserved");
+    }
+
+    #[tokio::test]
+    async fn ipv6_loopback_hint_binds_to_ipv6_loopback() {
+        // Positive complement to the test above: `[::1]` is the only
+        // IPv6 address we honor explicitly. Validates the §3.5 wording
+        // that we may bind `::1` "only if the user-supplied redirect
+        // URI is literal IPv6".
+        let hint = Url::parse("http://[::1]:0/cb").expect("parse hint");
+        let Ok(b) = bind(Some(&hint)).await else {
+            // Some CI hosts disable IPv6 entirely (e.g. dual-stack
+            // turned off in the kernel). Skip rather than fail.
+            eprintln!("skipping: IPv6 loopback unavailable on this host");
+            return;
+        };
+        let addr = b.listener.local_addr().unwrap();
+        assert!(
+            addr.ip().is_loopback(),
+            "ipv6 loopback hint must still produce a loopback bind, got {addr}"
+        );
     }
 }
