@@ -127,6 +127,7 @@ class Connection(ErrorHandlerMixin):
         """
         self._messages: list[tuple[type[Exception], ErrorValue]] = []
         self._errorhandler: Callable[..., None] = Error.default_errorhandler
+        self._query_timeout: int = kwargs.get("query_timeout", 0)  # type: ignore[assignment]
 
         self.config = ConnectionConfig.from_connection_args(
             connection_name=connection_name,

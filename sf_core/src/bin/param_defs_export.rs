@@ -164,11 +164,12 @@ fn required_to_str(r: &Required) -> &'static str {
 }
 
 /// Section comment from the scope.
-fn scope_section(scope: ParamScope) -> &'static str {
-    match scope {
-        ParamScope::Connection => "Connection",
-        ParamScope::Session => "Session",
-        ParamScope::Statement => "Statement",
+fn scope_section(scope: &[ParamScope]) -> &'static str {
+    match scope.first() {
+        Some(ParamScope::Connection) => "Connection",
+        Some(ParamScope::Session) => "Session",
+        Some(ParamScope::Statement) => "Statement",
+        None => "Unknown",
     }
 }
 
@@ -228,8 +229,8 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     let mut sensitive: Vec<String> = Vec::new();
 
     for p in sorted_params.iter().copied() {
-        // Skip statement-scoped params; they belong on the cursor, not the connection.
-        if p.scope == ParamScope::Statement {
+        // Skip statement-only params; they belong on the cursor, not the connection.
+        if p.is_statement_only() {
             continue;
         }
 
@@ -273,19 +274,20 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
     out.push_str("    \"\"\"\n\n");
 
     // Fields grouped by scope section
-    let mut current_scope: Option<ParamScope> = None;
+    let mut current_scope: Option<&str> = None;
 
     for p in sorted_params.iter().copied() {
-        // Skip statement-scoped params; they belong on the cursor, not the connection.
-        if p.scope == ParamScope::Statement {
+        // Skip statement-only params; they belong on the cursor, not the connection.
+        if p.is_statement_only() {
             continue;
         }
 
-        if current_scope != Some(p.scope) {
-            current_scope = Some(p.scope);
+        let section = scope_section(p.scope);
+        if current_scope != Some(section) {
+            current_scope = Some(section);
             out.push_str(&format!(
                 "    # -- {} parameters {}\n",
-                scope_section(p.scope),
+                section,
                 "-".repeat(50)
             ));
         }

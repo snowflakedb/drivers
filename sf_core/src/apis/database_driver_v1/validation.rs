@@ -314,7 +314,7 @@ pub(crate) fn validate_connection_seed_write(
     let Some(d) = def else {
         return Ok(());
     };
-    if d.scope == ParamScope::Statement {
+    if !d.allows_connection_scope() && !d.allows_session_scope() {
         return InvalidArgumentSnafu {
             argument: format!(
                 "Parameter '{}' is statement-scoped; set it on a statement handle",
@@ -324,7 +324,7 @@ pub(crate) fn validate_connection_seed_write(
         .fail();
     }
     if post_connect {
-        if d.scope == ParamScope::Session {
+        if d.allows_session_scope() && !d.allows_connection_scope() {
             return InvalidArgumentSnafu {
                 argument: format!(
                     "Parameter '{}' is session-scoped; use connection_set_session_option after connect",
@@ -352,19 +352,10 @@ pub(crate) fn validate_session_override_write(
     let Some(d) = def else {
         return Ok(());
     };
-    if d.scope == ParamScope::Statement {
+    if !d.allows_session_scope() {
         return InvalidArgumentSnafu {
             argument: format!(
-                "Parameter '{}' is statement-scoped; set it on a statement handle",
-                d.canonical_name
-            ),
-        }
-        .fail();
-    }
-    if d.scope == ParamScope::Connection {
-        return InvalidArgumentSnafu {
-            argument: format!(
-                "Parameter '{}' is connection-scoped; set it via connection options before connect",
+                "Parameter '{}' is not session-scoped; set it on a statement handle or via connection options",
                 d.canonical_name
             ),
         }
@@ -379,7 +370,7 @@ pub(crate) fn validate_statement_option_write(
     let Some(d) = def else {
         return Ok(());
     };
-    if d.scope != ParamScope::Statement {
+    if !d.allows_statement_scope() {
         return InvalidArgumentSnafu {
             argument: format!(
                 "Parameter '{}' is not statement-scoped; set it on the connection or session",
@@ -815,5 +806,39 @@ mod tests {
         assert_eq!(unknown.get("SOME_BOOL_KEY"), Some(&"true".to_string()));
         assert!(!unknown.contains_key("host"));
         assert!(!unknown.contains_key("HOST"));
+    }
+
+    #[test]
+    fn multi_scope_param_accepted_on_connection_seed() {
+        let result = validate_connection_seed_write(
+            false,
+            param_registry::registry().resolve("query_timeout"),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn multi_scope_param_accepted_post_connect() {
+        let result = validate_connection_seed_write(
+            true,
+            param_registry::registry().resolve("query_timeout"),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn statement_only_param_rejected_on_connection() {
+        let result = validate_connection_seed_write(
+            false,
+            param_registry::registry().resolve("async_execution"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn query_timeout_accepted_on_statement() {
+        let result =
+            validate_statement_option_write(param_registry::registry().resolve("query_timeout"));
+        assert!(result.is_ok());
     }
 }

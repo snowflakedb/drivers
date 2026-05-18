@@ -34,6 +34,7 @@ from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ConfigSetting,
     ExecuteQueryResponse,
     MultiStatementResult,
     PrepareResult,
@@ -433,6 +434,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
+        timeout: int = 0,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -446,13 +448,14 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
+            timeout (int): Query timeout in seconds (0 = use connection default or disabled).
         """
         if num_statements is not None:
             # TODO Create a global known parameters registry
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
         self.reset()
-        return self._execute(operation, parameters, _is_put_get, **kwargs)
+        return self._execute(operation, parameters, _is_put_get, timeout=timeout, **kwargs)
 
     def _format_query_for_log(self, query: str) -> str:
         return self._connection._format_query_for_log(query)
@@ -462,6 +465,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        timeout: int = 0,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
@@ -473,6 +477,10 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             if self._statement_parameters:
                 self._apply_statement_parameters(stmt_handle)
+
+            effective_timeout = timeout if timeout > 0 else getattr(self._connection, "_query_timeout", 0)
+            if effective_timeout > 0:
+                self._set_query_timeout(stmt_handle, effective_timeout)
 
             response = self._execute_query(stmt_handle, bindings)
 
@@ -499,6 +507,11 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             if setting is not None:
                 options[key] = setting
 
+        core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
+
+    def _set_query_timeout(self, stmt_handle: StatementHandle, timeout_seconds: int) -> None:
+        """Set query timeout on the statement handle."""
+        options = {"query_timeout": ConfigSetting(int_value=timeout_seconds)}
         core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
 
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:

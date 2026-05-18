@@ -86,6 +86,16 @@ pub enum SfError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "Query timed out after {elapsed:?} (timeout {configured:?}, query_id: {query_id})"
+    ))]
+    QueryTimeout {
+        query_id: String,
+        configured: Duration,
+        elapsed: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Cancelled"))]
     Cancelled {
         #[snafu(implicit)]

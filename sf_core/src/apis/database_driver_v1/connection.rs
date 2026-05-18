@@ -850,6 +850,16 @@ impl Connection {
         self.connection_seed.insert(key, value);
     }
 
+    pub(crate) fn get_param(
+        &self,
+        key: crate::config::param_registry::ParamKey,
+    ) -> Option<Setting> {
+        self.resolved_connect
+            .as_ref()
+            .and_then(|s| s.get(key).cloned())
+            .or_else(|| self.connection_seed.get(key).cloned())
+    }
+
     fn resolved_settings(&self) -> Result<ParamStore, crate::config::ConfigError> {
         resolver::resolve(&self.connection_seed)
     }
@@ -1494,7 +1504,7 @@ impl DatabaseDriverV1 {
 
                 let (canonical, def) = canonicalize_setting_key(&key);
                 if let Some(d) = def
-                    && d.scope == ParamScope::Session
+                    && d.allows_session_scope()
                 {
                     if let Some(s) = conn
                         .session_overrides

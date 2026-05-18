@@ -27,3 +27,39 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetStmtAttr: HY010 during SQL_NEED_D
 
   SQLCancel(stmt_handle());
 }
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetStmtAttr: SQL_ATTR_QUERY_TIMEOUT set and get",
+                 "[odbc-api][setstmtattr][driver_attributes][query_timeout]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_QUERY_TIMEOUT,
+                                 reinterpret_cast<SQLPOINTER>(30), SQL_IS_UINTEGER);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLULEN value = 0;
+  ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_QUERY_TIMEOUT, &value, SQL_IS_UINTEGER, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(value == 30);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetStmtAttr: SQL_ATTR_QUERY_TIMEOUT zero disables",
+                 "[odbc-api][setstmtattr][driver_attributes][query_timeout]") {
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_QUERY_TIMEOUT,
+                                 reinterpret_cast<SQLPOINTER>(60), SQL_IS_UINTEGER);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_QUERY_TIMEOUT,
+                       reinterpret_cast<SQLPOINTER>(0), SQL_IS_UINTEGER);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLULEN value = 99;
+  ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_QUERY_TIMEOUT, &value, SQL_IS_UINTEGER, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(value == 0);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetStmtAttr: SQL_ATTR_QUERY_TIMEOUT default is zero",
+                 "[odbc-api][getstmtattr][driver_attributes][query_timeout]") {
+  SQLULEN value = 99;
+  SQLRETURN ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_QUERY_TIMEOUT, &value, SQL_IS_UINTEGER, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(value == 0);
+}

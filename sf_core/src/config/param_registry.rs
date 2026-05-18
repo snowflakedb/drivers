@@ -117,6 +117,8 @@ pub mod param_names {
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
     pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
+    // Query timeout
+    pub const QUERY_TIMEOUT: ParamKey = ParamKey("query_timeout");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -125,6 +127,19 @@ pub enum ParamScope {
     Connection,
     Session,
     Statement,
+}
+
+impl ParamScope {
+    pub const fn slice_contains(scopes: &[ParamScope], target: ParamScope) -> bool {
+        let mut i = 0;
+        while i < scopes.len() {
+            if scopes[i] as u8 == target as u8 {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
 }
 
 /// Defines a single supported configuration parameter.
@@ -160,8 +175,9 @@ pub struct ParamDef {
     /// If deprecated, the canonical name of the replacement parameter.
     pub deprecated_by: Option<&'static str>,
 
-    /// Which API layer owns writes for this parameter.
-    pub scope: ParamScope,
+    /// Which API layers may write this parameter (e.g. Connection-only,
+    /// Statement-only, or both Connection and Statement for inherited defaults).
+    pub scope: &'static [ParamScope],
 
     /// When true, the resolved connection-seed value participates in login / new session.
     pub used_at_connect: bool,
@@ -204,7 +220,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Snowflake account identifier",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -218,7 +234,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Snowflake server hostname",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -232,7 +248,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Server port number",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -246,7 +262,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Connection protocol (http or https)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -260,7 +276,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable or disable SSL/TLS (sets protocol to https or http)",
         deprecated_by: Some("protocol"),
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -274,7 +290,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Full server URL (alternative to host/port/protocol)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -288,7 +304,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Preserve underscores in the hostname derived from the account name",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -303,7 +319,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Login username",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -317,7 +333,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Login password",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -331,7 +347,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Authenticator type for the connection",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -345,7 +361,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Private key for key-pair authentication (base64-encoded or PEM)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -359,7 +375,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Path to private key file for key-pair authentication",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -373,7 +389,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Passphrase for encrypted private key",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -387,7 +403,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Pre-acquired bearer token (PAT or legacy OAUTH)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -401,7 +417,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "MFA passcode for USERNAME_PASSWORD_MFA authentication",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -415,7 +431,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Whether the MFA passcode is appended to the password",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -429,7 +445,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable MFA token caching for USERNAME_PASSWORD_MFA authentication",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -443,7 +459,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Timeout in seconds for native Okta SSO authentication",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -457,7 +473,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Okta username (defaults to the Snowflake user if omitted)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -471,7 +487,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Skip the Okta SAML URL host-match safety check",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -630,7 +646,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default database to use",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: true,
     },
@@ -644,7 +660,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default schema to use",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: true,
     },
@@ -658,7 +674,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default warehouse to use",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: true,
     },
@@ -672,7 +688,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default role to use",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: true,
     },
@@ -687,7 +703,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Path to custom root certificate store",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -701,7 +717,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Whether to verify the server hostname in TLS",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -715,7 +731,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Whether to verify TLS certificates",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -730,7 +746,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Certificate revocation check mode (DISABLED, ENABLED, ADVISORY)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -744,7 +760,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable disk caching for CRL responses",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -758,7 +774,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable in-memory caching for CRL responses",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -772,7 +788,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Directory for CRL cache files",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -786,7 +802,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "CRL cache validity time in days",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -800,7 +816,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Allow certificates that do not include a CRL distribution URL",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -814,7 +830,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "HTTP timeout in seconds for CRL endpoint requests",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -828,7 +844,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Connection timeout in seconds for CRL endpoints",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -843,7 +859,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Named connection to load from TOML configuration files",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -857,7 +873,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Maximum number of characters of a query string to include in log messages",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -871,7 +887,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Include the (truncated) SQL text in INFO query logs",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -885,7 +901,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Include the (truncated) JSON bindings in INFO query logs (requires log_query_text)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -900,7 +916,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -914,7 +930,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable auto-detection of async queries before logout (SNOW-2314152)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -928,7 +944,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Error handling strategy for logout: 'best_effort' or 'strict'",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -942,7 +958,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Total timeout budget for logout operation including retries",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -956,7 +972,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Maximum total attempts for logout (1 = no retry, 3 = 2 retries)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -970,7 +986,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Per-request socket timeout for individual logout attempts",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -984,7 +1000,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Application identifier sent by the client wrapper (e.g. PythonConnector)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: false,
         mutable_after_connect: false,
     },
@@ -999,7 +1015,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Execute queries asynchronously",
         deprecated_by: None,
-        scope: ParamScope::Statement,
+        scope: &[ParamScope::Statement],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -1013,7 +1029,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Exact number of statements in a multi-statement query",
         deprecated_by: None,
-        scope: ParamScope::Statement,
+        scope: &[ParamScope::Statement],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -1028,7 +1044,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Number of concurrent chunk prefetch threads for result set downloading",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -1042,7 +1058,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Memory budget in MB for chunk prefetch buffer (0 = unlimited)",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: false,
         mutable_after_connect: true,
     },
@@ -1057,7 +1073,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Keep the session alive with periodic heartbeat requests",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -1071,23 +1087,62 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Heartbeat frequency in seconds (clamped to interval master_token_validity/16..master_token_validity/4)",
         deprecated_by: None,
-        scope: ParamScope::Session,
+        scope: &[ParamScope::Session],
         used_at_connect: true,
         mutable_after_connect: false,
+    },
+    // ── Query timeout ──────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::QUERY_TIMEOUT.as_str(),
+        aliases: &["QUERY_TIMEOUT"],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(0)),
+        sensitive: false,
+        description: "Query execution timeout in seconds (0 = disabled)",
+        deprecated_by: None,
+        scope: &[ParamScope::Connection, ParamScope::Statement],
+        used_at_connect: false,
+        mutable_after_connect: true,
     },
 ];
 
 impl ParamDef {
     /// Whether the resolved value may participate in login / new session creation.
     ///
-    /// [`ParamScope::Statement`] parameters are never consumed at connect regardless
-    /// of stored metadata.
+    /// Parameters that are only statement-scoped are never consumed at connect
+    /// regardless of stored metadata.
     #[inline]
     pub fn effective_used_at_connect(&self) -> bool {
-        if self.scope == ParamScope::Statement {
+        if self.is_statement_only() {
             return false;
         }
         self.used_at_connect
+    }
+
+    /// True when this parameter can be set on a connection.
+    #[inline]
+    pub fn allows_connection_scope(&self) -> bool {
+        ParamScope::slice_contains(self.scope, ParamScope::Connection)
+    }
+
+    /// True when this parameter can be set on a session.
+    #[inline]
+    pub fn allows_session_scope(&self) -> bool {
+        ParamScope::slice_contains(self.scope, ParamScope::Session)
+    }
+
+    /// True when this parameter can be set on a statement.
+    #[inline]
+    pub fn allows_statement_scope(&self) -> bool {
+        ParamScope::slice_contains(self.scope, ParamScope::Statement)
+    }
+
+    /// True when the parameter is ONLY statement-scoped (not also connection/session).
+    #[inline]
+    pub fn is_statement_only(&self) -> bool {
+        self.scope == &[ParamScope::Statement]
     }
 }
 
@@ -1211,14 +1266,14 @@ mod tests {
             .resolve("CLIENT_SESSION_KEEP_ALIVE")
             .expect("CLIENT_SESSION_KEEP_ALIVE should resolve");
         assert_eq!(keep_alive.value_type, ValueType::Bool);
-        assert_eq!(keep_alive.scope, ParamScope::Session);
+        assert!(keep_alive.allows_session_scope());
         assert!(keep_alive.used_at_connect);
 
         let freq = r
             .resolve("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY")
             .expect("heartbeat frequency param should resolve");
         assert_eq!(freq.value_type, ValueType::Int);
-        assert_eq!(freq.scope, ParamScope::Session);
+        assert!(freq.allows_session_scope());
         assert!(freq.used_at_connect);
     }
 
@@ -1294,7 +1349,7 @@ mod tests {
             .expect("log_max_query_length should be registered");
         assert_eq!(def.canonical_name, "log_max_query_length");
         assert_eq!(def.value_type, ValueType::Int);
-        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(def.allows_connection_scope());
         assert!(!def.used_at_connect);
         assert!(!def.mutable_after_connect);
         assert_eq!(def.default.unwrap()(), Setting::Int(80));
@@ -1309,7 +1364,7 @@ mod tests {
         assert_eq!(def.canonical_name, "log_query_text");
         assert_eq!(def.value_type, ValueType::Bool);
         assert_eq!(def.additional_value_type, Some(ValueType::String));
-        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(def.allows_connection_scope());
         assert!(!def.used_at_connect);
         assert!(!def.mutable_after_connect);
         assert!(!def.sensitive);
@@ -1325,7 +1380,7 @@ mod tests {
         assert_eq!(def.canonical_name, "log_query_parameters");
         assert_eq!(def.value_type, ValueType::Bool);
         assert_eq!(def.additional_value_type, Some(ValueType::String));
-        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(def.allows_connection_scope());
         assert!(!def.used_at_connect);
         assert!(!def.mutable_after_connect);
         assert!(!def.sensitive);
@@ -1354,7 +1409,7 @@ mod tests {
     fn statement_scope_params_are_never_used_at_connect() {
         let r = registry();
         for p in r.all_params() {
-            if p.scope == ParamScope::Statement {
+            if p.allows_statement_scope() {
                 assert!(
                     !p.used_at_connect,
                     "expected used_at_connect == false for {}",
@@ -1372,9 +1427,44 @@ mod tests {
             let d = r
                 .resolve(key)
                 .unwrap_or_else(|| panic!("expected registry entry for {key}"));
-            assert_eq!(d.scope, ParamScope::Session, "key {key}");
+            assert!(d.allows_session_scope(), "key {key}");
             assert!(d.used_at_connect, "key {key}");
             assert!(d.mutable_after_connect, "key {key}");
+        }
+    }
+
+    #[test]
+    fn query_timeout_registered_with_correct_properties() {
+        let r = registry();
+        let def = r
+            .resolve("query_timeout")
+            .expect("query_timeout should be registered");
+        assert_eq!(def.canonical_name, "query_timeout");
+        assert_eq!(def.value_type, ValueType::Int);
+        assert!(def.allows_connection_scope());
+        assert!(def.allows_statement_scope());
+        assert!(!def.is_statement_only());
+        assert!(!def.used_at_connect);
+        assert!(def.mutable_after_connect);
+        assert_eq!(def.default.unwrap()(), Setting::Int(0));
+    }
+
+    #[test]
+    fn query_timeout_alias_resolves() {
+        let r = registry();
+        let def = r
+            .resolve("QUERY_TIMEOUT")
+            .expect("QUERY_TIMEOUT alias should resolve");
+        assert_eq!(def.canonical_name, "query_timeout");
+    }
+
+    #[test]
+    fn multi_scope_params_not_used_at_connect() {
+        let r = registry();
+        for p in r.all_params() {
+            if p.allows_statement_scope() && p.allows_connection_scope() {
+                assert!(!p.effective_used_at_connect());
+            }
         }
     }
 }

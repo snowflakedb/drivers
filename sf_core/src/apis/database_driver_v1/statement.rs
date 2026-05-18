@@ -25,12 +25,15 @@ use crate::rest::snowflake::{
 
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
+use crate::rest::snowflake::RestError;
 use crate::rest::snowflake::async_exec::submit_statement_async;
+use crate::rest::snowflake::error::SfError;
 #[cfg(test)]
 use crate::rest::snowflake::query_request;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -278,6 +281,18 @@ impl DatabaseDriverV1 {
             query_parameters: build_query_parameters_with_timeout(&stmt.settings, timeout_seconds),
         };
 
+        let query_timeout = {
+            let conn = stmt.conn.lock().await;
+            stmt.resolve_query_timeout(&conn)
+        };
+        let effective_policy = if !query_timeout.is_zero() {
+            let mut p = retry_policy.clone();
+            p.max_elapsed = query_timeout;
+            p
+        } else {
+            retry_policy
+        };
+
         let conn_arc = stmt.conn.clone();
         drop(stmt);
 
@@ -291,12 +306,15 @@ impl DatabaseDriverV1 {
                     query_parameters.clone(),
                     session_token.reveal(),
                     query_input.clone(),
-                    &retry_policy,
+                    &effective_policy,
                     execution_mode,
                 )
                 .await
                 {
                     Ok(result) => break Ok(result),
+                    Err(e) if !query_timeout.is_zero() && is_deadline_exceeded(&e) => {
+                        return Err(wrap_as_query_timeout(e, query_timeout)).context(QuerySnafu);
+                    }
                     Err(e) => last_error = Some(e),
                 }
             }
@@ -526,6 +544,20 @@ impl Statement {
         }
         QueryExecutionMode::Blocking
     }
+
+    pub(crate) fn resolve_query_timeout(&self, conn: &Connection) -> Duration {
+        if let Some(Setting::Int(secs)) = self.settings.get(param_names::QUERY_TIMEOUT) {
+            if *secs > 0 {
+                return Duration::from_secs(*secs as u64);
+            }
+        }
+        if let Some(Setting::Int(secs)) = conn.get_param(param_names::QUERY_TIMEOUT) {
+            if secs > 0 {
+                return Duration::from_secs(secs as u64);
+            }
+        }
+        Duration::ZERO
+    }
 }
 
 fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
@@ -726,6 +758,38 @@ fn resolve_query_bindings<'a>(
         }
         .build()),
         None => Ok(None),
+    }
+}
+
+fn is_deadline_exceeded(err: &RestError) -> bool {
+    matches!(
+        err,
+        RestError::AsyncQuery {
+            source: SfError::DeadlineExceeded { .. },
+            ..
+        }
+    )
+}
+
+fn wrap_as_query_timeout(err: RestError, query_timeout: Duration) -> RestError {
+    if let RestError::AsyncQuery {
+        source: SfError::DeadlineExceeded { elapsed, .. },
+        ..
+    } = &err
+    {
+        RestError::AsyncQuery {
+            source: SfError::QueryTimeout {
+                query_id: String::new(),
+                configured: query_timeout,
+                elapsed: *elapsed,
+                location: snafu::location!(),
+            },
+            request_id: None,
+            query_id: None,
+            location: snafu::location!(),
+        }
+    } else {
+        err
     }
 }
 
