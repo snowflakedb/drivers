@@ -11,8 +11,12 @@ import oldSnowflakeSDK from 'snowflake-sdk';
 import newSnowflakeSDK from '../../../src/index.js';
 import getTestParameter from './getTestParameter';
 
+export function isRunningForOldDriver() {
+  return !!process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER;
+}
+
 export function getSnowflakeSDK() {
-  if (process.env.SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER) {
+  if (isRunningForOldDriver()) {
     return oldSnowflakeSDK;
   } else {
     // TODO:
