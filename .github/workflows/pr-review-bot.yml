@@ -54,8 +54,8 @@ on:
     types: [opened, ready_for_review, reopened]
   schedule:
     # Every 2h on the hour, but only at UTC times that overlap
-    # working hours (08:00–16:59):
-    - cron: "0 7,12,14 * * *"
+    # working hours (08:00–16:59), Monday-Friday only (skip weekends).
+    - cron: "0 7,12,14 * * 1-5"
   workflow_dispatch:
     inputs:
       mode:
