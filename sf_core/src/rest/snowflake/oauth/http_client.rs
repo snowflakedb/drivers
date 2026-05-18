@@ -151,6 +151,25 @@ impl<'c> AsyncHttpClient<'c> for OAuthHttpClient {
     }
 }
 
+/// Build an [`OAuthHttpClient`] from the caller-injected `reqwest::Client`,
+/// optionally layering DPoP proof signing when a key is provided.
+///
+/// The `reqwest::Client` comes from the core login logic (connection pool,
+/// TLS, proxy settings are all shared). The [`OAuthHttpClient`] wrapper is
+/// required by the `oauth2` crate's `AsyncHttpClient` trait system.
+pub(super) fn make_http_client(
+    client: &reqwest::Client,
+    dpop_key: Option<&DPoPKey>,
+    token_url: &Url,
+) -> OAuthHttpClient {
+    let adapter = OAuthHttpClient::new(client);
+    if let Some(key) = dpop_key {
+        adapter.with_dpop(DPoPContext::new(key, token_url))
+    } else {
+        adapter
+    }
+}
+
 fn clone_request(request: &Request<Vec<u8>>) -> Request<Vec<u8>> {
     let mut builder = http::Request::builder()
         .method(request.method().clone())

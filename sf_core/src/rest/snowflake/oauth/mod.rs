@@ -26,7 +26,7 @@ mod loopback_server;
 mod pkce;
 mod token;
 
-pub(crate) use authorization_code::acquire_authorization_code;
+pub(crate) use authorization_code::run_oauth_authorization_code;
 pub(crate) use client_credentials::acquire_client_credentials;
 pub(crate) use error::EndpointUrlParseSnafu;
 pub use error::OAuthError;

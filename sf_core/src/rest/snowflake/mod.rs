@@ -498,13 +498,21 @@ pub async fn auth_request_data(
                     url: login_parameters.server_url.clone(),
                 })
                 .context(OAuthFlowSnafu)?;
-            let acquired = oauth::acquire_authorization_code(client, &server_url, cfg, token_cache)
-                .await
-                .context(OAuthFlowSnafu)?;
+            let acquired =
+                oauth::run_oauth_authorization_code(client, &server_url, cfg, token_cache)
+                    .await
+                    .context(OAuthFlowSnafu)?;
             data.login_name = Some(cfg.username.clone());
             data.token = Some(acquired.access_token);
             data.authenticator = Some("OAUTH".to_string());
             data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
+            // `dpop_jwk_json` is `Option<String>`: `Some` when DPoP was
+            // enabled, `None` otherwise, so the assignment is implicitly
+            // conditional. The JWK is carried through login data so the
+            // driver can build a DPoP proof header on the Snowflake login
+            // request; the server validates it statelessly against the
+            // thumbprint (`jkt`) already embedded in the access token
+            // (RFC 9449).
             data.dpop_jwk_json = acquired.dpop_jwk_json;
         }
         // Client Credentials is external-IdP only (analysis §4) and tokens
@@ -520,6 +528,7 @@ pub async fn auth_request_data(
             data.token = Some(acquired.access_token);
             data.authenticator = Some("OAUTH".to_string());
             data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
+            // See AC branch above for why dpop_jwk_json is carried here.
             data.dpop_jwk_json = acquired.dpop_jwk_json;
         }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
@@ -792,7 +801,7 @@ pub async fn snowflake_login_with_client(
             let mut should_retry = false;
             match &login_parameters.login_method {
                 LoginMethod::OAuthAuthorizationCode(cfg) => {
-                    tracing::info!(
+                    tracing::debug!(
                         code = code,
                         oauth_type = "OAUTH_AUTHORIZATION_CODE",
                         "OAuth access token cache eviction triggered by Snowflake error code {code}"
@@ -807,7 +816,7 @@ pub async fn snowflake_login_with_client(
                 LoginMethod::OAuthClientCredentials(_) => {
                     // No cache to evict for CC (analysis §4 / §14 #12);
                     // the replay re-acquires from the IdP token endpoint.
-                    tracing::info!(
+                    tracing::debug!(
                         code = code,
                         oauth_type = "OAUTH_CLIENT_CREDENTIALS",
                         "Re-acquiring OAuth client-credentials access token after Snowflake error code {code}"
@@ -817,7 +826,7 @@ pub async fn snowflake_login_with_client(
                 _ => {}
             }
             if should_retry {
-                tracing::info!("Retrying login after OAuth refresh");
+                tracing::debug!("Retrying login after OAuth refresh");
                 let retry_data =
                     auth_request_data(client, login_parameters, session_parameters, token_cache)
                         .await?;

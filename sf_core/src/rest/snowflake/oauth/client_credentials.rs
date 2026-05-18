@@ -14,13 +14,12 @@
 use std::time::Duration;
 
 use oauth2::basic::BasicClient;
-use oauth2::{AuthUrl, ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
-use url::Url;
+use oauth2::{ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
 
 use super::authorization_code::{AcquiredOAuthToken, map_request_token_error};
 use super::dpop::DPoPKey;
 use super::error::{AuthenticationTimeoutSnafu, MissingAccessTokenSnafu, OAuthError};
-use super::http_client::{DPoPContext, OAuthHttpClient};
+use super::http_client::make_http_client;
 use crate::config::rest_parameters::OAuthClientCredentialsConfig;
 use crate::sensitive::SensitiveString;
 
@@ -36,7 +35,7 @@ pub(crate) async fn acquire_client_credentials(
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     tracing::info!("Starting OAuth client credentials flow");
 
-    let dpop_key = if config.enable_dpop {
+    let dpop_key = if config.flow_options.enable_dpop {
         Some(DPoPKey::generate()?)
     } else {
         None
@@ -50,12 +49,8 @@ pub(crate) async fn acquire_client_credentials(
     // the Snowflake-IdP substitution path documented for AC has no
     // analogue here.
     //
-    // Client Credentials has no `authorize_url` step, but the `oauth2`
-    // typestate still requires the field to be set. We reuse the token
-    // URL — the value is never read for CC.
     let oauth_client = BasicClient::new(ClientId::new(config.client_id.clone()))
         .set_client_secret(ClientSecret::new(config.client_secret.reveal().to_string()))
-        .set_auth_uri(AuthUrl::from_url(config.token_url.clone()))
         .set_token_uri(TokenUrl::from_url(config.token_url.clone()));
 
     let mut request = oauth_client.exchange_client_credentials();
@@ -68,12 +63,12 @@ pub(crate) async fn acquire_client_credentials(
     // Drift B.3: enforce the configured `authentication_timeout` budget
     // around the token-endpoint round-trip. Previously the field was
     // parsed but never honored for CC.
-    let budget = Duration::from_secs(config.authentication_timeout_secs);
+    let budget = Duration::from_secs(config.flow_options.authentication_timeout_secs);
     let response = match tokio::time::timeout(budget, request.request_async(&http)).await {
         Ok(inner) => inner.map_err(map_request_token_error)?,
         Err(_) => {
             return AuthenticationTimeoutSnafu {
-                elapsed_secs: config.authentication_timeout_secs,
+                elapsed_secs: config.flow_options.authentication_timeout_secs,
             }
             .fail();
         }
@@ -100,24 +95,12 @@ pub(crate) async fn acquire_client_credentials(
     })
 }
 
-fn make_http_client(
-    client: &reqwest::Client,
-    dpop_key: Option<&DPoPKey>,
-    token_url: &Url,
-) -> OAuthHttpClient {
-    let adapter = OAuthHttpClient::new(client);
-    if let Some(key) = dpop_key {
-        adapter.with_dpop(DPoPContext::new(key, token_url))
-    } else {
-        adapter
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::rest_parameters::DEFAULT_AUTHENTICATION_TIMEOUT_SECS;
+    use crate::config::rest_parameters::{DEFAULT_AUTHENTICATION_TIMEOUT_SECS, OAuthFlowOptions};
     use std::time::Duration;
+    use url::Url;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -128,8 +111,10 @@ mod tests {
             client_secret: "shh".into(),
             token_url,
             scope: None,
-            enable_dpop: false,
-            authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            flow_options: OAuthFlowOptions {
+                enable_dpop: false,
+                authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            },
         }
     }
 

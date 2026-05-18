@@ -283,14 +283,25 @@ pub struct OAuthAuthorizationCodeConfig {
     /// Python-only escape hatch (analysis §9): disable PKCE S256.
     /// All other drivers always run PKCE; defaults to `false` here.
     pub disable_pkce: bool,
-    /// Enable RFC 9449 DPoP proof-of-possession on token + login requests.
-    /// Currently only JDBC has parity (analysis §5); defaults to `false`.
-    pub enable_dpop: bool,
     /// Whether refresh tokens may be persisted to the OS-level token cache
     /// (analysis §7.1; controls `client_store_temporary_credential`).
     pub client_store_temporary_credential: bool,
-    /// End-to-end auth budget for the AC flow, mirroring
-    /// [`DEFAULT_AUTHENTICATION_TIMEOUT_SECS`] used by `NativeOktaConfig`.
+    /// Driver-local flow behavior (DPoP, timeout). Not sent to Snowflake.
+    pub flow_options: OAuthFlowOptions,
+}
+
+/// Driver-local OAuth flow behavior knobs shared by both AC and CC.
+///
+/// These parameters control the driver's own OAuth flow machinery (DPoP
+/// proof generation, timeout budget). They are **not** transmitted to
+/// Snowflake in the login-request JSON — they are consumed entirely
+/// within the OAuth flow engine in `sf_core::rest::snowflake::oauth`.
+#[derive(Debug)]
+pub struct OAuthFlowOptions {
+    /// Enable RFC 9449 DPoP proof-of-possession on token + login requests.
+    /// Currently only JDBC has parity (analysis §5); defaults to `false`.
+    pub enable_dpop: bool,
+    /// End-to-end auth budget for the OAuth flow.
     pub authentication_timeout_secs: u64,
 }
 
@@ -310,11 +321,8 @@ pub struct OAuthClientCredentialsConfig {
     pub token_url: Url,
     /// OAuth scope string (space-separated). `None` ⇒ derived from role.
     pub scope: Option<String>,
-    /// Enable RFC 9449 DPoP proof-of-possession on the token + login
-    /// requests. Currently only JDBC has parity (analysis §5).
-    pub enable_dpop: bool,
-    /// End-to-end auth budget for the CC flow.
-    pub authentication_timeout_secs: u64,
+    /// Driver-local flow behavior (DPoP, timeout). Not sent to Snowflake.
+    pub flow_options: OAuthFlowOptions,
 }
 
 #[derive(Debug)]
@@ -638,9 +646,11 @@ impl LoginMethod {
                     scope,
                     enable_single_use_refresh_tokens,
                     disable_pkce,
-                    enable_dpop,
                     client_store_temporary_credential,
-                    authentication_timeout_secs,
+                    flow_options: OAuthFlowOptions {
+                        enable_dpop,
+                        authentication_timeout_secs,
+                    },
                 }))
             }
             "OAUTH_CLIENT_CREDENTIALS" => {
@@ -671,8 +681,10 @@ impl LoginMethod {
                     client_secret: client_secret.into(),
                     token_url,
                     scope,
-                    enable_dpop,
-                    authentication_timeout_secs,
+                    flow_options: OAuthFlowOptions {
+                        enable_dpop,
+                        authentication_timeout_secs,
+                    },
                 }))
             }
             "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {

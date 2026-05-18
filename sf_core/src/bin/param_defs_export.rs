@@ -115,6 +115,45 @@ fn setting_to_py_literal(s: &Setting) -> String {
     }
 }
 
+/// Word-wrap `text` so that no output line exceeds `max_cols` characters
+/// (including the indentation prefix).  The first line gets
+/// `first_line_budget` characters; continuation lines are prefixed with
+/// `continuation_indent` and get `max_cols - continuation_indent.len()`
+/// characters.
+fn wrap_text(
+    text: &str,
+    first_line_budget: usize,
+    continuation_indent: &str,
+    max_cols: usize,
+) -> String {
+    let cont_budget = max_cols - continuation_indent.len();
+    let mut result = String::new();
+    let mut budget = first_line_budget;
+    let mut first_word = true;
+
+    for word in text.split_whitespace() {
+        let needed = if first_word {
+            word.len()
+        } else {
+            1 + word.len()
+        };
+        if !first_word && needed > budget {
+            result.push('\n');
+            result.push_str(continuation_indent);
+            budget = cont_budget - word.len();
+            result.push_str(word);
+        } else {
+            if !first_word {
+                result.push(' ');
+            }
+            result.push_str(word);
+            budget = budget.saturating_sub(needed);
+            first_word = false;
+        }
+    }
+    result
+}
+
 /// Format the Required enum as a human-readable string for docstrings.
 fn required_to_str(r: &Required) -> &'static str {
     match r {
@@ -295,7 +334,24 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
         if let Some(dep) = p.deprecated_by {
             doc_parts.push(format!("Deprecated: use {} instead", to_python_field(dep)));
         }
-        out.push_str(&format!("    \"\"\"{}\"\"\"\n\n", doc_parts.join(". ")));
+        // Render the docstring on a single line when it fits in 120
+        // columns, otherwise spread it across multiple lines so ruff's
+        // E501 (line-too-long) doesn't reject the generated file.
+        let single = format!("    \"\"\"{}\"\"\"\n\n", doc_parts.join(". "));
+        if single.len() <= 121 {
+            // 120 cols + trailing newline (\n)
+            out.push_str(&single);
+        } else {
+            out.push_str("    \"\"\"");
+            for (i, part) in doc_parts.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(".\n\n    ");
+                }
+                let first_budget = if i == 0 { 120 - 7 } else { 120 - 4 };
+                out.push_str(&wrap_text(part, first_budget, "    ", 120));
+            }
+            out.push_str("\n    \"\"\"\n\n");
+        }
     }
 
     // ── Class variables (PARAM_DEFS-derived lookup tables) ─────────────

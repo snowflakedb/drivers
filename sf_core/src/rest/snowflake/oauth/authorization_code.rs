@@ -39,7 +39,7 @@ use super::error::{
     AuthenticationTimeoutSnafu, EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu,
     OAuthError, RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
 };
-use super::http_client::{DPoPContext, OAuthHttpClient};
+use super::http_client::make_http_client;
 use super::loopback_server::{self, RedirectResult};
 use super::token;
 use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
@@ -106,7 +106,6 @@ pub(crate) struct AcquiredOAuthToken {
     pub(crate) access_token: SensitiveString,
     /// Refresh token returned by the IdP, when issued. Persisted by the
     /// flow itself; the wiring layer does not consume it directly.
-    #[allow(dead_code)]
     pub(crate) refresh_token: Option<SensitiveString>,
     /// Present iff DPoP was negotiated. Carries the JWK JSON so the
     /// Snowflake login-request can reuse the same key when signing
@@ -144,7 +143,7 @@ fn default_browser_launch() -> BrowserLaunchFn {
     skip(client, config, token_cache),
     fields(server_url = %server_url, username = %config.username),
 )]
-pub(crate) async fn acquire_authorization_code(
+pub(crate) async fn run_oauth_authorization_code(
     // TODO(SNOW-XXX): build a no-redirect sibling reqwest client for OAuth
     // token calls (see https://docs.rs/oauth2/5.0.0/oauth2/#security-warning).
     client: &reqwest::Client,
@@ -152,7 +151,7 @@ pub(crate) async fn acquire_authorization_code(
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<&dyn TokenCache>,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
-    acquire_authorization_code_inner(
+    run_authorization_code_flow(
         client,
         server_url,
         config,
@@ -163,7 +162,7 @@ pub(crate) async fn acquire_authorization_code(
 }
 
 #[tracing::instrument(skip(client, config, token_cache, launch_browser), fields(username = %config.username))]
-async fn acquire_authorization_code_inner(
+async fn run_authorization_code_flow(
     client: &reqwest::Client,
     server_url: &Url,
     config: &OAuthAuthorizationCodeConfig,
@@ -176,7 +175,7 @@ async fn acquire_authorization_code_inner(
     let cache_host_url = token_url.as_str();
     // Drift B.3: single end-to-end deadline shared by the loopback
     // wait, the IdP token exchange and any refresh exchange.
-    let deadline = FlowDeadline::new(config.authentication_timeout_secs);
+    let deadline = FlowDeadline::new(config.flow_options.authentication_timeout_secs);
 
     // 1. Cache short-circuit (analysis §3.2 + §7).
     if let Some(cached) = try_cache_short_circuit(
@@ -231,7 +230,7 @@ async fn try_cache_short_circuit(
     // first. The bundle carries both the access token and the JWK JSON
     // so the same DPoP key can sign the Snowflake login leg without
     // re-running the interactive flow (analysis §5.1, §6).
-    if config.enable_dpop
+    if config.flow_options.enable_dpop
         && let Some((cached_at, jwk_json)) =
             token::try_get_cached_oauth_dpop_bundled(cache_host_url, &config.username, token_cache)
     {
@@ -280,7 +279,7 @@ async fn try_cache_short_circuit(
         // verify the proof JWT and so we can rebundle the new access
         // token with the same JWK afterwards. Generating a fresh key
         // here would silently break the cached-bundle contract.
-        let dpop_key = if config.enable_dpop {
+        let dpop_key = if config.flow_options.enable_dpop {
             match dpop::DPoPKey::generate() {
                 Ok(k) => Some(k),
                 Err(e) => {
@@ -335,7 +334,7 @@ async fn run_interactive_flow(
     let binding = loopback_server::bind(config.redirect_uri.as_ref()).await?;
     let redirect_uri = binding.redirect_uri.clone();
 
-    let dpop_key = if config.enable_dpop {
+    let dpop_key = if config.flow_options.enable_dpop {
         Some(dpop::DPoPKey::generate()?)
     } else {
         None
@@ -514,19 +513,6 @@ async fn refresh_access_token(
     })
 }
 
-fn make_http_client(
-    client: &reqwest::Client,
-    dpop_key: Option<&DPoPKey>,
-    token_url: &Url,
-) -> OAuthHttpClient {
-    let adapter = OAuthHttpClient::new(client);
-    if let Some(key) = dpop_key {
-        adapter.with_dpop(DPoPContext::new(key, token_url))
-    } else {
-        adapter
-    }
-}
-
 fn build_oauth_client(
     config: &OAuthAuthorizationCodeConfig,
     authorize_url: Url,
@@ -574,6 +560,11 @@ fn resolve_client_credentials(
 
 /// Translate the `oauth2` crate's `RequestTokenError` into an
 /// [`OAuthError`] for the authorization-code exchange leg.
+///
+/// The `'static` bound on `RE` is required because the `Request` variant
+/// is boxed into `Box<dyn Error + Send + Sync>` and then downcast via
+/// `Any` to recover an [`OAuthError`]; `Any`-based downcasting requires
+/// `'static`.
 pub(super) fn map_request_token_error<RE>(
     err: RequestTokenError<RE, StandardErrorResponse<BasicErrorResponseType>>,
 ) -> OAuthError
@@ -622,7 +613,7 @@ where
 
 /// Refresh-leg specialization: surfaces [`OAuthError::RefreshTokenExchange`]
 /// for any failure so cache-eviction logic in
-/// [`acquire_authorization_code`] can match on a single variant.
+/// [`run_oauth_authorization_code`] can match on a single variant.
 pub(super) fn map_refresh_token_error<RE>(
     err: RequestTokenError<RE, StandardErrorResponse<BasicErrorResponseType>>,
 ) -> OAuthError
@@ -726,7 +717,7 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::rest_parameters::DEFAULT_AUTHENTICATION_TIMEOUT_SECS;
+    use crate::config::rest_parameters::{DEFAULT_AUTHENTICATION_TIMEOUT_SECS, OAuthFlowOptions};
     use crate::token_cache::TokenCacheError;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -798,9 +789,11 @@ mod tests {
             scope: None,
             enable_single_use_refresh_tokens: false,
             disable_pkce: false,
-            enable_dpop: false,
             client_store_temporary_credential: true,
-            authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            flow_options: OAuthFlowOptions {
+                enable_dpop: false,
+                authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            },
         }
     }
 
@@ -830,7 +823,7 @@ mod tests {
 
         let config = cfg_with_token_url(token_url);
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
             .await
             .expect("cache hit");
         assert_eq!(acquired.access_token.reveal(), "CACHED-AT");
@@ -860,7 +853,7 @@ mod tests {
         let config = cfg_with_token_url(token_url.clone());
 
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
             .await
             .expect("refresh succeeds");
 
@@ -896,9 +889,9 @@ mod tests {
         let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async {}));
         let mut config_short =
             cfg_with_token_url(Url::parse(&format!("{}/oauth/token", server.uri())).unwrap());
-        config_short.authentication_timeout_secs = 1;
+        config_short.flow_options.authentication_timeout_secs = 1;
         let client = reqwest::Client::new();
-        let result = acquire_authorization_code_inner(
+        let result = run_authorization_code_flow(
             &client,
             &server_url(),
             &config_short,
@@ -961,10 +954,9 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let acquired =
-            acquire_authorization_code_inner(&client, &server_url(), &config, None, launch)
-                .await
-                .expect("interactive flow succeeds");
+        let acquired = run_authorization_code_flow(&client, &server_url(), &config, None, launch)
+            .await
+            .expect("interactive flow succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-FRESH");
         assert_eq!(
             acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
@@ -1001,7 +993,7 @@ mod tests {
             })
         });
         let client = reqwest::Client::new();
-        let err = acquire_authorization_code_inner(&client, &server_url(), &config, None, launch)
+        let err = run_authorization_code_flow(&client, &server_url(), &config, None, launch)
             .await
             .expect_err("must fail with IdpError");
         assert!(matches!(err, OAuthError::IdpError { .. }), "got {err:?}");
@@ -1036,7 +1028,7 @@ mod tests {
             })
         });
         let client = reqwest::Client::new();
-        let err = acquire_authorization_code_inner(&client, &server_url(), &config, None, launch)
+        let err = run_authorization_code_flow(&client, &server_url(), &config, None, launch)
             .await
             .expect_err("must fail with state mismatch");
         assert!(matches!(err, OAuthError::StateMismatch { .. }));
