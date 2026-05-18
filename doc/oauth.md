@@ -9,8 +9,8 @@ Implementation lives almost entirely in the Rust core
 (`sf_core/src/rest/snowflake/oauth/`); the wrappers (ODBC, Python) only
 expose the configuration keys and forward kwargs to the core. The
 exhaustive per-driver behavioural matrix (PKCE sizes, token-cache layouts,
-gotchas inherited from JDBC/ODBC/Python/.NET/Go/Node) is captured in
-[`analysis_feature_oauth.md`](../analysis_feature_oauth.md).
+gotchas inherited from JDBC/ODBC/Python/.NET/Go/Node) was prepared during
+the initial design phase.
 
 User-facing test scenarios live in
 [`tests/definitions/shared/authentication/oauth.feature`](../tests/definitions/shared/authentication/oauth.feature).
@@ -165,7 +165,7 @@ sequenceDiagram
 Notes:
 
 - Snowflake itself does **not** support `grant_type=client_credentials`
-  (analysis §4). CC therefore *requires* an external IdP and explicit
+  CC therefore *requires* an external IdP and explicit
   `oauth_token_request_url`.
 - No browser, no loopback, no PKCE — this is a pure HTTP back-channel
   exchange. The flow is suitable for batch jobs / service accounts.
@@ -398,9 +398,9 @@ Useful environment toggles when diagnosing OAuth issues:
 
 ## 10. References
 
-- [`analysis_feature_oauth.md`](../analysis_feature_oauth.md) — exhaustive
-  cross-driver analysis: configuration matrix, state machines, gotchas,
-  error taxonomy.
+- Cross-driver analysis (configuration matrix, state machines, gotchas,
+  error taxonomy) was prepared during the initial design phase and
+  informed the implementation decisions documented above.
 - [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) — The OAuth 2.0
   Authorization Framework.
 - [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) — PKCE.
