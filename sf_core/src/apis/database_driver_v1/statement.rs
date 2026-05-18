@@ -341,11 +341,17 @@ impl DatabaseDriverV1 {
                     query_parameters: query_parameters.clone(),
                     conn: conn_arc.clone(),
                 };
+                let use_s3_regional_url_session_param = conn_arc
+                    .lock()
+                    .await
+                    .use_s3_regional_url_session_param()
+                    .await;
                 perform_put_get_transfer(
                     command,
                     &data,
                     &self.wrapper_presets,
                     Some(stage_creds_refresh_context),
+                    use_s3_regional_url_session_param,
                 )
                 .await
                 .context(QueryResponseProcessingSnafu)?
@@ -442,9 +448,22 @@ impl DatabaseDriverV1 {
         }
 
         let rowset_data = match data.command.as_deref() {
-            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets, None)
+            Some(command) => {
+                let use_s3_regional_url_session_param = conn_ptr
+                    .lock()
+                    .await
+                    .use_s3_regional_url_session_param()
+                    .await;
+                perform_put_get_transfer(
+                    command,
+                    &data,
+                    &self.wrapper_presets,
+                    None,
+                    use_s3_regional_url_session_param,
+                )
                 .await
-                .context(QueryResponseProcessingSnafu)?,
+                .context(QueryResponseProcessingSnafu)?
+            }
             None => data.into_rowset_data(),
         };
         let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;

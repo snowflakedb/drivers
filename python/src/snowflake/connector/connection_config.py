@@ -220,6 +220,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     schema: str | None = None
     """Default schema to use"""
 
+    use_s3_regional_url: bool | None = False
+    """Force the S3 regional endpoint for PUT/GET (PrivateLink-to-S3). Default: False"""
+
     warehouse: str | None = None
     """Default warehouse to use"""
 
@@ -228,6 +231,7 @@ class ConnectionConfig(ConnectionConfigMixin):
         "clientstoretemporarycredential": "client_store_temporary_credential",
         "crl_enabled": "crl_check_mode",
         "crl_mode": "crl_check_mode",
+        "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
         "oauth_token_url": "oauth_token_request_url",
         "passcodeinpassword": "passcode_in_password",
         "priv_key_base64": "private_key",

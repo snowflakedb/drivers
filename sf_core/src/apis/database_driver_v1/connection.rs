@@ -840,6 +840,15 @@ impl Connection {
         self.http_client.is_some()
     }
 
+    /// Resolves the `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session
+    /// parameter to a boolean by briefly read-locking the parameter cache.
+    /// Used by the PUT/GET dispatch path to OR into the S3 regional-URL
+    /// decision. See `read_use_s3_regional_url_session_param`.
+    pub(crate) async fn use_s3_regional_url_session_param(&self) -> bool {
+        let params = self.session_parameters.read().await;
+        crate::rest::snowflake::query_response::read_use_s3_regional_url_session_param(&params)
+    }
+
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
     pub(crate) fn query_transport_parameters(&self) -> Result<QueryParameters, ApiError> {
         let empty = ParamStore::new();
