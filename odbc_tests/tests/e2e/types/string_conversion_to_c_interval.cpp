@@ -45,7 +45,7 @@ inline void expect_old_driver_interval_get_data_sqlstate_07006(const StatementHa
   INFO("Reference driver: VARCHAR -> interval column " << column << " expects SQLSTATE 07006");
   SQL_INTERVAL_STRUCT value{};
   SQLLEN indicator = -999;
-  SQLRETURN ret = get_data_raw(stmt, column, interval_c_type, &value, sizeof(value), &indicator);
+  SQLRETURN ret = get_data_raw(stmt, column, interval_c_type, &value, &indicator);
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(stmt);
   REQUIRE(!records.empty());
