@@ -118,6 +118,7 @@ pub const ALL_OAUTH_KEYS: &[&str] = &[
 /// persisted to the DSN ini. The wrapper joins this list with
 /// [`crate::api::oauth::TOKEN`] and the existing PWD-style redaction
 /// list at the connection-string boundary.
+#[allow(dead_code)] // consumed by setup_common.rs (windows-only DSN write path)
 pub const SENSITIVE_OAUTH_KEYS: &[&str] = &[OAUTH_CLIENT_SECRET, TOKEN];
 
 /// Recognised values of the `AUTHENTICATOR` connection-string key
@@ -125,6 +126,7 @@ pub const SENSITIVE_OAUTH_KEYS: &[&str] = &[OAUTH_CLIENT_SECRET, TOKEN];
 /// `sf_core::config::connection_config::build_auth_config` matches
 /// them case-insensitively — but we re-declare them here so the
 /// setup dialog and tests can branch on a single source of truth.
+#[allow(dead_code)] // will be wired into cross-platform connection-string handling
 pub mod authenticator {
     /// `AUTHENTICATOR=OAUTH` — legacy pre-acquired access token mode
     /// (pre-acquired access token).
@@ -141,12 +143,14 @@ pub mod authenticator {
 
 /// Returns `true` when `key` is a known ODBC OAuth DSN key
 /// (case-insensitive).
+#[allow(dead_code)] // will be wired into cross-platform connection-string handling
 pub fn is_oauth_key(key: &str) -> bool {
     ALL_OAUTH_KEYS.iter().any(|k| key.eq_ignore_ascii_case(k))
 }
 
 /// Returns `true` when `key` is an OAuth secret that must never be
 /// persisted to the DSN registry or printed in logs (case-insensitive).
+#[allow(dead_code)] // consumed by setup_common.rs (windows-only) and not-yet-wired redact_value
 pub fn is_sensitive_oauth_key(key: &str) -> bool {
     SENSITIVE_OAUTH_KEYS
         .iter()
@@ -155,6 +159,7 @@ pub fn is_sensitive_oauth_key(key: &str) -> bool {
 
 /// Returns `true` when `auth` selects one of the OAuth flows
 /// recognised by the wrapper (case-insensitive).
+#[allow(dead_code)] // will be wired into cross-platform connection-string handling
 pub fn is_oauth_authenticator(auth: &str) -> bool {
     [
         authenticator::OAUTH,
@@ -210,6 +215,7 @@ pub fn canonical_name(key: &str) -> Option<&'static str> {
 /// Does **not** redact non-OAuth secrets such as `PWD` /
 /// `PRIV_KEY_FILE_PWD`; callers compose this with their own redaction
 /// list.
+#[allow(dead_code)] // will be wired into cross-platform connection-string logging
 pub fn redact_value<'a>(key: &str, value: &'a str) -> &'a str {
     if is_sensitive_oauth_key(key) {
         "****"
@@ -223,6 +229,7 @@ pub fn redact_value<'a>(key: &str, value: &'a str) -> &'a str {
 /// `true` for all non-secret OAuth keys and for any non-OAuth key
 /// (callers compose this with their own DSN-skip rules for `PWD`,
 /// `DSN`, etc.).
+#[allow(dead_code)] // consumed by setup_common.rs (windows-only DSN write path)
 pub fn should_persist_to_dsn(key: &str) -> bool {
     !is_sensitive_oauth_key(key)
 }
