@@ -19,10 +19,11 @@ fn azure_stage(mock_uri: &str) -> StageInfo {
         creds: CloudCredentials::Azure {
             sas_token: SensitiveString::from("sv=2021-08-06&sig=test-secret-sig&se=2099-01-01"),
         },
-        end_point: Some(mock_uri.to_string()),
+        endpoint: Some(mock_uri.to_string()),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
     }
 }
@@ -222,10 +223,11 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         creds: CloudCredentials::Azure {
             sas_token: SensitiveString::from("sv=2021-08-06&sig=test-secret-sig&se=2099-01-01"),
         },
-        end_point: Some(format!("http://{addr}")),
+        endpoint: Some(format!("http://{addr}")),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
     };
 
@@ -273,7 +275,7 @@ async fn azure_download_with_missing_storage_account_fails() {
     let mut stage = azure_stage(&server.uri());
     stage.storage_account = None;
     // Remove scheme so it falls through to the standard URL path
-    stage.end_point = Some("blob.core.windows.net".to_string());
+    stage.endpoint = Some("blob.core.windows.net".to_string());
 
     let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
 

@@ -15,10 +15,11 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
-        end_point: None,
+        endpoint: None,
         presigned_url: Some(presigned_url.to_string()),
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
         storage_account: None,
     }
 }
@@ -33,10 +34,11 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         creds: CloudCredentials::Gcs {
             gcs_access_token: Some(SensitiveString::from("test-bearer-token")),
         },
-        end_point: Some(endpoint.to_string()),
+        endpoint: Some(endpoint.to_string()),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
         storage_account: None,
     }
 }
