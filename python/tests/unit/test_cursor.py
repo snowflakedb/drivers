@@ -22,7 +22,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from snowflake.connector.constants import QueryStatus
-from snowflake.connector.cursor import FetchMode, QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
+from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.cursor._query_result import _QueryResult
 from snowflake.connector.cursor._query_result_waiter import QueryResultWaiter
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
@@ -1405,108 +1405,6 @@ class TestFetchPandasAll:
         mock_fetch.assert_called_once_with(force_return_table=True, force_microsecond_precision=True)
 
 
-class TestFetchModeValidation:
-    """Unit tests for fetch mode validation (preventing mixed row/arrow fetching)."""
-
-    @pytest.fixture
-    def mock_connection(self):
-        mock_connection = MagicMock()
-        mock_connection.is_closed.return_value = False
-        return mock_connection
-
-    @pytest.fixture
-    def cursor(self, mock_connection):
-        return SnowflakeCursor(mock_connection)
-
-    @pytest.fixture(autouse=True)
-    def _patch_deps(self):
-        with (
-            patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor._base.pyarrow", new=MagicMock()),
-            patch("snowflake.connector.cursor._base.pandas", new=MagicMock()),
-        ):
-            yield
-
-    def test_row_then_arrow_raises(self, cursor):
-        cursor._iterator = iter([(1,)])
-
-        with patch.object(cursor, "_create_row_iterator"):
-            cursor.fetchone()
-
-        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
-            list(cursor.fetch_arrow_batches())
-
-    def test_arrow_then_row_raises(self, cursor):
-        cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
-
-        with patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])):
-            cursor.fetch_arrow_all()
-
-        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
-            cursor.fetchone()
-
-    def test_row_then_pandas_raises(self, cursor):
-        cursor._iterator = iter([(1,)])
-
-        with patch.object(cursor, "_create_row_iterator"):
-            cursor.fetchone()
-
-        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
-            list(cursor.fetch_pandas_batches())
-
-    def test_pandas_then_row_raises(self, cursor):
-        cursor._fetch_mode = FetchMode.ARROW
-
-        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
-            cursor.fetchall()
-
-    def test_fetchall_then_arrow_raises(self, cursor):
-        cursor._iterator = MockRowIterator([(1,)])
-
-        with patch.object(cursor, "_create_row_iterator"):
-            cursor.fetchall()
-
-        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
-            cursor.fetch_arrow_all()
-
-    def test_arrow_then_fetchmany_raises(self, cursor):
-        cursor._fetch_mode = FetchMode.ARROW
-
-        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
-            cursor.fetchmany(5)
-
-    def test_arrow_then_fetchall_raises(self, cursor):
-        cursor._fetch_mode = FetchMode.ARROW
-
-        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
-            cursor.fetchall()
-
-    def test_fetchmany_then_arrow_raises(self, cursor):
-        cursor._iterator = MockRowIterator([(1,), (2,)])
-
-        with patch.object(cursor, "_create_row_iterator"):
-            cursor.fetchmany(1)
-
-        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
-            cursor.fetch_arrow_all()
-
-    def test_same_mode_is_fine(self, cursor):
-        cursor._iterator = MockRowIterator([(1,), (2,)])
-
-        with patch.object(cursor, "_create_row_iterator"):
-            cursor.fetchone()
-            cursor.fetchone()
-
-    def test_execute_resets_fetch_mode(self, cursor, mock_connection, mock_core_client):
-        mock_connection.conn_handle = ConnectionHandle(id=1)
-        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
-
-        cursor._fetch_mode = FetchMode.ARROW
-        cursor.execute("SELECT 1")
-
-        assert cursor._fetch_mode is None
-
-
 class TestReset:
     """Unit tests for Cursor.reset method."""
 
@@ -1531,14 +1429,12 @@ class TestReset:
         cursor._iterator = iter([(1,)])
         cursor._binding_data = b"data"
         cursor._rownumber = 10
-        cursor._fetch_mode = FetchMode.ROW
 
         cursor.reset()
 
         # Cleared by reset
         assert cursor._iterator is None
         assert cursor._binding_data is None
-        assert cursor._fetch_mode is None
         assert cursor._query_result.rowcount is None
         # Preserved by reset (matches old driver)
         assert cursor._rownumber == 10
@@ -1551,13 +1447,11 @@ class TestReset:
         """Calling reset() twice produces the same state as calling it once."""
         cursor._query_result = _QueryResult(rowcount=42)
         cursor._iterator = iter([(1,)])
-        cursor._fetch_mode = FetchMode.ROW
 
         cursor.reset()
         cursor.reset()
 
         assert cursor._iterator is None
-        assert cursor._fetch_mode is None
         assert cursor._query_result.rowcount is None
         assert cursor._rownumber == -1
 
@@ -1567,7 +1461,6 @@ class TestReset:
 
         assert cursor._iterator is None
         assert cursor.sqlstate is None
-        assert cursor._fetch_mode is None
         assert cursor._binding_data is None
         assert cursor._rownumber == -1
         assert cursor.rowcount is None
@@ -1585,14 +1478,12 @@ class TestReset:
         cursor._iterator = iter([(1,)])
         cursor._binding_data = b"data"
         cursor._rownumber = 10
-        cursor._fetch_mode = FetchMode.ARROW
 
         cursor.reset(closing=True)
 
         # Cleared by reset
         assert cursor._iterator is None
         assert cursor._binding_data is None
-        assert cursor._fetch_mode is None
         # Preserved by reset (always)
         assert cursor._rownumber == 10
         assert cursor._query_result.description is mock_desc
@@ -1658,13 +1549,11 @@ class TestClose:
         mock_desc = [MagicMock()]
         cursor._query_result = _QueryResult(description=mock_desc)
         cursor._iterator = iter([(1,)])
-        cursor._fetch_mode = FetchMode.ROW
 
         cursor.close()
 
         assert cursor._iterator is None
         assert cursor._query_result.description is mock_desc
-        assert cursor._fetch_mode is None
 
     def test_close_returns_none_on_exception(self, cursor):
         """close() returns None when reset() raises an exception."""
@@ -1750,14 +1639,6 @@ class TestResetIntegration:
         # _execute should be called 3 times
         assert mock_execute.call_count == 3
 
-    def test_execute_resets_fetch_mode_allowing_mode_switch(self, cursor, mock_connection):
-        """After execute(), the fetch mode is cleared so a different fetch strategy can be used."""
-        cursor._fetch_mode = FetchMode.ARROW
-
-        cursor.execute("SELECT 1")
-
-        assert cursor._fetch_mode is None
-
     def test_execute_overwrites_sqlstate_with_new_result(self, cursor, mock_connection):
         """execute() overwrites sqlstate from the new query result."""
         cursor._query_result.sqlstate = "42601"
@@ -1778,22 +1659,18 @@ class TestResetIntegration:
     def test_executemany_server_side_binding_delegates_reset_to_execute(self, cursor, mock_connection):
         """executemany() with server-side (qmark) binding delegates to execute(), which performs its own reset."""
         mock_connection.paramstyle = ParamStyle.QMARK
-        cursor._fetch_mode = FetchMode.ARROW
         cursor._query_result.sqlstate = "42601"
 
         cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
 
-        assert cursor._fetch_mode is None
         assert cursor.sqlstate is None
 
     def test_executemany_empty_params_does_not_reset(self, cursor, mock_connection):
         """executemany() with empty seq_of_parameters returns early without calling reset."""
-        cursor._fetch_mode = FetchMode.ARROW
         cursor._query_result = _QueryResult(rowcount=42)
 
         cursor.executemany("INSERT INTO t VALUES (?)", [])
 
-        assert cursor._fetch_mode == FetchMode.ARROW
         assert cursor._query_result.rowcount == 42
 
 
@@ -1856,7 +1733,6 @@ class TestDescribe:
         )
 
         cursor._query_result.rowcount = 42
-        cursor._fetch_mode = FetchMode.ARROW
 
         cursor.describe("SELECT 1")
 
@@ -1864,7 +1740,6 @@ class TestDescribe:
         assert cursor.query == "SELECT 1"
         assert cursor.sqlstate is None  # "00000" is normalized to None
         assert cursor.rowcount == 0
-        assert cursor._fetch_mode is None
 
     def test_describe_forwards_non_success_sqlstate(self, cursor, mock_core_client):
         """describe() forwards sqlstate when it differs from '00000'."""
@@ -1884,14 +1759,12 @@ class TestDescribe:
     def test_describe_side_effects_without_columns(self, cursor, mock_core_client):
         """describe() resets state; sfqid/query/sqlstate are set from result even without columns."""
         cursor._query_result.rowcount = 42
-        cursor._fetch_mode = FetchMode.ARROW
         self._setup_prepare(mock_core_client)
 
         cursor.describe("SELECT 1")
 
         assert cursor.sfqid is None
         assert cursor.rowcount is None
-        assert cursor._fetch_mode is None
 
     def test_describe_releases_handle_and_stream(self, cursor, mock_core_client):
         """describe() allocates/releases statement handle and releases the arrow stream."""
@@ -2006,15 +1879,13 @@ class TestQueryResult:
         assert request.query_id == "01234567-abcd-ef01-0000-000000000001"
 
     def test_query_result_resets_prior_state(self, cursor, mock_core_client):
-        """query_result clears iterator and fetch mode from a previous execute."""
+        """query_result clears iterator from a previous execute."""
         cursor._query_result = _QueryResult(rowcount=99)
         cursor._iterator = iter([(1,)])
-        cursor._fetch_mode = FetchMode.ROW
 
         self._stub_result(mock_core_client)
         cursor.query_result("qid")
 
-        assert cursor._fetch_mode is None
         assert cursor._iterator is None
 
     def test_query_result_raises_on_closed_cursor_or_connection(self, cursor, mock_connection):
@@ -2291,10 +2162,10 @@ class TestExecuteAsync:
 
     def test_resets_cursor_state(self, cursor):
         """execute_async resets cursor state before submission."""
-        cursor._fetch_mode = FetchMode.ROW
+        cursor._iterator = iter([(1,)])
         cursor.execute_async("SELECT 1")
 
-        assert cursor._fetch_mode is None
+        assert cursor._iterator is None
 
     def test_with_parameters_passes_bindings(self, cursor, mock_core_client):
         """execute_async forwards parameter bindings to the RPC request."""

@@ -22,18 +22,14 @@ class _ResultSetWrapper:
     new one; ``release()`` frees the current handle.  ``__del__`` acts as a
     safety net for handles that were never explicitly released.
 
-    The wrapper tracks whether the Arrow stream has already been consumed.
-    A second call to :meth:`get_arrow_stream_ptr` raises instead of
-    silently re-fetching.  (The core layer *does* support re-fetching via a
-    slow path, but the Python wrapper prevents it to catch accidental
-    double-consumption.)
+    The core layer supports repeated ``result_set_get_stream`` calls — each
+    invocation builds a fresh Arrow stream from the stored ``RowsetData``.
     """
 
-    __slots__ = ("_handle", "_stream_consumed")
+    __slots__ = ("_handle",)
 
     def __init__(self, handle: ResultSetHandle | None = None) -> None:
         self._handle: ResultSetHandle | None = handle
-        self._stream_consumed: bool = False
 
     # -- handle management --------------------------------------------------
 
@@ -41,7 +37,6 @@ class _ResultSetWrapper:
         """Release the current handle (if any) and adopt *new_handle*."""
         self._do_release()
         self._handle = new_handle
-        self._stream_consumed = False
 
     def release(self) -> None:
         """Explicitly release the handle."""
@@ -65,24 +60,17 @@ class _ResultSetWrapper:
     def get_arrow_stream_ptr(self) -> int:
         """Fetch the Arrow stream and return the raw C pointer.
 
-        The stream can only be consumed once per result set.  A second call
-        raises ``ProgrammingError`` instead of silently hitting Snowflake.
+        Each call builds a fresh stream from the stored result set data.
 
         Raises:
-            ProgrammingError: If no handle is held or the stream was already consumed.
+            ProgrammingError: If no handle is held.
         """
         if self._handle is None:
             raise ProgrammingError(
                 msg="No results available (not produced by this query)",
                 errno=ER_NO_DATA_FOUND,
             )
-        if self._stream_consumed:
-            raise ProgrammingError(
-                msg="No results available (arrow stream already consumed)",
-                errno=ER_NO_DATA_FOUND,
-            )
         response = core_driver.result_set_get_stream(result_set_handle=self._handle)
-        self._stream_consumed = True
         return get_stream_ptr(response)
 
     def get_chunks(self) -> ResultSetGetChunksResponse | None:
