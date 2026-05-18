@@ -4,24 +4,28 @@ behavior_differences:
     status: allowed
     type: bug
     reviewed: true
+    impact: medium
 
   2:
     name: "DEFLATE compression type option is now correctly auto-detected"
     status: allowed
     type: bug
     reviewed: true
+    impact: medium
 
   3:
     name: "BROTLI compression type option is now supported"
     status: allowed
     type: enhancement
     reviewed: true
+    impact: low
 
   5:
     name: "Private key password parameter name changed"
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: low
     old_driver_behavior: |
       `private_key_file_pwd`
     new_driver_behavior: |
@@ -33,6 +37,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: low
     old_driver_behavior: |
       CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
     new_driver_behavior: |
@@ -43,6 +48,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: low
     old_driver_behavior: |
       add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.
     new_driver_behavior: |
@@ -53,6 +59,7 @@ behavior_differences:
     status: allowed
     type: bug
     reviewed: true
+    impact: medium
     old_driver_behavior: |
       When connections.toml exists but is empty, it replaces config.toml connections with an empty set.
     new_driver_behavior: |
@@ -63,6 +70,7 @@ behavior_differences:
     status: allowed
     type: bug
     reviewed: true
+    impact: low
     old_driver_behavior: |
       Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.
     new_driver_behavior: |
@@ -73,6 +81,7 @@ behavior_differences:
     status: allowed
     type: enhancement
     reviewed: true
+    impact: medium
     old_driver_behavior: |
       Each cursor populates its session parameters independently from query responses, so a cursor that has not executed a query will not reflect changes made by another cursor.
     new_driver_behavior: |
@@ -83,6 +92,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: low
     old_driver_behavior: |
       `client_request_mfa_token` enables MFA token caching.
     new_driver_behavior: |
@@ -95,6 +105,7 @@ behavior_differences:
     status: allowed
     type: enhancement
     reviewed: true
+    impact: low
     old_driver_behavior: |
       Does not validate the method parameter; attempts the request, which may result in an HttpError from the server.
     new_driver_behavior: |
@@ -107,6 +118,7 @@ behavior_differences:
     status: allowed
     type: enhancement
     reviewed: true
+    impact: low
     old_driver_behavior: |
       `JSONResultBatch.to_arrow()` and `JSONResultBatch.to_pandas()` raise `NotSupportedError` because JSON-format chunks have no Arrow representation.
     new_driver_behavior: |
@@ -118,6 +130,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: high
     old_driver_behavior: |
       `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
     new_driver_behavior: |
@@ -128,6 +141,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: low
     old_driver_behavior: |
       `ResultBatch` exposes `session_manager` (get/set) and `http_config` (get/set)
       properties used to control HTTP behavior for chunk downloads when the connection is no
@@ -146,6 +160,7 @@ behavior_differences:
     status: allowed
     type: bug
     reviewed: true
+    impact: high
     old_driver_behavior: |
       Only `execute()` has a closed-cursor guard (`InterfaceError`, errno=252006).
       Other methods fail incidentally based on internal state:
@@ -168,6 +183,7 @@ behavior_differences:
     status: allowed
     type: bug
     reviewed: true
+    impact: high
     old_driver_behavior: |
       Calling `fetchone`, `fetchmany`, `fetchall`, or iterating a cursor before any query has been executed has no guard, so they raise `TypeError` because the cursor's internal result state is `None`.
     new_driver_behavior: |
@@ -179,6 +195,7 @@ behavior_differences:
     status: unknown
     type: api_incompatibility
     reviewed: true
+    impact: high
     old_driver_behavior: |
       `SnowflakeConnection` exposes a public `connect(**kwargs)` method that `__init__` calls at the end of construction.
       Despite being public, the method was not usable as a reconnect mechanism: after a successful connection
@@ -194,6 +211,7 @@ behavior_differences:
     status: unknown
     type: api_incompatibility
     reviewed: true
+    impact: medium
     old_driver_behavior: |
       `region` is accepted as a `connect()` kwarg and used internally to
       construct the Snowflake hostname. `Connection.region` returns the value, emitting a
@@ -210,6 +228,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
+    impact: high
     old_driver_behavior: |
       `client_fetch_threads` controls the chunk-fetch pool size (defaulting to
       `client_prefetch_threads`). `client_fetch_use_mp=True` switches the pool from
