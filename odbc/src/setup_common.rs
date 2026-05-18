@@ -6,6 +6,8 @@
 
 #![cfg(target_os = "windows")]
 
+use crate::api::oauth;
+
 // ---------------------------------------------------------------------------
 // odbccp32.dll — ODBC Installer API (raw-dylib, no import lib needed)
 // ---------------------------------------------------------------------------
@@ -82,7 +84,11 @@ pub(crate) unsafe fn read_dsn_value(dsn: &str, key: &str) -> String {
 /// Write a DSN and its key/value fields to the ODBC registry.
 ///
 /// Skips `DSN` and `PWD` keys (DSN is implicit in the section name;
-/// PWD must never be persisted).  Returns `false` if any write fails.
+/// PWD must never be persisted).  Also delegates to
+/// [`oauth::should_persist_to_dsn`] so OAuth secrets
+/// (`OAUTH_CLIENT_SECRET`, `TOKEN`) never reach the on-disk registry —
+/// they are only ever read from the dialog into the in-memory test
+/// connection string.  Returns `false` if any write fails.
 pub(crate) unsafe fn write_dsn_values(
     dsn: &str,
     driver: &str,
@@ -96,7 +102,10 @@ pub(crate) unsafe fn write_dsn_values(
     let odbc_ini = to_wide("odbc.ini");
     let mut ok = true;
     for (key, value) in fields {
-        if key.eq_ignore_ascii_case("DSN") || key.eq_ignore_ascii_case("PWD") {
+        if key.eq_ignore_ascii_case("DSN")
+            || key.eq_ignore_ascii_case("PWD")
+            || !oauth::should_persist_to_dsn(key)
+        {
             continue;
         }
         let key_w = to_wide(key);
