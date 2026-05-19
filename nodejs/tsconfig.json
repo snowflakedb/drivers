@@ -11,5 +11,5 @@
     "declaration": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "types/**/*.ts", "vitest.config.ts"]
 }

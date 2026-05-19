@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    silent: 'passed-only',
     // TODO: coverage will be added later
     // coverage: {
     //   provider: "v8",

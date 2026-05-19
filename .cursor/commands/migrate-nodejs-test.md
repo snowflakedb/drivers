@@ -93,29 +93,15 @@ Apply these rules — they are the migration spec, follow them literally.
 
 - Import types (`Connection`, `ConnectionOptions`, `RowStatement`, etc.) directly from `snowflake-sdk`.
   > Temporary: once the new universal driver SDK exposes its own type surface, types should be imported from there instead.
-- Multi-statement helpers `hasNext()` and `NextResult()` are declared on `FileAndStageBindStatement`
-  (which extends `RowStatement`) — not on `RowStatement` itself. When iterating sub-results, narrow
-  the statement with `as FileAndStageBindStatement` rather than reaching for `as any`.
 - Prefer the public `ErrorCode` enum re-exported from `snowflake-sdk` over reaching into
   `lib/errors` for error-code constants. A legacy `require('../../lib/errors').codes.ERR_FOO` is
   *not* an "internal API" red flag for migration purposes — `import { ErrorCode } from 'snowflake-sdk'`
   exposes the same values.
-- When you have to cast around an incomplete `snowflake-sdk` type (any gap in the upstream
-  `.d.ts`), leave a short `// TODO:` comment at the cast site noting it's a missing-SDK-types gap,
-  so it's easy to find and remove once the types catch up.
-- Casts that just narrow a correctly-typed union are **not** SDK-types gaps and should **not** carry
-  a TODO. The most common case: `executeAsync` returns `{ statement: RowStatement | FileAndStageBindStatement, ... }`,
-  so when a test only needs the row-statement surface, `statement as RowStatement` is a plain
-  narrowing cast — no comment.
-
-Known SDK-types gaps so far (use these as the canonical examples of what counts as a "gap"):
-
-- `FileAndStageBindStatement.hasNext()` / `NextResult()` — declared only on
-  `FileAndStageBindStatement`; cast with `as FileAndStageBindStatement` for multi-statement iteration.
-- `Connection.getQueryStatus()` — typed `Promise<string>` but the `QueryStatus` literal union is
-  what `isStillRunning()` accepts. Cast with `as QueryStatus`.
-- `Connection.isAnError()` — declared with no args in the public types but the runtime takes a
-  status string. Cast with `as (s: string) => boolean` (or `as (s: QueryStatus) => boolean`).
+- When you hit a real upstream type gap in `snowflake-sdk`, add the patch to
+  `nodejs/types/snowflake-sdk-fixed.d.ts` with a comment explaining the upstream signature, what's
+  wrong with it, and what you changed. That file uses `declare module 'snowflake-sdk'` to merge
+  fixed members into the upstream interfaces — every existing `from 'snowflake-sdk'` import
+  automatically sees the patched types, no alias needed.
 
 #### Connection lifecycle
 
@@ -138,11 +124,10 @@ Known SDK-types gaps so far (use these as the canonical examples of what counts 
 
 #### Logger
 
-- Drop all logger configuration (`snowflake.configure({ logLevel: ... })`, `Logger()` calls, etc.).
-  The test harness does not configure logging.
-- Drop log-only sub-steps that exist purely to print state (e.g. an `async.series` step that runs
-  `select current_version()` just to log driver/server versions, or `Logger.getInstance().info(row)`
-  inside a stream handler). They carry no assertion and are noise in the migrated test.
+- Drop all logger configuration and log-only steps from the legacy file (`snowflake.configure`,
+  `Logger.getInstance().info(...)`, `select current_version()` calls that exist purely to print the
+  driver/server version, etc.). The test harness does not configure logging and these carry no
+  assertion.
 
 #### Callbacks to promises
 
@@ -159,7 +144,6 @@ Known SDK-types gaps so far (use these as the canonical examples of what counts 
   file** (e.g. "stream all rows and return the count"), extract a small module-local helper at the
   top of the file rather than inlining the `new Promise` twice. Only promote a helper to
   `tests/e2e/utils/` once it's needed by a second test file.
-- Use smaller timeouts where the exact delay is not semantically important.
 
 #### Resource cleanup
 
@@ -168,11 +152,10 @@ Known SDK-types gaps so far (use these as the canonical examples of what counts 
   `try { ... } finally { ... }` so a failing assertion doesn't leak state. The shared
   `beforeAll` / `afterAll` connection is already cleaned up by the harness — no `try/finally`
   needed around individual `it()`s for that.
-- For best-effort destroy of multiple connections in a `finally`, swallow individual errors so one
-  bad destroy doesn't mask the real test failure:
-  `await Promise.all(conns.map((c) => destroyAsync(c).catch(() => undefined)))`.
-  For a single connection in a `finally`, let `destroyAsync` propagate — the swallowing pattern is
-  only for the multi-connection case.
+- For best-effort destroy of *multiple* connections in a `finally`, swallow individual errors so
+  one bad destroy doesn't mask the real test failure:
+  `await Promise.all(conns.map((c) => destroyAsync(c).catch(() => undefined)))`. For a single
+  connection, let `destroyAsync` propagate.
 
 #### Assertions
 
@@ -191,9 +174,8 @@ Known SDK-types gaps so far (use these as the canonical examples of what counts 
   *different* input that produces a *different* expected output, and the assertion should compare
   position-for-position (e.g. `expect(actuals).toEqual(expecteds)`). The lazy shape
   `expect(rowCounts).toEqual(Array(N).fill(SAME_VALUE))` cannot catch a bug where results from one
-  in-flight statement bleed into another. Prefer hardcoded distinct constants per test (e.g.
-  `const expectedRowCounts = [2837, 6104, 1592, 8471, 3963]`) over `Math.random()` — tests must be
-  deterministic.
+  in-flight statement bleed into another. Use hardcoded distinct constants per test (e.g.
+  `const expectedRowCounts = [2837, 6104, 1592, 8471, 3963]`).
 
 #### Test organisation
 
@@ -201,10 +183,9 @@ Known SDK-types gaps so far (use these as the canonical examples of what counts 
   `describe('<methodName>()')` per method inside the outer file-level `describe`. This reads much
   better than a flat list of `it()`s prefixed with the method name.
 - When several `it()`s inside the *same* nested `describe` need identical per-test setup, lift it
-  into a `beforeEach` and store the result in a `let` declared at the same scope. Do **not** put a
-  `beforeEach` on a `describe` whose tests don't all need the setup — every `it()` in that
-  describe pays for it. If only some tests need the setup, either keep it inline in those tests or
-  split the describe.
+  into a `beforeEach` and store the result in a `let` declared at the same scope. Only do this
+  when *every* `it()` in the describe needs the setup; otherwise keep it inline or split the
+  describe so the `beforeEach` cost isn't paid by tests that don't need it.
 
 #### Naming inside the file
 
@@ -221,13 +202,13 @@ Run the migrated test against the old driver:
 cd nodejs && npm run test:e2e-old-driver -- <new-file>.test.ts
 ```
 
-The test must pass against the old driver. If it fails, fix it before proceeding.
+The test must pass against the old driver before proceeding.
 
 ### Step 6: Remove migrated tests from the source file
 
 Delete **only** the `it()` blocks that were successfully migrated. Keep any `it()` blocks that were flagged for `sf_core` — they stay in the source file as a record until they are explicitly moved into `sf_core` or dropped.
 
-If every `it()` inside a `describe` was migrated, remove the entire `describe`. Also remove any now-unused imports, `before` / `after` hooks, and helper variables. Do not leave dead code in the source file.
+If every `it()` inside a `describe` was migrated, remove the entire `describe`, along with any now-unused imports, `before` / `after` hooks, and helper variables.
 
 ### Step 7: Delete the source file if empty
 
@@ -266,10 +247,8 @@ Walk through these prompts and act on any "yes" answer by editing this file:
 - **Step out of order?** Did the workflow above only work because you reordered or skipped a step? →
   Reorder the checklist and the section headings to match what actually works.
 
-Keep edits surgical: only change what the latest migration proved needs changing. If nothing needs
-changing, say so explicitly in the summary ("Self-review: no changes needed").
-
-This step is **not optional** — skipping it means the next run repeats the same mistake.
+Keep edits surgical: only change what the latest migration proved needs changing. If nothing
+needs changing, say so in the Step 8 summary ("Self-review: no changes needed").
 
 ## Reference: existing migrated tests
 
@@ -278,8 +257,8 @@ For style examples, see:
   wrapped with inline `new Promise` (`statement.cancel`).
 - `nodejs/tests/e2e/connection-serialization.test.ts` — `it.skip` with TODO link for known driver
   bugs; using `getSnowflakeSDK()` directly.
-- `nodejs/tests/e2e/multi-statement.test.ts` — multi-statement iteration with the
-  `FileAndStageBindStatement` cast.
+- `nodejs/tests/e2e/multi-statement.test.ts` — multi-statement iteration via `hasNext()` /
+  `NextResult()`.
 - `nodejs/tests/e2e/concurrent-execution.test.ts` — fan-out via `Promise.all`, distinct expected
   values per worker, multi-connection cleanup pattern.
 - `nodejs/tests/e2e/query-execution-async.test.ts` — nested `describe`s grouped by SDK method,

@@ -1,4 +1,4 @@
-import type { Connection, QueryStatus, SnowflakeError } from 'snowflake-sdk';
+import type { Connection, SnowflakeError } from 'snowflake-sdk';
 import { ErrorCode } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { createConnection, connectAsync, destroyAsync, sleepAsync, executeAsync } from './utils';
@@ -23,11 +23,8 @@ describe('Async Query Execution', () => {
 
   describe('getQueryStatus()', () => {
     it('returns RUNNING for pending async query', async () => {
-      // TODO: snowflake-sdk types getQueryStatus() as Promise<string> but
-      // isStillRunning() takes the QueryStatus literal union. Drop the cast
-      // once the public types narrow getQueryStatus() to QueryStatus.
       const { statement } = await executeAsync(connection, ASYNC_WAIT_SQL, { asyncExec: true });
-      const status = (await connection.getQueryStatus(statement.getQueryId())) as QueryStatus;
+      const status = await connection.getQueryStatus(statement.getQueryId());
       expect(status).toBe('RUNNING');
       expect(connection.isStillRunning(status)).toBe(true);
     });
@@ -101,15 +98,13 @@ describe('Async Query Execution', () => {
       asyncExec: true,
     });
     const queryId = failedQuery.statement.getQueryId();
-    while (connection.isStillRunning((await connection.getQueryStatus(queryId)) as QueryStatus)) {
+    while (connection.isStillRunning(await connection.getQueryStatus(queryId))) {
       await sleepAsync(250);
     }
 
     const status = await connection.getQueryStatus(queryId);
     expect(status).toBe('FAILED_WITH_ERROR');
-    // TODO: snowflake-sdk index.d.ts declares isAnError() with no args, but the
-    // implementation takes a status string. Drop the cast once the public types catch up.
-    expect((connection.isAnError as (s: string) => boolean)(status)).toBe(true);
+    expect(connection.isAnError(status)).toBe(true);
 
     await expect(connection.getQueryStatusThrowIfError(queryId)).rejects.toMatchObject({
       name: 'OperationFailedError',
