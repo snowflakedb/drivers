@@ -23,6 +23,7 @@ from typing import Any, ClassVar, TypeVar
 from snowflake.connector._internal._private_key_helper import normalize_private_key
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ConfigSetting
 from snowflake.connector.errors import ProgrammingError
+from snowflake.connector.version import __version__ as _DRIVER_VERSION
 
 
 _Self = TypeVar("_Self", bound="ConnectionConfigMixin")
@@ -276,8 +277,9 @@ class ConnectionConfigMixin:
           popped from kwargs and mapped to ``client_app_id`` (CLIENT_APP_ID)
           and ``client_app_version`` (CLIENT_APP_VERSION) respectively. When
           omitted, ``client_app_id`` defaults to ``_APPLICATION_NAME`` and
-          ``client_app_version`` is left unset so the Rust core falls back to
-          its compiled-in default.
+          ``client_app_version`` defaults to the Python driver's own
+          ``__version__`` — matching the old connector, which sends its own
+          version on the wire when the caller does not override it.
         * ``autocommit`` - type-checked (must be ``bool``), then merged into
           ``session_parameters["AUTOCOMMIT"]``.
         """
@@ -329,11 +331,14 @@ class ConnectionConfigMixin:
             config.client_app_id = internal_app_name  # type: ignore[attr-defined]
         else:
             config.client_app_id = cls._APPLICATION_NAME  # type: ignore[attr-defined]
-        # CLIENT_APP_VERSION is only sent when the caller explicitly overrides
-        # it via ``internal_application_version`` — otherwise the Rust core
-        # falls back to its compiled-in default.
+        # CLIENT_APP_VERSION defaults to the Python driver's own ``__version__``,
+        # mirroring the old connector (which seeds its ``internal_application_version``
+        # kwarg with ``CLIENT_VERSION`` so the wire field always carries the
+        # driver's version when the caller does not override it).
         if isinstance(internal_app_version, str) and internal_app_version:
             config.client_app_version = internal_app_version  # type: ignore[attr-defined]
+        else:
+            config.client_app_version = _DRIVER_VERSION  # type: ignore[attr-defined]
 
         if config.autocommit is not None:
             if not isinstance(config.autocommit, bool):

@@ -886,15 +886,16 @@ class TestInternalApplicationName:
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["client_app_version"] == ConfigSetting(string_value="1.2.3")
 
-    def test_internal_application_version_not_sent_when_omitted(self, mock_db_api):
-        """When the caller does not override, client_app_version must not be
-        sent so the Rust core falls back to its compiled-in default."""
+    def test_internal_application_version_defaults_to_driver_version(self, mock_db_api):
+        """When the caller does not override, client_app_version falls back to
+        the Python driver's own __version__ — matching the old connector."""
         from snowflake.connector.connection import Connection
+        from snowflake.connector.version import __version__
 
         Connection(user="u", account="a")
 
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
-        assert "client_app_version" not in request.options
+        assert request.options["client_app_version"] == ConfigSetting(string_value=__version__)
 
 
 class TestLogMaxQueryLength:
