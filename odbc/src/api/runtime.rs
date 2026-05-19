@@ -2,9 +2,8 @@ use std::ops::Deref;
 use std::sync::{Arc, RwLock};
 
 use parking_lot::Mutex;
-use sf_core::apis::database_driver_v1::DatabaseDriverV1;
 use sf_core::protobuf::apis::database_driver_v1::{
-    DatabaseDriverClient, DriverProviders, WrapperPresets, database_driver_client_and_driver_with,
+    DatabaseDriverClient, DriverProviders, WrapperPresets, database_driver_client_with,
 };
 use snafu::{Location, ResultExt, Snafu};
 
@@ -38,30 +37,19 @@ static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 ///
 /// The `client` is held behind an `Arc` so callers that want to invoke
 /// protobuf RPCs (foreground SQL via [`block_on`](Self::block_on),
-/// synchronous telemetry via the same helper) do not force the generated
+/// in-band telemetry via the same helper) do not force the generated
 /// `DatabaseDriverClient` itself to be `Clone`.
 ///
-/// # Single runtime, direct-API telemetry
+/// # Single runtime
 ///
 /// A single multi-threaded tokio runtime (`num_cpus` workers) drives
-/// every foreground SQL operation through the protobuf client. The
-/// in-band telemetry path, on the other hand, **never** touches the
-/// runtime or the protobuf transport:
-///
-/// - At `SQLConnect` time the wrapper calls the **synchronous**
-///   [`DatabaseDriverV1::connection_telemetry`] via [`driver()`](Self::driver),
-///   which serves the recorder from sf_core's lock-light side-table.
-///   No `block_on`.
-/// - The returned [`ConnectionTelemetry`](sf_core::telemetry::ConnectionTelemetry)
-///   is stashed on the `Dbc`'s `ConnectionState::Connected`. Each
-///   subsequent `SQL*` entry point records its `api_call` /
-///   `exception` event through that cached recorder — no `block_on`,
-///   no protobuf serialisation, no async-mutex contention with the
-///   SQL data path.
-///
-/// `driver` is the very same [`DatabaseDriverV1`] the `client`'s
-/// transport routes to (shared via `Arc`), so protobuf and direct
-/// callers always see the same handle registries.
+/// every interaction with sf_core through the protobuf client -
+/// foreground SQL, connection lifecycle, **and** in-band telemetry
+/// (see [`crate::api::telemetry`]). The wrapper holds **no** typed
+/// sf_core handles: the only sf_core symbols reachable from here are
+/// the prost-generated `DatabaseDriverClient` + request/response
+/// messages, exactly mirroring the surface area that
+/// `snowflake.connector` (Python) consumes over its C ABI.
 ///
 /// At `env_freed` time all user-facing SQL handles have already been
 /// freed, so the runtime is quiescent and `Runtime::drop` does not block
@@ -69,7 +57,6 @@ static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
     client: Arc<DatabaseDriverClient>,
-    driver: Arc<DatabaseDriverV1>,
     pub env_registry: HandleManager<crate::api::Env>,
     pub dbc_registry: HandleManager<crate::api::Dbc>,
     pub stmt_registry: HandleManager<crate::api::Statement>,
@@ -78,13 +65,6 @@ pub struct OdbcGlobals {
 impl OdbcGlobals {
     pub fn block_on<T>(&self, f: impl AsyncFnOnce(&DatabaseDriverClient) -> T) -> T {
         self.runtime.block_on(f(&self.client))
-    }
-
-    /// Shared driver instance used by both the protobuf client above
-    /// and by direct sync callers (notably the telemetry recorder
-    /// fetch at `SQLConnect` time).
-    pub fn driver(&self) -> &Arc<DatabaseDriverV1> {
-        &self.driver
     }
 }
 
@@ -164,12 +144,10 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         .enable_all()
         .build()
         .context(RuntimeCreationSnafu)?;
-    let (client, driver) = database_driver_client_and_driver_with(providers);
-    let client = Arc::new(client);
+    let client = Arc::new(database_driver_client_with(providers));
     guard.globals = Some(Arc::new(OdbcGlobals {
         runtime,
         client,
-        driver,
         env_registry: HandleManager::new(),
         dbc_registry: HandleManager::new(),
         stmt_registry: HandleManager::new(),

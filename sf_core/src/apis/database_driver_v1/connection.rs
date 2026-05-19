@@ -431,14 +431,20 @@ impl DatabaseDriverV1 {
     /// have to enter the per-connection async mutex.
     ///
     /// Returns a [`ConnectionTelemetry::noop`] for unknown handles or
-    /// for handles that never had telemetry enabled. The returned
-    /// recorder is cheap to clone (`Arc` internally) and is intended
-    /// to be cached by callers (e.g. the ODBC wrapper stashes it on
-    /// its `Dbc` after `SQLConnect`), so per-event recording is a
-    /// lone OTel `add_event` on the cached handle.
+    /// for handles that never had telemetry enabled.
+    ///
+    /// This is a crate-internal helper used by the protobuf
+    /// `telemetry_send_*` handlers (see
+    /// [`DatabaseDriverImpl`](crate::protobuf::apis::database_driver_v1::DatabaseDriverImpl))
+    /// to resolve the recorder for a `conn_handle` on the RPC server
+    /// side. External wrappers — ODBC, Python, JDBC — go through the
+    /// protobuf surface and never see this type directly.
     ///
     /// [`ConnectionTelemetry::noop`]: crate::telemetry::ConnectionTelemetry::noop
-    pub fn connection_telemetry(&self, handle: Handle) -> crate::telemetry::ConnectionTelemetry {
+    pub(crate) fn connection_telemetry(
+        &self,
+        handle: Handle,
+    ) -> crate::telemetry::ConnectionTelemetry {
         self.connection_recorders
             .read()
             .unwrap_or_else(|e| e.into_inner())

@@ -1,5 +1,8 @@
 use odbc_sys as sql;
-use sf_core::telemetry::ConnectionTelemetry;
+use sf_core::protobuf::generated::database_driver_v1::{
+    ConnectionHandle as TConnectionHandle, TelemetrySendApiUsageRequest,
+    TelemetrySendWrapperErrorRequest,
+};
 
 use crate::api::OdbcError;
 use crate::api::runtime::global;
@@ -15,49 +18,72 @@ pub fn record_api_usage(
     handle: sql::Handle,
     api_method: &'static str,
 ) {
-    let Some(recorder) = resolve_recorder(handle_type, handle) else {
+    let Some(conn_handle) = resolve_conn_handle(handle_type, handle) else {
         return;
     };
-    recorder.record_api_call(api_method);
+    let Ok(globals) = global() else { return };
+    let result = globals.block_on(async |client| {
+        client
+            .telemetry_send_api_usage(TelemetrySendApiUsageRequest {
+                conn_handle: Some(conn_handle),
+                api_method: api_method.to_string(),
+            })
+            .await
+    });
+    if let Err(e) = result {
+        tracing::debug!(error = ?e, "telemetry_send_api_usage failed");
+    }
 }
 
 /// Record an `exception` event derived from an `OdbcError`.
 ///
 /// Same drop rules as [`record_api_usage`]. `OdbcError` itself is
-/// **not** forwarded into the recorder — only the already-classified
-/// `(exception_type, error_source)` `&'static str`s (returned by
-/// [`OdbcError::telemetry_classification`]) are.
+/// **not** forwarded across the wire — only the already-classified
+/// `(exception_type, error_source)` `&'static str`s returned by
+/// [`OdbcError::telemetry_classification`].
 pub fn record_wrapper_error(handle_type: sql::HandleType, handle: sql::Handle, err: &OdbcError) {
-    let Some(recorder) = resolve_recorder(handle_type, handle) else {
+    let Some(conn_handle) = resolve_conn_handle(handle_type, handle) else {
         return;
     };
+    let Ok(globals) = global() else { return };
     let (exception_type, error_source) = err.telemetry_classification();
     let error_source: &'static str = error_source.into();
-    recorder.record_exception(exception_type, error_source);
+    let result = globals.block_on(async |client| {
+        client
+            .telemetry_send_wrapper_error(TelemetrySendWrapperErrorRequest {
+                conn_handle: Some(conn_handle),
+                exception_type: exception_type.to_string(),
+                error_source: error_source.to_string(),
+            })
+            .await
+    });
+    if let Err(e) = result {
+        tracing::debug!(error = ?e, "telemetry_send_wrapper_error failed");
+    }
 }
 
-/// Resolve any ODBC handle to a clone of the cached
-/// [`ConnectionTelemetry`] for its owning, currently-connected
-/// session. Returns `None` for handles that do not correspond to a
-/// live session (env/desc handles, null handles, statement handles
-/// whose Dbc is disconnected, etc.).
-fn resolve_recorder(
+/// Resolve any ODBC handle to the protobuf [`TConnectionHandle`] of
+/// its owning, currently-connected session. Returns `None` for
+/// handles that do not correspond to a live session (env/desc
+/// handles, null handles, statement handles whose Dbc is still
+/// `Disconnected`, etc.).
+fn resolve_conn_handle(
     handle_type: sql::HandleType,
     handle: sql::Handle,
-) -> Option<ConnectionTelemetry> {
+) -> Option<TConnectionHandle> {
     if handle.is_null() {
         return None;
     }
     match handle_type {
         sql::HandleType::Dbc => {
             let dbc = conn_from_handle(handle).ok()?;
-            connected_recorder(&dbc)
+            connected_conn_handle(&dbc)
         }
         sql::HandleType::Stmt => {
             let stmt = stmt_from_handle(handle).ok()?;
             let conn_id = stmt.conn_id;
             let dbc = global().ok()?.dbc_registry.get(conn_id).ok()?;
-            connected_recorder(&dbc)
+            connected_conn_handle(&dbc)
         }
         // Env, Desc, and any unknown handle type cannot have an associated
         // session. (Descriptor handles route through their owning statement
@@ -68,9 +94,9 @@ fn resolve_recorder(
     }
 }
 
-fn connected_recorder(dbc: &crate::api::Dbc) -> Option<ConnectionTelemetry> {
+fn connected_conn_handle(dbc: &crate::api::Dbc) -> Option<TConnectionHandle> {
     match &dbc.connection.lock().state {
-        ConnectionState::Connected { telemetry, .. } => Some(telemetry.clone()),
+        ConnectionState::Connected { conn_handle, .. } => Some(*conn_handle),
         ConnectionState::Disconnected => None,
     }
 }
@@ -85,19 +111,19 @@ mod tests {
     }
 
     #[test]
-    fn resolve_recorder_returns_none_for_null_handle() {
+    fn resolve_conn_handle_returns_none_for_null_handle() {
         // No ODBC globals initialised in unit tests — and even if they were,
         // a null handle resolves to None before any registry lookup.
-        assert!(resolve_recorder(sql::HandleType::Stmt, std::ptr::null_mut()).is_none());
-        assert!(resolve_recorder(sql::HandleType::Dbc, std::ptr::null_mut()).is_none());
-        assert!(resolve_recorder(sql::HandleType::Env, std::ptr::null_mut()).is_none());
+        assert!(resolve_conn_handle(sql::HandleType::Stmt, std::ptr::null_mut()).is_none());
+        assert!(resolve_conn_handle(sql::HandleType::Dbc, std::ptr::null_mut()).is_none());
+        assert!(resolve_conn_handle(sql::HandleType::Env, std::ptr::null_mut()).is_none());
     }
 
     #[test]
-    fn resolve_recorder_returns_none_for_env_handle_type() {
+    fn resolve_conn_handle_returns_none_for_env_handle_type() {
         // Env handles never carry a session even when non-null.
         let dummy: sql::Handle = 1usize as sql::Handle;
-        assert!(resolve_recorder(sql::HandleType::Env, dummy).is_none());
+        assert!(resolve_conn_handle(sql::HandleType::Env, dummy).is_none());
     }
 
     #[test]

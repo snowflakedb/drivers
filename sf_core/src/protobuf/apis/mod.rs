@@ -24,15 +24,6 @@ impl RustTransport {
             driver: DatabaseDriverImpl::new_with(providers),
         }
     }
-
-    /// Wrap a pre-built [`DatabaseDriverImpl`] (sharing its driver `Arc`
-    /// with the caller) so the protobuf transport and direct sync
-    /// callers can address the same underlying [`DatabaseDriverV1`].
-    ///
-    /// [`DatabaseDriverV1`]: crate::apis::database_driver_v1::DatabaseDriverV1
-    pub fn from_impl(driver: DatabaseDriverImpl) -> Self {
-        Self { driver }
-    }
 }
 
 impl Transport for RustTransport {

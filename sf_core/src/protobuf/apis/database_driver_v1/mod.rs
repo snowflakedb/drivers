@@ -51,15 +51,9 @@ impl DatabaseDriverImpl {
     }
 
     pub fn new_with(providers: DriverProviders) -> Self {
-        Self::from_driver(Arc::new(DatabaseDriverV1::with_providers(providers)))
-    }
-
-    pub fn from_driver(driver: Arc<DatabaseDriverV1>) -> Self {
-        Self { driver }
-    }
-
-    pub fn driver(&self) -> &Arc<DatabaseDriverV1> {
-        &self.driver
+        Self {
+            driver: Arc::new(DatabaseDriverV1::with_providers(providers)),
+        }
     }
 }
 
@@ -968,27 +962,7 @@ pub fn database_driver_client() -> DatabaseDriverClient {
 }
 
 pub fn database_driver_client_with(providers: DriverProviders) -> DatabaseDriverClient {
-    let (client, _driver) = database_driver_client_and_driver_with(providers);
-    client
-}
-
-/// Build a [`DatabaseDriverClient`] together with the shared
-/// [`DatabaseDriverV1`] it routes to.
-///
-/// In-process callers (e.g. the ODBC driver) keep both:
-/// - the `client` for the normal async/protobuf SQL path, and
-/// - the `Arc<DatabaseDriverV1>` for direct sync calls (notably
-///   [`DatabaseDriverV1::connection_telemetry`] on the in-band
-///   telemetry hot path) that would otherwise pay a `Runtime::block_on`
-///   per recorded event.
-pub fn database_driver_client_and_driver_with(
-    providers: DriverProviders,
-) -> (DatabaseDriverClient, Arc<DatabaseDriverV1>) {
-    let driver = Arc::new(DatabaseDriverV1::with_providers(providers));
-    let transport = crate::protobuf::apis::RustTransport::from_impl(
-        DatabaseDriverImpl::from_driver(Arc::clone(&driver)),
-    );
-    (DatabaseDriverClient::new(transport), driver)
+    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new_with(providers))
 }
 
 // Synchronous convenience wrappers used by Rust test helpers and small

@@ -11,7 +11,7 @@ pub mod snowflake_exporter;
 pub mod os_details;
 pub mod platform_detection;
 
-pub use recorder::ConnectionTelemetry;
+pub(crate) use recorder::ConnectionTelemetry;
 
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
