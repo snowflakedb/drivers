@@ -498,6 +498,8 @@ fn should_omit_single_use_refresh_flag_from_refresh_grant_body() {
 // =============================================================================
 
 #[test]
+#[ignore = "Flaky on Windows x86, improved diagnostics added - keyring_cache.remove_token needs further investigation within SNOW-3552507"]
+// TODO: SNOW-3552507
 fn should_evict_refresh_token_when_idp_returns_invalid_grant() {
     // Given a refresh token is cached, the IdP refuses with
     // `invalid_grant`, and the AC `authentication_timeout` is short

@@ -91,6 +91,7 @@ impl TokenCache for KeyringTokenCache {
         debug!("Removing secret for {token_type:?}");
         let key = build_cache_key(host, username, token_type);
         let entry = self.create_entry(host, username, token_type)?;
+        // TODO: SNOW-3552507
         // TEMP DIAGNOSTIC (SNOW-2314157, Windows x86 eviction regression):
         // Distinguish "actually deleted" from "backend reported NoEntry"
         // so we can tell whether `should_evict_refresh_token_when_idp_returns_invalid_grant`
