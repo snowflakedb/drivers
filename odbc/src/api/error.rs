@@ -487,12 +487,20 @@ fn is_well_formed_sql_state(state: &str) -> bool {
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        self.structured_message().unwrap_or_else(|| {
+        let base = self.structured_message().unwrap_or_else(|| {
             trace
                 .last()
                 .map(|entry| entry.message.clone())
                 .unwrap_or_default()
-        })
+        });
+        if crate::api::error_trace_flag::error_trace_enabled() && !trace.is_empty() {
+            format!(
+                "{base}\nerror trace:\n{}",
+                error_trace::format_error_trace(&trace)
+            )
+        } else {
+            base
+        }
     }
 
     /// Extract a user-facing message from structured protobuf error fields

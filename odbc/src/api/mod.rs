@@ -6,6 +6,7 @@ pub mod diagnostic;
 pub mod encoding;
 pub mod environment;
 pub mod error;
+pub(crate) mod error_trace_flag;
 pub mod handle_allocation;
 pub mod handle_registry;
 pub mod query_type;

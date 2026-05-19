@@ -88,8 +88,12 @@ pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     if guard.globals.is_none() {
+        let log_manager = sf_core::logging::LogManager::for_odbc();
+        if let Some(lm) = &log_manager {
+            crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());
+        }
         let providers = DriverProviders {
-            log_manager: sf_core::logging::LogManager::for_odbc(),
+            log_manager,
             wrapper_presets: WrapperPresets::odbc(),
             ..Default::default()
         };
