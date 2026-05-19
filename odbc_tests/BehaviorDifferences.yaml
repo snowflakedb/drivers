@@ -646,3 +646,15 @@ behavior_differences:
       SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT: default -1 (auto-detect), supports set/get roundtrip for values -1 to 32767, returns SQL_ERROR with HY024 for values < -1, and forwards the count to the server enabling multi-statement result sets via SQLMoreResults.
     impact: |
       Applications relying on SQL_SF_STMT_ATTR_LAST_QUERY_ID after SQLPrepare+SQLExecute or on SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT must target the new driver. Basic last-query-id retrieval after SQLExecDirect works on both drivers.
+
+  57:
+    name: "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY is sent as a server session parameter"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      The old driver uses CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY only client-side to configure the background heartbeat thread interval. It is not forwarded to the server as a session parameter, so SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY' returns the server default (3600).
+    new_driver_behavior: |
+      The new driver sends CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY to the server as a session parameter during login, making it queryable via SHOW PARAMETERS. The value is also used client-side to configure the heartbeat interval.
+    impact: |
+      Applications that query SHOW PARAMETERS to verify the heartbeat frequency will now see the value they configured in the connection string.
