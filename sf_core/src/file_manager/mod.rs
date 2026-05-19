@@ -32,7 +32,10 @@ use std::path::Path;
 /// matching the historical universal-driver behaviour.
 const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIPPED";
 
-pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
+pub async fn upload_files(
+    data: &UploadData,
+    mut refresher: Option<&mut dyn StageCredsRefresher>,
+) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
         expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
 
@@ -43,15 +46,19 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
         .fail();
     }
 
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(file_locations.len());
 
+    // The refresher owns the latest stage credentials for the batch via its
+    // shared `StageCredsCache`; per-file calls read from that cache, so
+    // refreshed creds heal the remaining files automatically (matching
+    // Python's shared `StorageCredential`). The refresher coalesces
+    // rapid-fire refresh calls across files.
     for file_location in file_locations {
-        // TODO: We could experiment with references here for performance after we have working parallel implementation
-
+        let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
         let single_upload_data = SingleUploadData {
             file_path: file_location.path,
             filename: file_location.filename,
-            stage_info: data.stage_info.clone(),
+            stage_info,
             encryption_material: data.encryption_material.clone(),
             auto_compress: data.auto_compress,
             source_compression: data.source_compression.clone(),
@@ -59,14 +66,32 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
             flavor: data.flavor.clone(),
         };
 
-        let result = upload_single_file(single_upload_data).await?;
+        let result = upload_single_file(single_upload_data, &mut refresher).await?;
         results.push(result);
     }
 
     Ok(results)
 }
 
-pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, FileManagerError> {
+/// Returns a copy of `base` with `creds` replaced by the refresher's current
+/// snapshot, when a refresher is present. Without a refresher, `base` is
+/// returned unchanged.
+fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageCredsRefresher>) -> StageInfo {
+    let mut info = base.clone();
+    if let Some(r) = refresher {
+        info.creds = r.cache().snapshot();
+    }
+    info
+}
+
+/// Uploads one file. On S3 stages, the `refresher` (if any) is used to refresh
+/// STS credentials on `ExpiredToken`; see `s3_transfer::upload_to_s3_or_skip`
+/// for the refresh semantics. Refreshed credentials are stored in the
+/// refresher's `StageCredsCache` rather than returned here.
+pub async fn upload_single_file(
+    data: SingleUploadData,
+    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
 
     let mut file_buffer = Vec::new();
@@ -80,6 +105,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            refresher,
         )
         .await
         .context(S3UploadSnafu)?,
@@ -240,6 +266,7 @@ fn auto_detect_source_compression(
 
 pub async fn download_files(
     mut data: DownloadData,
+    mut refresher: Option<&mut dyn StageCredsRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
@@ -248,23 +275,26 @@ pub async fn download_files(
         .drain(..)
         .zip(data.encryption_materials.drain(..))
     {
+        let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
         let single_download_data = SingleDownloadData {
             src_location: file_location,
             local_location: data.local_location.clone(),
-            stage_info: data.stage_info.clone(),
+            stage_info,
             encryption_material,
             flavor: data.flavor.clone(),
         };
 
-        let result = download_single_file(single_download_data).await?;
+        let result = download_single_file(single_download_data, &mut refresher).await?;
         results.push(result);
     }
 
     Ok(results)
 }
 
+/// Downloads one file. See `upload_single_file` for the refresh semantics.
 pub async fn download_single_file(
     data: SingleDownloadData,
+    refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
     let DownloadResponse {
         data: raw_data,
@@ -272,9 +302,11 @@ pub async fn download_single_file(
         file_metadata,
         cloud_byte_count,
     } = match data.stage_info.location_type {
-        LocationType::S3 => download_from_s3(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(S3DownloadSnafu)?,
+        LocationType::S3 => {
+            download_from_s3(&data.stage_info, data.src_location.as_str(), refresher)
+                .await
+                .context(S3DownloadSnafu)?
+        }
         LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
             .await
             .context(GcsDownloadSnafu)?,
