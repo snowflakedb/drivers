@@ -88,7 +88,7 @@ describe('Query returning data types', () => {
       connection,
       "SELECT '-9.8765432099999998623226732747455716901e-250'::DECFLOAT as DECFLOAT_COLUMN",
     );
-    // NO is* methods cover decfloat
+    // NO isDecfloat method available :/
     expect(statement.getColumn(0).getType()).toBe('decfloat');
     expect(rows![0].DECFLOAT_COLUMN).toBe('-9.8765432099999998623226732747455716901e-250');
   });
