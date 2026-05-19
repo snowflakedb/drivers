@@ -1,7 +1,7 @@
 use keyring::credential::CredentialPersistence;
 use keyring::{CredentialBuilder, Entry};
 use snafu::ResultExt;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::token_cache::file_cache::FileTokenCache;
 
@@ -89,10 +89,52 @@ impl TokenCache for KeyringTokenCache {
     ) -> Result<(), TokenCacheError> {
         validate_key_components(host, username)?;
         debug!("Removing secret for {token_type:?}");
+        let key = build_cache_key(host, username, token_type);
         let entry = self.create_entry(host, username, token_type)?;
-        match entry.delete_credential() {
-            Ok(()) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
+        // TEMP DIAGNOSTIC (SNOW-2314157, Windows x86 eviction regression):
+        // Distinguish "actually deleted" from "backend reported NoEntry"
+        // so we can tell whether `should_evict_refresh_token_when_idp_returns_invalid_grant`
+        // fails because the OS credential store silently drops the delete
+        // or because our default-target derivation diverges between
+        // write/read and delete on `keyring v3` + windows-native. After
+        // every reported-success delete, do a verify-read to catch a
+        // backend that lies about deletion on the spot.
+        // Remove once the root cause is confirmed.
+        let delete_result = entry.delete_credential();
+        match &delete_result {
+            Ok(()) => info!(
+                cache_key = %key,
+                "delete_credential returned Ok for {token_type:?}"
+            ),
+            Err(keyring::Error::NoEntry) => warn!(
+                cache_key = %key,
+                "delete_credential returned NoEntry for {token_type:?}; \
+                 treating as success but credential may still be present"
+            ),
+            Err(_) => {}
+        }
+        match delete_result {
+            Ok(()) | Err(keyring::Error::NoEntry) => {
+                let verify_entry = self.create_entry(host, username, token_type)?;
+                match verify_entry.get_password() {
+                    Ok(value) => warn!(
+                        cache_key = %key,
+                        leaked_byte_len = value.len(),
+                        "post-delete verify-read FOUND credential for {token_type:?}; \
+                         keyring backend reported success but credential persists"
+                    ),
+                    Err(keyring::Error::NoEntry) => info!(
+                        cache_key = %key,
+                        "post-delete verify-read confirms credential gone for {token_type:?}"
+                    ),
+                    Err(e) => warn!(
+                        cache_key = %key,
+                        error = %e,
+                        "post-delete verify-read errored for {token_type:?}"
+                    ),
+                }
+                Ok(())
+            }
             Err(e) => Err(e).boxed().context(TokenRemovalSnafu),
         }
     }
