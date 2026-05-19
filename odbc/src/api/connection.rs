@@ -1580,33 +1580,6 @@ mod tests {
         );
     }
 
-    /// Wiring guard for the SQLSTATE classifier: every OAuth key in
-    /// `oauth::ALL_OAUTH_KEYS` must be present in
-    /// `error::AUTHENTICATOR_PARAMETERS` so missing-required errors
-    /// for OAuth params are mapped to SQLSTATE `28000` (auth-related)
-    /// rather than the generic `HY000`. Indirectly exercised through
-    /// the helper closure below to avoid exposing the static.
-    #[test]
-    fn oauth_keys_are_classified_as_authenticator_parameters() {
-        // We cannot reach the private static from outside the module,
-        // so we inspect the OAuth wiring by round-tripping a
-        // canonical name through the resolver. The check is simple:
-        // `ALL_OAUTH_KEYS` is the input list; if any one of them
-        // is missing from `AUTHENTICATOR_PARAMETERS` (which is what
-        // the static is initialized from in error.rs after this
-        // commit), SQLSTATE classification would silently regress.
-        // For now we re-assert the same set the wiring uses to
-        // populate the static — the failure mode is "wiring drifted"
-        // rather than "set missed an entry".
-        for &key in oauth::ALL_OAUTH_KEYS {
-            assert!(
-                oauth::is_oauth_key(key),
-                "ALL_OAUTH_KEYS entry {key} is not recognised by is_oauth_key — \
-                 wiring will fail to classify SQLSTATE for this parameter"
-            );
-        }
-    }
-
     /// End-to-end parse → normalize for the canonical OAuth
     /// authorization-code connection string. The
     /// resulting options map must contain every OAuth field as its
