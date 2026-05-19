@@ -63,6 +63,7 @@ LOGGER_CALLBACK = ctypes.CFUNCTYPE(
 core.sf_core_init.argtypes = [LOGGER_CALLBACK]
 core.sf_core_init.restype = ctypes.c_uint32
 
+# Sync proto API (blocks until complete)
 core.sf_core_api_call_proto.restype = ctypes.c_uint32
 core.sf_core_api_call_proto.argtypes = [
     ctypes.c_char_p,  # const char* api
@@ -78,6 +79,68 @@ core.sf_core_free_buffer.argtypes = [
     ctypes.POINTER(ctypes.c_ubyte),  # uint8_t* buffer
     ctypes.c_size_t,  # size_t len
 ]
+
+# Async proto API (callback-based, returns immediately).
+#
+# Signature: uint64_t sf_core_api_call_proto_async(
+#     api, method, request, request_len,
+#     callback,    // ResponseCallback fn pointer
+#     user_data,   // opaque void*
+# )
+#
+# Returns a non-zero request ID. Pass it to ``sf_core_cancel_request`` to ask
+# Rust to abort the in-flight task. The callback is invoked exactly once from
+# a tokio worker thread when the request completes (unless the task was
+# aborted before it reached its last await point). Callers must:
+#   1. Keep both ``callback`` and any object referenced by ``user_data`` alive
+#      until the callback fires.
+#   2. Copy the response buffer inside the callback — Rust frees it on return.
+RESPONSE_CALLBACK = ctypes.CFUNCTYPE(
+    None,  # return type (must not raise/unwind)
+    ctypes.c_void_p,  # user_data
+    ctypes.c_size_t,  # status (0=ok, 1=app error, 2=transport error)
+    ctypes.POINTER(ctypes.c_ubyte),  # response_ptr
+    ctypes.c_size_t,  # response_len
+)
+core.sf_core_api_call_proto_async.restype = ctypes.c_uint64
+core.sf_core_api_call_proto_async.argtypes = [
+    ctypes.c_char_p,  # const char* api
+    ctypes.c_char_p,  # const char* method
+    ctypes.POINTER(ctypes.c_ubyte),  # const uint8_t* request
+    ctypes.c_size_t,  # size_t request_len
+    RESPONSE_CALLBACK,  # callback
+    ctypes.c_void_p,  # user_data
+]
+
+# Cancel a previously submitted async request by ID. Best-effort: aborts the
+# tokio task at its next await point. Idempotent on unknown IDs.
+core.sf_core_cancel_request.restype = None
+core.sf_core_cancel_request.argtypes = [ctypes.c_uint64]
+
+
+def sf_core_api_call_proto_async(
+    api: bytes,
+    method: bytes,
+    request: Any,
+    request_len: int,
+    callback: Any,
+    user_data: Any,
+) -> int:
+    """Submit an async proto request. Returns immediately with a request ID.
+
+    The returned ID may be passed to :func:`sf_core_cancel_request` to ask
+    Rust to abort the task. ``callback`` is invoked exactly once unless the
+    task is aborted before it reaches its last await point.
+    """
+    return int(core.sf_core_api_call_proto_async(api, method, request, request_len, callback, user_data))
+
+
+def sf_core_cancel_request(request_id: int) -> None:
+    """Best-effort cancellation of an in-flight async request.
+
+    A no-op if the request has already completed or never existed.
+    """
+    core.sf_core_cancel_request(ctypes.c_uint64(request_id))
 
 
 # Performance instrumentation FFI bindings (see sf_core/src/c_api.rs).

@@ -4,7 +4,6 @@ import asyncio
 import ctypes
 import threading
 
-from ctypes import c_char_p
 from typing import Any
 
 from snowflake.connector._internal.status_codes import (
@@ -117,7 +116,7 @@ from ..protobuf_gen.proto_exception import (
     ProtoApplicationException,
     ProtoTransportException,
 )
-from .c_api import sf_core_api_call_proto, sf_core_free_buffer
+from .c_api import RESPONSE_CALLBACK, sf_core_api_call_proto_async, sf_core_cancel_request
 
 
 # ---------------------------------------------------------------------------
@@ -274,30 +273,87 @@ def _derive_sqlstate(driver_exception: Any) -> str | None:
 
 
 class ProtoTransport:
+    """Async, callback-based bridge to the Rust core RPC layer.
+
+    Each call:
+      1. Creates an :class:`asyncio.Future` bound to the running event loop.
+      2. Builds a C callback that resolves the Future when Rust completes.
+      3. Submits the request to ``sf_core_api_call_proto_async`` (returns
+         immediately — Rust spawns the work on its tokio runtime).
+      4. Awaits the Future.
+
+    Lifetime correctness is critical: the C callback object **must** outlive
+    the Rust task that may invoke it. We pin it to the Future so it stays alive
+    until the Future is resolved (and thus garbage-collected only after the
+    awaiting coroutine resumes). Stack-locals are not safe — if the awaiting
+    coroutine is cancelled, its frame is collected before Rust may have fired
+    the callback.
+    """
+
     async def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
-        return await asyncio.to_thread(self._handle_message_sync, api, method, message)
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[tuple[int, bytes]] = loop.create_future()
 
-    def _handle_message_sync(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
-        response = ctypes.POINTER(ctypes.c_ubyte)()
-        response_len = ctypes.c_size_t()
-        api_bytes: c_char_p = ctypes.c_char_p(api.encode("utf-8"))
-        method_bytes: c_char_p = ctypes.c_char_p(method.encode("utf-8"))
-        message_buf = (ctypes.c_ubyte * len(message))()
-        message_buf[:] = message  # type: ignore
-        code = sf_core_api_call_proto(
-            api_bytes,
-            method_bytes,
-            ctypes.cast(message_buf, ctypes.POINTER(ctypes.c_ubyte)),
+        # Closure captures `loop` and `future` only — no `self`.
+        def on_response(
+            user_data_ptr: int,
+            status: int,
+            response_ptr: Any,
+            response_len: int,
+        ) -> None:
+            # Copy response bytes BEFORE returning — Rust frees the buffer next.
+            # `string_at` is a single memcpy; avoids the O(n) Python __getitem__
+            # loop you get from `bytes(ptr[:n])`.
+            response_bytes = ctypes.string_at(response_ptr, response_len)
+
+            def _set() -> None:
+                # The Future may have been cancelled while Rust was working;
+                # `set_result` would raise InvalidStateError. Guard explicitly.
+                if not future.done():
+                    future.set_result((status, response_bytes))
+
+            loop.call_soon_threadsafe(_set)
+
+        callback_ref = RESPONSE_CALLBACK(on_response)
+        # Pin the callback to the Future so it cannot be garbage-collected
+        # before Rust invokes it. Without this, an awaiting coroutine that
+        # gets cancelled could free the callback object while Rust still
+        # holds the function pointer — use-after-free / segfault.
+        #
+        # Note: this creates a deliberate reference cycle
+        # (future -> callback_ref -> on_response closure -> future). It is
+        # broken by the cycle GC after the Future resolves and the awaiting
+        # coroutine drops its reference. Do not optimise this pin away
+        # thinking it is redundant — the lifetime invariant matters precisely
+        # in the cancellation path.
+        future._proto_transport_callback_ref = callback_ref  # type: ignore[attr-defined]
+
+        # Build a C-compatible buffer from the message bytes. (c_ubyte * n) is
+        # contiguous and ctypes can pass its address directly — no extra copy
+        # versus the prior `message_buf[:] = message` approach, but cleaner.
+        request_buf = (ctypes.c_ubyte * len(message)).from_buffer_copy(message)
+
+        request_id = sf_core_api_call_proto_async(
+            api.encode("utf-8"),
+            method.encode("utf-8"),
+            ctypes.cast(request_buf, ctypes.POINTER(ctypes.c_ubyte)),
             len(message),
-            ctypes.byref(response),
-            ctypes.byref(response_len),
+            callback_ref,
+            None,  # user_data — unused; we capture future in the closure
         )
-        if code == 0 or code == 1 or code == 2:
-            result = bytes(response[: response_len.value])
-            sf_core_free_buffer(response, response_len.value)
-            return (code, result)
 
-        raise ProtoTransportException(f"Unknown error code: {code}")
+        try:
+            status, response_bytes = await future
+        except asyncio.CancelledError:
+            # Tell Rust to abort the in-flight task at its next await point.
+            # The callback may still fire if Rust is past that point — the
+            # `future.done()` guard above makes that case a safe no-op.
+            sf_core_cancel_request(request_id)
+            raise
+
+        if status in (0, 1, 2):
+            return (status, response_bytes)
+        raise ProtoTransportException(f"Unknown error code: {status}")
 
 
 _background_loop: asyncio.AbstractEventLoop | None = None
@@ -383,7 +439,7 @@ class CoreDriver:
     The held client is a :class:`DatabaseDriverBlockingClient` that wraps the
     async-first :class:`DatabaseDriverClient`. This keeps every CoreDriver
     method synchronous for existing callers while the underlying transport
-    runs the FFI call off-loop via ``asyncio.to_thread``.
+    runs the FFI call asynchronously via a callback-based bridge to tokio.
     """
 
     def __init__(self) -> None:
