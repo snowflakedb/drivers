@@ -3,10 +3,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
+#include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: exec_direct_2col_empty_result", "[dtm]") {
+  SKIP_IODBC("Replay sets SQL_OV_ODBC3_80; iODBC only supports up to ODBC 3.0");
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;

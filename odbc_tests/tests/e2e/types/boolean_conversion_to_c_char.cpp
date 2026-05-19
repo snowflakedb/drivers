@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -30,6 +31,7 @@ TEST_CASE("should convert boolean to SQL_C_CHAR", "[datatype][boolean][conversio
 // ============================================================================
 
 TEST_CASE("should convert boolean to SQL_C_WCHAR", "[datatype][boolean][conversion][char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 

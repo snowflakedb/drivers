@@ -179,7 +179,7 @@ std::string DataSourceConfig::connection_string() const {
 #ifdef _WIN32
     ss << "DSN=" << driver_config_.value()->name() << ";";
 #else
-    ss << "DRIVER={" << driver_config_.value()->get_driver_path() << "};";
+    ss << "DRIVER={" << driver_config_.value()->name() << "};";
 #endif
   }
   for (const auto& [key, value] : parameters_) {

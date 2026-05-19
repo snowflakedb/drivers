@@ -345,6 +345,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Undefined fiel
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][getdescfield][descriptor][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -367,6 +368,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - IRD access during SQL_NEED_DATA",
                  "[odbc-api][getdescfield][descriptor][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);

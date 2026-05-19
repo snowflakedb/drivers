@@ -17,6 +17,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -362,6 +363,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should round-trip empty JSON containers thr
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle JSON with unicode content", "[semi_structured]") {
+  SKIP_IODBC("Test reads wide results via check_wchar_success (u16string); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -383,6 +385,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle JSON with unicode content", "
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle JSON with unicode in keys", "[semi_structured]") {
+  SKIP_IODBC("Test reads wide results via check_wchar_success (u16string); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 

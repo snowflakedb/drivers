@@ -6,11 +6,13 @@
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumResultCols: HY010 during SQL_NEED_DATA",
                  "[odbc-api][numresultcols][retrieving_results][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

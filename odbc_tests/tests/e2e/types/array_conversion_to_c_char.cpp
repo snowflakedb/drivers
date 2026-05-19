@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
@@ -127,6 +128,7 @@ TEST_CASE("ARRAY to SQL_C_CHAR with null elements", "[array][conversion][c_char]
 // ============================================================================
 
 TEST_CASE("ARRAY to SQL_C_WCHAR", "[array][conversion][c_char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 

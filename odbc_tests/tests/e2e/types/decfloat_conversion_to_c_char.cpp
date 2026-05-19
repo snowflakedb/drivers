@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -45,6 +46,7 @@ TEST_CASE("DECFLOAT full precision to SQL_C_CHAR", "[decfloat][conversion][c_cha
 // ============================================================================
 
 TEST_CASE("DECFLOAT to SQL_C_WCHAR", "[decfloat][conversion][c_char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -98,6 +100,7 @@ TEST_CASE("DECFLOAT SQL_C_CHAR exact-fit buffer", "[decfloat][conversion][c_char
 }
 
 TEST_CASE("DECFLOAT SQL_C_WCHAR truncation with small buffer", "[decfloat][conversion][c_char][truncation]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 

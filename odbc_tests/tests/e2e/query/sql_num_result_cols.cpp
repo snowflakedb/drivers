@@ -140,6 +140,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns correct count afte
 // =============================================================================
 
 TEST_CASE("SQLNumResultCols returns HY010 when called on freshly allocated statement.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Doc: "(DM) The function was called prior to calling SQLPrepare or SQLExecDirect
   //       for the StatementHandle."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlnumresultcols-function#diagnostics

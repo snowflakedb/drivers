@@ -33,6 +33,7 @@
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should cast string values to appropriate type for string and synonyms",
                  "[datatype][string]") {
+  SKIP_IODBC("Test uses u\"\" / std::u16string for SQLExecDirectW; iODBC expects UTF-32 SQLWCHAR");
   // Given Snowflake client is logged in
 
   // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
@@ -70,6 +71,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string literals", "
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals with corner case values", "[datatype][string]") {
+  SKIP_IODBC("Test uses u\"\" literals for SQLExecDirectW; iODBC expects UTF-32 SQLWCHAR");
   // Given Snowflake client is logged in
 
   // When Query selecting corner case string literals is executed
@@ -139,6 +141,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string values from 
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values from table", "[datatype][string]") {
+  SKIP_IODBC("Test asserts results via check_wchar_success (u16string); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
 
   // And A temporary table with VARCHAR column is created
@@ -199,6 +202,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values fro
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should insert and select back hardcoded string values using parameter binding",
                  "[datatype][string]") {
+  SKIP_IODBC("Parameter binding round-trips through SQLWCHAR; iODBC uses 4-byte SQLWCHAR vs. test harness u16string");
   // Given Snowflake client is logged in
 
   // And A temporary table with VARCHAR column is created
@@ -233,6 +237,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert and select back hardcoded str
 // ============================================================================
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals using parameter binding", "[datatype][string]") {
+  SKIP_IODBC("Test asserts wide results via u16string; iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
 
   auto stmt = conn.createStatement();
@@ -272,6 +277,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals using paramet
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values using parameter binding",
                  "[datatype][string]") {
+  SKIP_IODBC("Test asserts wide results via u16string; iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
 
   // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound

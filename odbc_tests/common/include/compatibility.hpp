@@ -98,4 +98,122 @@ inline bool is_ascii_locale() {
     }                                                  \
   } while (0)
 
+// ============================================================================
+// Driver-manager-specific compatibility shims
+// ============================================================================
+//
+// iODBC ships an older `<sqlext.h>` that doesn't define every macro from the
+// ODBC 3.8 spec (notably `SQL_GD_OUTPUT_PARAMS`, added in ODBC 3.8 to advertise
+// `SQLGetData` support against output parameters). unixODBC and Windows DM
+// both define them. Pull in `<sqlext.h>` and fill in any missing macros with
+// the canonical Microsoft-spec values so test code can reference them
+// unconditionally.
+#include <sqlext.h>
+
+#ifndef SQL_GD_OUTPUT_PARAMS
+#define SQL_GD_OUTPUT_PARAMS 0x00000010L
+#endif
+
+// `SQL_OV_ODBC3_80` is the value passed to `SQLSetEnvAttr` /
+// `SQL_ATTR_ODBC_VERSION` to opt into ODBC 3.8 behaviors (asynchronous
+// statement execution, `SQL_PARAM_DATA_AVAILABLE`, …). iODBC's `<sqlext.h>`
+// stops at `SQL_OV_ODBC3` (3UL); the canonical 3.8 value (380UL) below
+// matches Microsoft and unixODBC.
+#ifndef SQL_OV_ODBC3_80
+#define SQL_OV_ODBC3_80 380UL
+#endif
+
+// `SQL_API_SQLCANCELHANDLE` is the function ID reported by `SQLGetFunctions`
+// for ODBC 3.8's `SQLCancelHandle`. Microsoft and unixODBC define it as 1022;
+// iODBC ships an older `<sql.h>` that omits it.
+#ifndef SQL_API_SQLCANCELHANDLE
+#define SQL_API_SQLCANCELHANDLE 1022
+#endif
+
+// ODBC 3.8 `SQLGetInfo` info-type IDs and their associated bitmask values.
+// Microsoft and unixODBC define them; iODBC's `<sqlext.h>` does not. Tests
+// that probe `SQLGetInfo(SQL_ASYNC_DBC_FUNCTIONS)` etc. need these symbols at
+// compile time even though the actual driver always returns the
+// "not-capable" value.
+#ifndef SQL_ASYNC_DBC_FUNCTIONS
+#define SQL_ASYNC_DBC_FUNCTIONS 10023
+#endif
+#ifndef SQL_ASYNC_DBC_NOT_CAPABLE
+#define SQL_ASYNC_DBC_NOT_CAPABLE 0x00000000L
+#endif
+#ifndef SQL_ASYNC_DBC_CAPABLE
+#define SQL_ASYNC_DBC_CAPABLE 0x00000001L
+#endif
+#ifndef SQL_ASYNC_NOTIFICATION
+#define SQL_ASYNC_NOTIFICATION 10025
+#endif
+#ifndef SQL_ASYNC_NOTIFICATION_NOT_CAPABLE
+#define SQL_ASYNC_NOTIFICATION_NOT_CAPABLE 0x00000000L
+#endif
+#ifndef SQL_ASYNC_NOTIFICATION_CAPABLE
+#define SQL_ASYNC_NOTIFICATION_CAPABLE 0x00000001L
+#endif
+#ifndef SQL_DRIVER_AWARE_POOLING_SUPPORTED
+#define SQL_DRIVER_AWARE_POOLING_SUPPORTED 10024
+#endif
+#ifndef SQL_DRIVER_AWARE_POOLING_NOT_CAPABLE
+#define SQL_DRIVER_AWARE_POOLING_NOT_CAPABLE 0x00000000L
+#endif
+#ifndef SQL_DRIVER_AWARE_POOLING_CAPABLE
+#define SQL_DRIVER_AWARE_POOLING_CAPABLE 0x00000001L
+#endif
+
+// Connection-attribute / value pair for ODBC 3.8 asynchronous connection
+// operations (`SQLConnect`, `SQLDriverConnect`, ...). Not exposed by iODBC.
+#ifndef SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE
+#define SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE 117
+#endif
+#ifndef SQL_ASYNC_DBC_ENABLE_ON
+#define SQL_ASYNC_DBC_ENABLE_ON 1UL
+#endif
+#ifndef SQL_ASYNC_DBC_ENABLE_OFF
+#define SQL_ASYNC_DBC_ENABLE_OFF 0UL
+#endif
+
+// `SQL_CVT_GUID` is the bitmask flag returned by `SQLGetInfo` for the
+// `SQL_CONVERT_*` info types when the driver supports converting to GUID.
+// Microsoft / unixODBC: `0x01000000L`. iODBC's `<sqlext.h>` omits it.
+#ifndef SQL_CVT_GUID
+#define SQL_CVT_GUID 0x01000000L
+#endif
+
+// ============================================================================
+// iODBC detection and stubs
+// ============================================================================
+//
+// iODBC's `<sqltypes.h>` always pulls in `<iodbcunix.h>`, which defines
+// `_IODBCUNIX_H`. Use that as the sentinel — it's the closest thing iODBC
+// publishes to a vendor identification macro. Once we know we're on iODBC,
+// expose `SF_DM_IODBC` to test code for runtime skips, and provide stubs
+// for ODBC-3.8-only entry points that iODBC doesn't ship so call sites
+// stay compilable.
+#ifdef _IODBCUNIX_H
+#define SF_DM_IODBC 1
+
+// `SQLCancelHandle` was added in ODBC 3.8 and is exposed by both the
+// Microsoft DM and unixODBC, but iODBC never picked it up. Provide a stub
+// that returns `SQL_INVALID_HANDLE` (matching the unixODBC behavior tests
+// already assert) so iODBC builds link; tests that exercise this entry
+// point should `SKIP_IODBC()` at runtime — calling the stub would still
+// yield correct return-code semantics, but we'd rather signal "untested"
+// than silently report a synthetic value.
+static inline SQLRETURN SQLCancelHandle(SQLSMALLINT /*handle_type*/, SQLHANDLE /*handle*/) {
+  return SQL_INVALID_HANDLE;
+}
+#endif  // _IODBCUNIX_H
+
+// `SKIP_IODBC` skips the surrounding test under iODBC (compile-time guard,
+// since the iODBC-vs-unixODBC choice is fixed at build time). On other
+// driver managers it's a no-op, so call sites read cleanly under both DMs.
+#ifdef SF_DM_IODBC
+#define SKIP_IODBC(reason) SKIP("iODBC: " reason)
+#else
+#define SKIP_IODBC(reason) ((void)0)
+#endif
+
 #endif  // COMPATIBILITY_HPP

@@ -168,6 +168,7 @@ TEST_CASE("SQLBindParameter: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: 07009 for parameter number 0",
                  "[odbc-api][bindparameter][preparing][error]") {
+  SKIP_IODBC("iODBC DM does not validate ParameterNumber=0 — driver accepts the bind and yields a different SQLSTATE");
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // 07009: Invalid descriptor index
@@ -214,6 +215,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY009 for both null p
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY105 for invalid InputOutputType",
                  "[odbc-api][bindparameter][preparing][error]") {
+  SKIP_IODBC(
+      "iODBC DM does not validate the InputOutputType enum — driver receives the bogus value and yields a different "
+      "SQLSTATE");
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // HY105: Invalid parameter type (999 is not a valid InputOutputType)
@@ -223,6 +227,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY105 for invalid Inp
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY003 for invalid ValueType",
                  "[odbc-api][bindparameter][preparing][error]") {
+  SKIP_IODBC(
+      "iODBC DM does not validate ValueType — driver receives the bogus C-type code and yields a different SQLSTATE");
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // HY003: Invalid application buffer type (9999 is not a valid C data type)

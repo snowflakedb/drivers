@@ -4,6 +4,11 @@ PARAMS = {
     "OS":    ["ubuntu", "macos", "windows"],
     "Arch":  ["x64", "x86", "arm"],
     "Cloud": ["aws", "gcp", "azure"],
+    # iODBC is a separate driver manager on macOS that ships 4-byte SQLWCHAR;
+    # the driver picks the encoding at runtime from `sf.odbc.ini`. Only macOS
+    # is exercised under iODBC today — Linux uses unixODBC, Windows uses the
+    # OS DM. See odbc/README.md "Driver manager encoding".
+    "DM":    ["unixodbc", "iodbc"],
 }
 
 
@@ -18,6 +23,11 @@ def is_valid(c):
         # macos ODBC builds only arm.
         if c["Arch"] == "x64": return False
         if c["Arch"] == "x86": return False
+
+    # iODBC only applies on macOS (Homebrew libiodbc); Linux/Windows have no
+    # iODBC test lane.
+    if c["DM"] == "iodbc":
+        if c["OS"] != "macos": return False
 
     return True
 
@@ -42,16 +52,19 @@ def merge_valid(c):
 MERGE_VALID = [merge_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws"},
-    {"OS": "macos",   "Arch": "arm", "Cloud": "gcp"},
-    {"OS": "windows", "Arch": "x64", "Cloud": "azure"},
-    {"OS": "windows", "Arch": "x86", "Cloud": "aws"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "DM": "unixodbc"},
+    {"OS": "macos",   "Arch": "arm", "Cloud": "gcp",   "DM": "unixodbc"},
+    {"OS": "windows", "Arch": "x64", "Cloud": "azure", "DM": "unixodbc"},
+    {"OS": "windows", "Arch": "x86", "Cloud": "aws",   "DM": "unixodbc"},
+    # Keep the iODBC cell at PR scope: it exercises the 4-byte SQLWCHAR path
+    # the rest of the matrix never hits.
+    {"OS": "macos",   "Arch": "arm", "Cloud": "aws",   "DM": "iodbc"},
 ]
 
 JSON_CELLS = {
     "pr": [],
     "merge": [
-        {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws"},
+        {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "DM": "unixodbc"},
     ],
     "nightly": [],
 }

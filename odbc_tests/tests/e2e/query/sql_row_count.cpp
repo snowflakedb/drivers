@@ -8,6 +8,7 @@
 #include "get_diag_rec.hpp"
 
 TEST_CASE("SQLRowCount returns HY010 when called without executing statement.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -445,6 +446,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for INSER
 // =============================================================================
 
 TEST_CASE("SQLRowCount returns HY010 after SQLFreeStmt SQL_CLOSE.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Doc: "The cached row count value is valid until the statement handle is set
   //       back to the prepared or allocated state, the statement is reexecuted,
   //       or SQLCloseCursor is called."
@@ -470,6 +472,7 @@ TEST_CASE("SQLRowCount returns HY010 after SQLFreeStmt SQL_CLOSE.", "[query]") {
 }
 
 TEST_CASE("SQLRowCount returns HY010 after SQLPrepare without execute.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Doc: Calling SQLRowCount before SQLExecute/SQLExecDirect should return
   //      HY010 (Function sequence error).
 

@@ -390,6 +390,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for TextLength zer
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY010 during SQL_NEED_DATA",
                  "[odbc-api][execdirect][submitting_request][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

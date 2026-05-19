@@ -245,6 +245,7 @@ TEST_CASE("SQLDescribeCol available after SQLPrepare without execute.", "[query]
 // =============================================================================
 
 TEST_CASE("SQLPrepareW + SQLExecute basic flow.", "[query][prepare]") {
+  SKIP_IODBC("Query is built as std::u16string and passed to SQLPrepareW; iODBC expects UTF-32 SQLWCHAR");
   // Doc: "SQLPrepareW is the Unicode version of SQLPrepare."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function
 
@@ -272,6 +273,7 @@ TEST_CASE("SQLPrepareW + SQLExecute basic flow.", "[query][prepare]") {
 }
 
 TEST_CASE("SQLPrepareW with Unicode content in query.", "[query][prepare]") {
+  SKIP_IODBC("Query is built as std::u16string and passed to SQLPrepareW; iODBC expects UTF-32 SQLWCHAR");
   SKIP_WINDOWS_STRING_ENCODING();
   // Doc: "SQLPrepareW is the Unicode version of SQLPrepare."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function
@@ -300,6 +302,7 @@ TEST_CASE("SQLPrepareW with Unicode content in query.", "[query][prepare]") {
 // =============================================================================
 
 TEST_CASE("SQLExecute without prior SQLPrepare returns HY010.", "[query][prepare][error]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Doc: "HY010 - Function sequence error: ... The StatementHandle was not prepared."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecute-function#diagnostics
 
@@ -417,6 +420,7 @@ TEST_CASE("SQLExecute returns 24000 when cursor is not closed before re-execute 
 // =============================================================================
 
 TEST_CASE("SQLExecDirectW basic flow.", "[query][prepare]") {
+  SKIP_IODBC("Query is built as std::u16string and passed to SQLExecDirectW; iODBC expects UTF-32 SQLWCHAR");
   // Doc: "SQLExecDirect submits an SQL statement for one-time execution."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function#summary
 
@@ -499,6 +503,7 @@ TEST_CASE("SQLPrepare with null SQL text pointer returns HY009.", "[query][prepa
 }
 
 TEST_CASE("SQLPrepare with negative TextLength returns HY090.", "[query][prepare][error]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1090 instead of HY090");
   // Doc: "HY090 - Invalid string or buffer length: The argument TextLength was
   //       less than or equal to 0 but not equal to SQL_NTS."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#diagnostics

@@ -422,6 +422,7 @@ TEST_CASE("SQLGetData ignores BufferLength for fixed-length data types.", "[quer
 }
 
 TEST_CASE("SQLGetData returns HY090 when BufferLength is less than 0.", "[query][get_data]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1090 instead of HY090");
   // Doc: "SQLGetData returns SQLSTATE HY090 (Invalid string or buffer length) when
   //       BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -882,6 +883,7 @@ TEST_CASE("SQLGetData returns 07009 when Col_or_Param_Num exceeds result set col
 }
 
 TEST_CASE("SQLGetData returns 24000 when cursor is positioned after end of result set.", "[query][get_data]") {
+  SKIP_IODBC("iODBC DM intercepts cursor-state validation and returns a different SQLSTATE than 24000");
   // Doc: "24000 - Invalid cursor state: ... the cursor was positioned before the
   //       start of the result set or after the end of the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#diagnostics
@@ -1294,6 +1296,7 @@ TEST_CASE("SQLGetData retrieves correct data on each successive row after SQLFet
 // =============================================================================
 
 TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.", "[query][get_data]") {
+  SKIP_IODBC("iODBC DM rejects SQL_ARD_TYPE before reaching the driver");
   // Doc: "If TargetType is SQL_ARD_TYPE, the driver uses the type identifier
   //       specified in the SQL_DESC_CONCISE_TYPE field of the ARD."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1332,6 +1335,7 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.",
 // =============================================================================
 
 TEST_CASE("SQLGetData with SQL_ARD_TYPE returns 07009 error when ARD is unmodified.", "[query][get_data]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1003 instead of 07009");
   // Doc: "If TargetType is SQL_ARD_TYPE, the driver uses the type identifier
   //       specified in the SQL_DESC_CONCISE_TYPE field of the ARD."
   // Note: when no descriptor fields have been set, SQL_DESC_CONCISE_TYPE defaults to
@@ -1931,6 +1935,7 @@ TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL wide string column.", "[que
 // =============================================================================
 
 TEST_CASE("SQLGetData returns HY010 when called on a statement with no executed query.", "[query][get_data]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Doc: "HY010 - Function sequence error: (DM) The specified StatementHandle was
   //       not in an executed state. The function was called without first calling
   //       SQLExecDirect, SQLExecute, or a catalog function."

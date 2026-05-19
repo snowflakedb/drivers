@@ -57,6 +57,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate string data when byte lengt
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should truncate wide string data when byte length is longer than the buffer length",
                  "[datatype][string][conversion][wchar]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
 
   // When Query selecting a long string is executed

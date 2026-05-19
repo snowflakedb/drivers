@@ -201,6 +201,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL default conversion - large prec
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conversion][c_wchar]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given A Snowflake connection is established
 
   {

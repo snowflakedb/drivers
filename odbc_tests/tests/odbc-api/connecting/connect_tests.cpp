@@ -116,6 +116,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM002 - Non-existent DSN", "[odbc-api]
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative server name length",
                  "[odbc-api][connect][connecting][error]") {
+  SKIP_IODBC(
+      "iODBC DM does not validate negative-length server name; reaches driver and yields IM002 instead of HY090");
   const auto params = get_test_parameters("testconnection");
   const std::string server = params.at("SNOWFLAKE_TEST_HOST").get<std::string>();
 
@@ -140,6 +142,9 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative username length", "[o
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-api][connect][connecting][error]") {
+  SKIP_IODBC(
+      "iODBC DM does not validate negative-length PWD before DSN lookup; emits a different SQLSTATE pair than "
+      "unixODBC");
   const std::string dsn = "TestDSN";
   const std::string uid = "testuser";
   const std::string pwd = "testpwd";
@@ -161,6 +166,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-a
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM010/HY090 - Data source name too long",
                  "[odbc-api][connect][connecting][error]") {
+  SKIP_IODBC("iODBC DM does not enforce SQL_MAX_DSN_LENGTH on the DSN argument; falls through to IM002 instead");
   // Create a very long data source name (> SQL_MAX_DSN_LENGTH which is typically 32)
   // Per ODBC spec: IM010 = "*ServerName was longer than SQL_MAX_DSN_LENGTH characters"
   const std::string long_dsn(300, 'A');

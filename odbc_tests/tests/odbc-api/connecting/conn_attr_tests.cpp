@@ -143,6 +143,9 @@ TEST_CASE("should reject set on SQL_ATTR_AUTO_IPD with HY092", "[odbc-api][conn_
 // ============================================================================
 
 TEST_CASE("should set and get SQL_ATTR_PACKET_SIZE before connect", "[odbc-api][conn_attr][packet_size]") {
+  SKIP_IODBC(
+      "iODBC DM defers SQL_ATTR_PACKET_SIZE writes until after connect (per ODBC 3.5x semantics) — set call returns "
+      "08003 on an unconnected handle");
   // Given An allocated but unconnected DBC handle
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
@@ -165,6 +168,9 @@ TEST_CASE("should set and get SQL_ATTR_PACKET_SIZE before connect", "[odbc-api][
 // ============================================================================
 
 TEST_CASE("should set and get SQL_ATTR_QUIET_MODE", "[odbc-api][conn_attr][quiet_mode]") {
+  SKIP_IODBC(
+      "iODBC DM defers SQL_ATTR_QUIET_MODE writes until after connect — set call returns 08003 on an unconnected "
+      "handle");
   // Given An allocated DBC handle
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
@@ -221,6 +227,9 @@ TEST_CASE("should return 08003 for SQL_ATTR_CURRENT_CATALOG when not connected",
 
 TEST_CASE("should set SQL_ATTR_CURRENT_CATALOG to current value successfully",
           "[odbc-api][conn_attr][current_catalog][connecting]") {
+  SKIP_IODBC(
+      "iODBC DM caches SQL_ATTR_CURRENT_CATALOG locally and never round-trips to the driver, so the set/get "
+      "consistency assertion behaves differently");
   // Given A connected DBC handle with a known current catalog
   Connection conn;
   char initial_catalog[256] = {};
@@ -273,6 +282,9 @@ TEST_CASE("should return 3D000 when setting SQL_ATTR_CURRENT_CATALOG to nonexist
   // Old driver executes USE "<db>" via Simba SDK but does not map the failure to 3D000.
   SKIP_OLD_DRIVER("SNOW-3235552",
                   "Old driver does not map invalid catalog to 3D000; Simba framework returns HY000/42000");
+  SKIP_IODBC(
+      "iODBC DM intercepts SQL_ATTR_CURRENT_CATALOG sets and stores them locally without driver round-trip — the same "
+      "pattern as Windows DM, so 3D000 cannot surface");
 
   // Given A connected DBC handle
   Connection conn;

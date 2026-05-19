@@ -477,6 +477,7 @@ TEST_CASE("SQLDescribeCol returns SQL_NO_NULLS for NOT NULL column.", "[query]")
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol returns 07009 for column number 0 without bookmarks.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1002 instead of 07009");
   // Doc: "07009 - Invalid descriptor index: (DM) The value specified for the
   //       argument ColumnNumber was equal to 0, and the SQL_ATTR_USE_BOOKMARKS
   //       statement option was SQL_UB_OFF."
@@ -531,6 +532,7 @@ TEST_CASE("SQLDescribeCol returns 07009 for out-of-range column number.", "[quer
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol returns HY090 when BufferLength is less than 0.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1090 instead of HY090");
   // Doc: "HY090 - Invalid string or buffer length: (DM) The value specified for
   //       argument BufferLength was less than 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#diagnostics

@@ -79,6 +79,7 @@ static void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, c
 // ============================================================================
 
 TEST_CASE("should forward private key content set via SQLSetConnectAttr to core", "[private_key_auth_connect_attr]") {
+  SKIP_IODBC("Attribute is set via SQLSetConnectAttrW with u\"\" content; iODBC expects UTF-32 SQLWCHAR");
   SKIP_OLD_DRIVER("", "New-driver-only: tests direct attribute handling");
 
   // Given A connection handle is allocated and PRIV_KEY_CONTENT is set via SQLSetConnectAttr
@@ -99,6 +100,7 @@ TEST_CASE("should forward private key content set via SQLSetConnectAttr to core"
 }
 
 TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core", "[private_key_auth_connect_attr]") {
+  SKIP_IODBC("Attribute is set via SQLSetConnectAttrW with u\"\" content; iODBC expects UTF-32 SQLWCHAR");
   SKIP_OLD_DRIVER("", "New-driver-only: tests direct attribute handling");
 
   // Given A connection handle is allocated and PRIV_KEY_BASE64 is set via SQLSetConnectAttr

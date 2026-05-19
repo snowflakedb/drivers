@@ -12,6 +12,7 @@
 #include "get_diag_rec.hpp"
 
 TEST_CASE("TIMESTAMP_NTZ to SQL_C_WCHAR", "[timestamp_ntz][conversion][c_wchar]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 

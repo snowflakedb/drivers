@@ -509,6 +509,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 when statement not pr
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 during SQL_NEED_DATA",
                  "[odbc-api][execute][submitting_request][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

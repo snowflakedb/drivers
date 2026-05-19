@@ -53,6 +53,10 @@ TEST_CASE("SQLAllocHandle ENV: Multiple allocations succeed", "[odbc-api][alloc_
 }
 
 TEST_CASE("SQLAllocHandle ENV: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc_handle][env][connecting][error]") {
+  // iODBC's DM dereferences `OutputHandlePtr` without a null check before
+  // dispatching to the driver, so passing `nullptr` segfaults inside the DM
+  // rather than returning HY009. Microsoft and unixODBC both validate.
+  SKIP_IODBC("iODBC DM segfaults instead of returning HY009 for NULL OutputHandlePtr");
   // SQLSTATE HY009: Invalid use of null pointer
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, nullptr);
 
@@ -61,6 +65,11 @@ TEST_CASE("SQLAllocHandle ENV: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc_
 
 TEST_CASE("SQLAllocHandle ENV: Non-NULL InputHandle returns error",
           "[odbc-api][alloc_handle][env][connecting][error]") {
+  // iODBC's DM accepts a non-null `InputHandle` on `SQLAllocHandle(SQL_HANDLE_ENV)`
+  // and silently returns `SQL_SUCCESS` (yielding the existing env). The ODBC
+  // spec says InputHandle MUST be `SQL_NULL_HANDLE` for ENV; Microsoft and
+  // unixODBC enforce this with `SQL_INVALID_HANDLE`.
+  SKIP_IODBC("iODBC DM accepts non-null InputHandle on SQLAllocHandle(SQL_HANDLE_ENV)");
   SQLHENV env1 = SQL_NULL_HENV;
   SQLHENV env2 = SQL_NULL_HENV;
 
@@ -506,6 +515,11 @@ TEST_CASE("SQLAllocHandle: Works with SQL_OV_ODBC3", "[odbc-api][alloc_handle][c
 }
 
 TEST_CASE("SQLAllocHandle: Works with SQL_OV_ODBC3_80", "[odbc-api][alloc_handle][connecting][version]") {
+  // iODBC's DM rejects `SQL_OV_ODBC3_80` with HY024 because it implements
+  // ODBC up to 3.5x — the 3.8-only async-DBC, streaming-output, and
+  // `SQLCancelHandle` infrastructure was never picked up. Driver behaviour
+  // would be identical regardless, so skip the version probe.
+  SKIP_IODBC("iODBC DM does not implement ODBC 3.8 (SQL_OV_ODBC3_80 rejected with HY024)");
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
 

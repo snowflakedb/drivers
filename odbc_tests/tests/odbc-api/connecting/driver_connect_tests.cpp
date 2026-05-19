@@ -40,6 +40,8 @@ TEST_CASE("SQLDriverConnect: SQL_INVALID_HANDLE - NULL connection handle",
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative string length",
                  "[odbc-api][driverconnect][connecting][error]") {
+  SKIP_IODBC(
+      "iODBC DM does not validate negative StringLength1; reports IM003 (driver load failed) instead of HY090/IM002");
   // Negative StringLength1 (not SQL_NTS) should return HY090
   // Note: DM-dependent - some DMs validate length first (HY090), others pass to DSN lookup (IM002)
   const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"),
@@ -54,6 +56,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative string length",
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative buffer length",
                  "[odbc-api][driverconnect][connecting][error]") {
+  SKIP_IODBC("iODBC DM does not validate negative BufferLength; emits a different SQLSTATE than unixODBC");
   SQLCHAR outConnStr[256];
   SQLSMALLINT outConnStrLen = 0;
 
@@ -71,6 +74,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative buffer length",
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY110 - Invalid DriverCompletion value",
                  "[odbc-api][driverconnect][connecting][error]") {
+  SKIP_IODBC("iODBC DM does not validate DriverCompletion value; passes the bogus enum through to DSN lookup");
   // Invalid DriverCompletion value (not one of the valid constants)
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"), SQL_NTS, nullptr, 0, nullptr, 999);  // Invalid value
@@ -107,6 +111,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Empty connection string",
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: NULL connection string",
                  "[odbc-api][driverconnect][connecting][error]") {
+  SKIP_IODBC(
+      "iODBC DM dereferences InConnectionString without a null check and segfaults instead of returning SQL_ERROR");
   // NULL InConnectionString should be an error
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, nullptr, SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
@@ -231,6 +237,8 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE_REQ
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_PROMPT mode always requires window handle",
                  "[odbc-api][driverconnect][dsn][integration][drivercompletion][error]") {
+  SKIP_IODBC(
+      "iODBC DM does not gate SQL_DRIVER_PROMPT on a non-null window handle and connects successfully without one");
   // SQL_DRIVER_PROMPT: Always display dialog, even with complete DSN
   // Per ODBC spec, with NULL window handle should return HY092 or fail
   // Even though DSN is complete, PROMPT mode MUST show dialog

@@ -530,6 +530,7 @@ TEST_CASE("SQLBindCol ignores BufferLength for fixed-length data types.", "[quer
 }
 
 TEST_CASE("SQLBindCol returns HY090 when BufferLength is less than 0.", "[query][bind_col]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1090 instead of HY090");
   // Doc: "SQLBindCol returns SQLSTATE HY090 (Invalid string or buffer length)
   //       when BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -681,6 +682,7 @@ TEST_CASE("SQLBindCol converts data to the specified TargetType.", "[query][bind
 }
 
 TEST_CASE("SQLBindCol returns HY003 for invalid TargetType.", "[query][bind_col]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1003 instead of HY003");
   // Doc: "HY003 - Invalid application buffer type: The argument TargetType was
   //       neither a valid data type nor SQL_C_DEFAULT."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#diagnostics
@@ -1956,6 +1958,7 @@ TEST_CASE("Setting SQL_DESC_COUNT greater than number of bound columns does not 
 }
 
 TEST_CASE("Setting SQL_DESC_COUNT to -1 on the ARD returns an error.", "[query][bind_col]") {
+  SKIP_IODBC("iODBC DM accepts the invalid descriptor field and does not surface a SQLSTATE");
   // Doc: "SQL_DESC_COUNT is the count of the highest-numbered column that is
   //       bound. It is a SQLUSMALLINT value and should be non-negative."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlsetdescfield-function

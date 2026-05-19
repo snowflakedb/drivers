@@ -85,6 +85,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to SQL_C_BIN
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-8 string literals to SQL_C_BINARY",
                  "[datatype][string][conversion][binary][utf8]") {
+  SKIP_IODBC("Query is passed as a UTF-16 u\"\" literal to SQLExecDirectW; iODBC expects UTF-32 SQLWCHAR");
   // Given Snowflake client is logged in
 
   // When Query selecting UTF-8 string literals is executed

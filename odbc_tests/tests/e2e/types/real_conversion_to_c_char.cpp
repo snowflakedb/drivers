@@ -30,6 +30,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_CHAR", "[e2e][types][re
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL to SQL_C_WCHAR", "[e2e][types][real]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" / char16_t literals); iODBC uses 4-byte SQLWCHAR");
   // Given A Snowflake connection
 
   // When FLOAT values are fetched as SQL_C_WCHAR

@@ -371,6 +371,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][copydesc][descriptor][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   // Use a second statement's implicit ARD as the copy target,

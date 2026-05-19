@@ -20,6 +20,11 @@
 
 TEST_CASE("should set and get SQL_ATTR_ODBC_VERSION with valid values", "[odbc-api][env_attr][version]") {
   SQLINTEGER version = GENERATE(SQL_OV_ODBC2, SQL_OV_ODBC3, SQL_OV_ODBC3_80);
+  // iODBC's DM only implements ODBC up to 3.5x — `SQL_OV_ODBC3_80` is rejected
+  // with HY024. The other two versions are still meaningful coverage.
+  if (version == SQL_OV_ODBC3_80) {
+    SKIP_IODBC("iODBC DM does not implement ODBC 3.8 (rejects SQL_OV_ODBC3_80 with HY024)");
+  }
 
   // Given A freshly allocated environment handle
   SQLHENV env = SQL_NULL_HENV;

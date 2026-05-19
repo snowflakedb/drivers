@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "sf_odbc.h"
@@ -34,6 +35,7 @@ CursorShape captureShape(StatementHandleWrapper& stmt) {
 
 TEST_CASE("should report correct cursor shape for each result set in a DDL + DML + DDL batch",
           "[query][multistatement]") {
+  SKIP_IODBC("iODBC DM rejects Snowflake-specific SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT statement attribute");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -78,6 +80,7 @@ TEST_CASE("should report correct cursor shape for each result set in a DDL + DML
 }
 
 TEST_CASE("should not open a cursor for any statement in a TCL-only batch", "[query][multistatement]") {
+  SKIP_IODBC("iODBC DM rejects Snowflake-specific SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT statement attribute");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

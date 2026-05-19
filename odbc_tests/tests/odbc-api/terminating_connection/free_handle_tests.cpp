@@ -565,6 +565,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLFreeHandle: Freeing handle clears att
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeHandle: HY010 during SQL_NEED_DATA",
                  "[odbc-api][freehandle][terminating_connection][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

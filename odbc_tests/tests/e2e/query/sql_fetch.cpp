@@ -1014,6 +1014,7 @@ TEST_CASE("SQLFetch returns SQL_NO_DATA when result set is empty.", "[query]") {
 }
 
 TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1351,6 +1352,7 @@ TEST_CASE("SQLFetchScroll with non-NEXT orientations on forward-only cursor retu
 // =============================================================================
 
 TEST_CASE("SQLFetchScroll returns HY010 when called without executing statement.", "[query]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1010 instead of HY010");
   // Doc: "HY010 - Function sequence error: (DM) The specified StatementHandle was
   //       not in an executed state. The function was called without first calling
   //       SQLExecDirect, SQLExecute or a catalog function."

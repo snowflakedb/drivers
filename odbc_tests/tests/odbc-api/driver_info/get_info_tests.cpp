@@ -103,6 +103,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_BATCH_SUPPORT", "[odbc-a
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_NAME", "[odbc-api][getinfo][driver_info]") {
   WINDOWS_ONLY { SKIP_NEW_DRIVER_NOT_IMPLEMENTED(); }  // Implemented by DM on Linux, but not on Windows
+  SKIP_IODBC(
+      "iODBC DM does not synthesize SQL_DATA_SOURCE_NAME from the connection — forwards to the driver, which returns "
+      "the empty string");
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -3969,6 +3972,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY096/HY000 - Invalid InfoTy
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY090 - Negative BufferLength",
                  "[odbc-api][getinfo][driver_info][error]") {
+  SKIP_IODBC("iODBC DM does not validate negative BufferLength on SQLGetInfo — falls through to the driver");
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 

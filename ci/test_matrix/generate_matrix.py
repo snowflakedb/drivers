@@ -318,10 +318,16 @@ def _make_name(combo: dict[str, str], result_format: str | None = None) -> str:
     parts = [combo["OS"], combo["Arch"], combo["Cloud"]]
     py = combo.get("PyVersion")
     hatch_env = combo.get("HatchEnv")
+    dm = combo.get("DM")
     if py:
         parts.append(f"py{py}")
     if hatch_env and hatch_env != "test":
         parts.append(hatch_env)
+    # Default driver manager is implicit in the workflow (`matrix.driver_manager
+    # || 'unixodbc'`); only suffix the name when the cell runs under a
+    # non-default DM so the existing unixODBC cell names stay stable.
+    if dm and dm != "unixodbc":
+        parts.append(dm)
     if result_format:
         parts.append(result_format)
     return "-".join(parts)
@@ -377,6 +383,13 @@ def _build_gha_row(
         for key in ("msvc_arch", "vcpkg_triplet"):
             if key in platform:
                 row[key] = platform[key]
+        # Driver manager axis (ODBC only). The workflow reads
+        # `${{ matrix.driver_manager || 'unixodbc' }}`, so we only emit the
+        # key when a non-default DM is requested — keeps row shape stable for
+        # every existing cell.
+        dm = combo.get("DM")
+        if dm and dm != "unixodbc":
+            row["driver_manager"] = dm
 
     return row
 

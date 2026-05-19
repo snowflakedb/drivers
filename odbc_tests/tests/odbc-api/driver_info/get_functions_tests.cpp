@@ -225,6 +225,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Accepts NULL output poi
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: HY095 - Invalid FunctionId",
                  "[odbc-api][getfunctions][driver_info][error]") {
+  SKIP_IODBC(
+      "iODBC DM answers SQLGetFunctions itself from a static table and returns SQL_SUCCESS with supported=FALSE for "
+      "unknown FunctionId instead of HY095");
   // Note: Reference driver requires an active connection
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -247,6 +250,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: HY095 - Invalid Functio
 
 TEST_CASE_METHOD(DbcFixture, "SQLGetFunctions: Requires active connection",
                  "[odbc-api][getfunctions][driver_info][error]") {
+  SKIP_IODBC(
+      "iODBC DM answers SQLGetFunctions from a static table without contacting the driver, so it returns SQL_SUCCESS "
+      "even on an unconnected DBC");
   SQLUSMALLINT supported = SQL_FALSE;
   const SQLRETURN ret = SQLGetFunctions(dbc_handle(), SQL_API_SQLCONNECT, &supported);
 
@@ -256,6 +262,9 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetFunctions: Requires active connection",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Can be called after connection established",
                  "[odbc-api][getfunctions][driver_info]") {
+  SKIP_IODBC(
+      "iODBC DM reports SQL_API_SQLEXECDIRECT as supported in its static table regardless of driver answer, but the "
+      "assertion order assumes a driver round-trip");
   const std::string dsn = dsn_name();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);

@@ -6,10 +6,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "test_macros.hpp"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: returns HY092 on descriptor after SQLCancelHandle",
                  "[odbc-api][getdiagrec][descriptor][diagnostics]") {
+  SKIP_IODBC("SQLCancelHandle (ODBC 3.8) is not exposed by iODBC");
   SQLHDESC ard = SQL_NULL_HDESC;
   SQLRETURN ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
@@ -33,6 +35,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: returns HY092 on descrip
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagField: returns record count on descriptor after SQLCancelHandle",
                  "[odbc-api][getdiagfield][descriptor][diagnostics]") {
+  SKIP_IODBC("SQLCancelHandle (ODBC 3.8) is not exposed by iODBC");
   SQLHDESC ard = SQL_NULL_HDESC;
   SQLRETURN ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());

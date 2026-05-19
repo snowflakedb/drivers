@@ -37,6 +37,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Close and re-execute",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Fetch after close",
                  "[odbc-api][closecursor][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC DM transitions the statement to S2 (allocated) on SQLCloseCursor — a follow-up SQLFetch reaches the "
+      "driver and surfaces a different SQLSTATE than the unixODBC HY010");
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -72,6 +75,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Repeated close-execute 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Close after partial fetch of multi-row result",
                  "[odbc-api][closecursor][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC DM transitions the statement to S2 (allocated) on SQLCloseCursor — a follow-up SQLFetch surfaces a "
+      "different SQLSTATE than the unixODBC HY010");
   SQLRETURN ret =
       SQLExecDirect(stmt_handle(), sqlchar("SELECT * FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -196,6 +202,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: 24000 - No cursor open"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][closecursor][terminating_statement][error]") {
+  SKIP_IODBC("iODBC DM does not intercept SQL_NEED_DATA state — call reaches the driver instead of HY010");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -448,6 +455,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLDescribeCol fails wi
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLRowCount returns HY010 after close on exec_direct",
                  "[odbc-api][closecursor][terminating_statement]") {
+  SKIP_IODBC(
+      "iODBC DM transitions the statement to S2 (allocated) on SQLCloseCursor — SQLRowCount reaches the driver and "
+      "returns 0 rows rather than the unixODBC HY010");
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

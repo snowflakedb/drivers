@@ -35,6 +35,7 @@ TEST_CASE("should convert binary to SQL_C_CHAR returning uppercase hex", "[datat
 // ============================================================================
 
 TEST_CASE("should convert binary to SQL_C_WCHAR returning uppercase hex", "[datatype][binary][conversion][char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -76,6 +77,7 @@ TEST_CASE("should retrieve binary via SQLBindCol with SQL_C_CHAR", "[datatype][b
 // ============================================================================
 
 TEST_CASE("should retrieve binary via SQLBindCol with SQL_C_WCHAR", "[datatype][binary][conversion][char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
   const auto stmt = conn.createStatement();
@@ -174,6 +176,7 @@ TEST_CASE("should handle NULL binary with character C types", "[datatype][binary
 
 TEST_CASE("should convert VARBINARY to SQL_C_CHAR and SQL_C_WCHAR same as BINARY",
           "[datatype][binary][conversion][char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" literals); iODBC uses 4-byte SQLWCHAR");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -226,6 +229,7 @@ TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL
 
 TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL_C_WCHAR",
           "[datatype][binary][conversion][char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" literals); iODBC uses 4-byte SQLWCHAR");
   SKIP_OLD_DRIVER("BD#22",
                   "Simba SDK uses sizeof(wchar_t)=4 for WCHAR buffer capacity on Linux, "
                   "fitting fewer characters per call than the ODBC spec expects with 2-byte SQLWCHAR");
@@ -286,6 +290,7 @@ TEST_CASE("should succeed with exact-fit buffer for SQL_C_CHAR", "[datatype][bin
 // ============================================================================
 
 TEST_CASE("should succeed with exact-fit buffer for SQL_C_WCHAR", "[datatype][binary][conversion][char]") {
+  SKIP_IODBC("Test harness assumes 2-byte SQLWCHAR (u\"\" literals); iODBC uses 4-byte SQLWCHAR");
   SKIP_OLD_DRIVER("BD#22",
                   "Simba SDK uses sizeof(wchar_t)=4 for WCHAR buffer capacity on Linux, "
                   "fitting fewer characters per call than the ODBC spec expects with 2-byte SQLWCHAR");

@@ -48,6 +48,10 @@ TEST_CASE("should return empty last query ID before any query is executed", "[qu
 }
 
 TEST_CASE("should set last query ID after successful SQLExecDirect", "[query][last_query_id]") {
+  SKIP_IODBC(
+      "SQL_SF_STMT_ATTR_LAST_QUERY_ID is a string attribute fetched via SQLGetStmtAttr into an ANSI char buffer; under "
+      "iODBC the attribute is routed through the wide path and the UUID does not survive into the narrow buffer "
+      "(empty string returned)");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -62,6 +66,10 @@ TEST_CASE("should set last query ID after successful SQLExecDirect", "[query][la
 }
 
 TEST_CASE("should set last query ID after successful SQLPrepare + SQLExecute", "[query][last_query_id]") {
+  SKIP_IODBC(
+      "SQL_SF_STMT_ATTR_LAST_QUERY_ID is a string attribute fetched via SQLGetStmtAttr into an ANSI char buffer; under "
+      "iODBC the attribute is routed through the wide path and the UUID does not survive into the narrow buffer "
+      "(empty string returned)");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -78,6 +86,10 @@ TEST_CASE("should set last query ID after successful SQLPrepare + SQLExecute", "
 }
 
 TEST_CASE("should produce different last query IDs for successive queries", "[query][last_query_id]") {
+  SKIP_IODBC(
+      "SQL_SF_STMT_ATTR_LAST_QUERY_ID is a string attribute fetched via SQLGetStmtAttr into an ANSI char buffer; under "
+      "iODBC the attribute is routed through the wide path and the UUID does not survive into the narrow buffer "
+      "(empty string returned)");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

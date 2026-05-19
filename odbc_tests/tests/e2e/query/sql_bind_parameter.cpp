@@ -33,6 +33,7 @@ TEST_CASE("should return SQL_INVALID_HANDLE for null statement handle.", "[query
 }
 
 TEST_CASE("should return 07009 when ParameterNumber is zero.", "[query][bind_parameter][error]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1093 instead of 07009");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -48,6 +49,7 @@ TEST_CASE("should return 07009 when ParameterNumber is zero.", "[query][bind_par
 }
 
 TEST_CASE("should return HY003 for invalid C data type.", "[query][bind_parameter][error]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1003 instead of HY003");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -78,6 +80,7 @@ TEST_CASE("should return HY004 for invalid SQL data type.", "[query][bind_parame
 }
 
 TEST_CASE("should return HY105 for invalid InputOutputType.", "[query][bind_parameter][error]") {
+  SKIP_IODBC("iODBC DM intercepts and returns ODBC 2.x SQLSTATE S1105 instead of HY105");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -16,6 +17,7 @@
 // =============================================================================
 
 TEST_CASE("should execute multiple SELECT statements", "[query]") {
+  SKIP_IODBC("iODBC DM rejects Snowflake-specific SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT statement attribute");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -53,6 +55,7 @@ TEST_CASE("should execute multiple SELECT statements", "[query]") {
 }
 
 TEST_CASE("should execute multiple DML statements", "[query][multistatement]") {
+  SKIP_IODBC("iODBC DM rejects Snowflake-specific SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT statement attribute");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -81,6 +84,7 @@ TEST_CASE("should execute multiple DML statements", "[query][multistatement]") {
 }
 
 TEST_CASE("should execute mixed statement types", "[query][multistatement]") {
+  SKIP_IODBC("iODBC DM rejects Snowflake-specific SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT statement attribute");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -135,6 +139,7 @@ TEST_CASE("should fail when multistatement SQL is sent without multi_statement_c
 }
 
 TEST_CASE("should fail when multi_statement_count does not match actual statement count", "[query][multistatement]") {
+  SKIP_IODBC("iODBC DM rejects Snowflake-specific SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT statement attribute");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

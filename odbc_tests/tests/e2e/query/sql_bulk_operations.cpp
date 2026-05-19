@@ -4,9 +4,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "odbc_matchers.hpp"
 
 TEST_CASE("should return IM001 when SQLBulkOperations is called", "[query][sqlbulkoperations]") {
+  SKIP_IODBC("iODBC DM rejects SQLBulkOperations with a different SQLSTATE than IM001");
   // Given A query is executed and a row is fetched
   Connection conn;
   auto stmt = conn.execute_fetch("SELECT 42 AS value");
