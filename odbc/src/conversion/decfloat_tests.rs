@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
     use crate::conversion::decfloat::{
         SnowflakeDecfloat, format_decfloat, i128_from_big_endian_signed,
@@ -1139,7 +1140,7 @@ mod tests {
     #[test]
     fn write_wchar_produces_string() {
         let df = decfloat();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
 
@@ -1148,8 +1149,8 @@ mod tests {
             .unwrap();
 
         assert!(warnings.is_empty());
-        let expected: Vec<u16> = "123.456".encode_utf16().collect();
-        assert_eq!(str_len, (expected.len() * 2) as sql::Len);
+        let expected = encode_wide("123.456");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
         assert_eq!(buffer[expected.len()], 0);
     }
@@ -1157,7 +1158,7 @@ mod tests {
     #[test]
     fn write_wchar_negative_scientific() {
         let df = decfloat();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
 
@@ -1166,31 +1167,31 @@ mod tests {
             .unwrap();
 
         assert!(warnings.is_empty());
-        let expected: Vec<u16> = "-1.234e8000".encode_utf16().collect();
-        assert_eq!(str_len, (expected.len() * 2) as sql::Len);
+        let expected = encode_wide("-1.234e8000");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn write_wchar_zero() {
         let df = decfloat();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
 
         let warnings = df.write_odbc_type((0, 0), &binding, &mut None).unwrap();
 
         assert!(warnings.is_empty());
-        let expected: Vec<u16> = "0".encode_utf16().collect();
-        assert_eq!(str_len, (expected.len() * 2) as sql::Len);
-        assert_eq!(buffer[0], '0' as u16);
+        let expected = encode_wide("0");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
+        assert_eq!(buffer[0], '0' as WideChar);
         assert_eq!(buffer[1], 0);
     }
 
     #[test]
     fn write_wchar_truncation_returns_warning() {
         let df = decfloat();
-        let mut buffer = vec![0u16; 4];
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
 
@@ -1208,8 +1209,8 @@ mod tests {
     #[test]
     fn write_wchar_chunked_reading() {
         let df = decfloat();
-        // "123.456" = 7 wide chars; buffer of 4 u16 allows 3 chars + NUL per chunk
-        let mut buffer = vec![0u16; 4];
+        // "123.456" = 7 wide chars; buffer of 4 wide chars allows 3 chars + NUL per chunk
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let mut offset: Option<usize> = None;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
@@ -1222,7 +1223,7 @@ mod tests {
                 .iter()
                 .any(|w| matches!(w, Warning::StringDataTruncated))
         );
-        let first_chunk: Vec<u16> = "123".encode_utf16().collect();
+        let first_chunk = encode_wide("123");
         assert_eq!(&buffer[..3], &first_chunk[..]);
         assert!(offset.is_some());
 

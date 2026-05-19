@@ -33,6 +33,21 @@ case-insensitively. The logging subsystem recognises:
 Unknown keys are silently ignored by the logging subsystem and made
 available to other subsystems through the shared INI snapshot.
 
+### `DriverManagerEncoding`
+
+Selects how the driver interprets `SQLWCHAR` strings at the ABI boundary.
+Defaults to **UTF-16** (matches Windows and unixODBC). Set it to **UTF-32**
+when the driver is loaded by **iODBC** on Unix/macOS, where `SQLWCHAR`
+is 4 bytes:
+
+```ini
+DriverManagerEncoding=UTF-32
+```
+
+The value is read once on the first wide-string call and cached for the
+rest of the process. Accepted spellings are `UTF-16` and `UTF-32`
+(case-insensitive).
+
 ## Testing
 
 ODBC tests are written in C++ using CMake and Catch2 framework.

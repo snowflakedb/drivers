@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
     use crate::conversion::number::{NumericSettings, NumericSqlType, SnowflakeNumber};
     use crate::conversion::test_utils::helpers::{
@@ -448,13 +449,13 @@ mod tests {
                 #[test]
                 fn $name() {
                     let sn = make_decimal($scale, $precision);
-                    let mut buffer = vec![0u16; 128];
+                    let mut buffer = vec![0 as WideChar; 128];
                     let mut str_len: sql::Len = 0;
                     let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
                     sn.write_odbc_type($input, &binding, &mut None).unwrap();
                     let expected_str: &str = $expected;
-                    let expected: Vec<u16> = expected_str.encode_utf16().collect();
-                    assert_eq!(str_len, (expected.len() * 2) as sql::Len);
+                    let expected = encode_wide(expected_str);
+                    assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
                     assert_eq!(&buffer[..expected.len()], &expected[..]);
                     assert_eq!(buffer[expected.len()], 0);
                 }
@@ -808,9 +809,9 @@ mod tests {
     #[test]
     fn wchar_whole_digit_truncation_returns_22003() {
         let sn = make_decimal(0, 10);
-        // "123456" → 6 wide chars + null = 7 * 2 = 14 bytes
-        // Buffer of 8 bytes = 4 wide chars. Whole digits (6) >= capacity (4) → 22003.
-        let mut buffer = vec![0u16; 4];
+        // "123456" → 6 wide chars + null. Buffer of 4 wide chars holds 3 chars
+        // + NUL; whole digits (6) >= capacity (4) → 22003.
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         assert!(sn.write_odbc_type(123456i128, &binding, &mut None).is_err());
@@ -820,9 +821,9 @@ mod tests {
     fn wchar_fractional_truncation_returns_01004() {
         use crate::conversion::warning::Warning;
         let sn = make_decimal(3, 10);
-        // "12.345" → whole part "12" (2 chars)
+        // "12.345" → whole part "12" (2 chars).
         // Buffer of 4 wide chars. Whole digits (2) < capacity (4) → 01004.
-        let mut buffer = vec![0u16; 4];
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn.write_odbc_type(12345i128, &binding, &mut None).unwrap();

@@ -231,7 +231,7 @@ pub enum JsonBindingError {
         location: Location,
     },
 
-    #[snafu(display("Wide-character (WChar) parameter is not valid UTF-16"))]
+    #[snafu(display("Wide-character (WChar) parameter is not a valid wide-character string"))]
     WCharConversion {
         #[snafu(implicit)]
         location: Location,

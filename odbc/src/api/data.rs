@@ -1267,30 +1267,32 @@ mod tests {
 
         #[test]
         fn successfully_reads_wchar_target_type() {
+            use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar};
             let array = StringArray::from(vec!["hello"]);
             let field = field_with_text_meta();
-            let mut buffer = vec![0u16; 32];
+            let mut buffer = vec![0 as WideChar; 32];
             let mut str_len: sql::Len = 0;
 
             let binding = Binding {
                 target_type: CDataType::WChar,
                 target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-                buffer_length: (buffer.len() * 2) as sql::Len, // buffer_length is in bytes for WChar
+                buffer_length: (buffer.len() * WIDE_CHAR_SIZE) as sql::Len, // buffer_length is in bytes for WChar
                 octet_length_ptr: &mut str_len,
                 ..Default::default()
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
-            assert_eq!(str_len, 10); // "hello" is 5 UTF-16 code units = 10 bytes
+            // "hello" is 5 ASCII code points → 5 wide-char code units → bytes
+            assert_eq!(str_len, (5 * WIDE_CHAR_SIZE) as sql::Len);
             assert_eq!(
                 &buffer[..5],
                 &[
-                    b'h' as u16,
-                    b'e' as u16,
-                    b'l' as u16,
-                    b'l' as u16,
-                    b'o' as u16
+                    b'h' as WideChar,
+                    b'e' as WideChar,
+                    b'l' as WideChar,
+                    b'l' as WideChar,
+                    b'o' as WideChar,
                 ]
             );
             assert_eq!(buffer[5], 0); // Null terminator

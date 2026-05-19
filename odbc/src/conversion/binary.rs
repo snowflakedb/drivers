@@ -158,7 +158,9 @@ impl WriteODBCType for SnowflakeBinary {
                     } else {
                         hex_digit_to_ascii(b & 0x0F)
                     };
-                    Some(hex_byte as u16)
+                    // Hex digits are ASCII, so widening to UTF-16/UTF-32 is a
+                    // simple zero-extension cast to `WideChar`.
+                    Some(hex_byte as crate::api::encoding::WideChar)
                 };
 
                 Ok(binding.write_wchar_from_fn(converter, total_hex_len, get_data_offset))

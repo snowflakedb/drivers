@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::ReadArrowType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::error::ReadArrowError;
@@ -309,13 +310,13 @@ mod tests {
     #[test]
     fn write_wchar_scale_9_includes_fractional() {
         let sn = time(9);
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let input = NaiveTime::from_hms_nano_opt(12, 34, 56, 123_456_789).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        let expected: Vec<u16> = "12:34:56.123456789".encode_utf16().collect();
+        let expected = encode_wide("12:34:56.123456789");
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
@@ -326,14 +327,15 @@ mod tests {
     #[test]
     fn write_wchar() {
         let sn = time(0);
-        let mut buffer = vec![0u16; 16];
+        let mut buffer = vec![0 as WideChar; 16];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let input = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 16); // 8 UTF-16 code units * 2 bytes
-        let expected: Vec<u16> = "12:00:00".encode_utf16().collect();
+        // "12:00:00" is 8 ASCII chars → 8 wide-char code units → bytes
+        assert_eq!(str_len, (8 * WIDE_CHAR_SIZE) as sql::Len);
+        let expected = encode_wide("12:00:00");
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 

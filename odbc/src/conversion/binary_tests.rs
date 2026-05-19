@@ -3,6 +3,7 @@ mod tests {
     use std::borrow::Cow;
 
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar};
     use crate::conversion::WriteODBCType;
     use crate::conversion::binary::SnowflakeBinary;
     use crate::conversion::test_utils::helpers::{
@@ -347,18 +348,18 @@ mod tests {
     fn wchar_hex_encoding() {
         let sn = sn();
         let input: &[u8] = &[0xAB, 0xCD];
-        let mut buffer = vec![0u16; 16];
+        let mut buffer = vec![0 as WideChar; 16];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn
             .write_odbc_type(Cow::Borrowed(input), &binding, &mut None)
             .unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 8);
-        assert_eq!(buffer[0], 'A' as u16);
-        assert_eq!(buffer[1], 'B' as u16);
-        assert_eq!(buffer[2], 'C' as u16);
-        assert_eq!(buffer[3], 'D' as u16);
+        assert_eq!(str_len, (4 * WIDE_CHAR_SIZE) as sql::Len);
+        assert_eq!(buffer[0], 'A' as WideChar);
+        assert_eq!(buffer[1], 'B' as WideChar);
+        assert_eq!(buffer[2], 'C' as WideChar);
+        assert_eq!(buffer[3], 'D' as WideChar);
         assert_eq!(buffer[4], 0);
     }
 
@@ -366,7 +367,7 @@ mod tests {
     fn wchar_hex_empty_binary() {
         let sn = sn();
         let input: &[u8] = &[];
-        let mut buffer = vec![0xFFFFu16; 8];
+        let mut buffer = vec![0xFFFF as WideChar; 8];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn
@@ -380,22 +381,22 @@ mod tests {
     #[test]
     fn wchar_hex_single_byte_values() {
         let sn = sn();
-        for (byte, expected_u16) in [
-            (0x00u8, ['0' as u16, '0' as u16]),
-            (0xFF, ['F' as u16, 'F' as u16]),
-            (0x0A, ['0' as u16, 'A' as u16]),
+        for (byte, expected) in [
+            (0x00u8, ['0' as WideChar, '0' as WideChar]),
+            (0xFF, ['F' as WideChar, 'F' as WideChar]),
+            (0x0A, ['0' as WideChar, 'A' as WideChar]),
         ] {
             let input: &[u8] = &[byte];
-            let mut buffer = vec![0u16; 8];
+            let mut buffer = vec![0 as WideChar; 8];
             let mut str_len: sql::Len = 0;
             let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
             let warnings = sn
                 .write_odbc_type(Cow::Borrowed(input), &binding, &mut None)
                 .unwrap();
             assert!(warnings.is_empty());
-            assert_eq!(str_len, 4);
-            assert_eq!(buffer[0], expected_u16[0]);
-            assert_eq!(buffer[1], expected_u16[1]);
+            assert_eq!(str_len, (2 * WIDE_CHAR_SIZE) as sql::Len);
+            assert_eq!(buffer[0], expected[0]);
+            assert_eq!(buffer[1], expected[1]);
             assert_eq!(buffer[2], 0);
         }
     }
@@ -404,18 +405,18 @@ mod tests {
     fn wchar_hex_exact_fit_buffer() {
         let sn = sn();
         let input: &[u8] = &[0x01, 0xFF];
-        let mut buffer = vec![0u16; 5];
+        let mut buffer = vec![0 as WideChar; 5];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn
             .write_odbc_type(Cow::Borrowed(input), &binding, &mut None)
             .unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 8);
-        assert_eq!(buffer[0], '0' as u16);
-        assert_eq!(buffer[1], '1' as u16);
-        assert_eq!(buffer[2], 'F' as u16);
-        assert_eq!(buffer[3], 'F' as u16);
+        assert_eq!(str_len, (4 * WIDE_CHAR_SIZE) as sql::Len);
+        assert_eq!(buffer[0], '0' as WideChar);
+        assert_eq!(buffer[1], '1' as WideChar);
+        assert_eq!(buffer[2], 'F' as WideChar);
+        assert_eq!(buffer[3], 'F' as WideChar);
         assert_eq!(buffer[4], 0);
     }
 
@@ -423,7 +424,7 @@ mod tests {
     fn wchar_hex_truncation() {
         let sn = sn();
         let input: &[u8] = &[0xAB, 0xCD, 0xEF];
-        let mut buffer = vec![0u16; 3];
+        let mut buffer = vec![0 as WideChar; 3];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn
@@ -434,17 +435,17 @@ mod tests {
                 .iter()
                 .any(|w| matches!(w, Warning::StringDataTruncated))
         );
-        assert_eq!(buffer[0], 'A' as u16);
-        assert_eq!(buffer[1], 'B' as u16);
+        assert_eq!(buffer[0], 'A' as WideChar);
+        assert_eq!(buffer[1], 'B' as WideChar);
         assert_eq!(buffer[2], 0);
-        assert_eq!(str_len, 12);
+        assert_eq!(str_len, (6 * WIDE_CHAR_SIZE) as sql::Len);
     }
 
     #[test]
     fn wchar_hex_chunked_retrieval() {
         let sn = sn();
         let input: &[u8] = &[0xAB, 0xCD];
-        let mut buffer = vec![0u16; 3];
+        let mut buffer = vec![0 as WideChar; 3];
         let mut str_len: sql::Len = 0;
         let mut offset: Option<usize> = None;
 
@@ -457,9 +458,9 @@ mod tests {
                 .iter()
                 .any(|w| matches!(w, Warning::StringDataTruncated))
         );
-        assert_eq!(buffer[0], 'A' as u16);
-        assert_eq!(buffer[1], 'B' as u16);
-        assert_eq!(str_len, 8);
+        assert_eq!(buffer[0], 'A' as WideChar);
+        assert_eq!(buffer[1], 'B' as WideChar);
+        assert_eq!(str_len, (4 * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(offset, Some(2));
 
         buffer.fill(0);
@@ -469,10 +470,10 @@ mod tests {
             .write_odbc_type(Cow::Borrowed(input), &binding, &mut offset)
             .unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(buffer[0], 'C' as u16);
-        assert_eq!(buffer[1], 'D' as u16);
+        assert_eq!(buffer[0], 'C' as WideChar);
+        assert_eq!(buffer[1], 'D' as WideChar);
         assert_eq!(buffer[2], 0);
-        assert_eq!(str_len, 4);
+        assert_eq!(str_len, (2 * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(offset, None);
     }
 

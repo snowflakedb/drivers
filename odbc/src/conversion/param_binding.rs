@@ -1,13 +1,17 @@
 use std::{
     ffi::{CStr, c_char},
-    mem, slice, str,
+    slice, str,
 };
+
+#[cfg(test)]
+use std::mem;
 
 use serde_json::{Map, Value};
 use snafu::ResultExt;
 
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
+use crate::api::encoding::{OdbcEncoding, Wide, WideChar, wchar_byte_size, wide_strlen_bounded};
 use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding};
 use odbc_sys as sql;
 
@@ -598,35 +602,30 @@ pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, JsonBi
     acp_bytes_to_string(bytes)
 }
 
-/// Read a SQL_C_WCHAR (UTF-16) value and convert to a UTF-8 string.
+/// Read a `SQL_C_WCHAR` value and convert to a UTF-8 string. The DM-side
+/// wide-character encoding (UTF-16 or UTF-32) is auto-detected at runtime;
+/// see [`WideChar`] and the `encoding` module for details.
 ///
 /// When `StrLen_or_IndPtr` is NULL or points to `SQL_NTS`, the buffer is
-/// treated as null-terminated (scans for the first `0x0000` code unit).
-/// Otherwise the indicated byte length is used (clamped to `buffer_length`).
+/// treated as null-terminated (scans for the first null DM-side unit,
+/// bounded by `buffer_length`). Otherwise the indicated byte length is used.
 pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonBindingError> {
     let null_terminated =
         binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
+    let unit_size = wchar_byte_size();
+    let ptr = binding.parameter_value_ptr as *const WideChar;
 
-    let units = if null_terminated {
-        let ptr = binding.parameter_value_ptr as *const u16;
+    let unit_len = if null_terminated {
         let max_units = if binding.buffer_length > 0 {
-            binding.buffer_length as usize / mem::size_of::<u16>()
+            binding.buffer_length as usize / unit_size
         } else {
             usize::MAX
         };
-        let mut len = 0;
-        unsafe {
-            while len < max_units && *ptr.add(len) != 0 {
-                len += 1;
-            }
-            slice::from_raw_parts(ptr, len)
-        }
+        unsafe { wide_strlen_bounded(ptr, max_units) }
     } else {
-        let byte_len = buffer_data_len(binding);
-        let unit_len = byte_len / mem::size_of::<u16>();
-        unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u16, unit_len) }
+        buffer_data_len(binding) / unit_size
     };
-    String::from_utf16(units).map_err(|_| WCharConversionSnafu.build())
+    Wide::read_string(ptr, unit_len as i32).map_err(|_| WCharConversionSnafu.build())
 }
 
 /// Test-only entry point that mirrors what `odbc_bindings_to_json` does
@@ -650,6 +649,7 @@ pub(crate) fn convert_for_test(
 mod tests {
     use super::*;
     use crate::api::CDataType;
+    use crate::api::encoding::WIDE_CHAR_SIZE;
     use crate::api::types::{SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ};
     use crate::api::{ApdRecord, IpdRecord};
 
@@ -725,13 +725,13 @@ mod tests {
 
     #[test]
     fn read_wchar_str_with_explicit_length() -> TestResult {
-        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
-        let mut ind: sql::Len = 3 * mem::size_of::<u16>() as sql::Len;
+        let data: [WideChar; 4] = ['h' as WideChar, 'i' as WideChar, '!' as WideChar, 0];
+        let mut ind: sql::Len = 3 * WIDE_CHAR_SIZE as sql::Len;
         let binding = make_binding(
             CDataType::WChar,
             sql::SqlDataType::VARCHAR,
             data.as_ptr() as sql::Pointer,
-            (4 * mem::size_of::<u16>()) as sql::Len,
+            (4 * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert_eq!(read_wchar_str(&binding)?, "hi!");
@@ -740,13 +740,13 @@ mod tests {
 
     #[test]
     fn read_wchar_str_with_sql_nts() -> TestResult {
-        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let data: [WideChar; 4] = ['h' as WideChar, 'i' as WideChar, '!' as WideChar, 0];
         let mut ind: sql::Len = sql::NTS;
         let binding = make_binding(
             CDataType::WChar,
             sql::SqlDataType::VARCHAR,
             data.as_ptr() as sql::Pointer,
-            (4 * mem::size_of::<u16>()) as sql::Len,
+            (4 * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert_eq!(read_wchar_str(&binding)?, "hi!");
@@ -755,12 +755,12 @@ mod tests {
 
     #[test]
     fn read_wchar_str_with_null_indicator() -> TestResult {
-        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let data: [WideChar; 4] = ['h' as WideChar, 'i' as WideChar, '!' as WideChar, 0];
         let binding = make_binding(
             CDataType::WChar,
             sql::SqlDataType::VARCHAR,
             data.as_ptr() as sql::Pointer,
-            (4 * mem::size_of::<u16>()) as sql::Len,
+            (4 * WIDE_CHAR_SIZE) as sql::Len,
             std::ptr::null_mut(),
         );
         assert_eq!(read_wchar_str(&binding)?, "hi!");
@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn read_wchar_str_sql_nts_zero_buffer_length() -> TestResult {
-        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let data: [WideChar; 4] = ['h' as WideChar, 'i' as WideChar, '!' as WideChar, 0];
         let mut ind: sql::Len = sql::NTS;
         let binding = make_binding(
             CDataType::WChar,
@@ -1077,13 +1077,13 @@ mod tests {
 
     #[test]
     fn convert_wchar_to_boolean_true() -> TestResult {
-        let val: [u16; 1] = [b'1' as u16];
-        let mut ind: sql::Len = 2;
+        let val: [WideChar; 1] = [b'1' as WideChar];
+        let mut ind: sql::Len = WIDE_CHAR_SIZE as sql::Len;
         let binding = make_binding(
             CDataType::WChar,
             sql::SqlDataType::EXT_BIT,
             val.as_ptr() as sql::Pointer,
-            2,
+            WIDE_CHAR_SIZE as sql::Len,
             &mut ind,
         );
         let (ty, v) = convert_binding(&binding)?;
@@ -1094,13 +1094,13 @@ mod tests {
 
     #[test]
     fn convert_wchar_to_boolean_false() -> TestResult {
-        let val: [u16; 1] = [b'0' as u16];
-        let mut ind: sql::Len = 2;
+        let val: [WideChar; 1] = [b'0' as WideChar];
+        let mut ind: sql::Len = WIDE_CHAR_SIZE as sql::Len;
         let binding = make_binding(
             CDataType::WChar,
             sql::SqlDataType::EXT_BIT,
             val.as_ptr() as sql::Pointer,
-            2,
+            WIDE_CHAR_SIZE as sql::Len,
             &mut ind,
         );
         let (ty, v) = convert_binding(&binding)?;
@@ -2221,15 +2221,15 @@ mod tests {
 
     #[test]
     fn convert_wchar_infinity_as_real_rejected() {
-        let val: [u16; 9] = [
-            b'I' as u16,
-            b'n' as u16,
-            b'f' as u16,
-            b'i' as u16,
-            b'n' as u16,
-            b'i' as u16,
-            b't' as u16,
-            b'y' as u16,
+        let val: [WideChar; 9] = [
+            b'I' as WideChar,
+            b'n' as WideChar,
+            b'f' as WideChar,
+            b'i' as WideChar,
+            b'n' as WideChar,
+            b'i' as WideChar,
+            b't' as WideChar,
+            b'y' as WideChar,
             0,
         ];
         let mut ind: sql::Len = sql::NTS;
@@ -2237,7 +2237,7 @@ mod tests {
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
@@ -2248,16 +2248,16 @@ mod tests {
 
     #[test]
     fn convert_wchar_neg_infinity_as_real_rejected() {
-        let val: [u16; 10] = [
-            b'-' as u16,
-            b'I' as u16,
-            b'n' as u16,
-            b'f' as u16,
-            b'i' as u16,
-            b'n' as u16,
-            b'i' as u16,
-            b't' as u16,
-            b'y' as u16,
+        let val: [WideChar; 10] = [
+            b'-' as WideChar,
+            b'I' as WideChar,
+            b'n' as WideChar,
+            b'f' as WideChar,
+            b'i' as WideChar,
+            b'n' as WideChar,
+            b'i' as WideChar,
+            b't' as WideChar,
+            b'y' as WideChar,
             0,
         ];
         let mut ind: sql::Len = sql::NTS;
@@ -2265,7 +2265,7 @@ mod tests {
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
@@ -2276,13 +2276,13 @@ mod tests {
 
     #[test]
     fn convert_wchar_nan_as_real_rejected() {
-        let val: [u16; 4] = [b'N' as u16, b'a' as u16, b'N' as u16, 0];
+        let val: [WideChar; 4] = [b'N' as WideChar, b'a' as WideChar, b'N' as WideChar, 0];
         let mut ind: sql::Len = sql::NTS;
         let binding = make_binding(
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
@@ -2336,12 +2336,12 @@ mod tests {
     #[test]
     fn convert_wchar_overflow_as_real_overflows() {
         // UTF-16 of "1e309"
-        let val: [u16; 6] = [
-            b'1' as u16,
-            b'e' as u16,
-            b'3' as u16,
-            b'0' as u16,
-            b'9' as u16,
+        let val: [WideChar; 6] = [
+            b'1' as WideChar,
+            b'e' as WideChar,
+            b'3' as WideChar,
+            b'0' as WideChar,
+            b'9' as WideChar,
             0,
         ];
         let mut ind: sql::Len = sql::NTS;
@@ -2349,7 +2349,7 @@ mod tests {
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
@@ -2400,12 +2400,12 @@ mod tests {
     #[test]
     fn convert_wchar_garbage_as_real_rejected() {
         // UTF-16 of "hello"
-        let val: [u16; 6] = [
-            b'h' as u16,
-            b'e' as u16,
-            b'l' as u16,
-            b'l' as u16,
-            b'o' as u16,
+        let val: [WideChar; 6] = [
+            b'h' as WideChar,
+            b'e' as WideChar,
+            b'l' as WideChar,
+            b'l' as WideChar,
+            b'o' as WideChar,
             0,
         ];
         let mut ind: sql::Len = sql::NTS;
@@ -2413,7 +2413,7 @@ mod tests {
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
@@ -2428,13 +2428,13 @@ mod tests {
     #[test]
     fn convert_wchar_neg_overflow_as_real_overflows() {
         // UTF-16 of "-1e309"
-        let val: [u16; 7] = [
-            b'-' as u16,
-            b'1' as u16,
-            b'e' as u16,
-            b'3' as u16,
-            b'0' as u16,
-            b'9' as u16,
+        let val: [WideChar; 7] = [
+            b'-' as WideChar,
+            b'1' as WideChar,
+            b'e' as WideChar,
+            b'3' as WideChar,
+            b'0' as WideChar,
+            b'9' as WideChar,
             0,
         ];
         let mut ind: sql::Len = sql::NTS;
@@ -2442,7 +2442,7 @@ mod tests {
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
@@ -2554,15 +2554,15 @@ mod tests {
     #[test]
     fn convert_wchar_mixed_case_infinity_as_real_rejected() {
         // UTF-16 of "iNFINITY"
-        let val: [u16; 9] = [
-            b'i' as u16,
-            b'N' as u16,
-            b'F' as u16,
-            b'I' as u16,
-            b'N' as u16,
-            b'I' as u16,
-            b'T' as u16,
-            b'Y' as u16,
+        let val: [WideChar; 9] = [
+            b'i' as WideChar,
+            b'N' as WideChar,
+            b'F' as WideChar,
+            b'I' as WideChar,
+            b'N' as WideChar,
+            b'I' as WideChar,
+            b'T' as WideChar,
+            b'Y' as WideChar,
             0,
         ];
         let mut ind: sql::Len = sql::NTS;
@@ -2570,7 +2570,7 @@ mod tests {
             CDataType::WChar,
             sql::SqlDataType::DOUBLE,
             val.as_ptr() as sql::Pointer,
-            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            (val.len() * WIDE_CHAR_SIZE) as sql::Len,
             &mut ind,
         );
         assert!(matches!(
