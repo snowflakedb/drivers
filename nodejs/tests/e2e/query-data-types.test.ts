@@ -40,8 +40,8 @@ describe('Query returning data types', () => {
     }
   });
 
-  // NOTE: BINARY_OUTPUT_FORMAT (HEX or BASE64) does not affect results,
-  // since the server always returns HEX, which is always converted to Buffer client-side.
+  // NOTE: BINARY_OUTPUT_FORMAT (HEX or BASE64) does not affect results.
+  // The server always returns HEX and it is always converted to Buffer.
   it('returns BINARY as Buffer', async () => {
     const { statement, rows } = await executeAsync(
       connection,
