@@ -204,14 +204,14 @@ class TestMultistatementWithParameters:
         assert cursor.rowcount == 1
 
         # And the second result set reports update count 2
-        result = cursor.nextset()
-        assert result is cursor
+        assert cursor.nextset() is cursor
         assert cursor.rowcount == 2
         assert cursor.nextset() is None
 
         # And the table contains rows [10, 20, 30]
-        cursor.execute(f"SELECT id FROM {table_name} ORDER BY id")
-        assert cursor.fetchall() == [(10,), (20,), (30,)]
+        with cursor.connection.cursor() as verify:
+            verify.execute(f"SELECT id FROM {table_name} ORDER BY id")
+            assert verify.fetchall() == [(10,), (20,), (30,)]
 
     def test_should_execute_multistatement_select_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in

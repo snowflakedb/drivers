@@ -166,11 +166,6 @@ TEST_CASE("should execute multistatement DML with positional parameters", "[quer
   // When Multistatement INSERT chain is executed with 3 positional parameters
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLPrepare(stmt.getHandle(),
-                   sqlchar("INSERT INTO ms_odbc_bind_dml VALUES(?);"
-                           " INSERT INTO ms_odbc_bind_dml VALUES(?),(?)"),
-                   SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
   SQLINTEGER p1 = 10, p2 = 20, p3 = 30;
   SQLLEN p1_len = sizeof(p1), p2_len = sizeof(p2), p3_len = sizeof(p3);
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p1, sizeof(p1), &p1_len);
@@ -179,7 +174,10 @@ TEST_CASE("should execute multistatement DML with positional parameters", "[quer
   REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p3, sizeof(p3), &p3_len);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLExecute(stmt.getHandle());
+  ret = SQLExecDirect(stmt.getHandle(),
+                      sqlchar("INSERT INTO ms_odbc_bind_dml VALUES(?);"
+                              " INSERT INTO ms_odbc_bind_dml VALUES(?),(?)"),
+                      SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then 2 result sets are returned
@@ -224,8 +222,6 @@ TEST_CASE("should execute multistatement SELECT with positional parameters", "[q
   // When Multistatement SELECT chain is executed with 6 positional parameters
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?; SELECT ?, ?, ?"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
   SQLINTEGER params[6] = {10, 20, 30, 40, 50, 60};
   SQLLEN param_lens[6] = {sizeof(SQLINTEGER), sizeof(SQLINTEGER), sizeof(SQLINTEGER),
                           sizeof(SQLINTEGER), sizeof(SQLINTEGER), sizeof(SQLINTEGER)};
@@ -234,7 +230,7 @@ TEST_CASE("should execute multistatement SELECT with positional parameters", "[q
                            sizeof(SQLINTEGER), &param_lens[i]);
     REQUIRE_ODBC(ret, stmt);
   }
-  ret = SQLExecute(stmt.getHandle());
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?; SELECT ?, ?, ?"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then 3 result sets are returned
@@ -272,13 +268,11 @@ TEST_CASE("should fail when multistatement query has too few parameters", "[quer
   // When Multistatement SELECT requires 3 parameters but only 1 is bound
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
   SQLINTEGER p1 = 10;
   SQLLEN p1_len = sizeof(p1);
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p1, sizeof(p1), &p1_len);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLExecute(stmt.getHandle());
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
 
   // Then an error is returned indicating parameter count mismatch
   CHECK(ret == SQL_ERROR);
@@ -297,8 +291,6 @@ TEST_CASE("should fail when NULL positional parameters are used in multistatemen
   // When Multistatement SELECT is executed with NULL positional parameters
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
   SQLINTEGER p1_buf = 0, p2_buf = 10, p3_buf = 0;
   SQLLEN p1_len = SQL_NULL_DATA;
   SQLLEN p2_len = sizeof(p2_buf);
@@ -312,7 +304,7 @@ TEST_CASE("should fail when NULL positional parameters are used in multistatemen
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p3_buf, sizeof(p3_buf),
                          &p3_len);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLExecute(stmt.getHandle());
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
 
   // Then an error is returned indicating NULL bindings are not supported
   CHECK(ret == SQL_ERROR);
