@@ -8,6 +8,7 @@ to just the decorator façade.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import types
 
@@ -80,26 +81,46 @@ def backward_compatibility(obj: T) -> T:
 _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 
+def _send_telemetry(self: Any, func_name: str) -> None:
+    """Send api_usage telemetry for either a Connection or a cursor instance."""
+    from snowflake.connector.connection import Connection
+    from snowflake.connector.cursor._cursor_mixin import CursorMixin
+
+    api_name = f"{type(self).__name__}.{func_name}"
+    if isinstance(self, Connection):
+        self._telemetry_client.send_api_usage(api_name)
+    elif isinstance(self, CursorMixin):
+        self._connection._telemetry_client.send_api_usage(api_name)
+
+
 def api_telemetry(func: F) -> F:
     """Record ``{ClassName}.{method_name}`` telemetry for the outermost call.
 
     Suppresses ``_TRACKING`` for the method body so nested decorated calls
     are not recorded.  Generator results are wrapped to suppress only during
     each iteration step (see :func:`_suppress_tracking_generator`).
+
+    Handles both sync and async methods transparently.
     """
+    if asyncio.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            if _TRACKING.get():
+                _send_telemetry(self, func.__name__)
+                _TRACKING.set(False)
+                try:
+                    return await func(self, *args, **kwargs)
+                finally:
+                    _TRACKING.set(True)
+            return await func(self, *args, **kwargs)
+
+        return cast(F, async_wrapper)
 
     @functools.wraps(func)
     def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         if _TRACKING.get():
-            from snowflake.connector.connection import Connection
-            from snowflake.connector.cursor._base import SnowflakeCursorBase
-
-            api_name = f"{type(self).__name__}.{func.__name__}"
-            if isinstance(self, Connection):
-                self._telemetry_client.send_api_usage(api_name)
-            elif isinstance(self, SnowflakeCursorBase):
-                self._connection._telemetry_client.send_api_usage(api_name)
-
+            _send_telemetry(self, func.__name__)
             _TRACKING.set(False)
             try:
                 result = func(self, *args, **kwargs)

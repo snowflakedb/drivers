@@ -1,9 +1,9 @@
-"""
-Synchronous cursor base class.
+"""Async cursor classes.
 
-``SnowflakeCursorBase`` inherits shared state and properties from
-:class:`CursorMixin` and adds every method that performs synchronous I/O
-through :class:`BlockingImmutableCursor`.
+``AsyncSnowflakeCursorBase`` mirrors :class:`SnowflakeCursorBase` but uses
+``async def`` for every method that crosses the FFI boundary, operating
+directly on :class:`ImmutableCursor` (the async primitive) instead of its
+blocking wrapper.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import abc
 import logging
 
-from collections.abc import Iterator, Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
 from .._internal.arrow_stream_utils import (
@@ -22,10 +22,7 @@ from .._internal.decorators import api_telemetry, pep249
 from .._internal.errorcode import ER_INVALID_VALUE
 from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import pandas, pyarrow, requires_dependency
-from ..errors import InterfaceError, ProgrammingError
-from ..result_batch import ResultBatch
-from ._blocking_immutable_cursor import BlockingImmutableCursor
-from ._cursor_mixin import (
+from ..cursor._cursor_mixin import (
     CursorMixin,
     DictRow,
     Row,
@@ -33,9 +30,12 @@ from ._cursor_mixin import (
     _requires_open_cursor_not_connection,
     _with_prefetch_hook,
 )
-from ._query_result import _MultiStatementQueryResultState, _QueryResult
-from ._query_result_waiter import QueryResultWaiter
-from ._result_metadata import ResultMetadata
+from ..cursor._immutable_cursor import ImmutableCursor
+from ..cursor._query_result import _MultiStatementQueryResultState, _QueryResult
+from ..cursor._query_result_waiter import QueryResultWaiter
+from ..cursor._result_metadata import ResultMetadata
+from ..errors import InterfaceError, ProgrammingError
+from ..result_batch import ResultBatch
 
 
 if TYPE_CHECKING:
@@ -49,9 +49,8 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=Sequence[Any])
 
 
-class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
-    """
-    Base cursor class for synchronous database operations (PEP 249).
+class AsyncSnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
+    """Async base cursor for database operations (PEP 249 async flavour).
 
     Concrete subclasses must override :pyattr:`_use_dict_result` and
     :pymeth:`fetchone`.
@@ -59,10 +58,10 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
     def __init__(self, connection: Connection) -> None:
         self._init_cursor_mixin(connection)
-        self._immutable: BlockingImmutableCursor | None = None
+        self._immutable: ImmutableCursor | None = None
 
     @property
-    def _errorhandler_cursor(self) -> SnowflakeCursorBase:
+    def _errorhandler_cursor(self) -> AsyncSnowflakeCursorBase:
         return self
 
     # ------------------------------------------------------------------
@@ -70,16 +69,15 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     # ------------------------------------------------------------------
 
     @overload
-    def callproc(self, procname: str) -> tuple: ...
+    async def callproc(self, procname: str) -> tuple: ...
 
     @overload
-    def callproc(self, procname: str, args: T) -> T: ...
+    async def callproc(self, procname: str, args: T) -> T: ...
 
     @pep249
     @api_telemetry
     @_requires_open
-    def callproc(self, procname: str, args: Any = None) -> Any:
-        """Call a stored procedure."""
+    async def callproc(self, procname: str, args: Any = None) -> Any:
         if args is None:
             args = ()
         if isinstance(args, (str, bytes)):
@@ -87,41 +85,40 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
         if not isinstance(args, Sequence):
             raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
         command = f"CALL {procname}({self._connection.paramstyle.placeholders(len(args))})"
-        self.execute(command, args)
+        await self.execute(command, args)
         return args
 
     @pep249
     @api_telemetry
     @_requires_open
-    def execute(
+    async def execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
         **kwargs: Any,
-    ) -> SnowflakeCursorBase:
-        """Execute a database operation (query or command)."""
+    ) -> AsyncSnowflakeCursorBase:
         if num_statements is not None:
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
-        self.reset()
-        return self._execute(operation, parameters, _is_put_get, **kwargs)
+        await self.reset()
+        return await self._execute(operation, parameters, _is_put_get, **kwargs)
 
-    def _execute(
+    async def _execute(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         **kwargs: Any,
-    ) -> SnowflakeCursorBase:
+    ) -> AsyncSnowflakeCursorBase:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
         query, bindings = self._prepare_query(operation, parameters)
 
         try:
-            immutable = BlockingImmutableCursor.execute(
+            immutable = await ImmutableCursor.execute(
                 self._connection,
                 query,
                 bindings,
@@ -137,8 +134,7 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
         self._rownumber = -1
         return self
 
-    def _adopt_immutable(self, immutable: BlockingImmutableCursor, query: str | None) -> None:
-        """Bind a freshly-built ImmutableCursor to this cursor."""
+    def _adopt_immutable(self, immutable: ImmutableCursor, query: str | None) -> None:
         self._immutable = immutable
         self._query_result = immutable.query_result
 
@@ -155,8 +151,7 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @pep249
     @api_telemetry
     @_requires_open
-    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
-        """Execute a database operation repeatedly for each element in seq_of_parameters."""
+    async def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
         if not seq_of_parameters:
             return
 
@@ -164,11 +159,11 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
         first_params = seq_of_parameters[0]
 
         if paramstyle.is_client_side() or isinstance(first_params, dict):
-            self.reset()
+            await self.reset()
             total_rowcount = 0
             unknown_rowcount = False
             for params in seq_of_parameters:
-                self._execute(operation, params)
+                await self._execute(operation, params)
                 rc = self._query_result.rowcount
                 if rc is None or rc == -1:
                     unknown_rowcount = True
@@ -188,22 +183,21 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
         num_columns = first_len
         transposed = [[row[col_idx] for row in rows] for col_idx in range(num_columns)]
-        self.execute(operation, transposed)
+        await self.execute(operation, transposed)
 
     @api_telemetry
     @_requires_open
-    def describe(
+    async def describe(
         self,
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[ResultMetadata] | None:
-        """Obtain the schema of the result without executing the query."""
-        self.reset()
+        await self.reset()
         query, _bindings = self._prepare_query(operation, parameters)
 
         try:
-            self._query_result = BlockingImmutableCursor.describe(self._connection, query)
+            self._query_result = await ImmutableCursor.describe(self._connection, query)
         except ProgrammingError as exc:
             self._query_result = _QueryResult.from_programming_error(exc)
             raise
@@ -219,24 +213,22 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    def _fetchone(self) -> Row | DictRow | None:
+    async def _fetchone(self) -> Row | DictRow | None:
         if self._immutable is None:
             return None
-        row = self._immutable.fetchone()
+        row = await self._immutable.fetchone()
         self._rownumber = self._immutable.rownumber
         return row
 
     @pep249
     @abc.abstractmethod
-    def fetchone(self) -> Row | DictRow | None:
-        """Fetch the next row of a query result set."""
+    async def fetchone(self) -> Row | DictRow | None: ...
 
     @pep249
     @api_telemetry
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    def fetchmany(self, size: int | None = None) -> list[Any]:
-        """Fetch the next set of rows of a query result."""
+    async def fetchmany(self, size: int | None = None) -> list[Any]:
         if size is None:
             size = self.arraysize
 
@@ -250,7 +242,7 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
         if self._immutable is None:
             return []
-        rows = self._immutable.fetchmany(size)
+        rows = await self._immutable.fetchmany(size)
         self._rownumber = self._immutable.rownumber
         return rows
 
@@ -258,31 +250,25 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open_cursor_not_connection
     @_with_prefetch_hook
-    def fetchall(self) -> list[Any]:
-        """Fetch all (remaining) rows of a query result."""
+    async def fetchall(self) -> list[Any]:
         if self._immutable is None:
             return []
-        rows = self._immutable.fetchall()
+        rows = await self._immutable.fetchall()
         self._rownumber = self._immutable.rownumber
         return rows
 
     # ------------------------------------------------------------------
-    # Iterator protocol
+    # Async iterator protocol
     # ------------------------------------------------------------------
 
-    @pep249
-    def __iter__(self) -> SnowflakeCursorBase:
+    def __aiter__(self) -> AsyncSnowflakeCursorBase:
         return self
 
-    def __next__(self) -> Row | DictRow:
-        row = self.fetchone()
+    async def __anext__(self) -> Row | DictRow:
+        row = await self.fetchone()
         if row is None:
-            raise StopIteration
+            raise StopAsyncIteration
         return row
-
-    @pep249
-    def next(self) -> Row | DictRow:
-        return self.__next__()
 
     # ------------------------------------------------------------------
     # PEP 249 optional
@@ -291,8 +277,7 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @pep249
     @api_telemetry
     @_requires_open
-    def nextset(self) -> SnowflakeCursorBase | None:
-        """Skip to the next available result set."""
+    async def nextset(self) -> AsyncSnowflakeCursorBase | None:
         if self._multi_statement is None:
             return None
 
@@ -302,10 +287,10 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
         ms = self._multi_statement
         self._multi_statement = None
-        self.reset()
+        await self.reset()
         self._multi_statement = ms
 
-        immutable = BlockingImmutableCursor.from_query_id(
+        immutable = await ImmutableCursor.from_query_id(
             self._connection,
             query_id,
             use_dict_result=self._use_dict_result,
@@ -321,24 +306,23 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     # Context manager
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> SnowflakeCursorBase:
+    async def __aenter__(self) -> AsyncSnowflakeCursorBase:
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        self.close()
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.close()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     @_requires_open_cursor_not_connection
-    def reset(self, closing: bool = False) -> None:
-        """Reset the result set."""
+    async def reset(self, closing: bool = False) -> None:
         del self._messages[:]
         self._query_result.reset(closing=closing)
         if self._immutable is not None:
             try:
-                self._immutable.close()
+                await self._immutable.close()
             except Exception:
                 logger.warning("Failed to close ImmutableCursor during reset", exc_info=True)
             self._immutable = None
@@ -348,12 +332,11 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
     @pep249
     @api_telemetry
-    def close(self) -> bool | None:
-        """Close the cursor now."""
+    async def close(self) -> bool | None:
         try:
             if self._closed:
                 return False
-            self.reset(closing=True)
+            await self.reset(closing=True)
             self._closed = True
             del self._messages[:]
             return True
@@ -368,15 +351,15 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    def fetch_arrow_batches(
+    async def fetch_arrow_batches(
         self,
         force_microsecond_precision: bool = False,
-    ) -> Iterator[Table]:
-        """Fetch Arrow Tables in batches."""
+    ) -> AsyncIterator[Table]:
         if self._immutable is None:
             return
+        stream_ptr = await self._immutable.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=self._immutable.get_arrow_stream_ptr(),
+            stream_ptr=stream_ptr,
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -388,16 +371,16 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    def fetch_arrow_all(
+    async def fetch_arrow_all(
         self,
         force_return_table: bool = False,
         force_microsecond_precision: bool = False,
     ) -> Table | None:
-        """Fetch all results as a single Arrow Table."""
         if self._immutable is None:
             return None
+        stream_ptr = await self._immutable.get_arrow_stream_ptr()
         iterator = create_table_iterator(
-            stream_ptr=self._immutable.get_arrow_stream_ptr(),
+            stream_ptr=stream_ptr,
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -411,17 +394,15 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @requires_dependency(pandas)
     @api_telemetry
     @_requires_open
-    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
-        """Fetch Pandas DataFrames in batches."""
-        for table in self.fetch_arrow_batches(**kwargs):
+    async def fetch_pandas_batches(self, **kwargs: Any) -> AsyncIterator[DataFrame]:
+        async for table in self.fetch_arrow_batches(**kwargs):
             yield table.to_pandas()
 
     @requires_dependency(pandas)
     @api_telemetry
     @_requires_open
-    def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
-        """Fetch all results as a single Pandas DataFrame."""
-        table: Table = self.fetch_arrow_all(force_return_table=True, **kwargs)
+    async def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
+        table: Table = await self.fetch_arrow_all(force_return_table=True, **kwargs)
         return table.to_pandas()
 
     # ------------------------------------------------------------------
@@ -431,11 +412,10 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    def get_result_batches(self) -> list[ResultBatch] | None:
-        """Get the previously executed query's ResultBatches if available."""
+    async def get_result_batches(self) -> list[ResultBatch] | None:
         if self._immutable is None:
             return None
-        result_chunks = self._immutable.get_chunks()
+        result_chunks = await self._immutable.get_chunks()
         if result_chunks is None:
             return None
         return ResultBatch.from_chunks(
@@ -451,11 +431,10 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
     @api_telemetry
     @_requires_open
-    def query_result(self, qid: str) -> SnowflakeCursorBase:
-        """Fetch the result of a previously executed query by its Snowflake Query ID."""
-        self.reset()
+    async def query_result(self, qid: str) -> AsyncSnowflakeCursorBase:
+        await self.reset()
 
-        immutable = BlockingImmutableCursor.from_async_query(
+        immutable = await ImmutableCursor.from_async_query(
             self._connection,
             qid,
             use_dict_result=self._use_dict_result,
@@ -468,35 +447,35 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
     @api_telemetry
     @_requires_open
-    def get_results_from_sfqid(self, sfqid: str) -> None:
-        """Get results from a previously executed query."""
-        self.reset()
+    async def get_results_from_sfqid(self, sfqid: str) -> None:
+        await self.reset()
         self.connection.get_query_status_throw_if_error(sfqid)
         self._query_result.sfqid = sfqid
         waiter = QueryResultWaiter(self._connection, sfqid)
 
-        def prefetch_hook() -> None:
+        async def prefetch_hook() -> None:
             waiter.wait()
             self._prefetch_hook = None
-            self.query_result(sfqid)
+            await self.query_result(sfqid)
 
         self._prefetch_hook = prefetch_hook
 
     @api_telemetry
     @_requires_open
-    def execute_async(
+    async def execute_async(
         self,
         command: str,
         params: Sequence[Any] | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, str | None]:
-        """Submit a query for async execution and return immediately with the query ID."""
-        self.reset()
-        return self._execute_async(command, params)
+        await self.reset()
+        return await self._execute_async(command, params)
 
-    def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
+    async def _execute_async(
+        self, command: str, params: Sequence[Any] | dict[str, Any] | None
+    ) -> dict[str, str | None]:
         query, bindings = self._prepare_query(command, params)
-        query_id = BlockingImmutableCursor.execute_async(
+        query_id = await ImmutableCursor.execute_async(
             self._connection,
             query,
             bindings,
@@ -507,6 +486,52 @@ class SnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
 
     @api_telemetry
     @_requires_open
-    def abort_query(self, qid: str) -> bool:
-        """Abort a running query."""
-        return BlockingImmutableCursor.abort_query(self._connection, qid)
+    async def abort_query(self, qid: str) -> bool:
+        return await ImmutableCursor.abort_query(self._connection, qid)
+
+
+# ------------------------------------------------------------------
+# Concrete subclasses
+# ------------------------------------------------------------------
+
+
+class AsyncSnowflakeCursor(AsyncSnowflakeCursorBase):
+    """Async cursor returning results as tuples (default)."""
+
+    @property
+    def _use_dict_result(self) -> bool:
+        return False
+
+    @api_telemetry
+    async def fetchone(self) -> Row | None:
+        row = await self._fetchone()
+        if not (row is None or isinstance(row, tuple)):
+            raise TypeError(f"fetchone got unexpected result: {row}")
+        return row
+
+    async def fetchmany(self, size: int | None = None) -> list[Row]:
+        return await super().fetchmany(size)
+
+    async def fetchall(self) -> list[Row]:
+        return await super().fetchall()
+
+
+class AsyncDictCursor(AsyncSnowflakeCursorBase):
+    """Async cursor returning results as dictionaries."""
+
+    @property
+    def _use_dict_result(self) -> bool:
+        return True
+
+    @api_telemetry
+    async def fetchone(self) -> DictRow | None:
+        row = await self._fetchone()
+        if not (row is None or isinstance(row, dict)):
+            raise TypeError(f"fetchone got unexpected result: {row}")
+        return row
+
+    async def fetchmany(self, size: int | None = None) -> list[DictRow]:
+        return await super().fetchmany(size)
+
+    async def fetchall(self) -> list[DictRow]:
+        return await super().fetchall()

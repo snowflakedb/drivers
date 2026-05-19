@@ -22,12 +22,12 @@ from ..errors import Error
 
 if TYPE_CHECKING:
     from ..connection import Connection
-    from ..cursor import SnowflakeCursorBase
+    from ..cursor._cursor_mixin import CursorMixin
 
 
 def route_exception(
     connection: Connection | None,
-    cursor: SnowflakeCursorBase | None,
+    cursor: CursorMixin | None,
     exc: Error,
 ) -> NoReturn:
     """Route an ``Error`` through the PEP 249 errorhandler chain, then re-raise.
@@ -57,7 +57,7 @@ class ErrorHandlerMixin:
         return None
 
     @property
-    def _errorhandler_cursor(self) -> SnowflakeCursorBase | None:
+    def _errorhandler_cursor(self) -> CursorMixin | None:
         return None
 
 
@@ -89,7 +89,30 @@ _errorhandler_active: ContextVar[bool] = ContextVar("_errorhandler_active", defa
 
 
 def _wrap_method(method: Callable) -> Callable:
-    """Wrap a method to route ``Error`` through the errorhandler chain."""
+    """Wrap a method to route ``Error`` through the errorhandler chain.
+
+    Automatically detects coroutine functions and produces an ``async def``
+    wrapper so that ``await`` propagation works correctly.
+    """
+    if inspect.iscoroutinefunction(method):
+
+        @functools.wraps(method)
+        async def async_wrapper(self: ErrorHandlerMixin, *args: Any, **kwargs: Any) -> Any:
+            if _errorhandler_active.get():
+                return await method(self, *args, **kwargs)
+            token = _errorhandler_active.set(True)
+            try:
+                return await method(self, *args, **kwargs)
+            except Error as exc:
+                route_exception(
+                    self._errorhandler_connection,
+                    self._errorhandler_cursor,
+                    exc,
+                )
+            finally:
+                _errorhandler_active.reset(token)
+
+        return async_wrapper
 
     @functools.wraps(method)
     def wrapper(self: ErrorHandlerMixin, *args: Any, **kwargs: Any) -> Any:

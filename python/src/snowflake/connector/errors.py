@@ -44,7 +44,7 @@ from ._internal.decorators import backward_compatibility
 
 if TYPE_CHECKING:
     from .connection import Connection
-    from .cursor import SnowflakeCursorBase
+    from .cursor._cursor_mixin import CursorMixin
 
 ErrorValue = dict[str, Any]
 
@@ -103,7 +103,7 @@ class Error(Exception):
     @staticmethod
     def errorhandler_wrapper(
         connection: Connection | None,
-        cursor: SnowflakeCursorBase | None,
+        cursor: CursorMixin | None,
         error_class: type[Error] | type[Exception],
         error_value: ErrorValue,
     ) -> None:
@@ -124,7 +124,7 @@ class Error(Exception):
     @staticmethod
     def hand_to_other_handler(
         connection: Connection | None,
-        cursor: SnowflakeCursorBase | None,
+        cursor: CursorMixin | None,
         error_class: type[Error] | type[Exception],
         error_value: ErrorValue,
     ) -> bool:
@@ -169,7 +169,7 @@ class Error(Exception):
     @staticmethod
     def default_errorhandler(
         connection: Connection | None,
-        cursor: SnowflakeCursorBase | None,
+        cursor: CursorMixin | None,
         error_class: type[Error] | type[Exception],
         error_value: ErrorValue,
     ) -> None:

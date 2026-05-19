@@ -20,7 +20,7 @@ from snowflake.connector._internal.extras import (
     check_dependency as _real_check_dependency,
 )
 from snowflake.connector.constants import QueryStatus
-from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
+from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
 from snowflake.connector.cursor._blocking_immutable_cursor import BlockingImmutableCursor
 from snowflake.connector.cursor._query_result import _QueryResult
 from snowflake.connector.cursor._query_result_waiter import QueryResultWaiter
@@ -678,7 +678,9 @@ class TestFetchmanyArraysizeAttribute:
         assert cursor.arraysize == 1
 
     def test_arraysize_is_property(self):
-        assert isinstance(SnowflakeCursorBase.__dict__["arraysize"], property)
+        from snowflake.connector.cursor._cursor_mixin import CursorMixin
+
+        assert isinstance(CursorMixin.__dict__["arraysize"], property)
 
     def test_arraysize_instance_independent(self, cursor):
         assert cursor.arraysize == 1
@@ -781,13 +783,13 @@ class TestCheckCanUseArrowResultset:
             cursor.check_can_use_arrow_resultset()
 
     def test_raises_programming_error_when_pyarrow_missing(self, cursor):
-        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor._cursor_mixin.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_arrow_resultset()
             assert excinfo.value.errno == ER_NO_PYARROW
 
     def test_error_message_contains_install_link(self, cursor):
-        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor._cursor_mixin.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_arrow_resultset()
 
@@ -806,13 +808,13 @@ class TestCheckCanUsePandas:
             cursor.check_can_use_pandas()
 
     def test_raises_programming_error_when_pandas_missing(self, cursor):
-        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor._cursor_mixin.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_pandas()
             assert excinfo.value.errno == ER_NO_PYARROW
 
     def test_error_message_contains_install_link(self, cursor):
-        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor._cursor_mixin.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_pandas()
 
