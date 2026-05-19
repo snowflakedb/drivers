@@ -92,7 +92,7 @@ pub mod param_names {
     pub const CLIENT_SESSION_KEEP_ALIVE: ParamKey = ParamKey("CLIENT_SESSION_KEEP_ALIVE");
     pub const CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY: ParamKey =
         ParamKey("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY");
-    // ── OAuth (analysis_feature_oauth.md §9) ───────────────────────────────
+    // ── OAuth (cross-driver configuration matrix) ─────────────────────────
     pub const OAUTH_CLIENT_ID: ParamKey = ParamKey("oauth_client_id");
     pub const OAUTH_CLIENT_SECRET: ParamKey = ParamKey("oauth_client_secret");
     pub const OAUTH_AUTHORIZATION_URL: ParamKey = ParamKey("oauth_authorization_url");
@@ -476,9 +476,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         mutable_after_connect: false,
     },
     // ── OAuth ───────────────────────────────────────────────────────────
-    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`
-    // (analysis_feature_oauth.md §9). All OAuth params are connect-time
-    // and immutable for the life of the connection.
+    // Cross-driver canonical naming follows JDBC `SFSessionProperty.OAUTH_*`.
+    // All OAuth params are connect-time and immutable for the life of the
+    // connection.
     ParamDef {
         canonical_name: param_names::OAUTH_CLIENT_ID.as_str(),
         aliases: &["OAUTH_CLIENT_ID"],

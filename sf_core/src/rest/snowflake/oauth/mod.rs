@@ -5,14 +5,12 @@
 //! loopback HTTP server, DPoP, token cache I/O, and the OAuth-specific
 //! error type). CSRF state, browser launch, and the token-endpoint HTTP
 //! exchange are handled by the `oauth2`, `webbrowser`, and `axum`
-//! crates respectively. Cross-driver behavior, parameter names,
-//! redaction expectations, and gotchas are catalogued in
-//! `analysis_feature_oauth.md` (especially §2–§9 and §14).
+//! crates respectively.
 //!
 //! The re-exports below pin the surface that `auth_request_data`
-//! consumes when wiring `LoginMethod::OAuth*` (analysis §6 / §10.1)
-//! and that `snowflake_login_with_client` uses for the
-//! refresh-on-failure retry path (analysis §8 / §14 #9).
+//! consumes when wiring `LoginMethod::OAuth*` (login-request payload
+//! mapping) and that `snowflake_login_with_client` uses for the
+//! refresh-on-failure retry path (390303/390318 eviction + replay).
 
 mod authorization_code;
 mod client_credentials;
@@ -21,7 +19,7 @@ mod error;
 mod http_client;
 mod loopback_server;
 // Standalone PKCE helper kept as scaffolding; the active flow uses
-// `oauth2::PkceCodeChallenge` directly (analysis §9: PKCE always-on).
+// `oauth2::PkceCodeChallenge` directly (PKCE always-on).
 #[allow(dead_code)]
 mod pkce;
 mod token;

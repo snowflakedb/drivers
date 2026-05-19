@@ -1,9 +1,10 @@
 //! OAuth token cache I/O and refresh-token rotation.
 //!
 //! Cache key derivation follows JDBC/Python: host is the IdP token URL
-//! host (or fall back to the Snowflake server URL host) — see analysis
-//! `analysis_feature_oauth.md` §7.3, gotcha §14 #3. Eviction on Snowflake
-//! error codes `390303` / `390318` is required across all drivers (§8).
+//! host (or fall back to the Snowflake server URL host), matching JDBC's
+//! `getHostForOAuthCacheKey` and Python's
+//! `urlparse(token_request_url).hostname`. Eviction on Snowflake error
+//! codes `390303` / `390318` is required across all drivers.
 //!
 //! These helpers mirror the MFA-token helpers in
 //! `sf_core::rest::snowflake::mod` so the call sites in the OAuth flow
@@ -18,8 +19,8 @@ use crate::token_cache::{TokenCache, TokenType};
 
 /// Resolve the cache-key host for OAuth tokens.
 ///
-/// Python convention (`urllib.parse.urlparse(token_request_url).hostname`,
-/// see analysis §7.3): use the IdP token endpoint host when present,
+/// Python convention (`urllib.parse.urlparse(token_request_url).hostname`):
+/// use the IdP token endpoint host when present,
 /// otherwise fall back to the Snowflake server host.
 pub(crate) fn host_from_token_url(
     token_request_url: &str,
@@ -178,8 +179,7 @@ pub(crate) fn pack_dpop_bundle(access_token: &str, jwk_json: &str) -> String {
 
 /// Inverse of [`pack_dpop_bundle`]. Returns `None` if the format is not
 /// recognized so callers can evict the corrupt entry and start over
-/// (mirrors JDBC's "legacy non-base64 encoded cache values" branch —
-/// analysis §14 #9).
+/// (mirrors JDBC's "legacy non-base64 encoded cache values" branch).
 pub(crate) fn unpack_dpop_bundle(packed: &str) -> Option<(String, String)> {
     let (at_b64, jwk_b64) = packed.split_once('.')?;
     let at = BASE64_STD.decode(at_b64.as_bytes()).ok()?;

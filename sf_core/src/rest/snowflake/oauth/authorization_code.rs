@@ -2,11 +2,10 @@
 //!
 //! Owns the end-to-end orchestration: PKCE verifier/challenge, CSRF state,
 //! browser launch, loopback HTTP redirect handling, token exchange, and
-//! refresh-token rotation. See `analysis_feature_oauth.md` §3 for the
-//! per-driver state machine and gotchas (notably §3.5 on 127.0.0.1
-//! binding and §14 #11 on rejecting Node's `0.0.0.0`).
+//! refresh-token rotation. Loopback binds `127.0.0.1` explicitly (Node's
+//! `0.0.0.0` bind is intentionally not replicated).
 //!
-//! Defaults follow JDBC/Python (analysis §9):
+//! Defaults follow JDBC/Python:
 //! * `authorization_url` ⇒ `https://{server_host}/oauth/authorize`
 //! * `token_url` ⇒ `https://{server_host}/oauth/token-request`
 //! * `redirect_uri` ⇒ ephemeral `http://127.0.0.1:<port>/`
@@ -15,7 +14,7 @@
 //! `client_store_temporary_credential` is enabled and a [`TokenCache`] is
 //! provided, the access token is consulted first, then the refresh token
 //! is exchanged, and only if both fall through do we drive the
-//! interactive flow (analysis §3.2 state machine).
+//! interactive flow.
 //!
 //! HTTP transport, body encoding, CSRF generation, and PKCE generation
 //! are owned by the `oauth2` crate; we only orchestrate the moving parts
@@ -108,8 +107,7 @@ pub(crate) struct AcquiredOAuthToken {
     /// flow itself; the wiring layer does not consume it directly.
     pub(crate) refresh_token: Option<SensitiveString>,
     /// Present iff DPoP was negotiated. Carries the JWK JSON so the
-    /// Snowflake login-request can reuse the same key when signing
-    /// (analysis §5.1).
+    /// Snowflake login-request can reuse the same key when signing.
     pub(crate) dpop_jwk_json: Option<String>,
     /// IdP-reported lifetime of the access token, when present. Snowflake
     /// drives session validity itself, so this is informational only.
@@ -177,7 +175,7 @@ async fn run_authorization_code_flow(
     // wait, the IdP token exchange and any refresh exchange.
     let deadline = FlowDeadline::new(config.flow_options.authentication_timeout_secs);
 
-    // 1. Cache short-circuit (analysis §3.2 + §7).
+    // 1. Cache short-circuit.
     if let Some(cached) = try_cache_short_circuit(
         client,
         &token_url,
@@ -229,7 +227,7 @@ async fn try_cache_short_circuit(
     // Drift B.11: when DPoP is enabled, look up the bundled cache entry
     // first. The bundle carries both the access token and the JWK JSON
     // so the same DPoP key can sign the Snowflake login leg without
-    // re-running the interactive flow (analysis §5.1, §6).
+    // re-running the interactive flow.
     if config.flow_options.enable_dpop
         && let Some((cached_at, jwk_json)) =
             token::try_get_cached_oauth_dpop_bundled(cache_host_url, &config.username, token_cache)
@@ -348,7 +346,7 @@ async fn run_interactive_flow(
         redirect_uri.clone(),
     )?;
 
-    // PKCE S256 is on by default across drivers (analysis §3.3); Python
+    // PKCE S256 is on by default across drivers; Python
     // is the only one with a `oauth_disable_pkce` escape hatch and we
     // mirror it here (drift A.2). When disabled we skip both the
     // `set_pkce_challenge` on the authorize URL and the
@@ -359,8 +357,7 @@ async fn run_interactive_flow(
         Some(PkceCodeChallenge::new_random_sha256())
     };
 
-    // 256-bit CSRF state per `doc/oauth.md` §3 ("Key properties") and
-    // analysis §3.4 (drift A.4). 32 random bytes base64url-encoded.
+    // 256-bit CSRF state (drift A.4). 32 random bytes base64url-encoded.
     let mut request = oauth_client.authorize_url(|| CsrfToken::new_random_len(32));
     if let Some((challenge, _)) = pkce.as_ref() {
         request = request.set_pkce_challenge(challenge.clone());
@@ -498,8 +495,8 @@ async fn refresh_access_token(
 
     // Drift B.12: serialize the DPoP JWK alongside the new access token
     // so `persist_access_token` takes the bundled-cache write path
-    // (analysis §6: "DPoP key + access token JSON" lives under the
-    // bundled entry, not `OAUTH_ACCESS_TOKEN`).
+    // (DPoP key + access token lives under the bundled entry, not
+    // `OAUTH_ACCESS_TOKEN`).
     let dpop_jwk_json = match dpop_key {
         Some(k) => Some(k.to_jwk_json()?),
         None => None,
@@ -523,8 +520,8 @@ fn build_oauth_client(
     OAuthError,
 > {
     // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for missing
-    // client_id/client_secret (`doc/oauth.md` §2; analysis §1, §9 — drift
-    // B.1). We treat "user did not override the token URL" as the
+    // client_id/client_secret (drift B.1). We treat "user did not override
+    // the token URL" as the
     // Snowflake-as-IdP signal, matching JDBC's `OAuthUtil` heuristic.
     let snowflake_idp = config.token_url.is_none();
     let (client_id, client_secret) = resolve_client_credentials(config, snowflake_idp);
@@ -538,7 +535,7 @@ fn build_oauth_client(
 /// Drift B.1: if no client credentials were provided and Snowflake is
 /// the IdP, substitute the literal `LOCAL_APPLICATION` for both
 /// `client_id` and `client_secret` (matches JDBC, ODBC, Python, .NET,
-/// Go and Node — analysis §1 and §2). External IdPs require explicit
+/// Go and Node). External IdPs require explicit
 /// credentials, so the empty values fall through unchanged.
 fn resolve_client_credentials(
     config: &OAuthAuthorizationCodeConfig,
