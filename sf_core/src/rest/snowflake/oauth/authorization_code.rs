@@ -749,18 +749,6 @@ mod tests {
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::run_oauth_authorization_code as acquire_authorization_code;
-
-    async fn acquire_authorization_code_inner(
-        client: &reqwest::Client,
-        server_url: &Url,
-        config: &OAuthAuthorizationCodeConfig,
-        token_cache: Option<&dyn TokenCache>,
-        launch_browser: BrowserLaunchFn,
-    ) -> Result<AcquiredOAuthToken, OAuthError> {
-        run_authorization_code_flow(client, server_url, config, token_cache, launch_browser).await
-    }
-
     struct StubTokenCache {
         store: Mutex<HashMap<String, String>>,
     }
@@ -832,7 +820,7 @@ mod tests {
                 authentication_timeout_secs: DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
             },
             // Unit tests that drive the interactive leg pass their
-            // launcher directly through `acquire_authorization_code_inner`
+            // launcher directly through `run_authorization_code_flow`
             // (see `loopback_redirect_with`). Cache / refresh-only paths
             // never invoke the launcher, so `None` is safe.
             browser_launcher: None,
@@ -1196,7 +1184,7 @@ mod tests {
             Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
 
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code_inner(
+        let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
             &config,
@@ -1268,7 +1256,7 @@ mod tests {
             config.enable_single_use_refresh_tokens = enable;
 
             let client = reqwest::Client::new();
-            let acquired = acquire_authorization_code_inner(
+            let acquired = run_authorization_code_flow(
                 &client,
                 &server_url(),
                 &config,
@@ -1314,7 +1302,7 @@ mod tests {
         token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-OLD", Some(&cache));
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
-        let _ = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+        let _ = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
             .await
             .expect("refresh succeeds");
 
@@ -1351,7 +1339,7 @@ mod tests {
         token::store_oauth_refresh_token(token_url.as_str(), "alice", "RT-STALE", Some(&cache));
         let config = cfg_with_token_url(token_url.clone());
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
             .await
             .expect("refresh without new RT still succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
@@ -1388,7 +1376,7 @@ mod tests {
 
         let cache = FaultingTokenCache;
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code_inner(
+        let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
             &config,
@@ -1427,7 +1415,7 @@ mod tests {
         config.scope = None;
 
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code_inner(
+        let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
             &config,
@@ -1462,7 +1450,7 @@ mod tests {
         let config = cfg_with_token_url(token_url);
         assert!(config.scope.is_none());
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code(&client, &server_url(), &config, Some(&cache))
+        let acquired = run_oauth_authorization_code(&client, &server_url(), &config, Some(&cache))
             .await
             .expect("refresh without scope succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-NEW");
@@ -1503,7 +1491,7 @@ mod tests {
         config.client_secret = CLIENT_SECRET.into();
 
         let client = reqwest::Client::new();
-        let acquired = acquire_authorization_code_inner(
+        let acquired = run_authorization_code_flow(
             &client,
             &server_url(),
             &config,

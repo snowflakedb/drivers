@@ -192,6 +192,10 @@ impl OAuthTestFixture {
         assert!(result.is_ok(), "Expected {context}, got: {result:?}");
     }
 
+    // TODO(SNOW-3549115): Replace string-pattern matching against error
+    // messages with structured matching against an `AuthenticationError`
+    // enum. Matching on substrings is brittle and risks getting
+    // cargo-culted to other auth tests.
     fn assert_error(result: Result<(), String>, patterns: &[&str], context: &str) {
         let error = result.expect_err(&format!("Expected {context} to fail"));
         let matches = patterns.iter().any(|p| error.contains(p));
@@ -644,33 +648,4 @@ fn should_fail_client_credentials_when_idp_response_is_missing_access_token() {
         &["MissingAccessToken", "access_token", "OAuthFlow", "OAuth"],
         "CC missing access_token error",
     );
-}
-
-// =============================================================================
-// Authorization Code — interactive leg (documented + ignored)
-// =============================================================================
-
-/// Documents the interactive AC leg shape: the loopback listener binds
-/// and the test would otherwise hang indefinitely waiting on a real
-/// browser. Marked `#[ignore]` so it does not run in CI by default —
-/// the unit-level coverage in `authorization_code.rs` already drives
-/// the loopback synthetically (`loopback_redirect_with`,
-/// `dpop_nonce_retry_happens_exactly_once_with_nonce_claim`,
-/// `enable_single_use_refresh_tokens_appears_in_body_only_when_enabled`),
-/// so this is left as a manual reproducer.
-#[test]
-#[ignore = "drives the AC interactive leg; requires manual browser interaction"]
-fn should_drive_ac_interactive_leg_when_no_tokens_cached() {
-    let user = unique_user("oauth_ac_interactive");
-    let fixture = OAuthTestFixture::with_authorization_code(&user);
-    fixture
-        .mock
-        .mount(oauth::idp_token_endpoint_success_authorization_code());
-    fixture.mock.mount(oauth::snowflake_login_success_oauth(
-        "ac-access-token-success",
-    ));
-
-    // No tokens seeded — the flow will bind the loopback and wait for
-    // a browser redirect, which a human needs to drive manually.
-    let _ = fixture.connect();
 }
