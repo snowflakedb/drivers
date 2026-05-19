@@ -21,7 +21,7 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
 use crate::config::logout::LogoutConfig;
-use crate::config::param_registry::{ParamKey, ParamScope, param_names};
+use crate::config::param_registry::{ParamKey, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,

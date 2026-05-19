@@ -505,7 +505,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "OAuth client identifier (LOCAL_APPLICATION when Snowflake is the IdP)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -519,7 +519,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "OAuth client secret (redacted from logs)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -533,7 +533,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "IdP authorization endpoint (defaults to https://{host}/oauth/authorize)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -547,7 +547,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "IdP token endpoint (CC only; defaults to https://{host}/oauth/token-request for AC)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -561,7 +561,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Loopback redirect URI advertised to the IdP (defaults to http://127.0.0.1:<random>)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -575,7 +575,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "OAuth scope (space-separated; defaults to session:role:<role>)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -589,7 +589,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Request single-use refresh-token rotation (Snowflake-IdP only)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -603,7 +603,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Disable PKCE S256 challenge for OAUTH_AUTHORIZATION_CODE (Python-compatible escape hatch)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -617,7 +617,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable RFC 9449 DPoP proof-of-possession (JDBC-compatible)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -631,7 +631,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Disable EXTERNALBROWSER console-login (JDBC parity; does not gate OAuth)",
         deprecated_by: None,
-        scope: ParamScope::Connection,
+        scope: &[ParamScope::Connection],
         used_at_connect: true,
         mutable_after_connect: false,
     },
@@ -1142,7 +1142,7 @@ impl ParamDef {
     /// True when the parameter is ONLY statement-scoped (not also connection/session).
     #[inline]
     pub fn is_statement_only(&self) -> bool {
-        self.scope == &[ParamScope::Statement]
+        self.scope == [ParamScope::Statement]
     }
 }
 

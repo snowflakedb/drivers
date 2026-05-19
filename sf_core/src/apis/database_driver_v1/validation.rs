@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
-use crate::config::param_registry::{self, ParamScope, ValueType, param_names};
+use crate::config::param_registry::{self, ValueType, param_names};
 use crate::config::settings::{Setting, Settings};
 
 pub use crate::config::connection_config::{ValidationCode, ValidationIssue, ValidationSeverity};

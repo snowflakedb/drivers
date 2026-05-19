@@ -546,15 +546,15 @@ impl Statement {
     }
 
     pub(crate) fn resolve_query_timeout(&self, conn: &Connection) -> Duration {
-        if let Some(Setting::Int(secs)) = self.settings.get(param_names::QUERY_TIMEOUT) {
-            if *secs > 0 {
-                return Duration::from_secs(*secs as u64);
-            }
+        if let Some(Setting::Int(secs)) = self.settings.get(param_names::QUERY_TIMEOUT)
+            && *secs > 0
+        {
+            return Duration::from_secs(*secs as u64);
         }
-        if let Some(Setting::Int(secs)) = conn.get_param(param_names::QUERY_TIMEOUT) {
-            if secs > 0 {
-                return Duration::from_secs(secs as u64);
-            }
+        if let Some(Setting::Int(secs)) = conn.get_param(param_names::QUERY_TIMEOUT)
+            && secs > 0
+        {
+            return Duration::from_secs(secs as u64);
         }
         Duration::ZERO
     }

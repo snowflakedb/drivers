@@ -478,9 +478,12 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             if self._statement_parameters:
                 self._apply_statement_parameters(stmt_handle)
 
-            effective_timeout = timeout if timeout > 0 else getattr(self._connection, "_query_timeout", 0)
-            if effective_timeout > 0:
-                self._set_query_timeout(stmt_handle, effective_timeout)
+            if timeout > 0:
+                self._set_query_timeout(stmt_handle, timeout)
+            else:
+                conn_timeout = getattr(self._connection, "_query_timeout", 0)
+                if isinstance(conn_timeout, int) and conn_timeout > 0:
+                    self._set_query_timeout(stmt_handle, conn_timeout)
 
             response = self._execute_query(stmt_handle, bindings)
 
