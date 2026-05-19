@@ -15,7 +15,7 @@ use converter::{
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
 use std::future::Future;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use tracing::instrument;
 
 #[allow(clippy::result_large_err)]
@@ -36,7 +36,7 @@ fn not_implemented(message: &str) -> DriverException {
 }
 
 pub struct DatabaseDriverImpl {
-    driver: Arc<DatabaseDriverV1>,
+    driver: DatabaseDriverV1,
 }
 
 impl Default for DatabaseDriverImpl {
@@ -52,7 +52,7 @@ impl DatabaseDriverImpl {
 
     pub fn new_with(providers: DriverProviders) -> Self {
         Self {
-            driver: Arc::new(DatabaseDriverV1::with_providers(providers)),
+            driver: DatabaseDriverV1::with_providers(providers),
         }
     }
 }
@@ -912,9 +912,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: TelemetrySendApiUsageRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        self.driver
-            .connection_telemetry(Handle::from(conn_handle))
-            .record_api_call(&input.api_method);
+        let handle = Handle::from(conn_handle);
+
+        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
+            let _guard = conn_span.enter();
+            crate::telemetry::record_api_call(&input.api_method);
+        }
+
         Ok(TelemetrySendResponse {})
     }
 
@@ -927,9 +931,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: TelemetrySendWrapperErrorRequest,
     ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        self.driver
-            .connection_telemetry(Handle::from(conn_handle))
-            .record_exception(&input.exception_type, &input.error_source);
+        let handle = Handle::from(conn_handle);
+
+        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
+            let _guard = conn_span.enter();
+            crate::telemetry::record_exception(&input.exception_type, &input.error_source);
+        }
+
         Ok(TelemetrySendResponse {})
     }
 }

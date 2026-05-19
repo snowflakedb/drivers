@@ -75,8 +75,6 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     pub(super) results: HandleManager<Mutex<ResultSet>>,
-    pub(super) connection_recorders:
-        std::sync::RwLock<HashMap<u64, crate::telemetry::ConnectionTelemetry>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -101,7 +99,6 @@ impl DatabaseDriverV1 {
             connections: HandleManager::new(),
             statements: HandleManager::new(),
             results: HandleManager::new(),
-            connection_recorders: std::sync::RwLock::new(HashMap::new()),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),

@@ -1,5 +1,4 @@
 pub mod environment;
-pub mod recorder;
 pub mod types;
 
 // These modules are public for integration tests but are not part of the stable API.
@@ -10,8 +9,6 @@ pub mod snowflake_exporter;
 
 pub mod os_details;
 pub mod platform_detection;
-
-pub(crate) use recorder::ConnectionTelemetry;
 
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
