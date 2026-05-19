@@ -160,8 +160,8 @@ TEST_CASE("should execute multistatement DML with positional parameters", "[quer
   auto stmt = conn.createStatement();
 
   // And A temporary table with column (id NUMBER) exists
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
-                                sqlchar("CREATE OR REPLACE TEMPORARY TABLE ms_bind_dml(id NUMBER)"), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), sqlchar("CREATE OR REPLACE TEMPORARY TABLE ms_bind_dml(id NUMBER)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // When Multistatement INSERT chain is executed with 3 positional parameters
@@ -315,11 +315,10 @@ TEST_CASE("should fail when NULL positional parameters are used in multistatemen
   // Then an error is returned indicating NULL bindings are not supported
   CHECK(ret == SQL_ERROR);
   auto records = get_diag_rec(stmt);
-  bool mentions_bind =
-      std::any_of(records.begin(), records.end(), [](const DiagRec& r) {
-        std::string lower = r.messageText;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        return lower.find("bind") != std::string::npos;
-      });
+  bool mentions_bind = std::any_of(records.begin(), records.end(), [](const DiagRec& r) {
+    std::string lower = r.messageText;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    return lower.find("bind") != std::string::npos;
+  });
   CHECK(mentions_bind);
 }
