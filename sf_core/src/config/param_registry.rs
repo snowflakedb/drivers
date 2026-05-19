@@ -124,6 +124,7 @@ pub mod param_names {
     // canonical name matches the field on `StageInfo` (and libsfclient's
     // `use_s3_regional_url` connection attribute).
     pub const USE_S3_REGIONAL_URL: ParamKey = ParamKey("use_s3_regional_url");
+    pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -1133,6 +1134,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         scope: ParamScope::Session,
         used_at_connect: false,
         mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::VALIDATE_DEFAULT_PARAMETERS.as_str(),
+        aliases: &["VALIDATE_DEFAULT_PARAMETERS"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Validate that the default database, schema, and warehouse exist on the server at connect time",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
 ];
 

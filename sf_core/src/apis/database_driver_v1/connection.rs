@@ -210,6 +210,15 @@ impl DatabaseDriverV1 {
                             v.to_string(),
                         );
                     }
+                    if resolved
+                        .get_bool(param_names::VALIDATE_DEFAULT_PARAMETERS)
+                        .unwrap_or(false)
+                    {
+                        unknown_settings.insert(
+                            "CLIENT_VALIDATE_DEFAULT_PARAMETERS".to_string(),
+                            "true".to_string(),
+                        );
+                    }
                     let init_params = match init_params {
                         Some(explicit) => {
                             // Normalize explicit keys to uppercase so precedence

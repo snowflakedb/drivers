@@ -761,7 +761,7 @@ class Connection(ErrorHandlerMixin):
     @property
     def validate_default_parameters(self) -> bool:
         """Whether to validate default connection parameters at connect time."""
-        raise NotImplementedError("validate_default_parameters is not yet implemented")
+        return bool(self.config.validate_default_parameters)
 
     @property
     def insecure_mode(self) -> bool:
