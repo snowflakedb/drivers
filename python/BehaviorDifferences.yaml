@@ -234,3 +234,28 @@ behavior_differences:
     new_driver_behavior: |
       Both attributes are read-only properties. Assignment raises
       `AttributeError`.
+
+  27:
+    name: "S3 endpoint for cn-* regions delegated to AWS SDK"
+    status: unknown
+    type: behavior_change
+    reviewed: false
+    old_driver_behavior: |
+      For S3 stages in China regions (`cn-*`), the old connector unconditionally constructs
+      the endpoint as `https://<bucket>.s3.<region>.amazonaws.com.cn` in
+      `S3StorageClient.transfer_accelerate_config` (`s3_storage_client.py`), regardless of the
+      `useS3RegionalUrl` / `useRegionalUrl` flags returned by GS. This is required because the
+      old connector uses its own REST client for PUT/GET and does not go through `boto3`'s
+      endpoint resolver for transfers.
+    new_driver_behavior: |
+      The universal driver only sets an explicit S3 endpoint when either
+      `stageInfo.endpoint` is set (FIPS / VPCE / custom override) or
+      `useS3RegionalUrl || useRegionalUrl` is true. For a `cn-*` region without any of those
+      flags, no endpoint override is configured and `aws-sdk-s3`'s default endpoint resolver
+      is trusted to pick `amazonaws.com.cn` from the region. This matches snowflake-jdbc
+      (`SnowflakeS3Client.java`) and libsnowflakeclient (`SnowflakeS3Client.cpp`), which both
+      delegate to their respective AWS SDKs in the same conditions.
+    description: |
+      The Python connector is the outlier among reference drivers: JDBC and libsnowflakeclient
+      already trust the AWS SDK partition resolver for `cn-*` when no regional-URL flag is set.
+      Verification on a real `cn-*` stage end-to-end is still pending.
