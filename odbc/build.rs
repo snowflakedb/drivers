@@ -1,6 +1,14 @@
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../build_common.rs"));
 
 fn main() {
+    let rustc_meta = rustc_version::version_meta().expect("read rustc version");
+    println!("cargo:rustc-env=SF_ODBC_WRAPPER_LANGUAGE_RUNTIME=Rust");
+    println!(
+        "cargo:rustc-env=SF_ODBC_BUILD_RUST_SEMVER={}",
+        rustc_meta.semver
+    );
+    println!("cargo:rerun-if-env-changed=RUSTC");
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let odbc_api_version = read_odbc_metadata(&manifest_dir, "odbc_api_version");
     println!("cargo:rustc-env=SF_ODBC_API_VER={odbc_api_version}");
