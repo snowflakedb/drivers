@@ -181,18 +181,18 @@ impl LogManager {
         })
     }
 
-    /// Factory: find and parse `sf.odbc.ini`, falling back to defaults.
+    /// Factory: read `sf.odbc.ini` via [`crate::config::sf_odbc_ini::SfOdbcIni`]
+    /// and initialise logging with the resulting [`LoggingConfig`].
+    ///
+    /// The INI file is the shared source of truth for the ODBC driver: the
+    /// same snapshot also drives the wide-string ABI wrappers. Reading
+    /// goes through [`crate::config::sf_odbc_ini::SfOdbcIni::global`] so
+    /// both subsystems see identical values without opening the file
+    /// twice.
     pub fn for_odbc() -> Option<Self> {
-        let config = match super::ini_config::find_odbc_ini() {
-            Some(path) => super::ini_config::parse_ini_file(&path).unwrap_or_else(|e| {
-                eprintln!(
-                    "Failed to parse sf.odbc.ini at {}: {e:?}, using defaults",
-                    path.display()
-                );
-                LoggingConfig::default()
-            }),
-            None => LoggingConfig::default(),
-        };
+        let config = crate::config::sf_odbc_ini::SfOdbcIni::global()
+            .logging()
+            .clone();
         match Self::init(config) {
             Ok(lm) => Some(lm),
             Err(e) => {
