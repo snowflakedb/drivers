@@ -10,10 +10,12 @@ pub fn to_pascal_case(s: &str) -> String {
     s.to_case(Case::Pascal)
 }
 
-/// Strip common test-method prefixes (`test_`, `vpn_`) so the bare name
+/// Strip common test-method prefixes (`test_`, `vpn_`, `flaky_`) so the bare name
 /// can be compared against the Gherkin scenario name.
 pub fn clean_method_name(name: &str) -> &str {
-    name.trim_start_matches("test_").trim_start_matches("vpn_")
+    name.trim_start_matches("test_")
+        .trim_start_matches("vpn_")
+        .trim_start_matches("flaky_")
 }
 
 /// Normalize a string for matching: lowercase, strip whitespace, underscores,

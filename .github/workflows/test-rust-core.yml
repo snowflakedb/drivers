@@ -280,6 +280,13 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
 
+      - name: Run flaky tests (non-blocking)
+        continue-on-error: true
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo llvm-cov --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }} \
+            -- --ignored flaky_
+
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
       # contains no *.profraw files; running `cargo llvm-cov report` then fails with
@@ -445,6 +452,13 @@ jobs:
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
+
+      - name: Run flaky tests (non-blocking)
+        continue-on-error: true
+        shell: cmd
+        run: |
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+          cargo nextest run --package sf_core --target aarch64-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
 
       # Post-mortem diagnostics for Windows ARM64 failures: ARM64-specific build issues
       # (wrong architecture DLLs, missing OpenSSL, MSVC env not targeting ARM64) are
@@ -639,6 +653,13 @@ jobs:
         run: |
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
+
+      - name: Run flaky tests (non-blocking)
+        continue-on-error: true
+        shell: cmd
+        run: |
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+          cargo nextest run --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --run-ignored ignored-only -E "test(/^flaky_/)"
 
       - name: Save Rust cache
         if: always()

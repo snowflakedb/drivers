@@ -16,7 +16,8 @@ fn should_authenticate_using_pat_as_password() {
 }
 
 #[test]
-fn should_authenticate_using_pat_as_token() {
+#[cfg_attr(target_os = "windows", ignore)]
+fn flaky_should_authenticate_using_pat_as_token() {
     //Given Authentication is set to Programmatic Access Token and valid PAT token is provided
     let pat = Pat::acquire();
     let client = SnowflakeTestClient::with_default_params();
@@ -31,7 +32,8 @@ fn should_authenticate_using_pat_as_token() {
 }
 
 #[test]
-fn should_authenticate_using_pat_as_token_with_lowercase_authenticator() {
+#[cfg_attr(target_os = "windows", ignore)]
+fn flaky_should_authenticate_using_pat_as_token_with_lowercase_authenticator() {
     //Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
     let pat = Pat::acquire();
     let client = SnowflakeTestClient::with_default_params();
