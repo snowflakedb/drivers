@@ -18,11 +18,14 @@ Subcommands
     rule has the form ``<label> @login1 @login2 ...`` and contributes
     its reviewers when the PR carries that label. Reviewers are
     unioned across every matched rule so a PR labeled both ``python``
-    and ``odbc`` pools the experts of each domain. The reserved key
-    ``all`` (see :data:`FALLBACK_KEY`) defines the fallback pool used
-    when *no* PR label matches a rule (e.g. a fresh PR opened before
-    the triage labels are applied). Labels are read straight from the
-    PR payload — no extra API call is required.
+    and ``odbc`` pools the experts of each domain. When *no* PR label
+    matches a rule (e.g. a fresh PR opened before the triage labels
+    are applied), the fallback pool is the union of every reviewer
+    across every rule — including the reserved :data:`FALLBACK_KEY`
+    (``all``) rule's own list. This deliberately spreads unlabeled
+    PRs across the whole roster rather than concentrating picks on
+    the small ``all`` rule's generalist subset. Labels are read
+    straight from the PR payload — no extra API call is required.
 
     The PR author and any user already requested for review are
     excluded from the pool. Candidates whose Slack status currently
@@ -33,10 +36,7 @@ Subcommands
     reviewer. Status comes from ``users.info`` and requires
     ``SLACK_BOT_TOKEN`` with the ``users:read`` scope (granted
     implicitly by ``users:read.email``); when the token is missing or
-    the lookup fails the filter no-ops silently. As a final
-    safety-net, if no PR label matches any rule *and* the rules file
-    has no ``all`` fallback, the bot widens the pool to the union of
-    every listed reviewer.
+    the lookup fails the filter no-ops silently.
 
     Requests review and adds the user as an assignee via the REST
     endpoints ``POST /pulls/:n/requested_reviewers`` and
@@ -561,27 +561,29 @@ def select_candidates(
     Matching is case-insensitive. Reviewers from every matched rule
     are unioned (a PR labeled both ``python`` and ``odbc`` pools the
     experts from both rules). When no PR label matches any rule the
-    reviewers of the :data:`FALLBACK_KEY` rule (``all``) are returned
-    instead — these are the generalists who can review anything.
+    fallback pool is the *union of every reviewer across every rule*
+    (including the :data:`FALLBACK_KEY` (``all``) rule's own list).
+    Spreading unlabeled PRs across the whole roster avoids
+    over-concentrating picks on the small ``all`` rule's explicit
+    list — historically a 2-person generalist bucket that drew far
+    more than its share of assignments on freshly-opened PRs.
 
     The returned list preserves rules-file order, so the downstream
     random pick depends only on the RNG, not on dict iteration order.
-    Returns an empty list only when *neither* a label matched *nor* an
-    ``all`` fallback is configured; :func:`cmd_assign` widens to the
-    full pool in that case.
+    Returns an empty list only when the rules file itself is empty.
     """
     label_set = {(l or "").lower() for l in labels if l}
 
     selected: list[str] = []
     seen: set[str] = set()
-    fallback_owners: list[str] = []
+    has_match = False
 
     for key, owners in rules:
         if key == FALLBACK_KEY:
-            fallback_owners = owners
             continue
         if key.lower() not in label_set:
             continue
+        has_match = True
         for login in owners:
             k = login.lower()
             if k in seen:
@@ -589,25 +591,22 @@ def select_candidates(
             seen.add(k)
             selected.append(login)
 
-    if selected:
+    if has_match:
         return selected
 
-    for login in fallback_owners:
-        k = login.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        selected.append(login)
-    return selected
+    return all_reviewers(rules)
 
 
 def all_reviewers(rules: ReviewerRules) -> list[str]:
     """Return every unique reviewer login across all rules.
 
-    Used as the last-resort candidate pool when no rule label matches
-    a PR's labels *and* the file has no ``all`` fallback configured.
-    Order matches the rules-file order; duplicates across rules are
-    collapsed.
+    Used by :func:`select_candidates` as the fallback pool when no PR
+    label matches any rule, and by :func:`_swap_ooo_reviewers` to
+    widen the substitute pool when every domain expert is OOO. The
+    :data:`FALLBACK_KEY` (``all``) rule's reviewers are included too —
+    they are treated as regular roster members in the union rather
+    than as a privileged generalist subset. Order matches the
+    rules-file order; duplicates across rules are collapsed.
     """
     flat: list[str] = []
     seen: set[str] = set()
@@ -1124,9 +1123,10 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
     # Label-based narrowing: prefer the experts whose rule label is on
     # this PR. Labels live on the PR payload we already fetched, so no
-    # extra API call is needed. When no rule matches *and* there is no
-    # ``all`` fallback in the rules file, widen the pool to every
-    # listed reviewer so the PR is never left without a candidate.
+    # extra API call is needed. When no rule matches, ``select_candidates``
+    # already returns the union of every reviewer across every rule so
+    # unlabeled PRs are spread across the whole roster rather than
+    # concentrated on the ``all`` rule's tiny generalist list.
     pr_labels = [
         (lbl.get("name") or "").strip()
         for lbl in pr.get("labels", []) or []
@@ -1140,20 +1140,21 @@ def cmd_assign(args: argparse.Namespace) -> int:
         ", ".join(pr_labels) if pr_labels else "(none)",
     )
     candidates = select_candidates(rules, pr_labels)
-    if candidates:
-        log.info(
-            "Label-based selection picked %d candidate(s): %s",
-            len(candidates),
-            ", ".join(candidates),
-        )
-    else:
+    if not candidates:
+        # Defensive: only happens if the rules file is empty, which
+        # the ``full_pool`` check above would already have caught.
         log.warning(
-            "No rule in %s matched any PR label and no `%s` fallback is "
-            "configured; widening to the full reviewer pool.",
+            "No candidates from %s for labels %s; falling back to the full pool.",
             reviewers_path,
-            FALLBACK_KEY,
+            pr_labels or "(none)",
         )
         candidates = full_pool
+    log.info(
+        "Candidate pool for PR #%d (%d): %s",
+        pr_number,
+        len(candidates),
+        ", ".join(candidates),
+    )
 
     # Build the display/OOO resolver early so we can pre-filter the
     # candidate pool by Slack status. The resolver caches per-login

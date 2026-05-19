@@ -13,10 +13,15 @@
 #   2. Every rule whose label is on the PR contributes its reviewers
 #      to the candidate pool (union across matched rules — a PR
 #      labeled both `python` and `odbc` pools the experts from both).
-#   3. If no rule matched, the reserved `all` rule below is used as
-#      the fallback pool of generalists. `all` is not a real PR label
-#      anyone applies — it is just a more readable spelling of "no
-#      match" than `*` would be in a file of label names.
+#   3. If no rule matched, the candidate pool is the union of every
+#      reviewer across every rule — including the `all` rule's own
+#      list. This spreads unlabeled PRs across the whole roster
+#      instead of concentrating them on the `all` rule's small
+#      generalist bucket. The `all` rule is still useful as a place
+#      to list reviewers (e.g. team leads) who are happy to review
+#      anything but don't otherwise appear under a domain label.
+#      `all` is not a real PR label anyone applies — keeping the line
+#      here documents which logins are pure generalists.
 #   4. PR author and already-requested reviewers are removed.
 #   5. Reviewers whose Slack status signals OOO are removed (unless
 #      that would empty the pool).
