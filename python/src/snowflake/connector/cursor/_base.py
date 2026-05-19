@@ -16,10 +16,8 @@ import logging
 from collections.abc import Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
-from .._internal.api_client.client_api import core_driver
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
-    create_row_iterator,
     create_table_iterator,
 )
 from .._internal.binding_converters import (
@@ -27,34 +25,26 @@ from .._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
-from .._internal.config_utils import create_config_setting
 from .._internal.decorators import api_telemetry, pep249
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.errorhandler import ErrorHandlerMixin
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
-    ExecuteQueryResponse,
-    MultiStatementResult,
-    PrepareResult,
     QueryBindings,
-    ResultSetResponse,
-    StatementHandle,
 )
-from .._internal.statement_utils import statement
 from ..errors import Error, ErrorValue, InterfaceError, NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
+from ._blocking_immutable_cursor import BlockingImmutableCursor
 from ._query_result import _MultiStatementQueryResultState, _QueryResult
 from ._query_result_waiter import QueryResultWaiter
 from ._result_metadata import QueryResultStats, ResultMetadata
-from ._result_set_wrapper import _ResultSetWrapper
 
 
 if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
-    from .._internal.arrow_stream_iterator import ArrowStreamIterator
     from ..connection import Connection
 
 logger = logging.getLogger(__name__)
@@ -139,14 +129,12 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         # Cursor navigation position — mutable to avoid allocation per fetchone
         self._rownumber: int = -1
 
-        # -- ResultSet guard (set by _execute, cleared on reset) --
-        self._result_set = _ResultSetWrapper()
+        # -- Owned immutable cursor for the current query (None until execute) --
+        # All RPC and FFI for the cursor lifecycle goes through this primitive.
+        self._immutable: BlockingImmutableCursor | None = None
 
-        # -- Multi-statement navigation (set by _handle_multi_statement_response, cleared on reset) --
+        # -- Multi-statement navigation (set by _execute, cleared on reset) --
         self._multi_statement: _MultiStatementQueryResultState | None = None
-
-        # -- Active iteration state (cleared on reset) --
-        self._iterator: ArrowStreamIterator | None = None
 
         # -- Statement parameters (persists until explicitly changed) --
         self._statement_parameters: dict[str, Any] = {}
@@ -464,86 +452,56 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         _is_put_get: bool | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
-        """Execute query logic."""
+        """Execute query logic.
+
+        Delegates the statement+execute+result-set adoption to
+        :class:`BlockingImmutableCursor`. Multi-statement: the immutable
+        adopts the *first* child; this cursor tracks remaining children for
+        :meth:`nextset` via ``_multi_statement``.
+        """
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
         query, bindings = self._prepare_query(operation, parameters)
 
-        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            if self._statement_parameters:
-                self._apply_statement_parameters(stmt_handle)
+        try:
+            immutable = BlockingImmutableCursor.execute(
+                self._connection,
+                query,
+                bindings,
+                statement_options=self._statement_parameters or None,
+                use_dict_result=self._use_dict_result,
+                use_numpy=bool(self._connection.config.numpy),
+            )
+        except ProgrammingError as exc:
+            self._query_result = _QueryResult.from_programming_error(exc)
+            raise
 
-            response = self._execute_query(stmt_handle, bindings)
-
-            if response.HasField("multi"):
-                self._handle_multi_statement_response(response.multi, query)
-            else:
-                self._apply_result_set(response.single, query)
-
-        self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
+        self._adopt_immutable(immutable, query=query)
+        self._rownumber = -1  # rownumber is not reset in reset() for backward compatibility
         return self
 
-    def _apply_statement_parameters(self, stmt_handle: StatementHandle) -> None:
-        """Apply stored statement parameters to the statement handle via SetOptions RPC."""
-        if not self._statement_parameters:
-            return
+    def _adopt_immutable(self, immutable: BlockingImmutableCursor, query: str | None) -> None:
+        """Bind a freshly-built ImmutableCursor to this cursor.
 
-        # Build options map with ConfigSetting values (None values skipped)
-        options = {}
-        for key, value in self._statement_parameters.items():
-            try:
-                setting = create_config_setting(value)
-            except TypeError as err:
-                raise TypeError(f"Cannot set parameter '{key}': {err}") from err
-            if setting is not None:
-                options[key] = setting
+        Hydrates ``_query_result`` from the immutable's metadata bag and, for
+        multi-statement queries, sets up :class:`_MultiStatementQueryResultState`
+        so :meth:`nextset` can advance through the remaining children.
+        """
+        self._immutable = immutable
+        self._query_result = immutable.query_result
 
-        core_driver.statement_set_options(stmt_handle=stmt_handle, options=options)
-
-    def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
-        """Execute query and return ExecuteQueryResponse (single or multi)."""
-        try:
-            return core_driver.statement_execute_query(stmt_handle=stmt_handle, bindings=bindings)
-        except ProgrammingError as exc:
-            self._query_result = _QueryResult.from_programming_error(exc)
-            raise
-
-    def _handle_multi_statement_response(self, result: MultiStatementResult, query: str) -> None:
-        self._multi_statement = _MultiStatementQueryResultState.from_result(result)
-
-        # Edge case: empty multi-statement result
-        if self._multi_statement is None:
-            self._query_result = _QueryResult(query=query)
-            return
-
-        first_qid = self._multi_statement.advance()  # always non-None: from_result() guarantees non-empty children
-        # already populate cursor with first child query results
-        rs_response = self._fetch_result_set_by_query_id(first_qid)  # type: ignore[arg-type]
-        self._apply_result_set(rs_response, query)
-
-    def _apply_result_set(self, rs_response: ResultSetResponse, query: str | None) -> None:
-        self._result_set.replace(rs_response.result_set_handle)
-        self._query_result = _QueryResult.from_result_set_response(rs_response, query)
-
-    def _fetch_result_set_by_query_id(self, query_id: str) -> ResultSetResponse:
-        """Fetch a ResultSetResponse (handle + descriptor) for a given query ID."""
-        try:
-            return core_driver.connection_get_result_set(
-                conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
-                query_id=query_id,
+        ids = immutable.multi_query_ids
+        if ids:
+            # First child is already adopted by the immutable; mark _next_index=1
+            # so nextset() advances to the second child on its first call.
+            self._multi_statement = _MultiStatementQueryResultState(
+                parent_qid=None,
+                child_query_ids=ids,
             )
-        except Exception as exc:
-            if isinstance(exc, ProgrammingError):
-                raise
-            raise ProgrammingError(msg=f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
-
-    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult | None:
-        try:
-            return core_driver.statement_prepare(stmt_handle=stmt_handle).result
-        except ProgrammingError as exc:
-            self._query_result = _QueryResult.from_programming_error(exc)
-            raise
+            self._multi_statement._next_index = 1
+        else:
+            self._multi_statement = None
 
     @pep249
     @api_telemetry
@@ -636,13 +594,13 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             - Updates cursor.description with the column metadata
         """
         self.reset()
-        query, bindings = self._prepare_query(operation, parameters)
+        query, _bindings = self._prepare_query(operation, parameters)
 
-        prepare_result: PrepareResult | None = None
-        with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            prepare_result = self._prepare(stmt_handle)
-
-        self._query_result = _QueryResult.from_prepare_result(prepare_result)
+        try:
+            self._query_result = BlockingImmutableCursor.describe(self._connection, query)
+        except ProgrammingError as exc:
+            self._query_result = _QueryResult.from_programming_error(exc)
+            raise
 
         if self._query_result.description:
             self._rownumber = -1
@@ -661,14 +619,11 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         Return a dict if ``_use_dict_result`` is True, otherwise a tuple.
         Concrete subclasses expose this through a type-safe ``fetchone``.
         """
-        if not self._iterator:
-            self._iterator = self._create_row_iterator()
-        try:
-            row: Row | DictRow = next(self._iterator)
-            self._rownumber += 1
-            return row
-        except StopIteration:
+        if self._immutable is None:
             return None
+        row = self._immutable.fetchone()
+        self._rownumber = self._immutable.rownumber
+        return row
 
     @pep249
     @abc.abstractmethod
@@ -703,10 +658,10 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         if size == 0:
             return []
 
-        if not self._iterator:
-            self._iterator = self._create_row_iterator()
-        rows = self._iterator.fetch_many(size)
-        self._rownumber += len(rows)
+        if self._immutable is None:
+            return []
+        rows = self._immutable.fetchmany(size)
+        self._rownumber = self._immutable.rownumber
         return rows
 
     @pep249
@@ -720,23 +675,15 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         Returns:
             sequence: List of all remaining rows
         """
-        if not self._iterator:
-            self._iterator = self._create_row_iterator()
-        rows = self._iterator.fetch_all()
-        self._rownumber += len(rows)
+        if self._immutable is None:
+            return []
+        rows = self._immutable.fetchall()
+        self._rownumber = self._immutable.rownumber
         return rows
 
     # ------------------------------------------------------------------
     # Iterator protocol
     # ------------------------------------------------------------------
-
-    def _create_row_iterator(self) -> ArrowStreamIterator:
-        return create_row_iterator(
-            stream_ptr=self._result_set.get_arrow_stream_ptr(),
-            connection=self._connection,
-            use_dict_result=self._use_dict_result,
-            use_numpy=bool(self._connection.config.numpy),
-        )
 
     @pep249
     def __iter__(self) -> SnowflakeCursorBase:
@@ -812,8 +759,14 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         self.reset()
         self._multi_statement = ms
 
-        rs_response = self._fetch_result_set_by_query_id(query_id)
-        self._apply_result_set(rs_response, query=None)
+        immutable = BlockingImmutableCursor.from_query_id(
+            self._connection,
+            query_id,
+            use_dict_result=self._use_dict_result,
+            use_numpy=bool(self._connection.config.numpy),
+        )
+        self._immutable = immutable
+        self._query_result = immutable.query_result
         self._rownumber = -1
 
         return self
@@ -885,11 +838,14 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """
         del self._messages[:]
         self._query_result.reset(closing=closing)
-        self._result_set.release()
-        self._iterator = None
+        if self._immutable is not None:
+            try:
+                self._immutable.close()
+            except Exception:
+                logger.warning("Failed to close ImmutableCursor during reset", exc_info=True)
+            self._immutable = None
         self._binding_data = None
         self._prefetch_hook = None
-        # Clear multistatement state
         self._multi_statement = None
 
     @pep249
@@ -999,8 +955,10 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         force_microsecond_precision: bool = False,
     ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
+        if self._immutable is None:
+            return
         iterator = create_table_iterator(
-            stream_ptr=self._result_set.get_arrow_stream_ptr(),
+            stream_ptr=self._immutable.get_arrow_stream_ptr(),
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -1018,8 +976,10 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         force_microsecond_precision: bool = False,
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
+        if self._immutable is None:
+            return None
         iterator = create_table_iterator(
-            stream_ptr=self._result_set.get_arrow_stream_ptr(),
+            stream_ptr=self._immutable.get_arrow_stream_ptr(),
             connection=self._connection,
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
@@ -1061,7 +1021,9 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
     @_with_prefetch_hook
     def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
-        result_chunks = self._result_set.get_chunks()
+        if self._immutable is None:
+            return None
+        result_chunks = self._immutable.get_chunks()
         if result_chunks is None:
             return None
         return ResultBatch.from_chunks(
@@ -1097,24 +1059,13 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         """
         self.reset()
 
-        response = core_driver.connection_get_query_result(
-            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
-            query_id=qid,
+        immutable = BlockingImmutableCursor.from_async_query(
+            self._connection,
+            qid,
+            use_dict_result=self._use_dict_result,
+            use_numpy=bool(self._connection.config.numpy),
         )
-
-        # Handle single or multi-statement response
-        if response.HasField("multi"):
-            multi_result = response.multi
-            if multi_result.query_ids:
-                first_qid = multi_result.query_ids[0]
-                rs_response = self._fetch_result_set_by_query_id(first_qid)
-                self._apply_result_set(rs_response, query=None)
-            else:
-                self._query_result = _QueryResult()
-        else:
-            rs_response = response.single
-            self._apply_result_set(rs_response, query=None)
-
+        self._adopt_immutable(immutable, query=None)
         self._rownumber = -1
 
         return self
@@ -1189,22 +1140,17 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
 
     def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
         query, bindings = self._prepare_query(command, params)
-
-        response = None
-        with statement(self._connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
-            response = core_driver.statement_execute_async(stmt_handle=stmt_handle, bindings=bindings)
-
-        query_id = (response.query_id if response.query_id else None) if response else None
+        query_id = BlockingImmutableCursor.execute_async(
+            self._connection,
+            query,
+            bindings,
+            statement_options=self._statement_parameters or None,
+        )
         self._query_result = _QueryResult(sfqid=query_id)
-
         return {"queryId": query_id}
 
     @api_telemetry
     @_requires_open
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
-        response = core_driver.connection_abort_query(
-            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
-            query_id=qid,
-        )
-        return response.success
+        return BlockingImmutableCursor.abort_query(self._connection, qid)

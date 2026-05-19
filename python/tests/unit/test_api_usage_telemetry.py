@@ -1,7 +1,7 @@
 """Unit tests for api_telemetry decorator and api_usage tracking."""
 
 from io import StringIO
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -30,8 +30,8 @@ def _make_execute_response(query_id: str = "fake-qid") -> ExecuteQueryResponse:
 
 @pytest.fixture
 def mock_db_api():
-    """Create a mock DatabaseDriverClient patched into core_driver."""
-    from snowflake.connector._internal.api_client.client_api import core_driver
+    """Create a mock DatabaseDriverClient patched into core_driver and async_core_driver."""
+    from snowflake.connector._internal.api_client.client_api import async_core_driver, core_driver
 
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
@@ -50,8 +50,21 @@ def mock_db_api():
 
     old_client = core_driver._client
     core_driver.client = db_api
+
+    async_api = AsyncMock()
+    async_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+    async_api.statement_set_sql_query.return_value = MagicMock()
+    async_api.statement_execute_query.return_value = _make_execute_response()
+    async_api.statement_release.return_value = MagicMock()
+    async_api.result_set_release.return_value = MagicMock()
+    old_async_client = async_core_driver._client
+    async_core_driver.client = async_api
+
+    db_api._async_api = async_api
     yield db_api
+
     core_driver.client = old_client
+    async_core_driver.client = old_async_client
 
 
 @pytest.fixture
@@ -179,9 +192,10 @@ class TestCursorApiTelemetry:
         assert "SnowflakeCursor.close" in methods
 
     def test_fetchone_sends_telemetry(self, cursor, mock_db_api):
-        # fetchone requires a prior execute — mock the iterator
-        cursor._execute_result = MagicMock()
-        cursor._iterator = iter([])
+        mock_immutable = MagicMock()
+        mock_immutable.fetchone.return_value = None
+        mock_immutable.rownumber = -1
+        cursor._immutable = mock_immutable
         cursor.fetchone()
 
         methods = _get_api_methods(mock_db_api)
@@ -189,10 +203,10 @@ class TestCursorApiTelemetry:
 
     def test_fetchmany_sends_telemetry(self, cursor, mock_db_api):
         """fetchmany() should send its own telemetry event."""
-        mock_iterator = MagicMock()
-        mock_iterator.fetch_many.return_value = [(1,), (2,)]
-        cursor._execute_result = MagicMock()
-        cursor._iterator = mock_iterator
+        mock_immutable = MagicMock()
+        mock_immutable.fetchmany.return_value = []
+        mock_immutable.rownumber = -1
+        cursor._immutable = mock_immutable
         cursor.fetchmany(2)
 
         methods = _get_api_methods(mock_db_api)
@@ -205,8 +219,10 @@ class TestCursorApiTelemetry:
         cur = connection.cursor(DictCursor)
         mock_db_api.telemetry_send_api_usage.reset_mock()
 
-        cur._execute_result = MagicMock()
-        cur._iterator = iter([])
+        mock_immutable = MagicMock()
+        mock_immutable.fetchone.return_value = None
+        mock_immutable.rownumber = -1
+        cur._immutable = mock_immutable
         cur.fetchone()
 
         methods = _get_api_methods(mock_db_api)
@@ -229,14 +245,15 @@ class TestApiTelemetryResetBehavior:
 
     def test_tracking_resets_after_exception(self, cursor, mock_db_api):
         """If a method raises, tracking should still reset for the next call."""
-        mock_db_api.statement_execute_query.side_effect = RuntimeError("boom")
+        async_api = mock_db_api._async_api
+        async_api.statement_execute_query.side_effect = RuntimeError("boom")
 
         with pytest.raises(RuntimeError):
             cursor.execute("SELECT 1")
 
         # Tracking should be re-enabled
-        mock_db_api.statement_execute_query.side_effect = None
-        mock_db_api.statement_execute_query.return_value = _make_execute_response()
+        async_api.statement_execute_query.side_effect = None
+        async_api.statement_execute_query.return_value = _make_execute_response()
         mock_db_api.telemetry_send_api_usage.reset_mock()
         cursor.execute("SELECT 2")
 

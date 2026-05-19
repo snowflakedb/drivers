@@ -2,24 +2,30 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 
 @pytest.fixture
 def mock_db_api():
-    """MagicMock db_api patched into core_driver for Connection.__init__ tests.
+    """MagicMock db_api patched into core_driver and async_core_driver.
 
-    Sets ``core_driver.client`` to the mock so that all RPC calls flow
-    through the mock. Restores the previous client on teardown.
+    Sets ``core_driver.client`` and ``async_core_driver.client`` to mocks
+    so that all RPC calls (sync and async) flow through the mock. Restores
+    the previous clients on teardown.
     """
-    from snowflake.connector._internal.api_client.client_api import core_driver
+    from snowflake.connector._internal.api_client.client_api import async_core_driver, core_driver
     from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
         ConnectionHandle,
         ConnectionIsClosedResponse,
         ConnectionSetOptionsResponse,
         DatabaseHandle,
+        ExecuteQueryResponse,
+        ResultSetDescriptor,
+        ResultSetHandle,
+        ResultSetResponse,
+        StatementHandle,
     )
 
     db_api = MagicMock()
@@ -31,8 +37,25 @@ def mock_db_api():
 
     old_client = core_driver._client
     core_driver.client = db_api
+
+    async_api = AsyncMock()
+    async_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+    async_api.statement_set_sql_query.return_value = MagicMock()
+    async_api.statement_execute_query.return_value = ExecuteQueryResponse(
+        single=ResultSetResponse(
+            result_set_handle=ResultSetHandle(id=1),
+            result_descriptor=ResultSetDescriptor(query_id="fake-qid"),
+        )
+    )
+    async_api.statement_release.return_value = MagicMock()
+    async_api.result_set_release.return_value = MagicMock()
+    old_async_client = async_core_driver._client
+    async_core_driver.client = async_api
+
     yield db_api
+
     core_driver.client = old_client
+    async_core_driver.client = old_async_client
 
 
 @pytest.fixture

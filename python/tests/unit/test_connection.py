@@ -15,7 +15,6 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionGetQueryStatusResponse,
     ConnectionIsClosedResponse,
     ConnectionSetOptionsResponse,
-    StatementHandle,
     ValidationIssue,
 )
 from snowflake.connector.constants import QueryStatus
@@ -128,18 +127,23 @@ class TestParamstyleSetter:
             connection.paramstyle = 123  # type: ignore[assignment]
 
     def test_cursor_execute_qmark_after_string_assign(self, connection, mock_db_api):
-        mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
-        execute_result = MagicMock()
-        execute_result.columns = []
-        execute_result.HasField = MagicMock(return_value=False)
-        execute_result.sql_state = "00000"
-        mock_db_api.statement_execute_query.return_value.result = execute_result
+        from snowflake.connector.cursor._blocking_immutable_cursor import BlockingImmutableCursor
 
         connection.paramstyle = "qmark"
         cur = SnowflakeCursor(connection)
-        cur.execute("SELECT ?", (1,))
-        req = mock_db_api.statement_execute_query.call_args[0][0]
-        assert req.HasField("bindings")
+        with patch.object(
+            BlockingImmutableCursor,
+            "execute",
+            return_value=MagicMock(
+                query_result=MagicMock(),
+                multi_query_ids=None,
+            ),
+        ) as mock_execute:
+            cur.execute("SELECT ?", (1,))
+        # bindings is the 3rd positional arg to BlockingImmutableCursor.execute
+        bindings_arg = mock_execute.call_args.args[2]
+        assert bindings_arg is not None
+        assert bindings_arg.HasField("json")
 
 
 class TestSetAutocommit:

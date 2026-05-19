@@ -323,7 +323,7 @@ def _run_background_loop(loop: asyncio.AbstractEventLoop) -> None:
 
 
 def _shutdown_background_loop() -> None:
-    """Stop the background loop and join its thread at process exit.
+    """Atexit callback: stop the background loop and join its thread.
 
     Registered *before* any ``Connection._close_at_process_exit`` handler,
     so it runs *after* all connection atexit handlers (LIFO order).
@@ -728,14 +728,18 @@ def connection_close_at_exit(
 class AsyncCoreDriver:
     """Async-native facade over :class:`DatabaseDriverClient`.
 
-    The single source of truth for all protobuf RPC calls. Sync callers go
-    through :class:`CoreDriver` (which bridges to this via
-    :func:`get_background_loop`), async-native callers use
-    ``async_core_driver`` directly.
+    Mirrors :class:`CoreDriver` but exposes ``async def`` methods. Will
+    eventually replace ``CoreDriver`` once the codebase is fully async-first;
+    for now both coexist — sync callers go through ``core_driver``,
+    async-native callers (e.g. :class:`ImmutableCursor`) go through
+    ``async_core_driver``.
 
     Lazily initializes its underlying :class:`DatabaseDriverClient` on first
     access (thread-safe, double-checked lock). Tests can inject a mock by
     assigning to the ``client`` setter.
+
+    Currently exposes only the subset of methods the cursor layer needs;
+    extend as new async callers appear.
     """
 
     def __init__(self) -> None:
@@ -759,135 +763,7 @@ class AsyncCoreDriver:
         self._client = client
 
     # =====================================================================
-    # Database lifecycle
-    # =====================================================================
-
-    async def database_new(self) -> DatabaseNewResponse:
-        return await self.client.database_new(DatabaseNewRequest())
-
-    async def database_init(self, db_handle: DatabaseHandle) -> DatabaseInitResponse:
-        return await self.client.database_init(DatabaseInitRequest(db_handle=db_handle))
-
-    async def database_release(self, db_handle: DatabaseHandle) -> DatabaseReleaseResponse:
-        return await self.client.database_release(DatabaseReleaseRequest(db_handle=db_handle))
-
-    # =====================================================================
-    # Connection lifecycle
-    # =====================================================================
-
-    async def connection_new(self) -> ConnectionNewResponse:
-        return await self.client.connection_new(ConnectionNewRequest())
-
-    async def connection_init(
-        self,
-        conn_handle: ConnectionHandle,
-        db_handle: DatabaseHandle,
-        wrapper_identity: WrapperIdentity,
-    ) -> ConnectionInitResponse:
-        return await self.client.connection_init(
-            ConnectionInitRequest(conn_handle=conn_handle, db_handle=db_handle, wrapper_identity=wrapper_identity)
-        )
-
-    async def connection_set_options(
-        self,
-        conn_handle: ConnectionHandle,
-        options: dict[str, ConfigSetting],
-    ) -> ConnectionSetOptionsResponse:
-        return await self.client.connection_set_options(
-            ConnectionSetOptionsRequest(conn_handle=conn_handle, options=options)
-        )
-
-    async def connection_set_session_parameters(
-        self, conn_handle: ConnectionHandle, parameters: dict[str, str]
-    ) -> ConnectionSetSessionParametersResponse:
-        return await self.client.connection_set_session_parameters(
-            ConnectionSetSessionParametersRequest(conn_handle=conn_handle, parameters=parameters)
-        )
-
-    async def connection_close(self, conn_handle: ConnectionHandle) -> ConnectionCloseResponse:
-        return await self.client.connection_close(ConnectionCloseRequest(conn_handle=conn_handle))
-
-    async def connection_release(self, conn_handle: ConnectionHandle) -> ConnectionReleaseResponse:
-        return await self.client.connection_release(ConnectionReleaseRequest(conn_handle=conn_handle))
-
-    async def connection_is_closed(self, conn_handle: ConnectionHandle) -> ConnectionIsClosedResponse:
-        return await self.client.connection_is_closed(ConnectionIsClosedRequest(conn_handle=conn_handle))
-
-    async def connection_heartbeat(self, conn_handle: ConnectionHandle) -> ConnectionHeartbeatResponse:
-        return await self.client.connection_heartbeat(ConnectionHeartbeatRequest(conn_handle=conn_handle))
-
-    async def connection_get_info(
-        self,
-        conn_handle: ConnectionHandle,
-        include_master_token: bool = False,
-    ) -> ConnectionGetInfoResponse:
-        return await self.client.connection_get_info(
-            ConnectionGetInfoRequest(conn_handle=conn_handle, include_master_token=include_master_token)
-        )
-
-    async def connection_get_query_status(
-        self, conn_handle: ConnectionHandle, query_id: str
-    ) -> ConnectionGetQueryStatusResponse:
-        return await self.client.connection_get_query_status(
-            ConnectionGetQueryStatusRequest(conn_handle=conn_handle, query_id=query_id)
-        )
-
-    # =====================================================================
-    # Connection data
-    # =====================================================================
-
-    async def connection_get_result_set(self, conn_handle: ConnectionHandle, query_id: str) -> ResultSetResponse:
-        return await self.client.connection_get_result_set(
-            ConnectionGetResultSetRequest(conn_handle=conn_handle, query_id=query_id)
-        )
-
-    async def connection_get_query_result(self, conn_handle: ConnectionHandle, query_id: str) -> ExecuteQueryResponse:
-        return await self.client.connection_get_query_result(
-            ConnectionGetQueryResultRequest(conn_handle=conn_handle, query_id=query_id)
-        )
-
-    async def connection_abort_query(
-        self, conn_handle: ConnectionHandle, query_id: str
-    ) -> ConnectionAbortQueryResponse:
-        return await self.client.connection_abort_query(
-            ConnectionAbortQueryRequest(conn_handle=conn_handle, query_id=query_id)
-        )
-
-    async def connection_send_http(
-        self,
-        conn_handle: ConnectionHandle,
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes | None = None,
-    ) -> ConnectionSendHttpResponse:
-        return await self.client.connection_send_http(
-            ConnectionSendHttpRequest(conn_handle=conn_handle, method=method, url=url, headers=headers, body=body)
-        )
-
-    # =====================================================================
-    # Connection tokens/params
-    # =====================================================================
-
-    async def connection_request_token(
-        self, conn_handle: ConnectionHandle, request_type: TokenRequestType.ValueType
-    ) -> ConnectionTokenResponse:
-        return await self.client.connection_request_token(
-            ConnectionTokenRequest(conn_handle=conn_handle, request_type=request_type)
-        )
-
-    async def connection_get_parameter(self, conn_handle: ConnectionHandle, key: str) -> ConnectionGetParameterResponse:
-        return await self.client.connection_get_parameter(
-            ConnectionGetParameterRequest(conn_handle=conn_handle, key=key)
-        )
-
-    async def connection_get_all_parameters(self, conn_handle: ConnectionHandle) -> ConnectionGetAllParametersResponse:
-        return await self.client.connection_get_all_parameters(
-            ConnectionGetAllParametersRequest(conn_handle=conn_handle)
-        )
-
-    # =====================================================================
-    # Statement lifecycle
+    # Statement lifecycle (cursor execute path)
     # =====================================================================
 
     async def statement_new(self, conn_handle: ConnectionHandle) -> StatementNewResponse:
@@ -926,11 +802,29 @@ class AsyncCoreDriver:
         return await self.client.statement_prepare(StatementPrepareRequest(stmt_handle=stmt_handle))
 
     # =====================================================================
-    # Result set
+    # Connection result-set access (multi-statement / async-query paths)
     # =====================================================================
 
-    async def result_set_release(self, result_set_handle: ResultSetHandle) -> ResultSetReleaseResponse:
-        return await self.client.result_set_release(ResultSetReleaseRequest(result_set_handle=result_set_handle))
+    async def connection_get_result_set(self, conn_handle: ConnectionHandle, query_id: str) -> ResultSetResponse:
+        return await self.client.connection_get_result_set(
+            ConnectionGetResultSetRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    async def connection_get_query_result(self, conn_handle: ConnectionHandle, query_id: str) -> ExecuteQueryResponse:
+        return await self.client.connection_get_query_result(
+            ConnectionGetQueryResultRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    async def connection_abort_query(
+        self, conn_handle: ConnectionHandle, query_id: str
+    ) -> ConnectionAbortQueryResponse:
+        return await self.client.connection_abort_query(
+            ConnectionAbortQueryRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    # =====================================================================
+    # Result-set streaming
+    # =====================================================================
 
     async def result_set_get_stream(self, result_set_handle: ResultSetHandle) -> ResultSetGetStreamResponse:
         return await self.client.result_set_get_stream(ResultSetGetStreamRequest(result_set_handle=result_set_handle))
@@ -938,9 +832,8 @@ class AsyncCoreDriver:
     async def result_set_get_chunks(self, result_set_handle: ResultSetHandle) -> ResultSetGetChunksResponse:
         return await self.client.result_set_get_chunks(ResultSetGetChunksRequest(result_set_handle=result_set_handle))
 
-    # =====================================================================
-    # Database fetch
-    # =====================================================================
+    async def result_set_release(self, result_set_handle: ResultSetHandle) -> ResultSetReleaseResponse:
+        return await self.client.result_set_release(ResultSetReleaseRequest(result_set_handle=result_set_handle))
 
     async def database_fetch_chunk(
         self,
@@ -951,40 +844,6 @@ class AsyncCoreDriver:
         return await self.client.database_fetch_chunk(
             DatabaseFetchChunkRequest(db_handle=db_handle, chunk=chunk, columns=columns)
         )
-
-    # =====================================================================
-    # Telemetry
-    # =====================================================================
-
-    async def telemetry_send_api_usage(self, conn_handle: ConnectionHandle, api_method: str) -> TelemetrySendResponse:
-        return await self.client.telemetry_send_api_usage(
-            TelemetrySendApiUsageRequest(conn_handle=conn_handle, api_method=api_method)
-        )
-
-    async def telemetry_send_wrapper_error(
-        self, conn_handle: ConnectionHandle, exception_type: str, error_source: str
-    ) -> TelemetrySendResponse:
-        return await self.client.telemetry_send_wrapper_error(
-            TelemetrySendWrapperErrorRequest(
-                conn_handle=conn_handle, exception_type=exception_type, error_source=error_source
-            )
-        )
-
-    # =====================================================================
-    # Config
-    # =====================================================================
-
-    async def config_load_all_sections(
-        self,
-        config_file: str,
-        connections_file: str | None = None,
-    ) -> ConfigLoadAllSectionsResponse:
-        return await self.client.config_load_all_sections(
-            ConfigLoadAllSectionsRequest(config_file=config_file, connections_file=connections_file)
-        )
-
-    async def config_get_paths(self) -> ConfigGetPathsResponse:
-        return await self.client.config_get_paths(ConfigGetPathsRequest())
 
 
 async_core_driver = AsyncCoreDriver()
