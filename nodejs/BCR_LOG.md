@@ -9,6 +9,10 @@ This document outlines APIs that we should consider _not_ porting to the new dri
 - These constants are exported by the old driver but are undocumented. There does not appear to be a real use case for them, as the values returned by `column.getType()` do not match these constants.
 - They were temporarily added to `snowflake-sdk-fixed` for compatibility, but should likely be removed.
 
+### connection.heartbeat(callback) and .heartbeatAsync()
+
+- These methods are publicly exported but not documented. There is no practical use case for end users, as heartbeat is sent automatically by the driver.
+
 ### statement.getColumn() API
 
 - The methods `getRowValue(row: object)` and `getRowValueAsString(row: object)` are publicly documented in `index.d.ts`, but they were never covered by tests and do not work as intended. The `(row: object)` parameter requires a special internal row class that is not exposed to users. The public API returns rows as `externalizeRow`, so calling these methods will result in a runtime error.
