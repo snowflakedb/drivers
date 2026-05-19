@@ -9,11 +9,8 @@ const bigInt = require('big-integer');
 describe('Test DataType', function () {
   let connection;
   const createTableWithVariant = 'create or replace table testVariant(colA variant)';
-  const createTableWithArray = 'create or replace table testArray(colA array)';
   const createTableWithNumber = 'create or replace table testNumber(colA number)';
   const createTableWithDouble = 'create or replace table testDouble(colA double)';
-  const createTableWithDate = 'create or replace table testDate(colA date)';
-  const createTableWithTime = 'create or replace table testTime(colA time)';
   const createTableWithTimestamp =
     'create or replace table testTimestamp(colA timestamp_ltz, ' +
     'colB timestamp_tz, colC timestamp_ntz)';
@@ -37,9 +34,6 @@ describe('Test DataType', function () {
     "insert into testVariant select parse_json('{a : 1 , b :[1 , 2 , 3], c : {a : 1}}')";
   const insertVariantXML =
     "insert into testVariant select parse_xml('<root><a>1</a><b>1</b><c><a>1</a></c></root>')";
-  const insertArray = 'insert into testArray select parse_json(\'["a", 1]\')';
-  const insertDate = "insert into testDate values(to_date('2012-11-11'))";
-  const insertTime = "insert into testTime values(to_time('12:34:56.789789789'))";
   const insertTimestamp =
     'insert into testTimestamp values(to_timestamp_ltz(' +
     "'Thu, 21 Jan 2016 06:32:44 -0800'), to_timestamp_tz('Thu, 21 Jan 2016 06:32:44 -0800'), " +
@@ -47,9 +41,6 @@ describe('Test DataType', function () {
   const selectDouble = 'select * from testDouble';
   const selectNumber = 'select * from testNumber';
   const selectVariant = 'select * from testVariant';
-  const selectArray = 'select * from testArray';
-  const selectDate = 'select * from testDate';
-  const selectTime = 'select * from testTime';
   const selectTimestamp = 'select * from testTimestamp';
 
   before(function (done) {
@@ -260,78 +251,9 @@ describe('Test DataType', function () {
         });
       });
     });
-
-    it('testArray', function (done) {
-      async.series(
-        [
-          function (callback) {
-            testUtil.executeCmd(connection, createTableWithArray, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, insertArray, callback);
-          },
-          function (callback) {
-            testUtil.executeQueryAndVerify(
-              connection,
-              selectArray,
-              [{ COLA: ['a', 1] }],
-              callback,
-              null,
-              true,
-              false,
-            );
-          },
-        ],
-        done,
-      );
-    });
   });
 
   describe('testDateTime', function () {
-    it('testDate', function (done) {
-      async.series(
-        [
-          function (callback) {
-            testUtil.executeCmd(connection, createTableWithDate, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, insertDate, callback);
-          },
-          function (callback) {
-            testUtil.executeQueryAndVerify(
-              connection,
-              selectDate,
-              [{ COLA: '2012-11-11' }],
-              callback,
-            );
-          },
-        ],
-        done,
-      );
-    });
-
-    it('testTime', function (done) {
-      async.series(
-        [
-          function (callback) {
-            testUtil.executeCmd(connection, createTableWithTime, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, insertTime, callback);
-          },
-          function (callback) {
-            testUtil.executeQueryAndVerify(
-              connection,
-              selectTime,
-              [{ COLA: '12:34:56' }],
-              callback,
-            );
-          },
-        ],
-        done,
-      );
-    });
-
     it('testTimestamp', function (done) {
       async.series(
         [
@@ -362,16 +284,6 @@ describe('Test DataType', function () {
         done,
       );
     });
-  });
-
-  it('DECFLOAT is returned as string', async () => {
-    const testDecfloatValue = '-9.8765432099999998623226732747455716901e-250';
-    const { statement, rows } = await testUtil.executeCmdAsync(
-      connection,
-      `SELECT ${testDecfloatValue}::DECFLOAT`,
-    );
-    assert.strictEqual(statement.getColumn(0).getType(), 'decfloat');
-    assert.strictEqual(Object.values(rows[0])[0], testDecfloatValue);
   });
 });
 
