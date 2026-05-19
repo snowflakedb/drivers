@@ -327,6 +327,8 @@ pub enum StmtAttr {
     RetrieveData = 11,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
+    /// `SQL_ATTR_ROW_NUMBER` (14) — read-only: 1-based number of the current row (0 = not positioned).
+    RowNumber = 14,
     /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
     EnableAutoIpd = 15,
     /// `SQL_ATTR_PARAM_BIND_OFFSET_PTR` (17) — maps to `SQL_DESC_BIND_OFFSET_PTR` on the APD.
@@ -343,6 +345,8 @@ pub enum StmtAttr {
     ParamsetSize = 22,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
+    /// `SQL_ATTR_ROW_OPERATION_PTR` (24) — maps to `SQL_DESC_ARRAY_STATUS_PTR` on the ARD.
+    RowOperationPtr = 24,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
     RowStatusPtr = 25,
     /// `SQL_ATTR_ROWS_FETCHED_PTR` (26) — pointer to count of rows fetched.
@@ -385,6 +389,7 @@ impl TryFrom<i32> for StmtAttr {
             10 => Ok(StmtAttr::SimulateCursor),
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
+            14 => Ok(StmtAttr::RowNumber),
             15 => Ok(StmtAttr::EnableAutoIpd),
             17 => Ok(StmtAttr::ParamBindOffsetPtr),
             18 => Ok(StmtAttr::ParamBindType),
@@ -393,6 +398,7 @@ impl TryFrom<i32> for StmtAttr {
             21 => Ok(StmtAttr::ParamsProcessedPtr),
             22 => Ok(StmtAttr::ParamsetSize),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
+            24 => Ok(StmtAttr::RowOperationPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
             27 => Ok(StmtAttr::RowArraySize),
@@ -791,6 +797,9 @@ pub struct ArdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_OPERATION_PTR` — default null.
+    /// Each element is `SQL_ROW_PROCEED` (0) or `SQL_ROW_IGNORE` (1).
+    pub array_status_ptr: *mut u16,
 }
 
 impl Default for ArdDescriptor {
@@ -809,6 +818,7 @@ impl ArdDescriptor {
             array_size: 1,
             bind_type: 0,
             bind_offset_ptr: std::ptr::null_mut(),
+            array_status_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -1467,6 +1477,10 @@ pub struct StatementInner {
     /// Rows returned to the application so far in the current result set.
     /// Reset to 0 on each execution. Used to enforce `max_rows`.
     pub rows_returned: sql::ULen,
+    /// Current 1-based row number within the result set (`SQL_ATTR_ROW_NUMBER`).
+    /// 0 = not positioned (before first fetch, after end, or on error).
+    /// Reset to 0 on cursor close/re-execute; incremented on each successful fetch.
+    pub current_row_number: sql::ULen,
     /// `SQL_ATTR_CONCURRENCY` — cursor concurrency (default SQL_CONCUR_READ_ONLY = 1).
     pub concurrency: sql::ULen,
     /// `SQL_ATTR_CURSOR_SCROLLABLE` — cursor scrollability (default SQL_NONSCROLLABLE = 0).
@@ -1521,6 +1535,7 @@ impl Statement {
                 noscan: SQL_NOSCAN_OFF,
                 max_rows: 0,
                 rows_returned: 0,
+                current_row_number: 0,
                 concurrency: SQL_CONCUR_READ_ONLY,
                 cursor_scrollable: SQL_NONSCROLLABLE,
                 cursor_sensitivity: SQL_UNSPECIFIED,

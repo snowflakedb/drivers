@@ -324,6 +324,7 @@ fn exec_direct_impl(
     }
 
     inner.rows_returned = 0;
+    inner.current_row_number = 0;
     Ok(())
 }
 
@@ -876,6 +877,7 @@ pub fn execute(
     }
 
     inner.rows_returned = 0;
+    inner.current_row_number = 0;
     Ok(())
 }
 
@@ -1513,6 +1515,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
                 inner.ird.desc_count = desc_count;
                 inner.get_data_state = None;
                 inner.used_extended_fetch = false;
+                inner.current_row_number = 0;
             }
         }
         FreeStmtOption::Unbind => {
@@ -1801,6 +1804,12 @@ pub fn set_stmt_attr(
             inner.ard.bind_offset_ptr = ptr;
             Ok(())
         }
+        StmtAttr::RowOperationPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: RowOperationPtr = {:?}", ptr);
+            inner.ard.array_status_ptr = ptr;
+            Ok(())
+        }
         StmtAttr::ParamsetSize => {
             let size = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: ParamsetSize = {}", size);
@@ -1857,7 +1866,10 @@ pub fn set_stmt_attr(
             inner.metadata_id = val != 0;
             Ok(())
         }
-        StmtAttr::SnowflakeLastQueryId | StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
+        StmtAttr::SnowflakeLastQueryId
+        | StmtAttr::ImpRowDesc
+        | StmtAttr::ImpParamDesc
+        | StmtAttr::RowNumber => {
             tracing::warn!("set_stmt_attr: {:?} is read-only", attr);
             ReadOnlyAttributeSnafu { attribute }.fail()
         }
@@ -2125,6 +2137,19 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             Ok(())
         }
+        StmtAttr::RowNumber => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = inner.current_row_number;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
         StmtAttr::RowArraySize => {
             unsafe {
                 *(value_ptr as *mut sql::ULen) = inner.ard.array_size as sql::ULen;
@@ -2158,6 +2183,14 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::RowBindOffsetPtr => {
             unsafe {
                 *(value_ptr as *mut *mut sql::Len) = inner.ard.bind_offset_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowOperationPtr => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut *mut u16) = inner.ard.array_status_ptr;
+                }
             }
             Ok(())
         }

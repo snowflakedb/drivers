@@ -284,7 +284,11 @@ pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResu
         return DisconnectedSnafu.fail();
     }
     let numeric_settings = conn.numeric_settings;
-    fetch_impl(&guard, &numeric_settings, warnings)
+    let result = fetch_impl(&guard, &numeric_settings, warnings);
+    if matches!(result, Err(crate::api::OdbcError::NoMoreData { .. })) {
+        guard.inner.lock().current_row_number = 0;
+    }
+    result
 }
 
 fn fetch_impl(
@@ -341,6 +345,7 @@ fn fetch_impl(
         match outputs.into_iter().next().unwrap_or_else(|| Ok(Vec::new())) {
             Ok(row_warnings) => {
                 inner.rows_returned += 1;
+                inner.current_row_number += 1;
                 let status = if row_warnings.is_empty() {
                     RowStatus::Success
                 } else {
@@ -487,6 +492,7 @@ fn fetch_impl(
     }
 
     inner.rows_returned += rows_fetched as sql::ULen;
+    inner.current_row_number += rows_fetched as sql::ULen;
 
     if !rows_fetched_ptr.is_null() {
         unsafe { *rows_fetched_ptr = rows_fetched as sql::ULen };
@@ -627,7 +633,11 @@ pub fn extended_fetch(
         inner.ird.array_status_ptr = row_status_ptr;
     }
 
-    fetch_impl(&guard, &numeric_settings, warnings)
+    let result = fetch_impl(&guard, &numeric_settings, warnings);
+    if matches!(result, Err(crate::api::OdbcError::NoMoreData { .. })) {
+        guard.inner.lock().current_row_number = 0;
+    }
+    result
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {

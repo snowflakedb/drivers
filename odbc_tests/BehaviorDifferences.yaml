@@ -813,6 +813,18 @@ behavior_differences:
     impact: |
       Applications querying these info types to determine driver capabilities for parameter array execution will receive different values. The new driver correctly advertises full parameter array execution support.
 
+  61:
+    name: "SQL_ATTR_ROW_NUMBER returns SQL_SUCCESS with 0 when cursor is not positioned; old driver returns SQL_ERROR"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      SQLGetStmtAttr(SQL_ATTR_ROW_NUMBER) returns SQL_ERROR when the cursor is not positioned on a row (before first fetch, after SQL_NO_DATA, or on a fresh statement with no result set open).
+    new_driver_behavior: |
+      SQLGetStmtAttr(SQL_ATTR_ROW_NUMBER) returns SQL_SUCCESS with value 0 when the cursor is not positioned on a row, per the ODBC spec which states the attribute returns 0 if there is no current row.
+    impact: |
+      Applications that check the return code of SQLGetStmtAttr(SQL_ATTR_ROW_NUMBER) before a fetch may need to handle SQL_SUCCESS (new) instead of SQL_ERROR (old). Applications that only call it during an active fetch are unaffected.
+
   56:
     name: "SQL_SF_STMT_ATTR_LAST_QUERY_ID (SQLPrepare+SQLExecute path) and SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT are only fully supported by the new driver"
     status: unknown
