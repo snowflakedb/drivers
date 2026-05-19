@@ -312,8 +312,7 @@ TEST_CASE("should fail when NULL positional parameters are used in multistatemen
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
 
-  // Then an error is returned indicating NULL bindings are not supported.
-  // Server surfaces "Bind variable ? not set" — match loosely on "bind".
+  // Then an error is returned indicating NULL bindings are not supported
   CHECK(ret == SQL_ERROR);
   auto records = get_diag_rec(stmt);
   bool mentions_bind =

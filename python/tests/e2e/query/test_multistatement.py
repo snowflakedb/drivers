@@ -186,6 +186,7 @@ class TestMultistatementWithParameters:
 
     def test_should_execute_multistatement_dml_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
+        pass
         # And A temporary table with column (id NUMBER) exists
         table_name = random_table_name("ms_bind_dml")
         cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name}(id NUMBER)")
@@ -198,6 +199,7 @@ class TestMultistatementWithParameters:
         )
 
         # Then 2 result sets are returned
+        pass
         # And the first result set reports update count 1
         assert cursor.rowcount == 1
 
@@ -213,6 +215,7 @@ class TestMultistatementWithParameters:
 
     def test_should_execute_multistatement_select_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
+        pass
         # When Multistatement SELECT chain is executed with 6 positional parameters
         cursor.execute(
             "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?",
@@ -221,6 +224,7 @@ class TestMultistatementWithParameters:
         )
 
         # Then 3 result sets are returned
+        pass
         # And the first result set contains row [10]
         assert cursor.fetchone() == (10,)
 
@@ -235,7 +239,10 @@ class TestMultistatementWithParameters:
 
     def test_should_fail_when_multistatement_query_has_too_few_parameters(self, cursor):
         # Given Snowflake client is logged in
+        pass
         # When Multistatement SELECT requires 3 parameters but only 1 is bound
+        pass
+
         # Then an error is returned indicating parameter count mismatch
         with pytest.raises(ProgrammingError):
             cursor.execute(
@@ -246,9 +253,11 @@ class TestMultistatementWithParameters:
 
     def test_should_fail_when_null_positional_parameters_are_used_in_multistatement_query(self, cursor):
         # Given Snowflake client is logged in
+        pass
         # When Multistatement SELECT is executed with NULL positional parameters
-        # Then an error is returned indicating NULL bindings are not supported.
-        # Server surfaces "Bind variable ? not set" — match loosely on "bind".
+        pass
+
+        # Then an error is returned indicating NULL bindings are not supported
         with pytest.raises(ProgrammingError, match=r"(?i)bind"):
             cursor.execute(
                 "SELECT ?; SELECT ?, ?",
