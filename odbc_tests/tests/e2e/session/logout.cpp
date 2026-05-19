@@ -54,7 +54,7 @@ TEST_CASE("should be idempotent when close called multiple times", "[session][lo
   CHECK(first_ret == SQL_SUCCESS);
 }
 
-TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
+TEST_CASE("should handle concurrent close calls safely", "[session][logout][flaky]") {
 #ifdef _WIN32
   SKIP("WireMock tests not yet validated on Windows");
 #endif
