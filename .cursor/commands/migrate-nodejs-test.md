@@ -113,14 +113,14 @@ Apply these rules — they are the migration spec, follow them literally.
   `tests/e2e/utils/getTestParameter.ts`: `parameters.json` (`testconnection` section, path from `PARAMETER_PATH`
   or repo root) first, then `process.env` as fallback.
 - Replace `testUtil.connectAsync(conn)` with `connectAsync(conn)` from `tests/e2e/utils`.
-- Replace `testUtil.destroyConnectionAsync(conn)` with `destroyAsync(conn)` from `tests/e2e/utils`.
+- Replace `testUtil.destroyConnectionAsync(conn)` with `destroyConnectionAsync(conn)` from `tests/e2e/utils`.
 - **Default to a shared connection in `beforeAll` / `afterAll`** (the same shape the legacy Mocha
   tests use, and what the rest of the e2e suite does). Connect/destroy is the slowest part of an
   e2e run; reusing one connection across the whole `describe` keeps the suite fast. Only switch to
   per-test connections when a test needs its own connection state (e.g. a test that destroys its
   connection mid-flight, asserts on connection-id uniqueness, or needs different connection
   options from the rest of the file). When you do go per-test, wrap the lifecycle in a
-  `try { ... } finally { destroyAsync(conn) }` — see "Resource cleanup" below.
+  `try { ... } finally { destroyConnectionAsync(conn) }` — see "Resource cleanup" below.
 
 #### Logger
 
@@ -154,8 +154,8 @@ Apply these rules — they are the migration spec, follow them literally.
   needed around individual `it()`s for that.
 - For best-effort destroy of *multiple* connections in a `finally`, swallow individual errors so
   one bad destroy doesn't mask the real test failure:
-  `await Promise.all(conns.map((c) => destroyAsync(c).catch(() => undefined)))`. For a single
-  connection, let `destroyAsync` propagate.
+  `await Promise.all(conns.map((c) => destroyConnectionAsync(c).catch(() => undefined)))`. For a single
+  connection, let `destroyConnectionAsync` propagate.
 
 #### Assertions
 
@@ -264,5 +264,5 @@ For style examples, see:
 - `nodejs/tests/e2e/query-execution-async.test.ts` — nested `describe`s grouped by SDK method,
   `executeAsync` reused inside the test body for queryId setup, `beforeEach` to lift duplicated
   setup, `expect(...).rejects.toMatchObject({ code: ErrorCode.... })` for error-path assertions.
-- `nodejs/tests/e2e/utils/index.ts` (helpers — `createConnection`, `connectAsync`, `destroyAsync`,
+- `nodejs/tests/e2e/utils/index.ts` (helpers — `createConnection`, `connectAsync`, `destroyConnectionAsync`,
   `executeAsync`, `sleepAsync`, `getSnowflakeSDK`).

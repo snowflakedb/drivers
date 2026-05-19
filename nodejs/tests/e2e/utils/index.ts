@@ -22,8 +22,10 @@ export function getSnowflakeSDK() {
   }
 }
 
-export function createConnection(overrides: Partial<ConnectionOptions> = {}): Connection {
-  const snowflake = getSnowflakeSDK();
+export function createTestConnection(
+  snowflake: typeof oldSnowflakeSDK,
+  overrides: Partial<ConnectionOptions> = {},
+): Connection {
   return snowflake.createConnection({
     account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
     username: getTestParameter('SNOWFLAKE_TEST_USER'),
@@ -36,13 +38,7 @@ export function createConnection(overrides: Partial<ConnectionOptions> = {}): Co
   });
 }
 
-export function connectAsync(connection: Connection): Promise<void> {
-  return new Promise((resolve, reject) => {
-    connection.connect((err) => (err ? reject(err) : resolve()));
-  });
-}
-
-export function destroyAsync(connection: Connection): Promise<void> {
+export function destroyConnectionAsync(connection: Connection): Promise<void> {
   return new Promise((resolve, reject) => {
     connection.destroy((err) => (err ? reject(err) : resolve()));
   });

@@ -1,7 +1,13 @@
 import type { Connection, SnowflakeError } from 'snowflake-sdk';
 import { ErrorCode } from 'snowflake-sdk';
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
-import { createConnection, connectAsync, destroyAsync, sleepAsync, executeAsync } from './utils';
+import {
+  createTestConnection,
+  destroyConnectionAsync,
+  sleepAsync,
+  executeAsync,
+  getSnowflakeSDK,
+} from './utils';
 
 const WAIT_SECONDS = 2;
 const ASYNC_WAIT_SQL = `CALL SYSTEM$WAIT(${WAIT_SECONDS}, 'SECONDS')`;
@@ -10,15 +16,16 @@ const EXPECTED_WAIT_RESULT = `waited ${WAIT_SECONDS} seconds`;
 const NON_EXISTENT_QUERY_ID = '12345678-1234-4123-A123-123456789012';
 
 describe('Async Query Execution', () => {
+  const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
   beforeAll(async () => {
-    connection = createConnection();
-    await connectAsync(connection);
+    connection = createTestConnection(snowflake);
+    await connection.connectAsync();
   });
 
   afterAll(async () => {
-    await destroyAsync(connection);
+    await destroyConnectionAsync(connection);
   });
 
   describe('getQueryStatus()', () => {
