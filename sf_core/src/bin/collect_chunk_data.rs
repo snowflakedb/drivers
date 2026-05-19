@@ -117,6 +117,7 @@ fn load_parameters(path: &PathBuf) -> Result<Parameters, Box<dyn std::error::Err
 
 fn default_client_info() -> ClientInfo {
     ClientInfo {
+        client_app_id: env!("CARGO_PKG_NAME").to_string(),
         application: env!("CARGO_PKG_NAME").to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),

@@ -103,6 +103,10 @@ impl QueryParameters {
 }
 #[derive(Clone, Debug)]
 pub struct ClientInfo {
+    /// Driver identity sent as CLIENT_APP_ID and used in the User-Agent header.
+    pub client_app_id: String,
+    /// User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION.
+    /// Falls back to `client_app_id` when not explicitly provided.
     pub application: String,
     pub version: String,
     pub os: String,
@@ -125,11 +129,17 @@ impl ClientInfo {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
 
+        let client_app_id = settings
+            .get_string("client_app_id")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
+        let application = settings
+            .get_string("application")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| client_app_id.clone());
         let client_info = ClientInfo {
-            application: settings
-                .get_string("client_app_id")
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string()),
+            client_app_id,
+            application,
             version: settings
                 .get_string("client_app_version")
                 .filter(|s| !s.trim().is_empty())
@@ -166,6 +176,7 @@ pub mod test_fixtures {
     /// syntax: `ClientInfo { application: "foo".into(), ..test_client_info() }`.
     pub fn test_client_info() -> ClientInfo {
         ClientInfo {
+            client_app_id: "sf_core_test".to_string(),
             application: "sf_core_test".to_string(),
             version: "1.0.0".to_string(),
             os: std::env::consts::OS.to_string(),
@@ -1054,11 +1065,68 @@ mod tests {
             Setting::String("test.snowflakecomputing.com".to_string()),
         )]);
         let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.client_app_id, env!("CARGO_PKG_NAME"));
         assert_eq!(info.application, env!("CARGO_PKG_NAME"));
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert!(info.runtime_name.is_none());
         assert!(info.runtime_version.is_none());
         assert!(info.compiler.is_none());
+    }
+
+    #[test]
+    fn test_application_defaults_to_client_app_id_when_unset() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            (
+                "client_app_id",
+                Setting::String("PythonConnector".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.client_app_id, "PythonConnector");
+        assert_eq!(info.application, "PythonConnector");
+    }
+
+    #[test]
+    fn test_application_independent_of_client_app_id() {
+        // Mirrors the old connector: internal_application_name → CLIENT_APP_ID,
+        // application → CLIENT_ENVIRONMENT.APPLICATION. The two values are
+        // independent.
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            (
+                "client_app_id",
+                Setting::String("PythonConnector".to_string()),
+            ),
+            (
+                "application",
+                Setting::String("SNOWCLI.STAGE.COPY".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.client_app_id, "PythonConnector");
+        assert_eq!(info.application, "SNOWCLI.STAGE.COPY");
+    }
+
+    #[test]
+    fn test_application_empty_falls_back_to_client_app_id() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            ("client_app_id", Setting::String("JDBC".to_string())),
+            ("application", Setting::String("   ".to_string())),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.client_app_id, "JDBC");
+        assert_eq!(info.application, "JDBC");
     }
 
     #[test]
@@ -1084,6 +1152,7 @@ mod tests {
             ),
         ]);
         let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.client_app_id, "JDBC");
         assert_eq!(info.application, "JDBC");
         assert_eq!(info.version, "3.21.0");
         assert_eq!(info.runtime_name.as_deref(), Some("OpenJDK"));

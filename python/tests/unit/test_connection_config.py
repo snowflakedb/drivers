@@ -168,9 +168,25 @@ class TestFromConnectionArgs:
         config = ConnectionConfig.from_connection_args(user="u", application="SNOWCLI.STAGE.COPY")
         assert config.application == "SNOWCLI.STAGE.COPY"
 
-    def test_client_app_id_injected(self):
+    def test_client_app_id_defaults_to_driver_name(self):
+        """CLIENT_APP_ID should stay as the driver name regardless of the
+        user-supplied ``application`` — the user's value remains in
+        ``application`` (CLIENT_ENVIRONMENT.APPLICATION on the wire)."""
         config = ConnectionConfig.from_connection_args(user="u", application="MyApp")
-        assert config._extra["client_app_id"] == "MyApp"
+        assert config.client_app_id == "PythonConnector"
+        assert config.application == "MyApp"
+
+    def test_client_app_id_kwarg_rejected(self):
+        """End users must not be able to override CLIENT_APP_ID. Mirrors the
+        old connector's treatment of ``internal_application_name``."""
+        with pytest.raises(ProgrammingError, match="wrapper-internal parameter"):
+            ConnectionConfig.from_connection_args(user="u", client_app_id="EvilApp")
+
+    def test_client_app_version_kwarg_rejected(self):
+        """End users must not be able to override CLIENT_APP_VERSION. Mirrors
+        the old connector's treatment of ``internal_application_version``."""
+        with pytest.raises(ProgrammingError, match="wrapper-internal parameter"):
+            ConnectionConfig.from_connection_args(user="u", client_app_version="9.9.9")
 
     def test_autocommit_true_injects_session_parameter(self):
         config = ConnectionConfig.from_connection_args(user="u", autocommit=True)

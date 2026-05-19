@@ -69,6 +69,9 @@ fn normalize_connection_string_option(
 
     match upper.as_str() {
         "PORT" => Some(("port".to_owned(), value.into())),
+        // APPLICATION carries the user-facing app name → CLIENT_ENVIRONMENT.APPLICATION.
+        // CLIENT_APP_ID stays as the wrapper-injected driver name ("ODBC").
+        "APPLICATION" => Some(("application".to_owned(), value.into())),
         "CRL_MODE" => Some(("CRL_MODE".to_owned(), value.to_uppercase().into())),
         "CRL_ENABLED" => Some((
             "CRL_ENABLED".to_owned(),
@@ -382,7 +385,9 @@ fn apply_pre_connection_overrides(
         options.insert("private_key_password".to_owned(), pwd.clone().into());
     }
 
-    // Application name
+    // SQL_SF_CONN_ATTR_APPLICATION → CLIENT_ENVIRONMENT.APPLICATION via the
+    // canonical ``application`` setting. CLIENT_APP_ID stays as the
+    // wrapper-injected driver name (matches the old ODBC driver).
     if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
         options.insert("application".to_owned(), app.clone().into());
     }
@@ -1401,6 +1406,51 @@ mod tests {
             config_string(&options, "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"),
             Some("1800")
         );
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_application_key() {
+        // APPLICATION on the connection string is the user-facing app name —
+        // it must land in the canonical ``application`` setting
+        // (CLIENT_ENVIRONMENT.APPLICATION on the wire), never in client_app_id
+        // (CLIENT_APP_ID stays as the wrapper-injected driver name "ODBC").
+        // Mirrors the old ODBC driver's behaviour.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "APPLICATION".to_owned(),
+            "Tableau".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "application"), Some("Tableau"));
+        assert!(!options.contains_key("APPLICATION"));
+        assert!(!options.contains_key("client_app_id"));
+    }
+
+    #[test]
+    fn apply_pre_connection_overrides_routes_application_attr() {
+        // SQL_SF_CONN_ATTR_APPLICATION (programmatic) follows the same routing
+        // as the connection-string APPLICATION key.
+        let mut options = HashMap::new();
+        let attrs = HashMap::from([(ConnectionAttribute::Application, "PowerBI".to_owned())]);
+
+        apply_pre_connection_overrides(&attrs, &mut options);
+
+        assert_eq!(config_string(&options, "application"), Some("PowerBI"));
+        assert!(!options.contains_key("client_app_id"));
+    }
+
+    #[test]
+    fn apply_pre_connection_overrides_application_attr_overrides_connection_string() {
+        // The override layer wins, matching the established pattern for
+        // private-key attributes.
+        let mut options = normalize_connection_string_options(HashMap::from([(
+            "APPLICATION".to_owned(),
+            "FromDsn".to_owned(),
+        )]));
+        let attrs = HashMap::from([(ConnectionAttribute::Application, "FromAttr".to_owned())]);
+
+        apply_pre_connection_overrides(&attrs, &mut options);
+
+        assert_eq!(config_string(&options, "application"), Some("FromAttr"));
     }
 
     #[test]
