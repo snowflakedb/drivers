@@ -330,9 +330,26 @@ impl DatabaseDriverV1 {
         }
 
         let rowset_data = match data.command.as_deref() {
-            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets)
+            Some(command) => {
+                // Build refresh context for PUT/GET so the file manager can
+                // recover from STS `ExpiredToken` by re-issuing the original
+                // PUT/GET SQL to obtain fresh stage credentials. The refresher
+                // calls back into `RefreshContext::execute_with_refresh`, so a
+                // session-token expiry mid-batch is renewed transparently.
+                let stage_creds_refresh_context = super::query::StageCredsRefreshContext {
+                    sql: query.clone(),
+                    query_parameters: query_parameters.clone(),
+                    conn: conn_arc.clone(),
+                };
+                perform_put_get_transfer(
+                    command,
+                    &data,
+                    &self.wrapper_presets,
+                    Some(stage_creds_refresh_context),
+                )
                 .await
-                .context(QueryResponseProcessingSnafu)?,
+                .context(QueryResponseProcessingSnafu)?
+            }
             None => data.into_rowset_data(),
         };
         let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
@@ -425,7 +442,7 @@ impl DatabaseDriverV1 {
         }
 
         let rowset_data = match data.command.as_deref() {
-            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets)
+            Some(command) => perform_put_get_transfer(command, &data, &self.wrapper_presets, None)
                 .await
                 .context(QueryResponseProcessingSnafu)?,
             None => data.into_rowset_data(),

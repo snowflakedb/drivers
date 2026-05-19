@@ -299,6 +299,20 @@ pub struct EncryptionMaterial {
 }
 
 impl Data {
+    /// Returns the cloud credentials embedded in the response's `stageInfo`,
+    /// or `None` if the response carries no `stageInfo` block (non-PUT/GET).
+    /// Used by the stage-credentials refresh path, which only needs the
+    /// `creds` slice and not the full `UploadData`/`DownloadData`.
+    pub fn stage_info_creds(
+        &self,
+    ) -> Result<Option<file_manager::CloudCredentials>, QueryResponseError> {
+        let Some(stage_info) = self.stage_info.as_ref() else {
+            return Ok(None);
+        };
+        let converted: file_manager::StageInfo = stage_info.try_into()?;
+        Ok(Some(converted.creds))
+    }
+
     /// Copies the fields necessary for file transfer.
     /// Encryption material is optional — SSE stages omit it from the response.
     ///

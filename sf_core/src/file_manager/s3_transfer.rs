@@ -1,6 +1,6 @@
 use super::types::{
-    DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo,
-    UploadStatus,
+    CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
+    StageCredsRefreshError, StageCredsRefresher, StageInfo, UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use snafu::{Location, ResultExt, Snafu};
@@ -28,24 +28,89 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 // TODO: streaming instead of loading the whole file into memory
 
 /// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
+///
+/// On AWS `ExpiredToken` the `refresher` (if any) is invoked to fetch fresh
+/// STS credentials, which it writes into the shared `StageCredsCache`; the
+/// upload then retries with the new creds. The refresher is responsible for
+/// coalescing rapid-fire calls (the production implementation caches a
+/// successful refresh for 10 minutes, matching ODBC's `m_lastRefreshTokenSec`
+/// gate). The refreshed credentials are visible to other files in the batch
+/// via the shared cache — no return-value plumbing required.
 pub async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<UploadStatus, UploadFileError> {
-    // Check if the file already exists in S3
-    let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
+    // Working copy of stage_info — `creds` may be replaced with refreshed
+    // values pulled from the refresher's cache; bucket/region/key_prefix are
+    // immutable for the lifetime of one PUT/GET command.
+    let mut stage_info = stage_info.clone();
 
-    if !overwrite && check_if_file_exists(&s3_client, stage_info, &s3_key).await? {
-        tracing::info!("File already exists in S3: {}", s3_key);
-        return Ok(UploadStatus::Skipped);
+    loop {
+        let s3_client = create_s3_client(&stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await?;
+
+        if !overwrite && check_if_file_exists(&s3_client, &stage_info, &s3_key).await? {
+            tracing::info!("File already exists in S3: {}", s3_key);
+            return Ok(UploadStatus::Skipped);
+        }
+
+        match upload_to_s3(prepared.clone(), &s3_client, &stage_info, &s3_key).await? {
+            S3Outcome::Ok(()) => return Ok(UploadStatus::Uploaded),
+            S3Outcome::StsExpired(aws_err) => {
+                let rotated = try_refresh_creds(refresher, &mut stage_info)
+                    .await
+                    .context(upload_file_error::StageCredsRefreshSnafu)?;
+                if !rotated {
+                    // No refresher, or refresher returned the same creds —
+                    // surface the original AWS error as a normal upload
+                    // failure, the same shape callers see for any other S3
+                    // PUT error.
+                    return Err(aws_err).context(upload_file_error::S3UploadSnafu);
+                }
+            }
+        }
     }
+}
 
-    // Proceed with upload if the file does not exist or overwrite is true
-    upload_to_s3(prepared, &s3_client, stage_info, &s3_key).await?;
-    Ok(UploadStatus::Uploaded)
+/// Outcome of a single S3 attempt (PUT or GET). `StsExpired` is an
+/// internal-only signal that drives the credential-refresh retry inside this
+/// module — `UploadFileError` / `DownloadFileError` deliberately have no
+/// `StsExpiredToken` variant, so callers cannot observe (or pattern-match on)
+/// a refresh-internal state.
+#[derive(Debug)]
+enum S3Outcome<T> {
+    Ok(T),
+    StsExpired(aws_sdk_s3::Error),
+}
+
+/// Asks the refresher (if any) to fetch new stage credentials and updates
+/// `stage_info.creds` from the refresher's cache. Returns:
+/// - `Ok(true)` — credentials rotated; the caller should retry.
+/// - `Ok(false)` — no refresher, or the refresher returned the same creds
+///   (e.g. inside its coalescing window). The caller should propagate the
+///   original AWS error rather than loop.
+/// - `Err(e)` — the refresh itself failed; the caller wraps with
+///   `.context(...)` to attach the upload/download error path's snafu
+///   instrumentation.
+async fn try_refresh_creds(
+    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    stage_info: &mut StageInfo,
+) -> Result<bool, StageCredsRefreshError> {
+    let Some(r) = refresher.as_deref_mut() else {
+        return Ok(false);
+    };
+    tracing::info!("S3 hit ExpiredToken; refreshing stage credentials");
+    r.refresh().await?;
+    let new_creds = r.cache().snapshot();
+    if creds_unchanged(&stage_info.creds, &new_creds) {
+        Ok(false)
+    } else {
+        stage_info.creds = new_creds;
+        Ok(true)
+    }
 }
 
 /// Returns true if the file exists in S3, false if it does not.
@@ -76,12 +141,39 @@ async fn check_if_file_exists(
     }
 }
 
+/// Returns `true` only when S3 surfaced HTTP 400 + `<Code>ExpiredToken</Code>`.
+/// Other codes (InvalidToken, AccessDenied, 403, 5xx, throttling) return false
+/// so they stay on the normal error path. Matches the Python / ODBC detector.
+fn is_expired_token_error(err: &aws_sdk_s3::Error) -> bool {
+    use aws_sdk_s3::error::ProvideErrorMetadata;
+    err.code() == Some("ExpiredToken")
+}
+
+/// Checks whether a refresh returned the same credentials we already had — for
+/// example because the refresher is inside its coalescing window. Compared on
+/// the non-sensitive `aws_key_id`; `SensitiveString` has no `PartialEq`
+/// (equality on secrets is its own footgun) and a new key id implies a fresh
+/// STS rotation from GS.
+fn creds_unchanged(a: &CloudCredentials, b: &CloudCredentials) -> bool {
+    match (a, b) {
+        (
+            CloudCredentials::S3 {
+                aws_key_id: a_key, ..
+            },
+            CloudCredentials::S3 {
+                aws_key_id: b_key, ..
+            },
+        ) => a_key == b_key,
+        _ => false,
+    }
+}
+
 async fn upload_to_s3(
     prepared: PreparedUpload,
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-) -> Result<(), UploadFileError> {
+) -> Result<S3Outcome<()>, UploadFileError> {
     let mut put_object_request = s3_client
         .put_object()
         .bucket(stage_info.bucket.clone())
@@ -101,38 +193,54 @@ async fn upload_to_s3(
 
     tracing::trace!("PUT object request: {:?}", put_object_request);
 
-    let result = put_object_request
-        .send()
-        .await
-        .map_err(aws_sdk_s3::Error::from)
-        .context(upload_file_error::S3UploadSnafu)?;
-
-    tracing::debug!("S3 upload result: {:?}", result);
-
-    Ok(())
+    match put_object_request.send().await {
+        Ok(res) => {
+            tracing::debug!("S3 upload result: {:?}", res);
+            Ok(S3Outcome::Ok(()))
+        }
+        Err(sdk_err) => {
+            let aws_err = aws_sdk_s3::Error::from(sdk_err);
+            if is_expired_token_error(&aws_err) {
+                tracing::warn!("S3 upload failed with ExpiredToken");
+                Ok(S3Outcome::StsExpired(aws_err))
+            } else {
+                Err(aws_err).context(upload_file_error::S3UploadSnafu)
+            }
+        }
+    }
 }
 
-/// Downloads a file from S3 and returns the data with optional encryption metadata.
-/// For SSE stages the metadata headers will be absent and `None` is returned.
+/// Downloads a file from S3. For SSE stages the encryption metadata headers
+/// will be absent and `file_metadata` is `None`. See `upload_to_s3_or_skip`
+/// for the `refresher` semantics; refreshed credentials are written into the
+/// shared `StageCredsCache` rather than returned.
 ///
-/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
-/// the blob — taken from the collected body length, which equals the S3
-/// `Content-Length` for non-streamed responses.
+/// `cloud_byte_count` on the returned `DownloadResponse` reflects the
+/// on-cloud (pre-decryption) byte count of the blob — taken from the
+/// collected body length, which equals the S3 `Content-Length` for
+/// non-streamed responses.
 pub async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
+    refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<DownloadResponse, DownloadFileError> {
-    let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
+    let mut stage_info = stage_info.clone();
 
-    let response = s3_client
-        .get_object()
-        .bucket(stage_info.bucket.clone())
-        .key(&s3_key)
-        .send()
-        .await
-        .map_err(aws_sdk_s3::Error::from)
-        .context(download_file_error::S3DownloadSnafu)?;
+    let response = loop {
+        let s3_client = create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await?;
+        match do_get_object(&s3_client, &stage_info, &s3_key).await? {
+            S3Outcome::Ok(r) => break *r,
+            S3Outcome::StsExpired(aws_err) => {
+                let rotated = try_refresh_creds(refresher, &mut stage_info)
+                    .await
+                    .context(download_file_error::StageCredsRefreshSnafu)?;
+                if !rotated {
+                    return Err(aws_err).context(download_file_error::S3DownloadSnafu);
+                }
+            }
+        }
+    };
 
     let metadata_map = response.metadata().cloned().unwrap_or_default();
 
@@ -177,6 +285,35 @@ pub async fn download_from_s3(
         file_metadata,
         cloud_byte_count,
     })
+}
+
+/// Issues the S3 `GetObject` call and folds `ExpiredToken` into the
+/// `S3Outcome::StsExpired` arm so the retry loop can catch it. The `Ok`
+/// payload is boxed because `GetObjectOutput` is ~800 bytes — far larger
+/// than the `aws_sdk_s3::Error` in `StsExpired`.
+async fn do_get_object(
+    s3_client: &S3Client,
+    stage_info: &StageInfo,
+    s3_key: &str,
+) -> Result<S3Outcome<Box<aws_sdk_s3::operation::get_object::GetObjectOutput>>, DownloadFileError> {
+    match s3_client
+        .get_object()
+        .bucket(stage_info.bucket.clone())
+        .key(s3_key)
+        .send()
+        .await
+    {
+        Ok(out) => Ok(S3Outcome::Ok(Box::new(out))),
+        Err(sdk_err) => {
+            let aws_err = aws_sdk_s3::Error::from(sdk_err);
+            if is_expired_token_error(&aws_err) {
+                tracing::warn!("S3 download failed with ExpiredToken");
+                Ok(S3Outcome::StsExpired(aws_err))
+            } else {
+                Err(aws_err).context(download_file_error::S3DownloadSnafu)
+            }
+        }
+    }
 }
 
 /// Returns a retry policy tuned for S3 file-transfer operations.
@@ -366,6 +503,12 @@ pub enum UploadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
+    StageCredsRefresh {
+        source: StageCredsRefreshError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -398,6 +541,12 @@ pub enum DownloadFileError {
     },
     #[snafu(display("Missing S3 credentials"))]
     MissingS3Credentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
+    StageCredsRefresh {
+        source: StageCredsRefreshError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -504,7 +653,7 @@ mod tests {
     // `aws_sdk_s3::Config` does not expose the resolved URL: explicit
     // endpoint, regional flag, neither, and scheme-less endpoint.
 
-    use crate::file_manager::types::{CloudCredentials, LocationType};
+    use crate::file_manager::types::LocationType;
     use crate::sensitive::SensitiveString;
 
     fn s3_stage(endpoint: Option<&str>, use_s3_regional_url: bool) -> StageInfo {
@@ -524,6 +673,60 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url,
             storage_account: None,
+        }
+    }
+
+    // --- ExpiredToken detector ---
+    //
+    // Constructing `aws_sdk_s3::Error` with a chosen error code is a little
+    // awkward because `Error::Unhandled` has private fields, but any typed
+    // variant carries metadata via its builder. `NoSuchKey` is convenient —
+    // we pin an arbitrary code onto its `ErrorMetadata` and upcast. This
+    // exercises the real `ProvideErrorMetadata::code` path the production
+    // detector relies on.
+
+    use aws_sdk_s3::Error as S3Error;
+    use aws_sdk_s3::error::ErrorMetadata;
+    use aws_sdk_s3::types::error::NoSuchKey;
+
+    fn s3_error_with_code(code: &str) -> S3Error {
+        S3Error::NoSuchKey(
+            NoSuchKey::builder()
+                .meta(ErrorMetadata::builder().code(code).build())
+                .build(),
+        )
+    }
+
+    fn s3_error_without_code() -> S3Error {
+        S3Error::NoSuchKey(NoSuchKey::builder().build())
+    }
+
+    #[test]
+    fn expired_token_code_is_detected() {
+        assert!(is_expired_token_error(&s3_error_with_code("ExpiredToken")));
+    }
+
+    #[test]
+    fn other_aws_codes_are_not_treated_as_expired_token() {
+        // These are the close-but-different codes that must NOT trigger an STS
+        // refresh. InvalidToken/TokenRefreshRequired mean the creds are bad in
+        // a way refreshing won't fix; AccessDenied means policy, not expiry;
+        // the others are transient SDK concerns handled by retry, not refresh.
+        for code in [
+            "InvalidToken",
+            "TokenRefreshRequired",
+            "AccessDenied",
+            "SignatureDoesNotMatch",
+            "InvalidAccessKeyId",
+            "RequestTimeTooSkewed",
+            "SlowDown",
+            "InternalError",
+            "NoSuchKey",
+        ] {
+            assert!(
+                !is_expired_token_error(&s3_error_with_code(code)),
+                "{code} must not trigger STS refresh"
+            );
         }
     }
 
@@ -576,5 +779,155 @@ mod tests {
             resolve_s3_endpoint(&stage).as_deref(),
             Some("http://localhost:9000")
         );
+    }
+
+    #[test]
+    fn missing_code_is_not_treated_as_expired_token() {
+        assert!(!is_expired_token_error(&s3_error_without_code()));
+    }
+
+    // --- creds_unchanged short-circuit ---
+    //
+    // Compared on `aws_key_id`. A different key id implies a fresh STS
+    // rotation from GS; same key id means we're inside the refresher's
+    // coalescing window and retrying would loop.
+
+    fn s3_creds(key: &str) -> CloudCredentials {
+        CloudCredentials::S3 {
+            aws_key_id: key.to_string(),
+            aws_secret_key: "secret".to_string().into(),
+            aws_token: "token".to_string().into(),
+        }
+    }
+
+    #[test]
+    fn creds_unchanged_returns_true_when_aws_key_id_matches() {
+        assert!(creds_unchanged(&s3_creds("AKIA1"), &s3_creds("AKIA1")));
+    }
+
+    #[test]
+    fn creds_unchanged_returns_false_when_aws_key_id_differs() {
+        assert!(!creds_unchanged(&s3_creds("AKIA1"), &s3_creds("AKIA2")));
+    }
+
+    #[test]
+    fn creds_unchanged_returns_false_for_non_s3_variants() {
+        // GCS/Azure can't expire mid-S3-transfer, so the comparison is
+        // S3-only by construction. Other variants always report "changed"
+        // so the retry loop never gets stuck on them.
+        let gcs = CloudCredentials::Gcs {
+            gcs_access_token: Some("g".to_string().into()),
+        };
+        let azure = CloudCredentials::Azure {
+            sas_token: "a".to_string().into(),
+        };
+        assert!(!creds_unchanged(&gcs, &gcs));
+        assert!(!creds_unchanged(&azure, &azure));
+        assert!(!creds_unchanged(&gcs, &azure));
+    }
+
+    // --- try_refresh_creds drives the refresher correctly ---
+    //
+    // A fake StageCredsRefresher records call counts and exposes a
+    // mutable cache so tests can simulate "refresh rotated the creds"
+    // vs "refresh coalesced and returned the same creds".
+
+    use super::super::types::{StageCredsCache, StageCredsRefreshError};
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    struct FakeRefresher {
+        cache: StageCredsCache,
+        next_creds: std::sync::Mutex<Option<CloudCredentials>>,
+        refresh_calls: AtomicUsize,
+    }
+
+    impl FakeRefresher {
+        fn new(initial: CloudCredentials) -> Self {
+            Self {
+                cache: StageCredsCache::new(initial),
+                next_creds: std::sync::Mutex::new(None),
+                refresh_calls: AtomicUsize::new(0),
+            }
+        }
+
+        /// Set what the cache will hold after the next `refresh()` call.
+        fn arm(&self, creds: CloudCredentials) {
+            *self.next_creds.lock().unwrap() = Some(creds);
+        }
+    }
+
+    impl StageCredsRefresher for FakeRefresher {
+        fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
+            self.refresh_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            let next = self.next_creds.lock().unwrap().take();
+            if let Some(c) = next {
+                self.cache.store(c);
+            }
+            // No-op rotation when not armed: the cache keeps the same creds,
+            // so try_refresh_creds will see "unchanged" and return Ok(false).
+            Box::pin(async { Ok::<(), StageCredsRefreshError>(()) })
+        }
+
+        fn cache(&self) -> &StageCredsCache {
+            &self.cache
+        }
+    }
+
+    fn stage_info_with(creds: CloudCredentials) -> StageInfo {
+        StageInfo {
+            location_type: super::super::types::LocationType::S3,
+            bucket: "bucket".into(),
+            key_prefix: "prefix/".into(),
+            region: "us-east-1".into(),
+            creds,
+            endpoint: None,
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn try_refresh_creds_returns_false_without_refresher() {
+        let mut none: Option<&mut dyn StageCredsRefresher> = None;
+        let mut info = stage_info_with(s3_creds("AKIA1"));
+        let rotated = try_refresh_creds(&mut none, &mut info).await.unwrap();
+        assert!(!rotated, "no refresher → no rotation");
+    }
+
+    #[tokio::test]
+    async fn try_refresh_creds_returns_true_when_creds_rotate() {
+        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
+        fake.arm(s3_creds("AKIA2"));
+        let mut info = stage_info_with(s3_creds("AKIA1"));
+
+        let mut handle: Option<&mut dyn StageCredsRefresher> = Some(&mut fake);
+        let rotated = try_refresh_creds(&mut handle, &mut info).await.unwrap();
+
+        assert!(rotated);
+        assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
+        // The caller's stage_info now holds the rotated key.
+        match &info.creds {
+            CloudCredentials::S3 { aws_key_id, .. } => assert_eq!(aws_key_id, "AKIA2"),
+            _ => panic!("expected S3 creds"),
+        }
+    }
+
+    #[tokio::test]
+    async fn try_refresh_creds_returns_false_when_refresher_coalesces() {
+        // Refresher leaves the cache untouched (simulating a hit inside its
+        // coalescing window). try_refresh_creds must report Ok(false) so the
+        // caller propagates the original AWS error rather than spinning.
+        let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
+        // Not armed → refresh() is a no-op, cache still holds AKIA1.
+        let mut info = stage_info_with(s3_creds("AKIA1"));
+
+        let mut handle: Option<&mut dyn StageCredsRefresher> = Some(&mut fake);
+        let rotated = try_refresh_creds(&mut handle, &mut info).await.unwrap();
+
+        assert!(!rotated, "unchanged creds → caller should propagate");
+        assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
     }
 }
