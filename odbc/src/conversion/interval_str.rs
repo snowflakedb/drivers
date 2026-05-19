@@ -38,19 +38,36 @@
 //! truncation case (#2). Any other shape is a format error (#4).
 //!
 //! Range handling: trailing composite fields are validated against
-//! their canonical ANSI SQL ranges and a violation surfaces 22018
-//! per Appendix D outcome #4 ("not a valid interval value"). The
-//! enforced ranges for *trailing* slots in a composite literal are:
+//! their canonical ANSI SQL ranges and a violation surfaces 22015
+//! ("Interval field overflow"). The enforced ranges for *trailing*
+//! slots in a composite literal are:
 //!
 //!   * MONTH (in `YEAR_TO_MONTH`)        : 0..=11
 //!   * HOUR  (in `*_TO_HOUR/MINUTE/SECOND`) : 0..=23
 //!   * MINUTE (in `*_TO_MINUTE/SECOND`)  : 0..=59
 //!   * SECOND (in `*_TO_SECOND`)         : 0..=59
 //!
+//! 22015 is the spec-mandated state for this case via two reinforcing
+//! readings of the ODBC reference:
+//!
+//!   * The `SQLGetData` diagnostics table defines 22015 as fired when
+//!     "there was no representation of the value of the SQL type in
+//!     the interval C type" — a trailing field outside its Gregorian
+//!     range has no representation in the interval C structure, whose
+//!     trailing fields are constrained by Gregorian rules per the
+//!     "Constraints of the Gregorian Calendar" appendix.
+//!   * The driver already uses `IntervalFieldOverflow` (→ 22015) for
+//!     analogous field-level overflows: `numeric_helpers::push_field_value`
+//!     fires it for trailing-field `u32::MAX` overflow, and this file's
+//!     own `field_overflow` helper fires it for day/hour/minute/second
+//!     overflow when the parsed value won't fit `u32`. Using 22018 for
+//!     a value of 61 while using 22015 for a value of 4_294_967_295
+//!     would be internally inconsistent — 22015 covers both ends.
+//!
 //! The *leading* field of any single-field or composite target keeps
 //! the precision-driven check (`SQL_DESC_DATETIME_INTERVAL_PRECISION`,
-//! 22015 on overflow) and is *not* range-checked, because per ANSI a
-//! leading field can be arbitrarily large within its declared
+//! also 22015 on overflow) and is *not* range-checked, because per
+//! ANSI a leading field can be arbitrarily large within its declared
 //! precision. For `MINUTE_TO_SECOND`, the leading slot is the minute,
 //! so only the trailing second is range-checked against 0..=59.
 
@@ -627,18 +644,24 @@ fn field_overflow(name: &str, value: u128) -> WriteOdbcError {
 }
 
 /// Validate a *trailing* composite-interval field against its
-/// canonical ANSI SQL range. Returns `InvalidValue` (mapped to
-/// SQLSTATE 22018, "Invalid character value for cast specification"
-/// — Appendix D outcome #4) when the magnitude exceeds
-/// `max_inclusive`. Leading fields use a precision-based check
-/// (22015) elsewhere and must NOT be passed through this helper.
+/// canonical ANSI SQL range. Returns `IntervalFieldOverflow` (mapped
+/// to SQLSTATE 22015, "Interval field overflow") when the magnitude
+/// exceeds `max_inclusive`. Per the `SQLGetData` diagnostics table
+/// 22015 fires when "there was no representation of the value of the
+/// SQL type in the interval C type", and an interval C structure has
+/// no representation for a trailing field outside its Gregorian range
+/// (HOUR > 23, MINUTE/SECOND > 59, MONTH > 11). This also matches the
+/// existing `field_overflow` helper below, which uses 22015 for the
+/// catastrophic `u32::MAX`-overflow form of the same problem. Leading
+/// fields use a precision-based 22015 check elsewhere and must NOT be
+/// passed through this helper.
 fn check_trailing_field_range(
     name: &'static str,
     value: u128,
     max_inclusive: u32,
 ) -> Result<(), WriteOdbcError> {
     if value > u128::from(max_inclusive) {
-        InvalidValueSnafu {
+        IntervalFieldOverflowSnafu {
             reason: format!(
                 "trailing '{name}' field magnitude {value} is outside the canonical ANSI range 0..={max_inclusive}"
             ),

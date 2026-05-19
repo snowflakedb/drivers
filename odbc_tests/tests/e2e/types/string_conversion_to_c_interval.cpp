@@ -681,20 +681,24 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject bare integer for every compos
 
 // BD#55 (out-of-range trailing fields): the universal driver enforces canonical
 // ANSI SQL ranges for the trailing field of a composite interval and rejects
-// out-of-range values with 22018; the reference driver accepts the literal as
-// long as the leading field fits inside its default precision (it still
-// rejects month >= 12 for YEAR_TO_MONTH).
-TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range field magnitudes with SQLSTATE 22018",
+// out-of-range values with 22015 ("Interval field overflow"); the reference
+// driver accepts the literal as long as the leading field fits inside its
+// default precision. Both drivers reject YEAR_TO_MONTH month >= 12, the
+// reference driver with 22018 and the universal driver with 22015.
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range field magnitudes with SQLSTATE 22015",
                  "[datatype][string][conversion][interval][failure]") {
-  // Per ODBC Appendix D (invalid literal): a trailing-field magnitude outside its
-  // canonical ANSI SQL range is "not a valid interval value" and must
-  // surface SQL_ERROR with SQLSTATE 22018. The universal driver enforces:
+  // Per the SQLGetData diagnostics table, SQLSTATE 22015 ("Interval field
+  // overflow") fires when "there was no representation of the value of the
+  // SQL type in the interval C type". An interval C structure cannot
+  // represent a trailing field outside its Gregorian range (per the
+  // "Constraints of the Gregorian Calendar" appendix), so the universal
+  // driver surfaces 22015 for:
   //   YEAR_TO_MONTH   trailing MONTH  : 0..=11
   //   *_TO_HOUR       trailing HOUR   : 0..=23
   //   *_TO_MINUTE     trailing MINUTE : 0..=59
   //   *_TO_SECOND     trailing SECOND : 0..=59
-  // The leading slot of each composite is precision-driven (22015) and is
-  // intentionally NOT range-checked.
+  // The leading slot of each composite is precision-driven (also 22015 on
+  // overflow) and is intentionally NOT range-checked.
   //
   // Given Snowflake client is logged in
   // When A VARCHAR row carrying out-of-canonical-range trailing fields is fetched
@@ -705,7 +709,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range field magnitudes
   OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
     // Reference driver does not enforce canonical ranges on trailing
     // day-time fields - it stores the parsed value as-is. It still rejects
-    // month >= 12 for YEAR_TO_MONTH.
+    // month >= 12 for YEAR_TO_MONTH, but uses 22018 ("invalid literal")
+    // for that case rather than the universal driver's 22015.
     SQL_INTERVAL_STRUCT value{};
     SQLLEN indicator = -999;
     REQUIRE(get_data_raw(stmt, 1, SQL_C_INTERVAL_HOUR_TO_MINUTE, &value, &indicator) == SQL_SUCCESS);
@@ -716,21 +721,21 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject out-of-range field magnitudes
   }
 
   NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
-    // Then SQL_C_INTERVAL_HOUR_TO_MINUTE rejects minute=61 with SQLSTATE 22018
-    check_invalid_string<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
-    // And SQL_C_INTERVAL_MINUTE_TO_SECOND rejects second=61 with SQLSTATE 22018
-    check_invalid_string<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 2);
-    // And SQL_C_INTERVAL_DAY_TO_SECOND rejects hour=24 with SQLSTATE 22018
-    check_invalid_string<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
-    // And SQL_C_INTERVAL_YEAR_TO_MONTH rejects month=12 with SQLSTATE 22018
-    check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 4);
+    // Then SQL_C_INTERVAL_HOUR_TO_MINUTE rejects minute=61 with SQLSTATE 22015
+    check_interval_field_overflow<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
+    // And SQL_C_INTERVAL_MINUTE_TO_SECOND rejects second=61 with SQLSTATE 22015
+    check_interval_field_overflow<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 2);
+    // And SQL_C_INTERVAL_DAY_TO_SECOND rejects hour=24 with SQLSTATE 22015
+    check_interval_field_overflow<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
+    // And SQL_C_INTERVAL_YEAR_TO_MONTH rejects month=12 with SQLSTATE 22015
+    check_interval_field_overflow<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 4);
   }
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should accept boundary field magnitudes",
                  "[datatype][string][conversion][interval][edge]") {
   // The ANSI ceiling enforced by the driver is exclusive: 24/60/12 are
-  // rejected (see the 22018 case above) while the inclusive max of
+  // rejected (see the 22015 case above) while the inclusive max of
   // 23/59/11 must round-trip cleanly. Pins the boundary behavior for
   // every range-checked trailing slot.
   //
@@ -835,4 +840,170 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should reject malformed VARCHAR via SQLBind
   auto records = get_diag_rec(stmt);
   REQUIRE(!records.empty());
   CHECK(records[0].sqlState == "22018");
+}
+
+// BD#55 (out-of-range trailing fields, SQLBindCol surface): mirrors the
+// SQLGetData "should reject out-of-range field magnitudes with SQLSTATE 22015"
+// test above. The diagnostic flows through a separate code path
+// (SQLFetch + SQLBindCol vs. SQLGetData), so we pin both surfaces to confirm
+// they emit the same SQLSTATE.
+TEST_CASE_METHOD(ConnSchemaFixture, "should report 22015 on out-of-range trailing field via SQLBindCol",
+                 "[datatype][string][conversion][interval][bindcol][failure]") {
+  // Given Snowflake client is logged in
+  // When SQLBindCol binds SQL_C_INTERVAL_HOUR_TO_MINUTE against '25:61'
+  // (canonical-shape literal whose trailing minute=61 is outside ANSI 0..=59)
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '25:61' AS oor_h_m", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQL_INTERVAL_STRUCT interval = {};
+  SQLLEN indicator = -999;
+  ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_INTERVAL_HOUR_TO_MINUTE, &interval, sizeof(interval), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  OLD_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
+    // Reference driver does not enforce canonical ranges on trailing day-time
+    // fields - it stores the parsed value as-is. SQLFetch therefore returns
+    // SQL_SUCCESS even though minute=61 is outside the canonical ANSI range.
+    REQUIRE(SQLFetch(stmt.getHandle()) == SQL_SUCCESS);
+    return;
+  }
+
+  NEW_DRIVER_ONLY(kBd55VarcharIntervalFetch) {
+    // Then SQLFetch returns SQL_ERROR with a SQLSTATE 22015 diagnostic record
+    ret = SQLFetch(stmt.getHandle());
+    CHECK(ret == SQL_ERROR);
+    auto records = get_diag_rec(stmt);
+    REQUIRE(!records.empty());
+    CHECK(records[0].sqlState == "22015");
+  }
+}
+
+// ============================================================================
+// Additional edge-case coverage: negative composite day-time intervals,
+// fractional-only negative seconds, sub-microsecond truncation, and
+// composite malformed-input rejection. The assertions are intentionally
+// driver-agnostic; BD#55-divergent edge cases (zero-magnitude minus
+// sign, zero-padded fractional digits, H:M with explicit fraction) are
+// covered separately so they can carry the proper OLD_DRIVER_ONLY /
+// NEW_DRIVER_ONLY branches.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative composite VARCHAR as SQL_C_INTERVAL_DAY_TO_SECOND",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR carrying a negative day-to-second interval literal
+  auto stmt = conn.execute_fetch("SELECT '-2 08:15:30.250000' AS neg_day_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_DAY_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 1);
+
+  // Then every component is preserved and the sign bit reflects the negative magnitude
+  CHECK(interval.interval_type == SQL_IS_DAY_TO_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.day == 2);
+  CHECK(interval.intval.day_second.hour == 8);
+  CHECK(interval.intval.day_second.minute == 15);
+  CHECK(interval.intval.day_second.second == 30);
+  CHECK(interval.intval.day_second.fraction == 250000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative composite VARCHAR as SQL_C_INTERVAL_HOUR_TO_SECOND",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR carrying a negative hour-to-second interval literal
+  auto stmt = conn.execute_fetch("SELECT '-12:30:45' AS neg_hour_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_HOUR_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
+
+  // Then the hour/minute/second components are populated and the sign bit is set
+  CHECK(interval.interval_type == SQL_IS_HOUR_TO_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.hour == 12);
+  CHECK(interval.intval.day_second.minute == 30);
+  CHECK(interval.intval.day_second.second == 45);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should fetch negative composite VARCHAR as SQL_C_INTERVAL_MINUTE_TO_SECOND",
+                 "[datatype][string][conversion][interval][negative]") {
+  // Given a VARCHAR carrying a negative minute-to-second interval literal with fractional seconds
+  auto stmt = conn.execute_fetch("SELECT '-45:30.750000' AS neg_minute_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_MINUTE_TO_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 1);
+
+  // Then minute, second, fraction are populated and the sign bit is set
+  CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.minute == 45);
+  CHECK(interval.intval.day_second.second == 30);
+  CHECK(interval.intval.day_second.fraction == 750000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should set sign bit on negative fractional-only SQL_C_INTERVAL_SECOND",
+                 "[datatype][string][conversion][interval][negative][fractional]") {
+  // Given a VARCHAR whose magnitude lives entirely in the fractional part
+  auto stmt = conn.execute_fetch("SELECT '-0.5' AS neg_half_second");
+
+  // When the column is fetched as SQL_C_INTERVAL_SECOND
+  auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+
+  // Then the sign bit is TRUE even though the integer part is zero (Microsoft ODBC spec: sign
+  // reflects the overall interval value, not just the leading field).
+  CHECK(interval.interval_type == SQL_IS_SECOND);
+  CHECK(interval.interval_sign == SQL_TRUE);
+  CHECK(interval.intval.day_second.second == 0);
+  CHECK(interval.intval.day_second.fraction == 500000);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should warn 01S07 on sub-microsecond fractional truncation",
+                 "[datatype][string][conversion][interval][truncation][fractional]") {
+  // Given VARCHARs whose fractional parts carry more than 6 significant digits
+  auto stmt = conn.execute_fetch(
+      "SELECT '12:30:45.1234567' AS hour_second_extra, "
+      "'2 08:15:30.7654321' AS day_second_extra, "
+      "'45:30.1234567' AS minute_second_extra");
+
+  // When fetched as composite SQL_C_INTERVAL_* with second precision
+  // Then the value is truncated to microseconds and SQLSTATE 01S07 is reported
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
+    CHECK(interval.intval.day_second.hour == 12);
+    CHECK(interval.intval.day_second.minute == 30);
+    CHECK(interval.intval.day_second.second == 45);
+    CHECK(interval.intval.day_second.fraction == 123456);
+  }
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 2);
+    CHECK(interval.intval.day_second.day == 2);
+    CHECK(interval.intval.day_second.hour == 8);
+    CHECK(interval.intval.day_second.minute == 15);
+    CHECK(interval.intval.day_second.second == 30);
+    CHECK(interval.intval.day_second.fraction == 765432);
+  }
+  {
+    auto interval = check_interval_trailing_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 3);
+    CHECK(interval.intval.day_second.minute == 45);
+    CHECK(interval.intval.day_second.second == 30);
+    CHECK(interval.intval.day_second.fraction == 123456);
+  }
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should reject malformed VARCHAR for representative composite SQL_C_INTERVAL_* targets",
+                 "[datatype][string][conversion][interval][negative][failure]") {
+  // The four day-time-only composite targets (DAY_TO_HOUR / DAY_TO_SECOND /
+  // HOUR_TO_SECOND / MINUTE_TO_SECOND) are already covered by
+  // `should reject malformed day-time VARCHAR with SQLSTATE 22018` above; this
+  // test fills in the remaining family members (YEAR_TO_MONTH, an additional
+  // DAY_TO_SECOND probe with the dotted shape, HOUR_TO_MINUTE) without
+  // duplicating coverage.
+  //
+  // Given a VARCHAR carrying a string that looks like an interval but uses wrong separators
+  auto stmt = conn.execute_fetch("SELECT '12.34.56' AS dotted, '5/10' AS slashed, 'abc' AS letters");
+
+  // When fetched as a representative subset of composite SQL_C_INTERVAL_* targets
+  // Then SQLGetData fails with SQLSTATE 22018 in each case
+  check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
+  check_invalid_string<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 2);
+  check_invalid_string<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 3);
 }
