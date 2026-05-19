@@ -56,6 +56,11 @@ Feature: Multistatement query execution
   # positional and flatten across `;`-separated statements in source order —
   # same contract as legacy snowflake-jdbc PreparedStatement, snowflake-odbc
   # SQLBindParameter, and snowflake-connector-python qmark paramstyle.
+  #
+  # "Then N result sets are returned" is asserted implicitly by walking the
+  # result-set chain to its terminator (-1 update count in JDBC, SQL_NO_DATA in
+  # ODBC, nextset() returning None in Python) — there is no separate count
+  # check.
 
   @jdbc_e2e @odbc_e2e @python_e2e
   Scenario: should execute multistatement DML with positional parameters

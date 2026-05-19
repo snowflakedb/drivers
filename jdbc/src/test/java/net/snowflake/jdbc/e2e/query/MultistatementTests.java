@@ -179,7 +179,7 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
     Connection connection = getDefaultConnection();
 
     // And A temporary table with column (id NUMBER) exists
-    String tableName = "ms_bind_dml_test";
+    String tableName = "ms_bind_dml";
     try (Statement setup = connection.createStatement()) {
       setup.execute("CREATE OR REPLACE TEMPORARY TABLE " + tableName + "(id NUMBER)");
     }
@@ -201,7 +201,7 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
       assertEquals(1, ps.getUpdateCount(), "First INSERT should affect 1 row");
 
       // And the second result set reports update count 2
-      assertFalse(ps.getMoreResults(), "Last DML statement returns false");
+      assertFalse(ps.getMoreResults());
       assertEquals(2, ps.getUpdateCount(), "Second INSERT should affect 2 rows");
       assertFalse(ps.getMoreResults());
       assertEquals(-1, ps.getUpdateCount(), "No more results");
@@ -267,6 +267,7 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
       }
 
       assertFalse(ps.getMoreResults(), "No more results after third statement");
+      assertEquals(-1, ps.getUpdateCount(), "No more results");
     }
   }
 
@@ -295,17 +296,22 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
     Connection connection = getDefaultConnection();
 
     // When Multistatement SELECT is executed with NULL positional parameters
-    assertThrows(
-        SQLException.class,
-        () -> {
-          // Then an error is returned indicating NULL bindings are not supported
-          try (PreparedStatement ps = connection.prepareStatement("SELECT ?; SELECT ?, ?")) {
-            ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
-            ps.setNull(1, Types.INTEGER);
-            ps.setInt(2, 10);
-            ps.setNull(3, Types.INTEGER);
-            ps.execute();
-          }
-        });
+    SQLException ex =
+        assertThrows(
+            SQLException.class,
+            () -> {
+              // Then an error is returned indicating NULL bindings are not supported
+              try (PreparedStatement ps = connection.prepareStatement("SELECT ?; SELECT ?, ?")) {
+                ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
+                ps.setNull(1, Types.INTEGER);
+                ps.setInt(2, 10);
+                ps.setNull(3, Types.INTEGER);
+                ps.execute();
+              }
+            });
+    // Server surfaces "Bind variable ? not set" — match loosely on "bind".
+    assertTrue(
+        ex.getMessage().toLowerCase().contains("bind"),
+        "Expected error to mention bind variables, got: " + ex.getMessage());
   }
 }
