@@ -24,8 +24,23 @@ mod loopback_server;
 mod pkce;
 mod token;
 
+/// Browser-launcher closure type used by [`OAuthAuthorizationCodeConfig`]
+/// to carry a per-connection factory. Re-exported so
+/// `crate::config::rest_parameters` can name the field type without
+/// reaching into `oauth::authorization_code` directly.
+pub(crate) use authorization_code::BrowserLaunchFn;
 pub(crate) use authorization_code::run_oauth_authorization_code;
 pub(crate) use client_credentials::acquire_client_credentials;
 pub(crate) use error::EndpointUrlParseSnafu;
 pub use error::OAuthError;
-pub(crate) use token::{host_from_token_url, remove_oauth_access_token, remove_oauth_dpop_bundled};
+pub(crate) use token::{remove_oauth_access_token, remove_oauth_dpop_bundled};
+
+#[cfg(not(any(test, feature = "test-utils")))]
+pub(crate) use token::host_from_token_url;
+/// Re-exported as `pub` under `cfg(any(test, feature = "test-utils"))` so
+/// integration / e2e tests can derive the OAuth token-cache key host
+/// from the same helper used by the production flow, instead of
+/// duplicating the Python-style `urlparse(token_request_url).hostname`
+/// fallback chain (see `analysis_feature_oauth.md` §7.3).
+#[cfg(any(test, feature = "test-utils"))]
+pub use token::host_from_token_url;
