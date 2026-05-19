@@ -1,7 +1,7 @@
 pub mod external_browser;
 pub mod native_okta;
-pub mod odbc_client_identity;
 pub mod oauth;
+pub mod odbc_client_identity;
 pub mod os_details;
 pub mod private_key_auth;
 pub mod spcs_token;
