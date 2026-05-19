@@ -17,4 +17,4 @@ This document outlines APIs that we should consider _not_ porting to the new dri
 
 ### Statement Buffer Monkey Patching
 
-- Currently, when a query returns a BINARY column, the driver returns a Buffer object monkey-patched methods: `.toStringSf()` and `.getFormat()`. These methods are not part of the documented API.
+- Currently, when a query returns a BINARY column, the driver returns a Buffer object monkey-patched methods: `.toStringSf()` and `.getFormat()`. These methods are not part of the documented API. There is no use case for them, as node can convert Buffer to both hex and base64.
