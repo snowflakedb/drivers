@@ -639,6 +639,29 @@ impl LoginParameters {
 // validate_settings – pre-flight check that collects all issues
 // ---------------------------------------------------------------------------
 
+/// Push an `InvalidValue` issue when `key` is present and non-empty but
+/// cannot be parsed as a URL. Absent or empty values are intentionally
+/// ignored — presence checks (when required) are handled separately by
+/// the caller so that a missing-and-malformed value never produces both
+/// `MissingRequired` *and* `InvalidValue` for the same parameter.
+fn push_invalid_url_issue(
+    settings: &ParamStore,
+    key: crate::config::ParamKey,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let Some(raw) = non_empty_string(settings, key) else {
+        return;
+    };
+    if let Err(e) = Url::parse(&raw) {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: key.into(),
+            message: format!("Invalid URL for '{key}': could not parse '{raw}': {e}"),
+            code: ValidationCode::InvalidValue,
+        });
+    }
+}
+
 /// Validate settings without building the full config.
 /// Returns a list of all issues found (errors and warnings).
 pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
@@ -743,11 +766,29 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 });
             }
         }
+        // TODO(SNOW-3552175): The OAuth arms below duplicate URL-shape
+        // checks already implemented (fail-fast) in
+        // `rest_parameters::OAuth*Config::from_settings`. We re-do them
+        // here so that pre-flight validation can report every issue in
+        // a single pass instead of surfacing them one-at-a-time at
+        // build time. The structural fix is to have
+        // `*Config::from_settings` (and the other auth `from_settings`
+        // impls) return `Vec<ValidationIssue>` instead of
+        // `Result<_, ConfigError>` and let `build_auth_config`
+        // aggregate — at that point this duplication can be removed
+        // across all auth methods, not just OAuth. This also dovetails
+        // with the typed `AuthenticationError` enum work in
+        // SNOW-3549115.
         "OAUTH_AUTHORIZATION_CODE" => {
             // AC flow defaults to Snowflake-as-IdP when
-            // client_id/secret are absent, so we
-            // only require user here. URL-shape validation is performed
-            // by `LoginMethod::from_settings` at build time.
+            // client_id/secret are absent, so we only require `user`
+            // here (already validated above). All three OAuth URL
+            // parameters are optional, but when supplied they must be
+            // parseable URLs — validate shape so a connection string
+            // with multiple malformed URLs reports all of them at once.
+            push_invalid_url_issue(settings, OAUTH_AUTHORIZATION_URL, &mut issues);
+            push_invalid_url_issue(settings, OAUTH_TOKEN_REQUEST_URL, &mut issues);
+            push_invalid_url_issue(settings, OAUTH_REDIRECT_URI, &mut issues);
         }
         "OAUTH_CLIENT_CREDENTIALS" => {
             // CC flow is external-IdP only: client_id, client_secret,
@@ -792,6 +833,12 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     code: ValidationCode::MissingRequired,
                 });
             }
+            // Shape-validate `oauth_token_request_url` in addition to
+            // the presence check above. Absent/empty values were
+            // already reported as `MissingRequired`, so this only adds
+            // an `InvalidValue` issue when a non-empty value is
+            // malformed.
+            push_invalid_url_issue(settings, OAUTH_TOKEN_REQUEST_URL, &mut issues);
         }
         "EXTERNALBROWSER" => {
             // no validation required; user is already validated above.
@@ -1727,6 +1774,230 @@ mod tests {
             .filter(|i| i.parameter == "host" && i.code == ValidationCode::MissingRequired)
             .collect();
         assert!(host_issues.is_empty());
+    }
+
+    // -- validate_settings: OAuth URL-shape tests --
+
+    fn oauth_ac_base_settings() -> Vec<(&'static str, Setting)> {
+        vec![
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("host", Setting::String("h.com".into())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".into()),
+            ),
+        ]
+    }
+
+    fn oauth_cc_base_settings() -> Vec<(&'static str, Setting)> {
+        vec![
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("host", Setting::String("h.com".into())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".into()),
+            ),
+            ("oauth_client_id", Setting::String("id".into())),
+            ("oauth_client_secret", Setting::String("secret".into())),
+        ]
+    }
+
+    #[test]
+    fn validate_oauth_ac_missing_urls_are_allowed() {
+        // AC falls back to Snowflake-as-IdP when URLs are absent,
+        // so missing oauth_*_url parameters must not produce errors.
+        let settings = settings_from(&oauth_ac_base_settings());
+        let issues = validate_settings(&settings);
+        let url_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.severity == ValidationSeverity::Error
+                    && matches!(
+                        i.parameter.as_str(),
+                        "oauth_authorization_url"
+                            | "oauth_token_request_url"
+                            | "oauth_redirect_uri"
+                    )
+            })
+            .collect();
+        assert!(
+            url_errors.is_empty(),
+            "Expected no OAuth URL errors when URLs are absent, got: {url_errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_ac_valid_urls_no_url_errors() {
+        let mut pairs = oauth_ac_base_settings();
+        pairs.extend([
+            (
+                "oauth_authorization_url",
+                Setting::String("https://idp.example.com/authorize".into()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/token".into()),
+            ),
+            (
+                "oauth_redirect_uri",
+                Setting::String("http://localhost:8080/callback".into()),
+            ),
+        ]);
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        let url_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.code == ValidationCode::InvalidValue
+                    && matches!(
+                        i.parameter.as_str(),
+                        "oauth_authorization_url"
+                            | "oauth_token_request_url"
+                            | "oauth_redirect_uri"
+                    )
+            })
+            .collect();
+        assert!(
+            url_errors.is_empty(),
+            "Expected no URL InvalidValue errors for well-formed URLs, got: {url_errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_ac_invalid_authorization_url_reports_invalid_value() {
+        let mut pairs = oauth_ac_base_settings();
+        pairs.push((
+            "oauth_authorization_url",
+            Setting::String("not a url".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.parameter == "oauth_authorization_url"
+                    && i.code == ValidationCode::InvalidValue),
+            "Expected InvalidValue for malformed oauth_authorization_url, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_ac_collects_all_three_url_shape_errors() {
+        // Regression test for the Option A fix: a connection string
+        // with three malformed AC URLs must report three issues in a
+        // single pre-flight pass, not just the first.
+        let mut pairs = oauth_ac_base_settings();
+        pairs.extend([
+            (
+                "oauth_authorization_url",
+                Setting::String("bad-auth-url".into()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("bad-token-url".into()),
+            ),
+            ("oauth_redirect_uri", Setting::String("bad-redirect".into())),
+        ]);
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+
+        let url_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.code == ValidationCode::InvalidValue
+                    && matches!(
+                        i.parameter.as_str(),
+                        "oauth_authorization_url"
+                            | "oauth_token_request_url"
+                            | "oauth_redirect_uri"
+                    )
+            })
+            .collect();
+        assert_eq!(
+            url_errors.len(),
+            3,
+            "Expected one InvalidValue issue per malformed URL, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_cc_missing_required_params_reports_three_issues() {
+        // Pre-existing presence-check behaviour: CC mandates
+        // client_id, client_secret, oauth_token_request_url. All
+        // three must be reported together.
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("host", Setting::String("h.com".into())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+
+        for missing in [
+            "oauth_client_id",
+            "oauth_client_secret",
+            "oauth_token_request_url",
+        ] {
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.parameter == missing && i.code == ValidationCode::MissingRequired),
+                "Expected MissingRequired for '{missing}', got: {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_oauth_cc_missing_token_url_does_not_report_invalid_value() {
+        // When oauth_token_request_url is absent we must surface
+        // MissingRequired only — never both MissingRequired *and*
+        // InvalidValue for the same parameter.
+        let settings = settings_from(&oauth_cc_base_settings());
+        let issues = validate_settings(&settings);
+
+        let invalid_value_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.parameter == "oauth_token_request_url" && i.code == ValidationCode::InvalidValue
+            })
+            .collect();
+        assert!(
+            invalid_value_issues.is_empty(),
+            "Absent oauth_token_request_url must not produce InvalidValue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_cc_invalid_token_url_reports_invalid_value() {
+        let mut pairs = oauth_cc_base_settings();
+        pairs.push((
+            "oauth_token_request_url",
+            Setting::String("not a url".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+
+        // Presence check is satisfied (value is non-empty), so
+        // MissingRequired must not fire for this parameter.
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.parameter == "oauth_token_request_url"
+                    && i.code == ValidationCode::MissingRequired),
+            "MissingRequired must not fire when value is present, got: {issues:?}"
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.parameter == "oauth_token_request_url"
+                    && i.code == ValidationCode::InvalidValue),
+            "Expected InvalidValue for malformed oauth_token_request_url, got: {issues:?}"
+        );
     }
 
     #[test]
