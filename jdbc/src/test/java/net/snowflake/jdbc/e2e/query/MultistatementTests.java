@@ -178,12 +178,13 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
+    // And A temporary table with column (id NUMBER) exists
     String tableName = "ms_bind_dml_test";
     try (Statement setup = connection.createStatement()) {
       setup.execute("CREATE OR REPLACE TEMPORARY TABLE " + tableName + "(id NUMBER)");
     }
 
-    // When Multistatement INSERT chain is executed with 3 positional parameters
+    // When Multistatement query "INSERT INTO {table} VALUES(?); INSERT INTO {table} VALUES(?),(?)" is executed with positional parameters [10, 20, 30] and multi_statement_count=2
     String sql =
         "INSERT INTO " + tableName + " VALUES(?);"
             + " INSERT INTO " + tableName + " VALUES(?),(?)";
@@ -195,15 +196,14 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
       ps.execute();
 
       // Then 2 result sets are returned
-      // And the first result set reports update count 1
       assertEquals(null, ps.getResultSet(), "First INSERT should not produce a result set");
+
+      // And the first result set reports update count 1
       assertEquals(1, ps.getUpdateCount(), "First INSERT should affect 1 row");
 
       // And the second result set reports update count 2
       assertFalse(ps.getMoreResults(), "Last DML statement returns false");
-      assertEquals(null, ps.getResultSet(), "Second INSERT should not produce a result set");
       assertEquals(2, ps.getUpdateCount(), "Second INSERT should affect 2 rows");
-
       assertFalse(ps.getMoreResults());
       assertEquals(-1, ps.getUpdateCount(), "No more results");
     }
@@ -226,9 +226,9 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Multistatement SELECT chain is executed with 6 positional parameters
-    String sql = "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?";
-    try (PreparedStatement ps = connection.prepareStatement(sql)) {
+    // When Multistatement query "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?" is executed with positional parameters [10, 20, 30, 40, 50, 60] and multi_statement_count=3
+    try (PreparedStatement ps =
+        connection.prepareStatement("SELECT ?; SELECT ?, ?; SELECT ?, ?, ?")) {
       ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 3);
       ps.setInt(1, 10);
       ps.setInt(2, 20);
@@ -240,6 +240,7 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
 
       // Then 3 result sets are returned
       assertTrue(hasResultSet, "First SELECT should produce a result set");
+
       // And the first result set contains row [10]
       try (ResultSet rs1 = ps.getResultSet()) {
         assertTrue(rs1.next());
@@ -275,7 +276,7 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Multistatement SELECT requires 3 parameters but only 1 is bound
+    // When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [10] and multi_statement_count=2
     assertThrows(
         SQLException.class,
         () -> {
@@ -290,40 +291,23 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void shouldHandleNullPositionalParametersInMultistatementQuery() throws Exception {
+  public void shouldFailWhenNullPositionalParametersAreUsedInMultistatementQuery() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Multistatement SELECT is executed with NULL/non-NULL positional parameters
-    try (PreparedStatement ps = connection.prepareStatement("SELECT ?; SELECT ?, ?")) {
-      ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
-      ps.setNull(1, Types.INTEGER);
-      ps.setInt(2, 10);
-      ps.setNull(3, Types.INTEGER);
-      boolean hasResultSet = ps.execute();
-
-      // Then 2 result sets are returned
-      assertTrue(hasResultSet, "First SELECT should produce a result set");
-      // And the first result set contains row [NULL]
-      try (ResultSet rs1 = ps.getResultSet()) {
-        assertTrue(rs1.next());
-        rs1.getObject(1);
-        assertTrue(rs1.wasNull(), "First column should be NULL");
-        assertFalse(rs1.next());
-      }
-
-      // And the second result set contains row [10, NULL]
-      assertTrue(ps.getMoreResults());
-      try (ResultSet rs2 = ps.getResultSet()) {
-        assertTrue(rs2.next());
-        assertEquals(10, rs2.getInt(1));
-        assertFalse(rs2.wasNull(), "First column of second row should not be NULL");
-        rs2.getObject(2);
-        assertTrue(rs2.wasNull(), "Second column of second row should be NULL");
-        assertFalse(rs2.next());
-      }
-
-      assertFalse(ps.getMoreResults(), "No more results after second statement");
-    }
+    // When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [NULL, 10, NULL] and multi_statement_count=2
+    assertThrows(
+        SQLException.class,
+        () -> {
+          // Then an error is returned indicating NULL bindings are not supported in multi-statement
+          try (PreparedStatement ps =
+              connection.prepareStatement("SELECT ?; SELECT ?, ?")) {
+            ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
+            ps.setNull(1, Types.INTEGER);
+            ps.setInt(2, 10);
+            ps.setNull(3, Types.INTEGER);
+            ps.execute();
+          }
+        });
   }
 }

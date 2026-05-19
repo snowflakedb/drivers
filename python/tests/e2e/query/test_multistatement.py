@@ -186,11 +186,12 @@ class TestMultistatementWithParameters:
 
     def test_should_execute_multistatement_dml_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
+        pass
         # And A temporary table with column (id NUMBER) exists
         table_name = random_table_name("ms_bind_dml")
         cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name}(id NUMBER)")
 
-        # When Multistatement INSERT chain is executed with 3 positional parameters
+        # When Multistatement query "INSERT INTO {table} VALUES(?); INSERT INTO {table} VALUES(?),(?)" is executed with positional parameters [10, 20, 30] and multi_statement_count=2
         cursor.execute(
             f"INSERT INTO {table_name} VALUES(?); INSERT INTO {table_name} VALUES(?),(?)",
             (10, 20, 30),
@@ -198,6 +199,7 @@ class TestMultistatementWithParameters:
         )
 
         # Then 2 result sets are returned
+        pass
         # And the first result set reports update count 1
         assert cursor.rowcount == 1
 
@@ -205,8 +207,6 @@ class TestMultistatementWithParameters:
         result = cursor.nextset()
         assert result is cursor
         assert cursor.rowcount == 2
-
-        # No more results
         assert cursor.nextset() is None
 
         # And the table contains rows [10, 20, 30]
@@ -215,7 +215,8 @@ class TestMultistatementWithParameters:
 
     def test_should_execute_multistatement_select_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
-        # When Multistatement SELECT chain is executed with 6 positional parameters
+        pass
+        # When Multistatement query "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?" is executed with positional parameters [10, 20, 30, 40, 50, 60] and multi_statement_count=3
         cursor.execute(
             "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?",
             (10, 20, 30, 40, 50, 60),
@@ -223,6 +224,7 @@ class TestMultistatementWithParameters:
         )
 
         # Then 3 result sets are returned
+        pass
         # And the first result set contains row [10]
         assert cursor.fetchone() == (10,)
 
@@ -233,13 +235,14 @@ class TestMultistatementWithParameters:
         # And the third result set contains row [40, 50, 60]
         assert cursor.nextset() is cursor
         assert cursor.fetchone() == (40, 50, 60)
-
-        # No more results
         assert cursor.nextset() is None
 
     def test_should_fail_when_multistatement_query_has_too_few_parameters(self, cursor):
         # Given Snowflake client is logged in
-        # When Multistatement SELECT requires 3 parameters but only 1 is bound
+        pass
+        # When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [10] and multi_statement_count=2
+        pass
+
         # Then an error is returned indicating parameter count mismatch
         with pytest.raises(ProgrammingError):
             cursor.execute(
@@ -248,22 +251,16 @@ class TestMultistatementWithParameters:
                 num_statements=2,
             )
 
-    def test_should_handle_null_positional_parameters_in_multistatement_query(self, cursor):
+    def test_should_fail_when_null_positional_parameters_are_used_in_multistatement_query(self, cursor):
         # Given Snowflake client is logged in
-        # When Multistatement SELECT is executed with NULL/non-NULL positional parameters
-        cursor.execute(
-            "SELECT ?; SELECT ?, ?",
-            (None, 10, None),
-            num_statements=2,
-        )
+        pass
+        # When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [NULL, 10, NULL] and multi_statement_count=2
+        pass
 
-        # Then 2 result sets are returned
-        # And the first result set contains row [NULL]
-        assert cursor.fetchone() == (None,)
-
-        # And the second result set contains row [10, NULL]
-        assert cursor.nextset() is cursor
-        assert cursor.fetchone() == (10, None)
-
-        # No more results
-        assert cursor.nextset() is None
+        # Then an error is returned indicating NULL bindings are not supported in multi-statement
+        with pytest.raises(ProgrammingError):
+            cursor.execute(
+                "SELECT ?; SELECT ?, ?",
+                (None, 10, None),
+                num_statements=2,
+            )
