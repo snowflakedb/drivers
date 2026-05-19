@@ -140,8 +140,7 @@ TEST_CASE("should return correct rowset for GET", "[put_get]") {
 
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_FILE_IDX) == filename + ".gz");
 
-  OLD_DRIVER_ONLY("BD#4") { CHECK(get_data<SQL_C_LONG>(stmt, GET_ROW_SIZE_IDX) == 32); }
-  NEW_DRIVER_ONLY("BD#4") { CHECK(get_data<SQL_C_LONG>(stmt, GET_ROW_SIZE_IDX) == 26); }
+  CHECK(get_data<SQL_C_LONG>(stmt, GET_ROW_SIZE_IDX) == 32);
 
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_STATUS_IDX) == "DOWNLOADED");
 

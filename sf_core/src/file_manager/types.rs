@@ -52,6 +52,12 @@ pub struct DownloadData {
     pub local_location: String,
     pub stage_info: StageInfo,
     pub encryption_materials: Vec<Option<EncryptionMaterial>>,
+    /// Wrapper-specific shape of the GET result set. Forwarded into each
+    /// `SingleDownloadData` so that `download_single_file` can populate the
+    /// `size` column according to the active wrapper's contract (cloud
+    /// pre-decryption byte count for ODBC vs. post-decryption length for
+    /// Python).
+    pub flavor: PutGetResultsetFlavor,
 }
 
 #[derive(Debug)]
@@ -60,6 +66,24 @@ pub struct SingleDownloadData {
     pub local_location: String,
     pub stage_info: StageInfo,
     pub encryption_material: Option<EncryptionMaterial>,
+    pub flavor: PutGetResultsetFlavor,
+}
+
+/// Bytes plus metadata returned by the cloud transfer layer for a single
+/// downloaded blob.
+///
+/// `cloud_byte_count` is the on-cloud (pre-decryption) byte count of the
+/// blob — typically the value reported by the storage layer's
+/// `Content-Length` header. For `PutGetResultsetFlavor::Odbc` it becomes
+/// the value of the GET result's `size` column (legacy `srcFileSize`
+/// parity); for `Python` we keep reporting the post-decryption buffer
+/// length out of `download_single_file`.
+#[derive(Debug)]
+pub struct DownloadResponse {
+    pub data: Vec<u8>,
+    pub digest: Option<String>,
+    pub file_metadata: Option<EncryptedFileMetadata>,
+    pub cloud_byte_count: i64,
 }
 
 #[derive(Debug, Clone)]

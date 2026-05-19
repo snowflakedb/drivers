@@ -19,9 +19,9 @@ behavior_differences:
 
   4:
     name: "GET rowset metadata contains file size after decryption instead of file size before decryption"
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
 
   5:
     name: "Header of a gzip-compressed file does not contain filename"
