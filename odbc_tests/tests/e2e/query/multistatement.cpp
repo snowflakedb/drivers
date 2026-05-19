@@ -160,11 +160,10 @@ TEST_CASE("should execute multistatement DML with positional parameters", "[quer
 
   // And A temporary table with column (id NUMBER) exists
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
-                                sqlchar("CREATE OR REPLACE TEMPORARY TABLE ms_odbc_bind_dml(id NUMBER)"),
-                                SQL_NTS);
+                                sqlchar("CREATE OR REPLACE TEMPORARY TABLE ms_odbc_bind_dml(id NUMBER)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
-  // When Multistatement query "INSERT INTO {table} VALUES(?); INSERT INTO {table} VALUES(?),(?)" is executed with positional parameters [10, 20, 30] and multi_statement_count=2
+  // When Multistatement INSERT chain is executed with 3 positional parameters
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLPrepare(stmt.getHandle(),
@@ -222,7 +221,7 @@ TEST_CASE("should execute multistatement SELECT with positional parameters", "[q
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When Multistatement query "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?" is executed with positional parameters [10, 20, 30, 40, 50, 60] and multi_statement_count=3
+  // When Multistatement SELECT chain is executed with 6 positional parameters
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?; SELECT ?, ?, ?"), SQL_NTS);
@@ -231,8 +230,8 @@ TEST_CASE("should execute multistatement SELECT with positional parameters", "[q
   SQLLEN param_lens[6] = {sizeof(SQLINTEGER), sizeof(SQLINTEGER), sizeof(SQLINTEGER),
                           sizeof(SQLINTEGER), sizeof(SQLINTEGER), sizeof(SQLINTEGER)};
   for (SQLUSMALLINT i = 0; i < 6; ++i) {
-    ret = SQLBindParameter(stmt.getHandle(), i + 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0,
-                           &params[i], sizeof(SQLINTEGER), &param_lens[i]);
+    ret = SQLBindParameter(stmt.getHandle(), i + 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &params[i],
+                           sizeof(SQLINTEGER), &param_lens[i]);
     REQUIRE_ODBC(ret, stmt);
   }
   ret = SQLExecute(stmt.getHandle());
@@ -270,7 +269,7 @@ TEST_CASE("should fail when multistatement query has too few parameters", "[quer
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [10] and multi_statement_count=2
+  // When Multistatement SELECT requires 3 parameters but only 1 is bound
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
@@ -285,7 +284,8 @@ TEST_CASE("should fail when multistatement query has too few parameters", "[quer
   CHECK(ret == SQL_ERROR);
 }
 
-TEST_CASE("should fail when NULL positional parameters are used in multistatement query", "[query][multistatement][parameters]") {
+TEST_CASE("should fail when NULL positional parameters are used in multistatement query",
+          "[query][multistatement][parameters]") {
   // Snowflake's SYSTEM$MULTISTMT server-side dispatcher rejects NULL bindings
   // with "Bind variable ? not set" — confirmed against legacy snowflake-jdbc
   // and legacy snowflake-odbc; the universal-driver inherits the same behavior.
@@ -294,7 +294,7 @@ TEST_CASE("should fail when NULL positional parameters are used in multistatemen
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [NULL, 10, NULL] and multi_statement_count=2
+  // When Multistatement SELECT is executed with NULL positional parameters
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
@@ -303,14 +303,17 @@ TEST_CASE("should fail when NULL positional parameters are used in multistatemen
   SQLLEN p1_len = SQL_NULL_DATA;
   SQLLEN p2_len = sizeof(p2_buf);
   SQLLEN p3_len = SQL_NULL_DATA;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p1_buf, sizeof(p1_buf), &p1_len);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p1_buf, sizeof(p1_buf),
+                         &p1_len);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p2_buf, sizeof(p2_buf), &p2_len);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p2_buf, sizeof(p2_buf),
+                         &p2_len);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p3_buf, sizeof(p3_buf), &p3_len);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p3_buf, sizeof(p3_buf),
+                         &p3_len);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then an error is returned indicating NULL bindings are not supported in multi-statement
+  // Then an error is returned indicating NULL bindings are not supported
   CHECK(ret == SQL_ERROR);
 }

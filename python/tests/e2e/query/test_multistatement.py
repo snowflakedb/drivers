@@ -191,7 +191,7 @@ class TestMultistatementWithParameters:
         table_name = random_table_name("ms_bind_dml")
         cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name}(id NUMBER)")
 
-        # When Multistatement query "INSERT INTO {table} VALUES(?); INSERT INTO {table} VALUES(?),(?)" is executed with positional parameters [10, 20, 30] and multi_statement_count=2
+        # When Multistatement INSERT chain is executed with 3 positional parameters
         cursor.execute(
             f"INSERT INTO {table_name} VALUES(?); INSERT INTO {table_name} VALUES(?),(?)",
             (10, 20, 30),
@@ -216,7 +216,7 @@ class TestMultistatementWithParameters:
     def test_should_execute_multistatement_select_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
         pass
-        # When Multistatement query "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?" is executed with positional parameters [10, 20, 30, 40, 50, 60] and multi_statement_count=3
+        # When Multistatement SELECT chain is executed with 6 positional parameters
         cursor.execute(
             "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?",
             (10, 20, 30, 40, 50, 60),
@@ -240,7 +240,7 @@ class TestMultistatementWithParameters:
     def test_should_fail_when_multistatement_query_has_too_few_parameters(self, cursor):
         # Given Snowflake client is logged in
         pass
-        # When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [10] and multi_statement_count=2
+        # When Multistatement SELECT requires 3 parameters but only 1 is bound
         pass
 
         # Then an error is returned indicating parameter count mismatch
@@ -254,10 +254,10 @@ class TestMultistatementWithParameters:
     def test_should_fail_when_null_positional_parameters_are_used_in_multistatement_query(self, cursor):
         # Given Snowflake client is logged in
         pass
-        # When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [NULL, 10, NULL] and multi_statement_count=2
+        # When Multistatement SELECT is executed with NULL positional parameters
         pass
 
-        # Then an error is returned indicating NULL bindings are not supported in multi-statement
+        # Then an error is returned indicating NULL bindings are not supported
         with pytest.raises(ProgrammingError):
             cursor.execute(
                 "SELECT ?; SELECT ?, ?",

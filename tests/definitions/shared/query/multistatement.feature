@@ -61,7 +61,7 @@ Feature: Multistatement query execution
   Scenario: should execute multistatement DML with positional parameters
     Given Snowflake client is logged in
     And A temporary table with column (id NUMBER) exists
-    When Multistatement query "INSERT INTO {table} VALUES(?); INSERT INTO {table} VALUES(?),(?)" is executed with positional parameters [10, 20, 30] and multi_statement_count=2
+    When Multistatement INSERT chain is executed with 3 positional parameters
     Then 2 result sets are returned
     And the first result set reports update count 1
     And the second result set reports update count 2
@@ -70,7 +70,7 @@ Feature: Multistatement query execution
   @jdbc_e2e @odbc_e2e @python_e2e
   Scenario: should execute multistatement SELECT with positional parameters
     Given Snowflake client is logged in
-    When Multistatement query "SELECT ?; SELECT ?, ?; SELECT ?, ?, ?" is executed with positional parameters [10, 20, 30, 40, 50, 60] and multi_statement_count=3
+    When Multistatement SELECT chain is executed with 6 positional parameters
     Then 3 result sets are returned
     And the first result set contains row [10]
     And the second result set contains row [20, 30]
@@ -79,7 +79,7 @@ Feature: Multistatement query execution
   @jdbc_e2e @odbc_e2e @python_e2e
   Scenario: should fail when multistatement query has too few parameters
     Given Snowflake client is logged in
-    When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [10] and multi_statement_count=2
+    When Multistatement SELECT requires 3 parameters but only 1 is bound
     Then an error is returned indicating parameter count mismatch
 
   @jdbc_e2e @odbc_e2e @python_e2e
@@ -88,5 +88,5 @@ Feature: Multistatement query execution
     # with "Bind variable ? not set" — confirmed against legacy snowflake-jdbc
     # and legacy snowflake-odbc; the universal-driver inherits the same behavior.
     Given Snowflake client is logged in
-    When Multistatement query "SELECT ?; SELECT ?, ?" is executed with positional parameters [NULL, 10, NULL] and multi_statement_count=2
-    Then an error is returned indicating NULL bindings are not supported in multi-statement
+    When Multistatement SELECT is executed with NULL positional parameters
+    Then an error is returned indicating NULL bindings are not supported
