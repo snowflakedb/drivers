@@ -110,6 +110,36 @@ class TestFromKwargs:
         config = ConnectionConfig.from_kwargs(CLIENT_SESSION_KEEP_ALIVE=True)
         assert config.client_session_keep_alive is True
 
+    def test_proxy_kwargs(self):
+        config = ConnectionConfig.from_kwargs(
+            proxy_host="proxy.example.com",
+            proxy_port=8080,
+            proxy_user="puser",
+            proxy_password="ppass",
+            no_proxy="internal.example.com,*.local",
+        )
+        assert config.proxy_host == "proxy.example.com"
+        assert config.proxy_port == 8080
+        assert config.proxy_user == "puser"
+        assert config.proxy_password == "ppass"
+        assert config.no_proxy == "internal.example.com,*.local"
+
+    def test_proxy_alias_to_proxy_host(self):
+        # Back-compat: legacy ODBC DSN dialog and other callers may pass `PROXY`.
+        config = ConnectionConfig.from_kwargs(PROXY="proxy.example.com")
+        assert config.proxy_host == "proxy.example.com"
+
+    def test_proxy_uppercase_kwargs(self):
+        # Resolution is case-insensitive; ODBC DSN strings deliver UPPERCASE keys.
+        config = ConnectionConfig.from_kwargs(
+            PROXY_HOST="proxy.example.com",
+            PROXY_PORT=8080,
+            NO_PROXY="internal.example.com",
+        )
+        assert config.proxy_host == "proxy.example.com"
+        assert config.proxy_port == 8080
+        assert config.no_proxy == "internal.example.com"
+
 
 class TestFromConnectionArgs:
     """Test ConnectionConfig.from_connection_args factory method."""
@@ -281,6 +311,28 @@ class TestToOptions:
         # from master_token_validity at runtime.
         assert "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY" not in opts
 
+    def test_proxy_fields_forwarded_with_canonical_names(self):
+        config = ConnectionConfig(
+            proxy_host="proxy.example.com",
+            proxy_port=8080,
+            proxy_user="puser",
+            proxy_password="ppass",
+            no_proxy="internal.example.com",
+        )
+        opts = config.to_options()
+        # Python field names equal Rust canonical names for proxy_*; no remap.
+        assert opts["proxy_host"] == "proxy.example.com"
+        assert opts["proxy_port"] == 8080
+        assert opts["proxy_user"] == "puser"
+        assert opts["proxy_password"] == "ppass"
+        assert opts["no_proxy"] == "internal.example.com"
+
+    def test_proxy_fields_omitted_when_unset(self):
+        config = ConnectionConfig(user="u")
+        opts = config.to_options()
+        for key in ("proxy_host", "proxy_port", "proxy_user", "proxy_password", "no_proxy"):
+            assert key not in opts
+
     def test_includes_extra(self):
         config = ConnectionConfig(user="u")
         config._extra = {"custom_param": "value"}
@@ -297,6 +349,17 @@ class TestRedactedOptions:
         assert opts["password"] == "***"
         assert opts["token"] == "***"
         assert opts["user"] == "u"
+
+    def test_proxy_password_redacted_but_other_proxy_fields_visible(self):
+        config = ConnectionConfig(
+            proxy_host="proxy.example.com",
+            proxy_user="puser",
+            proxy_password="ppass",
+        )
+        opts = config.redacted_options()
+        assert opts["proxy_host"] == "proxy.example.com"
+        assert opts["proxy_user"] == "puser"
+        assert opts["proxy_password"] == "***"
 
 
 class TestToProtoOptions:
@@ -332,10 +395,15 @@ class TestClassVariables:
     def test_alias_map_contains_uid(self):
         assert ConnectionConfig._ALIAS_MAP["uid"] == "user"
 
+    def test_alias_map_contains_proxy(self):
+        # Back-compat alias for legacy ODBC dialog DSN key.
+        assert ConnectionConfig._ALIAS_MAP["proxy"] == "proxy_host"
+
     def test_sensitive_params(self):
         assert "password" in ConnectionConfig._SENSITIVE_PARAMS
         assert "private_key" in ConnectionConfig._SENSITIVE_PARAMS
         assert "token" in ConnectionConfig._SENSITIVE_PARAMS
+        assert "proxy_password" in ConnectionConfig._SENSITIVE_PARAMS
 
     def test_python_only_fields(self):
         assert "numpy" in ConnectionConfig._PYTHON_ONLY

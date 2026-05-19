@@ -302,3 +302,19 @@ behavior_differences:
       Support for the body-encoded form (`client_secret_post`) is tracked as
       a follow-up; IdPs that *require* `client_secret_post` are not yet
       supported on the universal driver.
+
+  30:
+    name: "Proxy connection params take precedence over HTTP_PROXY/HTTPS_PROXY env vars"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      Since 3.17.0, the legacy connector consults `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
+      env vars before the explicit `proxy_host`/`proxy_port` connection parameters,
+      so a globally-set proxy env var silently overrides per-connection settings.
+    new_driver_behavior: |
+      Connection parameters take precedence over env vars, matching JDBC/Go/Node/ODBC.
+      Standard env vars (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, plus lowercase variants)
+      are still consulted as a fallback when no explicit `proxy_*` parameter is set.
+      Standardizes precedence across the Snowflake driver fleet. Tracking design
+      doc: `.ai/plans/proxy.md` (in review).
