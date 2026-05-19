@@ -10,6 +10,7 @@ use tracing_subscriber::{Layer, Registry};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::telemetry::os_details::detect_os_details;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
+use crate::telemetry::snowflake_processor::SessionFlushHandle;
 
 use super::error::{InitSnafu, LogError};
 use super::{EmptyLayer, LoggingConfig};
@@ -28,6 +29,7 @@ pub struct LogManager {
     #[allow(dead_code)]
     telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider,
     telemetry_sessions: SessionRegistry,
+    session_flusher: Option<SessionFlushHandle>,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
     fs: Arc<dyn FsAdapter>,
     /// Process-wide default for `log_query_text` parsed from `sf.odbc.ini` /
@@ -43,6 +45,16 @@ impl LogManager {
     /// Returns the session registry shared with the Snowflake telemetry exporter.
     pub fn telemetry_sessions(&self) -> &SessionRegistry {
         &self.telemetry_sessions
+    }
+
+    /// Flush buffered telemetry spans for a specific session.
+    /// Called during connection release before the connection span is dropped.
+    /// Awaits the export so it completes while session tokens are still alive
+    /// (see [`crate::telemetry::snowflake_processor::SessionFlushHandle::flush_session`]).
+    pub async fn flush_session(&self, session_id: i64) {
+        if let Some(ref flusher) = self.session_flusher {
+            flusher.flush_session(session_id).await;
+        }
     }
 
     /// Lazily detects and caches OS details (e.g. `/etc/os-release` on Linux).
@@ -83,6 +95,7 @@ impl LogManager {
         Self {
             telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
             telemetry_sessions: SessionRegistry::default(),
+            session_flusher: None,
             os_details: once_cell::sync::OnceCell::new(),
             fs,
             log_query_text: None,
@@ -114,16 +127,18 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
-        let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
-            .ok_or_else(|| {
-                InitSnafu {
-                    message: "provider is always Some when sessions are provided",
-                }
-                .build()
-            })?;
+        let (provider, flusher) =
+            Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?;
+        let provider = provider.ok_or_else(|| {
+            InitSnafu {
+                message: "provider is always Some when sessions are provided",
+            }
+            .build()
+        })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: sessions,
+            session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
             log_query_text,
@@ -146,16 +161,17 @@ impl LogManager {
         let log_query_text = config.log_query_text;
         let log_query_parameters = config.log_query_parameters;
         let error_trace_enabled = config.error_trace_enabled;
-        let provider =
-            Self::try_init(config, Some(app_sink), Some(registry.clone()))?.ok_or_else(|| {
-                InitSnafu {
-                    message: "provider is always Some when registry is Some",
-                }
-                .build()
-            })?;
+        let (provider, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
+        let provider = provider.ok_or_else(|| {
+            InitSnafu {
+                message: "provider is always Some when registry is Some",
+            }
+            .build()
+        })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: registry,
+            session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
             log_query_text,
@@ -205,7 +221,13 @@ impl LogManager {
         config: LoggingConfig,
         app_sink: Option<L>,
         registry: Option<SessionRegistry>,
-    ) -> Result<Option<opentelemetry_sdk::trace::SdkTracerProvider>, LogError>
+    ) -> Result<
+        (
+            Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+            Option<SessionFlushHandle>,
+        ),
+        LogError,
+    >
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
@@ -221,20 +243,21 @@ impl LogManager {
             layers.push(OpenTelemetryLayer::new(super::opentelemetry::init_tracer()?).boxed());
         }
 
-        let (snowflake_layer, provider) = if let Some(sessions) = registry {
+        let (snowflake_layer, provider, flush_handle) = if let Some(sessions) = registry {
             let exporter =
                 crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
+            let (processor, flush_handle) =
+                crate::telemetry::snowflake_processor::SnowflakeSpanProcessor::new(exporter);
             let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-                .with_simple_exporter(exporter)
+                .with_span_processor(processor)
                 .build();
             let tracer = provider.tracer("snowflake.telemetry");
-            let layer =
-                OpenTelemetryLayer::new(tracer).with_filter(tracing_subscriber::filter::filter_fn(
-                    |metadata| metadata.name() == "connection" || metadata.is_event(),
-                ));
-            (Some(layer), Some(provider))
+            // No filter — the processor handles routing and drops
+            // spans that cannot be resolved to a session.
+            let layer = OpenTelemetryLayer::new(tracer);
+            (Some(layer), Some(provider), Some(flush_handle))
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         if let Some(layer) = snowflake_layer {
@@ -263,7 +286,7 @@ impl LogManager {
             .build()
         })?;
 
-        Ok(provider)
+        Ok((provider, flush_handle))
     }
 
     fn build_core_layer(config: &LoggingConfig) -> Result<BoxedLayer, LogError> {
@@ -436,5 +459,19 @@ mod tests {
             !config.open_telemetry,
             "default opentelemetry should be false"
         );
+    }
+
+    #[test]
+    fn with_none_subscriber_exposes_session_registry() {
+        let lm = LogManager::with_none_subscriber(Arc::new(crate::fs_adapter::RealFs));
+        let guard = lm.telemetry_sessions().read().unwrap();
+        assert!(guard.is_empty(), "session registry should start empty");
+    }
+
+    #[tokio::test]
+    async fn flush_session_is_noop_without_flusher() {
+        let lm = LogManager::with_none_subscriber(Arc::new(crate::fs_adapter::RealFs));
+        // session_flusher is None for with_none_subscriber — should not panic
+        lm.flush_session(42).await;
     }
 }

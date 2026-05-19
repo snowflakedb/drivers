@@ -914,10 +914,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            let _guard = conn_span.enter();
-            crate::telemetry::record_api_call(&input.api_method);
-        }
+        let session_id = self.driver.session_id_for_conn(handle).await;
+        let span = crate::snowflake_op_span!("wrapper_api_usage", session_id);
+        let _guard = span.enter();
+        crate::telemetry::record_api_call(&input.api_method);
 
         Ok(TelemetrySendResponse {})
     }
@@ -933,10 +933,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            let _guard = conn_span.enter();
-            crate::telemetry::record_exception(&input.exception_type, &input.error_source);
-        }
+        let session_id = self.driver.session_id_for_conn(handle).await;
+        let span = crate::snowflake_op_span!("wrapper_error", session_id);
+        let _guard = span.enter();
+        crate::telemetry::record_exception(&input.exception_type, &input.error_source);
 
         Ok(TelemetrySendResponse {})
     }

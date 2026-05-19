@@ -6,18 +6,53 @@ pub mod types;
 pub mod serialization;
 #[doc(hidden)]
 pub mod snowflake_exporter;
+#[doc(hidden)]
+pub mod snowflake_processor;
 
 pub mod os_details;
 pub mod platform_detection;
 
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+/// Span attribute key for the Snowflake session id. Carried on every span
+/// the driver emits so the exporter can route it to the correct session
+/// without relying on parent-child trace relationships.
+pub const SESSION_ID_FIELD: &str = "snowflake.session.id";
+
+/// Build a bounded span for a single FFI / driver operation tagged with the
+/// owning session id. Each entry-point method opens one of these and lets it
+/// end with the operation — there is no long-lived parent span.
+///
+/// `$session_id` must be `Option<i64>`. When `None` (handle unknown, login
+/// not yet completed, mid-teardown) the macro returns `Span::none()` so the
+/// span is silently disabled rather than stamped with a sentinel that could
+/// collide with a real session id and route telemetry to the wrong tenant.
+///
+/// `event_kind = "span"` is stamped so downstream consumers can distinguish
+/// per-operation span records from event records (`session_init`, `api_call`,
+/// `exception`) that share the same `/telemetry/send` payload shape.
+#[macro_export]
+macro_rules! snowflake_op_span {
+    ($name:expr, $session_id:expr) => {
+        match $session_id {
+            ::std::option::Option::Some(id) => ::tracing::info_span!(
+                $name,
+                "db.system" = "snowflake",
+                "snowflake.session.id" = id,
+                "event_kind" = "span",
+            ),
+            ::std::option::Option::None => ::tracing::Span::none(),
+        }
+    };
+}
+
 /// Record a session_init event on the **current** tracing span.
 ///
-/// The caller must have entered the connection span before calling this.
-/// Uses `OpenTelemetrySpanExt::add_event` (rather than `tracing::event!`)
-/// because events with dotted field names (e.g. `service.name`) are not
-/// supported by the `event!` macro, and because
+/// The caller must have entered a span tagged with `snowflake.session.id`
+/// (e.g. one built by [`snowflake_op_span!`]) before calling this. Uses
+/// `OpenTelemetrySpanExt::add_event` (rather than `tracing::event!`) because
+/// events with dotted field names (e.g. `service.name`) are not supported by
+/// the `event!` macro, and because
 /// `Span::current().context().span().add_event(...)` operates on a detached
 /// `SpanRef` and does not mutate the underlying tracing span.
 pub fn record_session_init(env: &environment::EnvironmentInfo) {

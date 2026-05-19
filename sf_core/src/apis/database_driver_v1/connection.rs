@@ -1,10 +1,11 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
+use tracing::Instrument;
 
 use super::Setting;
 use super::async_query_registry::AsyncQueryRegistry;
@@ -345,6 +346,11 @@ impl DatabaseDriverV1 {
                     )
                     .await;
 
+                    // Populate the lock-free session id cache so entry-point
+                    // methods can stamp `snowflake.session.id` on their spans
+                    // without taking the connection mutex.
+                    conn.session_id_cache.store(session_id, Ordering::Relaxed);
+
                     // Telemetry setup: check if the server has opted this session
                     // into in-band telemetry and a session registry is configured,
                     // then register the session so spans tagged with this
@@ -389,21 +395,18 @@ impl DatabaseDriverV1 {
                             .as_ref()
                             .map(crate::telemetry::environment::EnvironmentInfo::with_wrapper)
                             .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
-                        // Long-lived connection span carries all telemetry events
-                        // (session_init, api_usage, wrapper_error) for this session.
-                        // Events are exported when the span ends on connection release.
-                        let conn_span =
-                            tracing::info_span!("connection", "snowflake.session.id" = session_id,);
-
-                        // Record session_init as an event on the connection span.
-                        // We enter the span so the OpenTelemetryLayer captures the
-                        // tracing event as an OTel span event.
-                        {
-                            let _guard = conn_span.enter();
-                            crate::telemetry::record_session_init(&env_info);
-                        }
-
-                        conn.telemetry_span = Some(conn_span);
+                        // Bounded `session_init` span: an event-carrier span whose
+                        // sole purpose is to attach `snowflake.session.id` to the
+                        // session_init OTEL event. It does NOT measure connection_init
+                        // duration — login has already completed by the time this span
+                        // opens. Each subsequent driver operation emits its own bounded
+                        // span tagged with the same session id; they share no trace_id
+                        // with this span.
+                        // TODO: instrument the surrounding connection_init future so we
+                        // capture login duration + Status::Error on failure.
+                        let init_span = crate::snowflake_op_span!("session_init", Some(session_id));
+                        let _guard = init_span.enter();
+                        crate::telemetry::record_session_init(&env_info);
                     }
 
                     if keep_alive {
@@ -440,45 +443,35 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Return the per-connection telemetry span if available.
+    /// Flush all telemetry for this connection and clean up the session registry.
     ///
-    /// Callers enter this span and record OTel events (via
-    /// `telemetry::record_api_call` / `record_exception`). The span
-    /// carries `snowflake.session.id` for routing by the shared exporter.
-    pub async fn telemetry_span(&self, handle: Handle) -> Option<tracing::Span> {
-        let conn_ptr = self.connections.get_obj(handle)?;
-        let conn = conn_ptr.lock().await;
-        conn.telemetry_span.clone()
-    }
-
-    /// End the connection span and deregister from the shared telemetry
-    /// session registry. Must be called while session tokens are still alive
-    /// (before logout/cleanup) so the exporter can authenticate the POST.
-    /// Idempotent: no-op if the span was already taken.
+    /// Order matters:
+    /// 1. Flush per-session buffered spans — awaited export to `/telemetry/send`
+    ///    while session tokens are still alive for authentication.
+    /// 2. Remove the session from the exporter registry so it no longer resolves.
+    ///
+    /// Must be called while session tokens are still alive (before logout).
+    /// Idempotent. Each driver operation emits a bounded span that ends when the
+    /// operation returns, so there is no long-lived parent span to drop here.
     pub async fn flush_connection_telemetry(&self, conn_handle: Handle) {
         let Some(conn_ptr) = self.connections.get_obj(conn_handle) else {
             return;
         };
-        let (span, tokens_arc) = {
-            let mut conn = conn_ptr.lock().await;
-            (conn.telemetry_span.take(), conn.tokens.clone())
+        let tokens_arc = {
+            let conn = conn_ptr.lock().await;
+            conn.tokens.clone()
         };
-        // Mutex dropped before reading the tokens RwLock to avoid deadlock.
         let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
 
-        // Drop the tracing span — this ends the underlying OTel span.
-        // SimpleSpanProcessor calls the exporter synchronously via
-        // futures_executor::block_on.  The exporter spawns the HTTP
-        // POST on the tokio runtime and awaits the JoinHandle, so by
-        // the time drop() returns the telemetry has been sent.
-        drop(span);
-        if let Some(id) = session_id
-            && let Some(sessions) = self.telemetry_sessions()
-        {
-            sessions
-                .write()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
+        if let Some(id) = session_id {
+            self.flush_telemetry_session(id).await;
+
+            if let Some(sessions) = self.telemetry_sessions() {
+                sessions
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+            }
         }
     }
 
@@ -808,10 +801,12 @@ pub struct Connection {
     pub final_session_names: RwLock<FinalSessionNames>,
     /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
-    /// Long-lived connection span carrying `snowflake.session.id`.
-    /// Telemetry events (session_init, api_usage, wrapper_error) are
-    /// recorded as OTel events on this span; it is ended on release.
-    pub(crate) telemetry_span: Option<tracing::Span>,
+    /// Snowflake session id, populated from `tokens.session_id` immediately after
+    /// `connection_init` succeeds. Stored as `AtomicI64` so entry-point methods
+    /// can resolve it lock-free when stamping `snowflake.session.id` on their
+    /// telemetry spans. `0` means "not yet populated"; resolvers must treat `0`
+    /// as `None` to avoid colliding with a real session id of zero.
+    pub(crate) session_id_cache: AtomicI64,
     /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
     pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
 }
@@ -842,7 +837,7 @@ impl Connection {
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
-            telemetry_span: None,
+            session_id_cache: AtomicI64::new(0),
             heartbeat_handle: None,
         }
     }
@@ -1825,51 +1820,59 @@ impl DatabaseDriverV1 {
     /// Returns `true` if the session is valid, `false` otherwise.
     /// Automatically attempts one token refresh on 401 (session expired).
     pub async fn connection_heartbeat(&self, conn_handle: Handle) -> Result<bool, ApiError> {
-        let conn_ptr = self
-            .connections
-            .get_obj(conn_handle)
-            .context(InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            })?;
+        let session_id = self.session_id_for_conn(conn_handle).await;
+        async {
+            let conn_ptr = self
+                .connections
+                .get_obj(conn_handle)
+                .context(InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                })?;
 
-        let mut ctx = match RefreshContext::from_arc(&conn_ptr).await {
-            Ok(ctx) => ctx,
-            Err(_) => return Ok(false),
-        };
-
-        let server_url = match url::Url::parse(&ctx.server_url) {
-            Ok(u) => u,
-            Err(_) => return Ok(false),
-        };
-
-        let mut last_error: Option<RestError> = None;
-
-        loop {
-            let token = match ctx.refresh_token(last_error.take()).await {
-                Ok(t) => t,
+            let mut ctx = match RefreshContext::from_arc(&conn_ptr).await {
+                Ok(ctx) => ctx,
                 Err(_) => return Ok(false),
             };
 
-            match heartbeat::send_heartbeat(
-                &ctx.http_client,
-                &server_url,
-                &ctx.client_info,
-                token.reveal(),
-            )
-            .await
-            {
-                Ok(()) => return Ok(true),
-                Err(
-                    e @ RestError::InvalidSnowflakeResponse {
-                        source: SnowflakeResponseError::SessionExpired { .. },
-                        ..
-                    },
-                ) => {
-                    last_error = Some(e);
-                }
+            let server_url = match url::Url::parse(&ctx.server_url) {
+                Ok(u) => u,
                 Err(_) => return Ok(false),
+            };
+
+            let mut last_error: Option<RestError> = None;
+
+            loop {
+                let token = match ctx.refresh_token(last_error.take()).await {
+                    Ok(t) => t,
+                    Err(_) => return Ok(false),
+                };
+
+                match heartbeat::send_heartbeat(
+                    &ctx.http_client,
+                    &server_url,
+                    &ctx.client_info,
+                    token.reveal(),
+                )
+                .await
+                {
+                    Ok(()) => return Ok(true),
+                    Err(
+                        e @ RestError::InvalidSnowflakeResponse {
+                            source: SnowflakeResponseError::SessionExpired { .. },
+                            ..
+                        },
+                    ) => {
+                        last_error = Some(e);
+                    }
+                    Err(_) => return Ok(false),
+                }
             }
         }
+        .instrument(crate::snowflake_op_span!(
+            "connection_heartbeat",
+            session_id
+        ))
+        .await
     }
 
     /// Execute a token request (ISSUE/RENEW) using the connection's master token.
