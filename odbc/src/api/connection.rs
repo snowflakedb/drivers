@@ -1383,6 +1383,26 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_forwards_session_keep_alive_params() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("CLIENT_SESSION_KEEP_ALIVE".to_owned(), "true".to_owned()),
+            (
+                "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY".to_owned(),
+                "1800".to_owned(),
+            ),
+        ]));
+
+        assert_eq!(
+            config_string(&options, "CLIENT_SESSION_KEEP_ALIVE"),
+            Some("true")
+        );
+        assert_eq!(
+            config_string(&options, "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"),
+            Some("1800")
+        );
+    }
+
+    #[test]
     fn apply_pre_connection_overrides_makes_priv_key_base64_authoritative() {
         let mut options = normalize_connection_string_options(HashMap::from([
             ("PRIV_KEY_BASE64".to_owned(), "dsn-key".to_owned()),
