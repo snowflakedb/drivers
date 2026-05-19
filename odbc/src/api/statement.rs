@@ -1742,7 +1742,7 @@ pub fn set_stmt_attr(
             }
         }
         StmtAttr::SnowflakeMultiStatementCount => {
-            let val = value_ptr as i64;
+            let val = value_ptr as isize as i64;
             if val < -1 || val > i16::MAX as i64 {
                 return InvalidAttributeValueSnafu {
                     attribute,

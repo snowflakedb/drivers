@@ -632,3 +632,17 @@ behavior_differences:
       Applications that rely on the reference driver's lenient parsing (accepting bare integers as YEAR_TO_MONTH leading fields, out-of-range trailing day-time fields, or silently truncating zero-magnitude fractions) will see new 22015 or 22018 errors or 01S07 warnings. Applications that set `SQL_DESC_DATETIME_INTERVAL_PRECISION` on the ARD now actually get the precision they asked for instead of the silent default. Callers that previously caught 22018 on '5.5' -> SQL_C_INTERVAL_YEAR must now also handle the 01S07 success-with-info case. Callers that previously caught 22018 on out-of-range YEAR_TO_MONTH months (e.g. '3-12') must also handle 22015 from the universal driver.
     description: |
       Spec reference: ODBC Appendix D, "Converting Data from SQL to C Data Types" - "Character to Interval" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-sql-to-c-data-types). Trailing-field range enforcement surfaces SQLSTATE 22015 ("Interval field overflow") because the `SQLGetData` diagnostics table defines 22015 as fired when "there was no representation of the value of the SQL type in the interval C type"; an interval C structure has no representation for trailing fields outside their Gregorian range, per the "Constraints of the Gregorian Calendar" appendix (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/constraints-of-the-gregorian-calendar). The same 22015 mapping is consistent with the driver-internal `field_overflow` helper, which fires 22015 for the larger `u32::MAX`-overflow form of the same issue. The canonical ANSI ranges (HOUR 0..23, MINUTE/SECOND 0..59, MONTH 0..11 in YEAR_TO_MONTH composites) are taken from ANSI SQL/Foundation interval literal grammar.
+
+  56:
+    name: "SQL_SF_STMT_ATTR_LAST_QUERY_ID (SQLPrepare+SQLExecute path) and SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT are only fully supported by the new driver"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      SQL_SF_STMT_ATTR_LAST_QUERY_ID: The old driver returns SQL_SUCCESS with an empty string before any execution and returns a valid query UUID after SQLExecDirect. However it does not populate the query ID after SQLPrepare+SQLExecute and does not return SQL_ERROR when the attribute is set (read-only violation is silently ignored).
+      SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT: The old driver does not implement this attribute. SQLGetStmtAttr returns an error or garbage. SQLSetStmtAttr silently accepts any value including invalid ones (e.g. -2) without error. The count is not forwarded to the server.
+    new_driver_behavior: |
+      SQL_SF_STMT_ATTR_LAST_QUERY_ID (read-only): returns empty string before any execution, a valid UUID after SQLExecDirect or SQLPrepare+SQLExecute, and SQL_ERROR with HY092 on any set attempt.
+      SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT: default -1 (auto-detect), supports set/get roundtrip for values -1 to 32767, returns SQL_ERROR with HY024 for values < -1, and forwards the count to the server enabling multi-statement result sets via SQLMoreResults.
+    impact: |
+      Applications relying on SQL_SF_STMT_ATTR_LAST_QUERY_ID after SQLPrepare+SQLExecute or on SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT must target the new driver. Basic last-query-id retrieval after SQLExecDirect works on both drivers.

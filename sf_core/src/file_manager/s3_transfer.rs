@@ -257,18 +257,54 @@ async fn create_s3_client(
         .await;
 
     let mut s3_config = aws_sdk_s3::config::Builder::from(&config);
-    if let Some(end_point) = &stage_info.end_point {
-        let endpoint_url = if end_point.starts_with("https://") || end_point.starts_with("http://")
-        {
-            end_point.clone()
-        } else {
-            format!("https://{end_point}")
-        };
-        tracing::debug!("Using Snowflake-provided S3 endpoint: {endpoint_url}");
+    if let Some(endpoint_url) = resolve_s3_endpoint(stage_info) {
+        tracing::debug!("Using S3 endpoint: {endpoint_url}");
         s3_config = s3_config.endpoint_url(endpoint_url);
     }
 
     Ok(S3Client::from_conf(s3_config.build()))
+}
+
+/// Resolves the explicit S3 endpoint URL to hand to the AWS SDK builder, or
+/// `None` to let the SDK derive the endpoint from the region.
+///
+/// Precedence (matches `snowflake-jdbc` and `libsnowflakeclient`):
+/// 1. `stage_info.endpoint` set (FIPS / VPCE / custom): used verbatim, with
+///    `https://` prepended if no scheme is present.
+/// 2. `stage_info.use_s3_regional_url` set: route to
+///    `s3.<region>.amazonaws.com[.cn]`.
+/// 3. Neither: `None` — the SDK uses its default endpoint resolver, which
+///    handles standard regions, GovCloud, and `cn-*` correctly on its own.
+///
+/// Extracted as a pure function so callers (and tests) can verify the chosen
+/// endpoint without going through `aws_sdk_s3::Config`, which doesn't expose
+/// the configured URL.
+fn resolve_s3_endpoint(stage_info: &StageInfo) -> Option<String> {
+    if let Some(ep) = stage_info.endpoint.as_deref() {
+        let endpoint_url = if ep.starts_with("https://") || ep.starts_with("http://") {
+            ep.to_string()
+        } else {
+            format!("https://{ep}")
+        };
+        return Some(endpoint_url);
+    }
+    if stage_info.use_s3_regional_url {
+        return Some(regional_s3_endpoint(&stage_info.region));
+    }
+    None
+}
+
+/// Builds the S3 regional endpoint URL for a given region. China regions
+/// (`cn-*`) use the `amazonaws.com.cn` suffix; everything else uses
+/// `amazonaws.com`. Mirrors `getDomainSuffixForRegionalUrl` in
+/// snowflake-jdbc's `SnowflakeS3Client`.
+fn regional_s3_endpoint(region: &str) -> String {
+    let suffix = if region.to_ascii_lowercase().starts_with("cn-") {
+        "amazonaws.com.cn"
+    } else {
+        "amazonaws.com"
+    };
+    format!("https://s3.{region}.{suffix}")
 }
 
 /// Error returned when `create_s3_client` is called with non-S3 credentials.
@@ -411,5 +447,123 @@ mod tests {
         let cfg = to_aws_timeout_config(&policy);
         assert_eq!(cfg.operation_timeout(), Some(policy.max_elapsed));
         assert_eq!(cfg.operation_attempt_timeout(), policy.per_request_timeout);
+    }
+
+    // --- Regional endpoint construction ---
+
+    #[test]
+    fn regional_s3_endpoint_default_suffix() {
+        assert_eq!(
+            regional_s3_endpoint("us-east-1"),
+            "https://s3.us-east-1.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn regional_s3_endpoint_china_suffix() {
+        assert_eq!(
+            regional_s3_endpoint("cn-north-1"),
+            "https://s3.cn-north-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn regional_s3_endpoint_china_match_is_case_insensitive() {
+        // GS could conceivably send the region in upper case; the suffix
+        // detection must not depend on case.
+        assert_eq!(
+            regional_s3_endpoint("CN-NORTH-1"),
+            "https://s3.CN-NORTH-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn regional_s3_endpoint_govcloud_uses_default_suffix() {
+        // GovCloud regions are still under amazonaws.com (e.g.
+        // s3.us-gov-west-1.amazonaws.com); only `cn-*` gets the .cn TLD.
+        assert_eq!(
+            regional_s3_endpoint("us-gov-west-1"),
+            "https://s3.us-gov-west-1.amazonaws.com"
+        );
+    }
+
+    // --- Endpoint resolution ---
+    //
+    // Exercises the four cases the AWS SDK can't surface for us because
+    // `aws_sdk_s3::Config` does not expose the resolved URL: explicit
+    // endpoint, regional flag, neither, and scheme-less endpoint.
+
+    use crate::file_manager::types::{CloudCredentials, LocationType};
+    use crate::sensitive::SensitiveString;
+
+    fn s3_stage(endpoint: Option<&str>, use_s3_regional_url: bool) -> StageInfo {
+        StageInfo {
+            location_type: LocationType::S3,
+            bucket: "my-bucket".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "us-east-1".to_string(),
+            creds: CloudCredentials::S3 {
+                aws_key_id: "k".to_string(),
+                aws_secret_key: SensitiveString::from("s"),
+                aws_token: SensitiveString::from("t"),
+            },
+            endpoint: endpoint.map(str::to_string),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url,
+            storage_account: None,
+        }
+    }
+
+    #[test]
+    fn resolve_endpoint_explicit_endpoint_wins_over_regional_flag() {
+        // GS-supplied endpoint always wins — FIPS / VPCE / custom must not
+        // be silently overridden by the regional flag.
+        let stage = s3_stage(Some("https://my-fips.us-east-1.amazonaws.com"), true);
+        assert_eq!(
+            resolve_s3_endpoint(&stage).as_deref(),
+            Some("https://my-fips.us-east-1.amazonaws.com")
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_uses_regional_when_only_flag_set() {
+        let stage = s3_stage(None, true);
+        assert_eq!(
+            resolve_s3_endpoint(&stage).as_deref(),
+            Some("https://s3.us-east-1.amazonaws.com")
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_returns_none_when_neither_set() {
+        // Falls through to the AWS SDK's default endpoint resolver — we
+        // must NOT pre-pin an endpoint, otherwise the SDK can't apply its
+        // own `cn-*` / GovCloud handling.
+        let stage = s3_stage(None, false);
+        assert_eq!(resolve_s3_endpoint(&stage), None);
+    }
+
+    #[test]
+    fn resolve_endpoint_prepends_https_when_scheme_missing() {
+        // GS sometimes sends `endPoint` without a scheme (host only).
+        // The SDK's `endpoint_url` requires a scheme, so we add `https://`.
+        let stage = s3_stage(Some("my-fips.us-east-1.amazonaws.com"), false);
+        assert_eq!(
+            resolve_s3_endpoint(&stage).as_deref(),
+            Some("https://my-fips.us-east-1.amazonaws.com")
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_preserves_http_scheme() {
+        // If GS or a test fixture supplies `http://`, we must not double-
+        // prefix or upgrade the scheme.
+        let stage = s3_stage(Some("http://localhost:9000"), false);
+        assert_eq!(
+            resolve_s3_endpoint(&stage).as_deref(),
+            Some("http://localhost:9000")
+        );
     }
 }
