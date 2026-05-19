@@ -37,20 +37,13 @@ Feature: OAuth Authentication
     When Trying to Connect
     Then Connection fails with a missing-parameter error citing oauth_token_request_url
 
-  # The two AUTHENTICATOR=OAUTH scenarios below are @odbc_int only:
-  # Python identifiers cannot include the `=` character, so the
-  # tests-format-validator cannot match a Python test method against
-  # these scenario names. The Python wrapper exercises identical
-  # behaviour in python/tests/integ/authentication/test_oauth_python_specific.py
-  # under language-neutral method names.
-
-  @odbc_int
+  @odbc_int @python_int
   Scenario: should forward AUTHENTICATOR=OAUTH with TOKEN to core
     Given Authentication is set to legacy OAUTH with a pre-acquired access token
     When Trying to Connect
     Then The wrapper forwards the token to sf_core without raising a missing-parameter error for it
 
-  @odbc_int
+  @odbc_int @python_int
   Scenario: should fail AUTHENTICATOR=OAUTH when TOKEN is missing
     Given Authentication is set to legacy OAUTH without a TOKEN
     When Trying to Connect
@@ -81,10 +74,10 @@ Feature: OAuth Authentication
     When Trying to Connect
     Then No diagnostic record contains the literal client secret
 
-  # Python-only OAuth wrapper behaviour (legacy OAUTH token redaction,
-  # `oauth_token_url` alias rewrite, `oauth_enable_refresh_tokens` /
-  # `oauth_credentials_in_body` / `oauth_socket_uri` deprecation
-  # warnings) lives in
+  # Python-only OAuth wrapper behaviour (legacy OAUTH `token` literal
+  # redaction, `oauth_token_url` / `oauth_socket_uri` alias rewrites, and
+  # `oauth_enable_refresh_tokens` / `oauth_credentials_in_body`
+  # deprecation warnings) lives in
   # python/tests/integ/authentication/test_oauth_python_specific.py.
   # These behaviours do not have shared Gherkin scenarios because they
   # are not part of the cross-driver OAuth contract.

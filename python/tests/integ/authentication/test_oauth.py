@@ -18,7 +18,7 @@ Snowflake account / IdP.
 Scenario step text comes verbatim from
 ``tests/definitions/shared/authentication/oauth.feature`` (@odbc_int /
 @python_int scenarios). Python-specific behaviour (legacy alias
-rewrite, deprecation warnings, ``token=`` echo guard) lives in
+rewrite, deprecation warnings) lives in
 ``test_oauth_python_specific.py`` so the shared feature file stays
 language-neutral.
 """
@@ -91,6 +91,44 @@ class TestOAuthClientCredentialsRequiredParams:
 
         # Then Connection fails with a missing-parameter error citing oauth_token_request_url
         assert "oauth_token_request_url" in _full_error_text(exception)
+
+
+# ---------------------------------------------------------------------------
+# Legacy AUTHENTICATOR=OAUTH — required ``token`` kwarg and forwarding
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyOAuthAuthenticator:
+    """Legacy AUTHENTICATOR=OAUTH requires a ``token`` kwarg and forwards it to sf_core."""
+
+    def test_should_fail_authenticator_oauth_when_token_is_missing(self, int_test_connection_factory):
+        # Given Authentication is set to legacy OAUTH without a TOKEN
+        kwargs = {"authenticator": "OAUTH", "private_key_file": None}
+
+        # When Trying to Connect
+        exception = _attempt_oauth_connect(int_test_connection_factory, **kwargs)
+
+        # Then Connection fails with a missing-parameter error citing token
+        text = _full_error_text(exception)
+        assert "token" in text.lower()
+
+    def test_should_forward_authenticator_oauth_with_token_to_core(self, int_test_connection_factory):
+        # Given Authentication is set to legacy OAUTH with a pre-acquired access token
+        kwargs = {
+            "authenticator": "OAUTH",
+            "private_key_file": None,
+            "token": "fake.jwt.token",
+        }
+
+        # When Trying to Connect
+        exception = _attempt_oauth_connect(int_test_connection_factory, **kwargs)
+
+        # The connection still fails because the localhost test backend
+        # rejects the token -- that is a *network* failure, not a
+        # *validation* failure.
+        # Then The wrapper forwards the token to sf_core without raising a missing-parameter error for it
+        text = _full_error_text(exception).lower()
+        assert "missing required parameter" not in text or "token" not in text.split("missing required parameter", 1)[1]
 
 
 # ---------------------------------------------------------------------------
