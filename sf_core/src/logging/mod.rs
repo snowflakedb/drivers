@@ -40,7 +40,7 @@ impl LogRotation {
 }
 
 /// Configuration for the logging subsystem.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoggingConfig {
     pub enabled: bool,
     pub level: LevelFilter,

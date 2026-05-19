@@ -47,23 +47,49 @@ pub fn parse_ini_content(content: &str) -> Result<LoggingConfig, LogError> {
     apply_ini_section(ini.general_section())
 }
 
-/// Map INI properties to a [`LoggingConfig`].
+/// Apply a single INI `key=value` pair to `config` if the key belongs to
+/// the logging subsystem.
+///
+/// Returns `Ok(true)` when the key was recognised and applied, `Ok(false)`
+/// when the key is owned by some other subsystem (the caller decides what
+/// to do — typically dispatch elsewhere or log a warning), and `Err` when
+/// the key was recognised but the value failed to parse.
+///
+/// Key matching is case-insensitive. This is the per-key primitive used by
+/// [`crate::config::sf_odbc_ini::SfOdbcIni`] to walk an INI section
+/// exactly once and dispatch each entry to the right subsystem, without
+/// splitting parsing rules across the logging code and the foreign-key
+/// lookup path.
+pub fn apply_logging_key(
+    key: &str,
+    value: &str,
+    config: &mut LoggingConfig,
+) -> Result<bool, LogError> {
+    match key.to_ascii_lowercase().as_str() {
+        "loglevel" => config.level = parse_level(value)?,
+        "logpath" => config.log_path = Some(PathBuf::from(value)),
+        "logfile" => config.log_file_name = Some(value.to_string()),
+        "logmaxsize" => config.max_file_size = Some(parse_u64(value)?),
+        "logmaxcount" => config.max_file_count = Some(parse_u32(value)?),
+        "logrotation" => config.rotation = parse_rotation(value)?,
+        "logenabled" => config.enabled = parse_bool(value)?,
+        "logquerytext" => config.log_query_text = Some(parse_bool(value)?),
+        "logqueryparameters" => config.log_query_parameters = Some(parse_bool(value)?),
+        "errortraceenabled" => config.error_trace_enabled = parse_bool(value)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Map INI properties to a [`LoggingConfig`], silently ignoring keys that
+/// belong to other subsystems. Used by tests and by [`parse_ini_file`] /
+/// [`parse_ini_content`]; production loading of `sf.odbc.ini` goes through
+/// [`crate::config::sf_odbc_ini::SfOdbcIni`], which routes non-logging
+/// keys into a per-section raw-value map for foreign-subsystem lookups.
 fn apply_ini_section(props: &ini::Properties) -> Result<LoggingConfig, LogError> {
     let mut config = LoggingConfig::default();
     for (key, value) in props.iter() {
-        match key.to_ascii_lowercase().as_str() {
-            "loglevel" => config.level = parse_level(value)?,
-            "logpath" => config.log_path = Some(PathBuf::from(value)),
-            "logfile" => config.log_file_name = Some(value.to_string()),
-            "logmaxsize" => config.max_file_size = Some(parse_u64(value)?),
-            "logmaxcount" => config.max_file_count = Some(parse_u32(value)?),
-            "logrotation" => config.rotation = parse_rotation(value)?,
-            "logenabled" => config.enabled = parse_bool(value)?,
-            "logquerytext" => config.log_query_text = Some(parse_bool(value)?),
-            "logqueryparameters" => config.log_query_parameters = Some(parse_bool(value)?),
-            "errortraceenabled" => config.error_trace_enabled = parse_bool(value)?,
-            other => eprintln!("ignoring unknown INI key: {other}"),
-        }
+        apply_logging_key(key, value, &mut config)?;
     }
     Ok(config)
 }

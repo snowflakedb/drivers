@@ -5,7 +5,9 @@ use sf_core::logging::LogManager;
 
 /// End-to-end: write a temp INI, point `SF_ODBC_INI` at it, call
 /// `LogManager::for_odbc()`, emit an event, and verify it lands in the log
-/// file.
+/// file. `LogManager::for_odbc` reads the INI via the shared
+/// `sf_core::config::sf_odbc_ini::SfOdbcIni` snapshot, so this also
+/// exercises the singleton's load path under a real file.
 #[test]
 fn for_odbc_factory_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
@@ -21,6 +23,11 @@ fn for_odbc_factory_end_to_end() {
         ),
     )
     .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ini_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
     temp_env::with_var("SF_ODBC_INI", Some(ini_path.to_str().unwrap()), || {
         LogManager::for_odbc();

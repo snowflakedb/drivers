@@ -12,6 +12,7 @@ pub mod resolver;
 pub mod rest_parameters;
 pub mod retry;
 pub mod settings;
+pub mod sf_odbc_ini;
 pub mod toml_loader;
 
 use error_trace::ErrorTrace;
