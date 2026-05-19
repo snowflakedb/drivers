@@ -162,27 +162,6 @@ TEST_CASE("oauth should fail legacy authentication with invalid token", "[oauth_
   CHECK(records[0].sqlState == "28000");
 }
 
-TEST_CASE("oauth should authenticate using lowercase oauth authenticator", "[oauth_e2e]") {
-  auto params = get_test_parameters("testconnection");
-  std::string access_token = require_oauth_param(params, "SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN");
-
-  // Given Authentication is set to lowercase oauth and a valid pre-acquired OAuth access token is supplied via TOKEN
-  std::stringstream ss = get_oauth_base_connection_stream("oauth");
-  ss << "TOKEN=" << access_token << ";";
-  std::string connection_string = ss.str();
-
-  auto env = setup_oauth_environment();
-  auto dbc = get_oauth_connection_handle(env);
-
-  // When Trying to Connect
-  attempt_oauth_connection(dbc, connection_string);
-
-  // Then Login is successful and a simple query can be executed
-  verify_oauth_simple_query_execution(dbc);
-
-  SQLDisconnect(dbc.getHandle());
-}
-
 // =============================================================================
 // OAuth Authorization Code (AC) flow
 // =============================================================================

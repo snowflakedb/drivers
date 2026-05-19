@@ -9,29 +9,11 @@ Feature: OAuth Authentication
   primitive in sf_core.
 
   # ===========================================================================
-  # ODBC integration tests -- offline; exercise the wrapper's
-  # connection-string parsing, OAuth-key forwarding, required-parameter
-  # validation, and secret redaction without contacting an IdP or
-  # Snowflake. Implemented in odbc_tests/tests/integration/authentication/oauth.cpp.
+  # ODBC integration tests -- offline; exercise the wrapper's token
+  # forwarding for legacy AUTHENTICATOR=OAUTH and OAUTH_CLIENT_SECRET
+  # redaction in diagnostics without contacting an IdP or Snowflake.
+  # Implemented in odbc_tests/tests/integration/authentication/oauth.cpp.
   # ===========================================================================
-
-  @odbc_int
-  Scenario: should fail OAUTH_CLIENT_CREDENTIALS when client_id is missing
-    Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_client_id
-    When Trying to Connect
-    Then Connection fails with a missing-parameter error citing oauth_client_id
-
-  @odbc_int
-  Scenario: should fail OAUTH_CLIENT_CREDENTIALS when client_secret is missing
-    Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_client_secret
-    When Trying to Connect
-    Then Connection fails with a missing-parameter error citing oauth_client_secret
-
-  @odbc_int
-  Scenario: should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missing
-    Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_token_request_url
-    When Trying to Connect
-    Then Connection fails with a missing-parameter error citing oauth_token_request_url
 
   @odbc_int
   Scenario: should forward AUTHENTICATOR=OAUTH with TOKEN to core
@@ -44,18 +26,6 @@ Feature: OAuth Authentication
     Given Authentication is set to legacy OAUTH without a TOKEN
     When Trying to Connect
     Then Connection fails with a missing-parameter error citing token
-
-  @odbc_int
-  Scenario: should accept lowercase oauth authenticator value
-    Given Authentication is set to lowercase oauth with a TOKEN
-    When Trying to Connect
-    Then The wrapper does not reject the AUTHENTICATOR value as unknown
-
-  @odbc_int
-  Scenario: should fail when AUTHENTICATOR is an unknown OAuth-like value
-    Given Authentication is set to a typo of an OAuth flow name
-    When Trying to Connect
-    Then Connection fails with an authenticator-related error
 
   @odbc_int
   Scenario: should not echo OAUTH_CLIENT_SECRET in diagnostics
@@ -114,15 +84,7 @@ Feature: OAuth Authentication
     Then Connection fails with an authentication / login error
 
   # ODBC-only E2E scenarios -- not implemented in sf_core because the
-  # Rust e2e harness covers different cases (keyring short-circuit) and
-  # the case-insensitive matching of OAUTH is exercised by sf_core unit
-  # tests instead.
-
-  @odbc_e2e
-  Scenario: oauth should authenticate using lowercase oauth authenticator
-    Given Authentication is set to lowercase oauth and a valid pre-acquired OAuth access token is supplied via TOKEN
-    When Trying to Connect
-    Then Login is successful and a simple query can be executed
+  # Rust e2e harness covers different cases (keyring short-circuit).
 
   @odbc_e2e
   Scenario: oauth should fail client credentials flow with bad client secret

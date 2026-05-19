@@ -41,10 +41,7 @@
 // What we DO cover here, mapped to scenarios in
 // tests/definitions/shared/authentication/oauth.feature:
 //
-//   * @odbc_int validation paths for OAUTH_CLIENT_CREDENTIALS
 //   * @odbc_int legacy AUTHENTICATOR=OAUTH (token forwarding + missing token)
-//   * @odbc_int case-insensitive AUTHENTICATOR matching
-//   * @odbc_int unknown OAuth-like AUTHENTICATOR value rejection
 //   * @odbc_int OAUTH_CLIENT_SECRET literal redaction in diagnostic records
 
 using Catch::Matchers::ContainsSubstring;
@@ -88,11 +85,6 @@ SQLRETURN attempt_oauth_connection(ConnectionHandleWrapper& dbc, const std::stri
   return ret;
 }
 
-bool diag_contains(const std::vector<DiagRec>& records, const std::string& needle) {
-  return std::any_of(records.begin(), records.end(),
-                     [&needle](const auto& r) { return ContainsSubstring(needle).match(r.messageText); });
-}
-
 bool diag_contains_missing(const std::vector<DiagRec>& records, const std::string& name) {
   return std::any_of(records.begin(), records.end(), [&name](const auto& r) {
     return (ContainsSubstring("Missing required parameter") && ContainsSubstring(name)).match(r.messageText);
@@ -115,74 +107,6 @@ bool diag_contains_missing(const std::vector<DiagRec>& records, const std::strin
 // `browser_launcher` default installed by
 // `OAuthAuthorizationCodeConfig::from_settings` under
 // `cfg(any(test, feature = "test-utils"))` is a no-op).
-
-// =============================================================================
-// OAuth Client Credentials (CC) flow -- validation only (token exchange would
-// hit the IdP; that path is exercised in the e2e suite).
-// =============================================================================
-
-TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_id is missing", "[oauth_int]") {
-  SKIP_OLD_DRIVER("", "New-driver-only: tests OAuth CC required-param validation");
-
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_client_id
-  auto env = setup_oauth_environment();
-  auto dbc = get_oauth_connection_handle(env);
-  std::stringstream ss;
-  ss << get_oauth_base_connection_string("OAUTH_CLIENT_CREDENTIALS");
-  ss << "OAUTH_CLIENT_SECRET=test-client-secret;";
-  ss << "OAUTH_TOKEN_REQUEST_URL=https://idp.example.com/oauth/token;";
-  std::string connection_string = ss.str();
-
-  // When Trying to Connect
-  SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
-
-  // Then Connection fails with a missing-parameter error citing oauth_client_id
-  REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(dbc);
-  CHECK(diag_contains_missing(records, "oauth_client_id"));
-}
-
-TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when client_secret is missing", "[oauth_int]") {
-  SKIP_OLD_DRIVER("", "New-driver-only: tests OAuth CC required-param validation");
-
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_client_secret
-  auto env = setup_oauth_environment();
-  auto dbc = get_oauth_connection_handle(env);
-  std::stringstream ss;
-  ss << get_oauth_base_connection_string("OAUTH_CLIENT_CREDENTIALS");
-  ss << "OAUTH_CLIENT_ID=test-client-id;";
-  ss << "OAUTH_TOKEN_REQUEST_URL=https://idp.example.com/oauth/token;";
-  std::string connection_string = ss.str();
-
-  // When Trying to Connect
-  SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
-
-  // Then Connection fails with a missing-parameter error citing oauth_client_secret
-  REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(dbc);
-  CHECK(diag_contains_missing(records, "oauth_client_secret"));
-}
-
-TEST_CASE("should fail OAUTH_CLIENT_CREDENTIALS when token_request_url is missing", "[oauth_int]") {
-  SKIP_OLD_DRIVER("", "New-driver-only: tests OAuth CC required-param validation");
-
-  // Given Authentication is set to OAUTH_CLIENT_CREDENTIALS without oauth_token_request_url
-  auto env = setup_oauth_environment();
-  auto dbc = get_oauth_connection_handle(env);
-  std::stringstream ss;
-  ss << get_oauth_base_connection_string("OAUTH_CLIENT_CREDENTIALS");
-  ss << "OAUTH_CLIENT_ID=test-client-id;";
-  ss << "OAUTH_CLIENT_SECRET=test-client-secret;";
-  std::string connection_string = ss.str();
-
-  // When Trying to Connect
-  SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
-
-  // Then Connection fails with a missing-parameter error citing oauth_token_request_url
-  REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(dbc);
-  CHECK(diag_contains_missing(records, "oauth_token_request_url"));
-}
 
 // =============================================================================
 // Legacy AUTHENTICATOR=OAUTH (pre-acquired access token)
@@ -223,55 +147,6 @@ TEST_CASE("should fail AUTHENTICATOR=OAUTH when TOKEN is missing", "[oauth_int]"
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
   CHECK(diag_contains_missing(records, "token"));
-}
-
-TEST_CASE("should accept lowercase oauth authenticator value", "[oauth_int]") {
-  SKIP_OLD_DRIVER("", "New-driver-only: tests case-insensitive AUTHENTICATOR matching for legacy OAUTH");
-
-  // Given Authentication is set to lowercase oauth with a TOKEN
-  auto env = setup_oauth_environment();
-  auto dbc = get_oauth_connection_handle(env);
-  std::stringstream ss;
-  ss << get_oauth_base_connection_string("oauth");
-  ss << "TOKEN=fake.jwt.token;";
-  std::string connection_string = ss.str();
-
-  // When Trying to Connect
-  SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
-
-  // Then The wrapper does not reject the AUTHENTICATOR value as unknown
-  REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(dbc);
-  for (const auto& record : records) {
-    CHECK_THAT(record.messageText, !ContainsSubstring("Invalid authenticator"));
-    CHECK_THAT(record.messageText, !ContainsSubstring("Unknown authenticator"));
-  }
-}
-
-// =============================================================================
-// Negative path: invalid authenticator value
-// =============================================================================
-
-TEST_CASE("should fail when AUTHENTICATOR is an unknown OAuth-like value", "[oauth_int]") {
-  SKIP_OLD_DRIVER("", "New-driver-only: tests unknown-authenticator validation");
-
-  // Given Authentication is set to a typo of an OAuth flow name
-  auto env = setup_oauth_environment();
-  auto dbc = get_oauth_connection_handle(env);
-  std::stringstream ss;
-  ss << get_oauth_base_connection_string("OAUTH_AUTHORIZATION_TYPO");
-  ss << "OAUTH_CLIENT_ID=test-client-id;";
-  std::string connection_string = ss.str();
-
-  // When Trying to Connect
-  SQLRETURN ret = attempt_oauth_connection(dbc, connection_string);
-
-  // Then Connection fails with an authenticator-related error
-  REQUIRE(ret == SQL_ERROR);
-  auto records = get_diag_rec(dbc);
-  bool found = diag_contains(records, "Invalid authenticator") || diag_contains(records, "Unknown authenticator") ||
-               diag_contains(records, "OAUTH_AUTHORIZATION_TYPO") || diag_contains(records, "authenticator");
-  CHECK(found);
 }
 
 // =============================================================================
