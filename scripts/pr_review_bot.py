@@ -18,11 +18,14 @@ Subcommands
     rule has the form ``<label> @login1 @login2 ...`` and contributes
     its reviewers when the PR carries that label. Reviewers are
     unioned across every matched rule so a PR labeled both ``python``
-    and ``odbc`` pools the experts of each domain. The reserved key
-    ``all`` (see :data:`FALLBACK_KEY`) defines the fallback pool used
-    when *no* PR label matches a rule (e.g. a fresh PR opened before
-    the triage labels are applied). Labels are read straight from the
-    PR payload — no extra API call is required.
+    and ``odbc`` pools the experts of each domain. When *no* PR label
+    matches a rule (e.g. a fresh PR opened before the triage labels
+    are applied), the fallback pool is the union of every reviewer
+    across every rule — including the reserved :data:`FALLBACK_KEY`
+    (``all``) rule's own list. This deliberately spreads unlabeled
+    PRs across the whole roster rather than concentrating picks on
+    the small ``all`` rule's generalist subset. Labels are read
+    straight from the PR payload — no extra API call is required.
 
     The PR author and any user already requested for review are
     excluded from the pool. Candidates whose Slack status currently
@@ -33,10 +36,7 @@ Subcommands
     reviewer. Status comes from ``users.info`` and requires
     ``SLACK_BOT_TOKEN`` with the ``users:read`` scope (granted
     implicitly by ``users:read.email``); when the token is missing or
-    the lookup fails the filter no-ops silently. As a final
-    safety-net, if no PR label matches any rule *and* the rules file
-    has no ``all`` fallback, the bot widens the pool to the union of
-    every listed reviewer.
+    the lookup fails the filter no-ops silently.
 
     Requests review and adds the user as an assignee via the REST
     endpoints ``POST /pulls/:n/requested_reviewers`` and
@@ -52,11 +52,12 @@ Subcommands
 ``remind``
     Iterate every open non-draft PR in the repository (via ``gh``) and
     write a digest Slack payload listing PRs that are *waiting on a
-    reviewer's action* — i.e. no review with state ``APPROVED`` or
-    ``CHANGES_REQUESTED``. PRs where a requested reviewer has only
-    ``COMMENTED`` are flagged with a note that comments do not count as a
-    review. Each entry includes the time elapsed since the *initial*
-    ``review_requested`` event.
+    reviewer's action* — i.e. no review with state ``APPROVED``,
+    ``CHANGES_REQUESTED`` or ``COMMENTED``. A plain comment-review
+    counts as engagement and clears the PR from the digest, so the
+    channel is not re-pinged while a reviewer is mid-discussion with
+    the author. Each entry includes the time elapsed since the
+    *initial* ``review_requested`` event.
 
     PRs whose waiting time is below :data:`MIN_WAITING_HOURS` are
     dropped from the digest so freshly-opened or freshly-requested
@@ -179,7 +180,11 @@ log = logging.getLogger("pr-review-bot")
 DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
 
 # Review states that mean the reviewer has taken action on the PR.
-ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED"}
+# ``COMMENTED`` is included so a plain comment-review counts the same as
+# an approval or change request: any human engagement clears the PR
+# from the reminder digest. This avoids re-pinging the channel while a
+# reviewer is mid-discussion with the author.
+ACTIONED_STATES = {"APPROVED", "CHANGES_REQUESTED", "COMMENTED"}
 
 # Minimum age (hours since the first ``review_requested`` event, or
 # since ``created_at`` when no review was requested yet) before a PR
@@ -556,27 +561,29 @@ def select_candidates(
     Matching is case-insensitive. Reviewers from every matched rule
     are unioned (a PR labeled both ``python`` and ``odbc`` pools the
     experts from both rules). When no PR label matches any rule the
-    reviewers of the :data:`FALLBACK_KEY` rule (``all``) are returned
-    instead — these are the generalists who can review anything.
+    fallback pool is the *union of every reviewer across every rule*
+    (including the :data:`FALLBACK_KEY` (``all``) rule's own list).
+    Spreading unlabeled PRs across the whole roster avoids
+    over-concentrating picks on the small ``all`` rule's explicit
+    list — historically a 2-person generalist bucket that drew far
+    more than its share of assignments on freshly-opened PRs.
 
     The returned list preserves rules-file order, so the downstream
     random pick depends only on the RNG, not on dict iteration order.
-    Returns an empty list only when *neither* a label matched *nor* an
-    ``all`` fallback is configured; :func:`cmd_assign` widens to the
-    full pool in that case.
+    Returns an empty list only when the rules file itself is empty.
     """
     label_set = {(l or "").lower() for l in labels if l}
 
     selected: list[str] = []
     seen: set[str] = set()
-    fallback_owners: list[str] = []
+    has_match = False
 
     for key, owners in rules:
         if key == FALLBACK_KEY:
-            fallback_owners = owners
             continue
         if key.lower() not in label_set:
             continue
+        has_match = True
         for login in owners:
             k = login.lower()
             if k in seen:
@@ -584,25 +591,22 @@ def select_candidates(
             seen.add(k)
             selected.append(login)
 
-    if selected:
+    if has_match:
         return selected
 
-    for login in fallback_owners:
-        k = login.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        selected.append(login)
-    return selected
+    return all_reviewers(rules)
 
 
 def all_reviewers(rules: ReviewerRules) -> list[str]:
     """Return every unique reviewer login across all rules.
 
-    Used as the last-resort candidate pool when no rule label matches
-    a PR's labels *and* the file has no ``all`` fallback configured.
-    Order matches the rules-file order; duplicates across rules are
-    collapsed.
+    Used by :func:`select_candidates` as the fallback pool when no PR
+    label matches any rule, and by :func:`_swap_ooo_reviewers` to
+    widen the substitute pool when every domain expert is OOO. The
+    :data:`FALLBACK_KEY` (``all``) rule's reviewers are included too —
+    they are treated as regular roster members in the union rather
+    than as a privileged generalist subset. Order matches the
+    rules-file order; duplicates across rules are collapsed.
     """
     flat: list[str] = []
     seen: set[str] = set()
@@ -1119,9 +1123,10 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
     # Label-based narrowing: prefer the experts whose rule label is on
     # this PR. Labels live on the PR payload we already fetched, so no
-    # extra API call is needed. When no rule matches *and* there is no
-    # ``all`` fallback in the rules file, widen the pool to every
-    # listed reviewer so the PR is never left without a candidate.
+    # extra API call is needed. When no rule matches, ``select_candidates``
+    # already returns the union of every reviewer across every rule so
+    # unlabeled PRs are spread across the whole roster rather than
+    # concentrated on the ``all`` rule's tiny generalist list.
     pr_labels = [
         (lbl.get("name") or "").strip()
         for lbl in pr.get("labels", []) or []
@@ -1135,20 +1140,21 @@ def cmd_assign(args: argparse.Namespace) -> int:
         ", ".join(pr_labels) if pr_labels else "(none)",
     )
     candidates = select_candidates(rules, pr_labels)
-    if candidates:
-        log.info(
-            "Label-based selection picked %d candidate(s): %s",
-            len(candidates),
-            ", ".join(candidates),
-        )
-    else:
+    if not candidates:
+        # Defensive: only happens if the rules file is empty, which
+        # the ``full_pool`` check above would already have caught.
         log.warning(
-            "No rule in %s matched any PR label and no `%s` fallback is "
-            "configured; widening to the full reviewer pool.",
+            "No candidates from %s for labels %s; falling back to the full pool.",
             reviewers_path,
-            FALLBACK_KEY,
+            pr_labels or "(none)",
         )
         candidates = full_pool
+    log.info(
+        "Candidate pool for PR #%d (%d): %s",
+        pr_number,
+        len(candidates),
+        ", ".join(candidates),
+    )
 
     # Build the display/OOO resolver early so we can pre-filter the
     # candidate pool by Slack status. The resolver caches per-login
@@ -1228,15 +1234,18 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
 
 def _latest_review_state_per_user(reviews: list[dict]) -> dict[str, str]:
-    """Return ``{login: latest_review_state}`` collapsing comments.
+    """Return ``{login: latest_review_state}`` per reviewer.
 
-    ``COMMENTED`` reviews do not overwrite an earlier ``APPROVED`` /
-    ``CHANGES_REQUESTED``, but a later ``DISMISSED`` does — i.e. dismissed
-    approvals are treated as "no action taken".
+    All non-``PENDING`` review states count as the user having acted on
+    the PR (see :data:`ACTIONED_STATES`, which now includes
+    ``COMMENTED``). A later ``COMMENTED`` does not overwrite an earlier
+    ``APPROVED`` / ``CHANGES_REQUESTED`` so the more specific signal is
+    preserved for any future caller that distinguishes between them; a
+    later ``DISMISSED`` does overwrite — dismissed approvals are
+    treated as "no action taken".
 
-    Bot reviews are ignored entirely: a Copilot approval doesn't count
-    as the PR having been actioned, and a Copilot comment shouldn't
-    sneak the bot's login into the displayed ``commented_only`` list.
+    Bot reviews are ignored entirely: a Copilot approval or comment
+    must not count as a human having actioned the PR.
     """
     by_user: dict[str, str] = {}
     for rv in reviews:
@@ -1269,16 +1278,13 @@ def _classify_pr_for_reminder(
     if any(s in ACTIONED_STATES for s in states.values()):
         return None
 
-    # Strip two kinds of would-be reviewers from the displayed lists:
+    # Strip would-be reviewers from the displayed list:
     #
-    # 1. The PR author themselves — a self "Comment review" or a
-    #    misfired `requested_reviewers` entry from GitHub's team
-    #    round-robin should never surface them as someone we're
-    #    waiting on.
+    # 1. The PR author themselves — a misfired ``requested_reviewers``
+    #    entry from GitHub's team round-robin should never surface
+    #    them as someone we're waiting on.
     # 2. Bot reviewers (Copilot, Dependabot, …) — not people; naming
-    #    them in a Slack nudge confuses the channel. ``commented_only``
-    #    is derived from ``states``, which is already bot-free thanks
-    #    to :func:`_latest_review_state_per_user`.
+    #    them in a Slack nudge confuses the channel.
     author_login = ((pr.get("user") or {}).get("login") or "").lower()
     requested_users = sorted(
         {
@@ -1290,11 +1296,8 @@ def _classify_pr_for_reminder(
             and u["login"].lower() != author_login
         }
     )
-    commented_only = sorted(
-        {u for u, s in states.items() if s == "COMMENTED" and u.lower() != author_login}
-    )
 
-    if not requested_users and not commented_only:
+    if not requested_users:
         return None
 
     if now is None:
@@ -1335,7 +1338,6 @@ def _classify_pr_for_reminder(
         "url": pr["html_url"],
         "updated_at": pr.get("updated_at", ""),
         "requested": requested_users,
-        "commented_only": commented_only,
         "waiting_hours": waiting_hours,
         "waiting_source": waiting_source if waiting_hours is not None else None,
     }
@@ -1410,9 +1412,8 @@ def _swap_ooo_reviewers(
     """Replace OOO requested reviewers with a fresh non-OOO pick.
 
     Run during the reminder pass after :func:`_classify_pr_for_reminder`
-    has produced *entry*. Mutates ``entry["requested"]`` (and
-    ``entry["commented_only"]``) so the Slack digest reflects the
-    post-swap state. Three branches:
+    has produced *entry*. Mutates ``entry["requested"]`` so the Slack
+    digest reflects the post-swap state. Three branches:
 
     1. No requested reviewer is OOO — nothing to do.
     2. *Some* requested reviewers are OOO but at least one is not —
@@ -1436,17 +1437,10 @@ def _swap_ooo_reviewers(
     """
     requested = list(entry.get("requested") or [])
     if not requested:
-        # Filter OOO commenters too — they can't formal-review either.
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     ooo = [u for u in requested if names.is_ooo(u)]
     if not ooo:
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     available = [u for u in requested if not names.is_ooo(u)]
@@ -1464,9 +1458,6 @@ def _swap_ooo_reviewers(
             ", ".join(available),
         )
         entry["requested"] = available
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     # Every requested human is OOO. Find a substitute via the same
@@ -1508,9 +1499,6 @@ def _swap_ooo_reviewers(
             len(requested),
             ", ".join(requested),
         )
-        entry["commented_only"] = [
-            u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-        ]
         return
 
     if widened:
@@ -1554,9 +1542,6 @@ def _swap_ooo_reviewers(
             )
 
     entry["requested"] = [replacement]
-    entry["commented_only"] = [
-        u for u in entry.get("commented_only") or [] if not names.is_ooo(u)
-    ]
 
 
 def _decorate_reviewer(names: ReviewerDisplay, login: str) -> str:
@@ -1581,15 +1566,13 @@ def _build_reminder_blocks(
 
     Compact layout: one heading section plus one bulleted section
     where each line is ``• <url|title> — reviewer(s) — waiting``. Keeps
-    the digest short even when many PRs are stale; per-PR author and
-    "comments don't count" footnotes are dropped on purpose — the linked
-    PR carries the rest of the context for anyone who clicks through.
+    the digest short even when many PRs are stale; per-PR author is
+    dropped on purpose — the linked PR carries the rest of the context
+    for anyone who clicks through.
     """
     lines: list[str] = []
     for pr in awaiting:
-        people = pr["requested"] + [
-            u for u in pr["commented_only"] if u not in pr["requested"]
-        ]
+        people = pr["requested"]
         people_str = (
             ", ".join(_decorate_reviewer(names, u) for u in people)
             if people
@@ -1696,8 +1679,8 @@ def cmd_remind(args: argparse.Namespace) -> int:
 
     # For every PR in the digest, try to replace OOO requested
     # reviewers with an available substitute. Mutates each entry's
-    # ``requested`` / ``commented_only`` so the Slack message reflects
-    # the post-swap state. Disabled when the rules file is empty.
+    # ``requested`` so the Slack message reflects the post-swap state.
+    # Disabled when the rules file is empty.
     if rules:
         for entry in awaiting:
             _swap_ooo_reviewers(
@@ -1706,7 +1689,7 @@ def cmd_remind(args: argparse.Namespace) -> int:
         # Re-filter: an entry whose only humans were OOO and that the
         # swap couldn't find a substitute for may now have no one left
         # to remind. Drop those.
-        awaiting = [e for e in awaiting if e.get("requested") or e.get("commented_only")]
+        awaiting = [e for e in awaiting if e.get("requested")]
         if not awaiting:
             log.info(
                 "All PRs were covered after the OOO-swap pass (nothing actionable "
