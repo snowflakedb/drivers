@@ -1,69 +1,162 @@
+# Allowed statuses:
+#  - unknown (default): status is not yet determined
+#  - todo: BD has to be fixed
+#  - fixed: BD has been addressed, removing the difference between the old and new driver
+#  - allowed: the change is expected and is accepted
+#
+# Allowed types:
+#  - unknown (default): type is not yet determined
+#  - api_incompatibility: the new driver removes support for a functionality
+#  - bug: the new driver has a bug/incompatibility relative to the old driver
+#  - bugfix: the new driver fixes incorrect old-driver behavior (e.g. non-compliance with the ODBC specification)
+#  - enhancement: the new driver extends or improves existing functionality
+#
+# Reviewed:
+#  - true: the BD has been reviewed and its status is accepted
+#  - false (default): the BD has not yet been reviewed
+#
+# status_rationale (required when reviewed is true):
+#  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
+#  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
+
 behavior_differences:
   1:
-    name: "Native error code should be 0 when error originates from client side"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "Returns misconfiguration SQL state instead of allowing the connection and failing on the server side"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      Returning a client-local misconfiguration diagnostic (SQLSTATE 01S00, native error 0) is intentional - we reject invalid client configuration before a server round-trip. The discrepancy with the legacy driver using SQLSTATE 28000 is accepted as deliberate  cleanup.
+    old_driver_behavior: |
+      Returns SQLSTATE 28000 and 20032 native error.
+    new_driver_behavior: |
+      Returns SQLSTATE 01S00 and 0 native error.
+    description: |
+      The native error should come from the server, and in this case we catch the issue early, in the driver.
 
   2:
     name: "Compression type is now returned in uppercase"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
+    status_rationale: |
+      Changing the returned compression token casing may break tooling that depended on lowercase.
+    old_driver_behavior: |
+      The old driver returns the compression type in lowercase.
+    new_driver_behavior: |
+      The driver returns the compression type in uppercase.
 
   3:
     name: "Encryption field is no longer included in the result"
     status: fixed
-    type: enhancement
-    reviewed: false
+    type: bug
+    reviewed: true
+    status_rationale: |
+      To be aligned with the old driver, as this is a regression.
+    old_driver_behavior: |
+      The PUT result set message column (column 8) contains "ENCRYPTED" and the GET result set message column (column 4) contains "DECRYPTED" after a successful file transfer.
+    new_driver_behavior: |
+      Both the PUT and GET result set message columns return an empty string on success. The message column is only populated on failure (currently always empty because errors are surfaced earlier).
+    impact: |
+      Applications that inspect the PUT/GET message column to confirm client-side encryption or decryption happened no longer see those values.
 
   4:
     name: "GET rowset metadata contains file size after decryption instead of file size before decryption"
     status: fixed
     type: bug
     reviewed: true
+    status_rationale: |
+      Switching the GET size metric to decrypted-on-disk payload size changes comparisons against on-stage ciphertext length.
+    old_driver_behavior: |
+      The GET result set size column (column 2) reports the raw downloaded byte count (e.g. 32 bytes for a small test file), which includes the client-side encryption padding/overhead before decryption.
+    new_driver_behavior: |
+      Reports the size of the decrypted payload written to disk (e.g. 26 bytes for the same test file), matching the size of the file the user actually ends up with locally.
+    impact: |
+      Applications that compare the reported GET size against the on-stage encrypted object length will see a smaller value. Applications that compare against the file written to disk will see a matching value.
 
   5:
     name: "Header of a gzip-compressed file does not contain filename"
-    status: unknown
+    status: todo
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Omitting gzip FNAME and zeroing mtime improves determinism (good for byte-identical reproducibility tests) but breaks consumers that scraped the embedded filename back out of the gzip header.
+    old_driver_behavior: |
+      When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip file contains the original filename in the FNAME field of the gzip header, making the byte stream non-deterministic for identical content.
+    new_driver_behavior: |
+      The uploaded gzip file is produced via `GzBuilder::new().mtime(0)` without a filename, so the header omits FNAME and the mtime is zeroed. The resulting bytes are deterministic and match a locally-compressed reference file.
+    impact: |
+      Applications that compare gzip byte streams (e.g. for deduplication or caching) will see identical bytes across uploads of the same content. Applications that relied on reading the filename back out of the gzip header will no longer find it.
 
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      This is a bug introduced in the UD ODBC implementation and has to be aligned with the old driver behavior.
+    old_driver_behavior: |
+      PUT with SOURCE_COMPRESSION=AUTO_DETECT on a file with an unsupported compression format (e.g. LZMA/xz) returns SQL_SUCCESS and uploads the file anyway.
+    new_driver_behavior: |
+      Returns SQL_ERROR for files whose compression format is not in the supported set (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE).
+    impact: |
+      Applications that previously uploaded LZMA or other unsupported formats under AUTO_DETECT will now receive an error at PUT time instead of silently uploading.
 
   7:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: enhancement
+    reviewed: true
+    status_rationale: |
+      This is an enhancement of the API. Widening access is deliberate.
+    old_driver_behavior: |
+      Calling SQLFetch on the statement returned by `ALTER USER <user> ADD PROGRAMMATIC ACCESS TOKEN ...` returns SQL_ERROR with SQLSTATE 24000, native error 10510, and message "Invalid cursor state". The token name and secret cannot be read through ODBC.
+    new_driver_behavior: |
+      SQLFetch returns SQL_SUCCESS and the token name (column 1) and token secret (column 2) can be retrieved via SQLGetData, allowing the PAT to be used immediately for authentication.
+    impact: |
+      Applications can now create a PAT and obtain its secret in a single round-trip via ODBC. On the old driver, the token secret must be acquired through a different channel.
 
   8:
     name: "Float max/min boundary values are returned successfully instead of numeric out of range error"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      The legacy driver falsely rejected FLT_MAX literals that IEEE 754 guarantees are representable. Accepting correctly rounded conversions while still rejecting genuinely out-of-range literals is ODBC-aligned.
+    old_driver_behavior: |
+      Converting the exact IEEE 754 single-precision boundary strings '3.4028235e38' (FLT_MAX) and '-3.4028235e38' (-FLT_MAX) to SQL_C_FLOAT returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range), even though both values are representable as a float.
+    new_driver_behavior: |
+      Returns SQL_SUCCESS with the correctly converted f32 values. Only values strictly greater than FLT_MAX (e.g. '3.4028236e38') are rejected with 22003.
+    impact: |
+      Applications that pass the exact float boundary values will now succeed on the new driver where the old driver spuriously reported out-of-range.
 
   9:
     name: "SQLBindCol doesn't set indicator when TargetValuePtr is null."
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      This is fixing a bug that surfaced during the development.
+    old_driver_behavior: |
+      When SQLBindCol is called with a null TargetValuePtr but a valid StrLen_or_IndPtr (intended to unbind the data buffer while keeping the indicator bound), the driver fully unbinds the column and leaves the caller's indicator unchanged after a subsequent SQLFetch.
+    new_driver_behavior: |
+      Initially wrote the data length into StrLen_or_IndPtr even though TargetValuePtr was null (treating the indicator as still bound).
+    description: |
+      Per the ODBC spec for SQLBindCol, passing a null TargetValuePtr unbinds the data buffer for the column. The reference test in `sql_bind_col.cpp` ("SQLBindCol can unbind data buffer while keeping indicator bound.") now asserts that the indicator remains unchanged for both drivers.
 
   10:
     name: "SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported"
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Raw OpenSSL structs cannot safely cross our Rust ODBC boundary today. Supporting string-based PEM material is the sanctioned replacement surface; breakage for EVP_PKEY callers is deliberate and callers must migrate to PRIV_KEY_CONTENT / PRIV_KEY_BASE64 workflows.
     old_driver_behavior: |
       Accepts raw EVP_PKEY* pointers via SQLSetConnectAttr.
     new_driver_behavior: |
       Does not support the raw EVP_PKEY* pointers.
     impact: |
-      Applications that used the raw EVP_PKEY* pointers will fail to connect.
+      Applications that used the raw EVP_PKEY* pointers will fail to connect. The user would need to parse the EVP_PKEY in the PRIV_KEY_CONTENT or PRIV_KEY_BASE64 format on their own.
     description: |
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
 
