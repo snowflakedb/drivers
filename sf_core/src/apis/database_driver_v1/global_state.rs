@@ -22,6 +22,17 @@ pub enum PutGetResultsetFlavor {
     Odbc,
 }
 
+/// Per-wrapper rules for compression auto-detection during PUT.
+/// Keep this independent of `PutGetResultsetFlavor` — auto-detect
+/// behavior may diverge from result-set shape over time.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CompressionAutoDetectFlavor {
+    #[default]
+    Python,
+    Odbc,
+    Jdbc,
+}
+
 /// Immutable behavioural presets declared by each wrapper (Python, ODBC, JDBC)
 /// at startup. These are **not** exposed to end users — they capture
 /// compile-time / init-time differences between wrappers so that shared Rust
@@ -29,6 +40,7 @@ pub enum PutGetResultsetFlavor {
 #[derive(Debug, Clone, Default)]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
+    pub compression_autodetect_flavor: CompressionAutoDetectFlavor,
 }
 
 impl WrapperPresets {
@@ -37,7 +49,10 @@ impl WrapperPresets {
     /// Currently identical to `Default` — listed explicitly so that
     /// future Python-specific overrides have a clear home.
     pub fn python() -> Self {
-        Self::default()
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::Python,
+            compression_autodetect_flavor: CompressionAutoDetectFlavor::Python,
+        }
     }
 
     /// Presets for the ODBC driver.
@@ -45,13 +60,17 @@ impl WrapperPresets {
     pub fn odbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
+            compression_autodetect_flavor: CompressionAutoDetectFlavor::Odbc,
             ..Self::default()
         }
     }
 
     /// Presets for the JDBC bridge.
     pub fn jdbc() -> Self {
-        Self::default()
+        Self {
+            put_get_resultset_flavor: PutGetResultsetFlavor::default(),
+            compression_autodetect_flavor: CompressionAutoDetectFlavor::Jdbc,
+        }
     }
 }
 

@@ -10,7 +10,7 @@ pub use self::types::*;
 pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::download_from_gcs;
 
-use crate::apis::database_driver_v1::PutGetResultsetFlavor;
+use crate::apis::database_driver_v1::{CompressionAutoDetectFlavor, PutGetResultsetFlavor};
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
@@ -64,6 +64,7 @@ pub async fn upload_files(
             source_compression: data.source_compression.clone(),
             overwrite: data.overwrite,
             flavor: data.flavor.clone(),
+            compression_autodetect_flavor: data.compression_autodetect_flavor.clone(),
         };
 
         let result = upload_single_file(single_upload_data, &mut refresher).await?;
@@ -173,7 +174,7 @@ fn preprocess_file_before_upload(
         data.filename.as_str(),
         file_buffer.as_slice(),
         &data.source_compression,
-        &data.flavor,
+        &data.compression_autodetect_flavor,
     )
     .context(CompressionTypeSnafu)?;
 
@@ -222,7 +223,7 @@ fn get_source_compression(
     filename: &str,
     file_buffer: &[u8],
     source_compression: &SourceCompressionParam,
-    flavor: &PutGetResultsetFlavor,
+    flavor: &CompressionAutoDetectFlavor,
 ) -> Result<CompressionType, CompressionTypeError> {
     match source_compression {
         SourceCompressionParam::AutoDetect => {
@@ -250,11 +251,11 @@ fn get_source_compression(
 fn auto_detect_source_compression(
     filename: &str,
     file_buffer: &[u8],
-    flavor: &PutGetResultsetFlavor,
+    flavor: &CompressionAutoDetectFlavor,
 ) -> Result<CompressionType, CompressionTypeError> {
     let detected = try_guess_compression_type(filename, file_buffer);
     match flavor {
-        PutGetResultsetFlavor::Odbc => match detected {
+        CompressionAutoDetectFlavor::Odbc => match detected {
             Err(CompressionTypeError::UnsupportedCompressionType { .. }) => {
                 Ok(CompressionType::None)
             }
@@ -562,7 +563,7 @@ mod tests {
     // BD#6 — when SOURCE_COMPRESSION=AUTO_DETECT detects an unsupported
     // compression format, legacy libsnowflakeclient silently fell back to
     // no compression. The `Odbc` flavor restores that behavior; the
-    // `Python` flavor (default) keeps surfacing the error.
+    // `Python` and `Jdbc` flavors keep surfacing the error.
     const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] = &[
         "test.xz",
         "test.lzma",
@@ -577,7 +578,7 @@ mod tests {
     fn auto_detect_source_compression_odbc_falls_back_to_none_for_unsupported() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
             let result =
-                auto_detect_source_compression(filename, b"", &PutGetResultsetFlavor::Odbc);
+                auto_detect_source_compression(filename, b"", &CompressionAutoDetectFlavor::Odbc);
             assert_eq!(
                 result.unwrap(),
                 CompressionType::None,
@@ -590,13 +591,30 @@ mod tests {
     fn auto_detect_source_compression_python_surfaces_unsupported_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
             let result =
-                auto_detect_source_compression(filename, b"", &PutGetResultsetFlavor::Python);
+                auto_detect_source_compression(filename, b"", &CompressionAutoDetectFlavor::Python);
             assert!(
                 matches!(
                     result,
                     Err(CompressionTypeError::UnsupportedCompressionType { .. })
                 ),
                 "Python flavor must propagate the unsupported error for {filename}, got: {result:?}",
+            );
+        }
+    }
+
+    // PR1 of Gap-12: today the `Jdbc` flavor uses the same propagating
+    // behavior as `Python`. PR2 may diverge.
+    #[test]
+    fn auto_detect_source_compression_jdbc_surfaces_unsupported_error() {
+        for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
+            let result =
+                auto_detect_source_compression(filename, b"", &CompressionAutoDetectFlavor::Jdbc);
+            assert!(
+                matches!(
+                    result,
+                    Err(CompressionTypeError::UnsupportedCompressionType { .. })
+                ),
+                "Jdbc flavor must propagate the unsupported error for {filename}, got: {result:?}",
             );
         }
     }
@@ -610,7 +628,7 @@ mod tests {
     fn auto_detect_source_compression_odbc_falls_back_for_buffer_detected_unsupported() {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
         let result =
-            auto_detect_source_compression("noext", xz_magic, &PutGetResultsetFlavor::Odbc);
+            auto_detect_source_compression("noext", xz_magic, &CompressionAutoDetectFlavor::Odbc);
         assert_eq!(result.unwrap(), CompressionType::None);
     }
 
@@ -618,7 +636,7 @@ mod tests {
     fn auto_detect_source_compression_python_surfaces_buffer_detected_unsupported() {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
         let result =
-            auto_detect_source_compression("noext", xz_magic, &PutGetResultsetFlavor::Python);
+            auto_detect_source_compression("noext", xz_magic, &CompressionAutoDetectFlavor::Python);
         assert!(
             matches!(
                 result,
@@ -629,8 +647,26 @@ mod tests {
     }
 
     #[test]
-    fn auto_detect_source_compression_recognizes_gzip_for_both_flavors() {
-        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+    fn auto_detect_source_compression_jdbc_surfaces_buffer_detected_unsupported() {
+        let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
+        let result =
+            auto_detect_source_compression("noext", xz_magic, &CompressionAutoDetectFlavor::Jdbc);
+        assert!(
+            matches!(
+                result,
+                Err(CompressionTypeError::UnsupportedCompressionType { .. })
+            ),
+            "Jdbc flavor must propagate the buffer-detected unsupported error, got: {result:?}",
+        );
+    }
+
+    #[test]
+    fn auto_detect_source_compression_recognizes_gzip_for_all_flavors() {
+        for flavor in [
+            CompressionAutoDetectFlavor::Python,
+            CompressionAutoDetectFlavor::Odbc,
+            CompressionAutoDetectFlavor::Jdbc,
+        ] {
             let result = auto_detect_source_compression("test.csv.gz", b"", &flavor);
             assert_eq!(
                 result.unwrap(),
@@ -641,8 +677,12 @@ mod tests {
     }
 
     #[test]
-    fn auto_detect_source_compression_returns_none_for_uncompressed_under_both_flavors() {
-        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+    fn auto_detect_source_compression_returns_none_for_uncompressed_under_all_flavors() {
+        for flavor in [
+            CompressionAutoDetectFlavor::Python,
+            CompressionAutoDetectFlavor::Odbc,
+            CompressionAutoDetectFlavor::Jdbc,
+        ] {
             let result = auto_detect_source_compression("test.csv", b"", &flavor);
             assert_eq!(
                 result.unwrap(),
@@ -656,7 +696,11 @@ mod tests {
     fn get_source_compression_explicit_param_ignores_flavor() {
         // Explicit SOURCE_COMPRESSION=<known type> never goes through the
         // auto-detect path, so the flavor branch is a no-op here.
-        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+        for flavor in [
+            CompressionAutoDetectFlavor::Python,
+            CompressionAutoDetectFlavor::Odbc,
+            CompressionAutoDetectFlavor::Jdbc,
+        ] {
             assert_eq!(
                 get_source_compression("ignored.xz", b"", &SourceCompressionParam::Gzip, &flavor,)
                     .unwrap(),

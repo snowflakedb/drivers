@@ -1,4 +1,4 @@
-use crate::apis::database_driver_v1::PutGetResultsetFlavor;
+use crate::apis::database_driver_v1::{CompressionAutoDetectFlavor, PutGetResultsetFlavor};
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,9 @@ pub struct UploadData {
     /// `SingleUploadData` so that `upload_single_file` can populate the
     /// `message` column according to the active wrapper's contract.
     pub flavor: PutGetResultsetFlavor,
+    /// Wrapper-specific compression auto-detect rules. Kept distinct from
+    /// `flavor` so auto-detect behavior can diverge from result-set shape.
+    pub compression_autodetect_flavor: CompressionAutoDetectFlavor,
 }
 
 pub struct SingleUploadData {
@@ -46,6 +49,7 @@ pub struct SingleUploadData {
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
     pub flavor: PutGetResultsetFlavor,
+    pub compression_autodetect_flavor: CompressionAutoDetectFlavor,
 }
 
 #[derive(Debug)]
