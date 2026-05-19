@@ -31,8 +31,14 @@ jobs:
           - os: ubuntu-latest
             java-version: '8'
             result_format: json
+          # Java 21 row exercises wiremock-based tests in net.snowflake.jdbc.wiremock.*
+          # (the vendored WireMock 3.x JAR requires JRE 11+ to launch). Java 8 rows skip
+          # those tests cleanly via assumeTrue(WiremockClient.requiresJava11OrHigher()).
+          - os: ubuntu-latest
+            java-version: '21'
+            result_format: default
     runs-on: ${{ matrix.os }}
-    name: JDBC Tests (${{ matrix.result_format }} format)
+    name: JDBC Tests (Java ${{ matrix.java-version }}, ${{ matrix.result_format }} format)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -97,7 +103,9 @@ jobs:
         if: always() && matrix.result_format == 'default'
         uses: actions/upload-artifact@v4
         with:
-          name: jdbc-tests-artifacts
+          # Disambiguate per Java version — actions/upload-artifact@v4 requires unique names
+          # within a single workflow run.
+          name: jdbc-tests-artifacts-java${{ matrix.java-version }}
           path: |
             jdbc/build/test-results/test/**/*.xml
             jdbc/build/jacoco/test.exec
@@ -109,7 +117,7 @@ jobs:
         run: |
           python3 jdbc/ci/reference_tests/extract_coverage.py \
             --report jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
-            --label "NEW JDBC" \
+            --label "NEW JDBC (Java ${{ matrix.java-version }})" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
 
