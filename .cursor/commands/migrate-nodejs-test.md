@@ -96,13 +96,26 @@ Apply these rules — they are the migration spec, follow them literally.
 - Multi-statement helpers `hasNext()` and `NextResult()` are declared on `FileAndStageBindStatement`
   (which extends `RowStatement`) — not on `RowStatement` itself. When iterating sub-results, narrow
   the statement with `as FileAndStageBindStatement` rather than reaching for `as any`.
-- When you have to cast around an incomplete `snowflake-sdk` type (e.g. the multi-statement helpers
-  above, or any other gap in the upstream `.d.ts`), leave a short `// TODO:` comment at the cast
-  site noting it's a missing-SDK-types gap, so it's easy to find and remove once the types catch up.
+- Prefer the public `ErrorCode` enum re-exported from `snowflake-sdk` over reaching into
+  `lib/errors` for error-code constants. A legacy `require('../../lib/errors').codes.ERR_FOO` is
+  *not* an "internal API" red flag for migration purposes — `import { ErrorCode } from 'snowflake-sdk'`
+  exposes the same values.
+- When you have to cast around an incomplete `snowflake-sdk` type (any gap in the upstream
+  `.d.ts`), leave a short `// TODO:` comment at the cast site noting it's a missing-SDK-types gap,
+  so it's easy to find and remove once the types catch up.
 - Casts that just narrow a correctly-typed union are **not** SDK-types gaps and should **not** carry
   a TODO. The most common case: `executeAsync` returns `{ statement: RowStatement | FileAndStageBindStatement, ... }`,
   so when a test only needs the row-statement surface, `statement as RowStatement` is a plain
   narrowing cast — no comment.
+
+Known SDK-types gaps so far (use these as the canonical examples of what counts as a "gap"):
+
+- `FileAndStageBindStatement.hasNext()` / `NextResult()` — declared only on
+  `FileAndStageBindStatement`; cast with `as FileAndStageBindStatement` for multi-statement iteration.
+- `Connection.getQueryStatus()` — typed `Promise<string>` but the `QueryStatus` literal union is
+  what `isStillRunning()` accepts. Cast with `as QueryStatus`.
+- `Connection.isAnError()` — declared with no args in the public types but the runtime takes a
+  status string. Cast with `as (s: string) => boolean` (or `as (s: QueryStatus) => boolean`).
 
 #### Connection lifecycle
 
@@ -115,11 +128,13 @@ Apply these rules — they are the migration spec, follow them literally.
   or repo root) first, then `process.env` as fallback.
 - Replace `testUtil.connectAsync(conn)` with `connectAsync(conn)` from `tests/e2e/utils`.
 - Replace `testUtil.destroyConnectionAsync(conn)` with `destroyAsync(conn)` from `tests/e2e/utils`.
-- **Default to per-test connection lifecycle**: each `it()` should `createConnection()` + `connectAsync()`
-  at the top and `destroyAsync()` in a `finally`. Only lift the connection into `beforeAll` /
-  `afterAll` when there is a concrete reason to share state across tests (e.g. shared session-level
-  setup that's expensive to repeat). The legacy Mocha shape of "one shared connection in `before`"
-  is the wrong default — it couples tests together and hides which tests actually need a connection.
+- **Default to a shared connection in `beforeAll` / `afterAll`** (the same shape the legacy Mocha
+  tests use, and what the rest of the e2e suite does). Connect/destroy is the slowest part of an
+  e2e run; reusing one connection across the whole `describe` keeps the suite fast. Only switch to
+  per-test connections when a test needs its own connection state (e.g. a test that destroys its
+  connection mid-flight, asserts on connection-id uniqueness, or needs different connection
+  options from the rest of the file). When you do go per-test, wrap the lifecycle in a
+  `try { ... } finally { destroyAsync(conn) }` — see "Resource cleanup" below.
 
 #### Logger
 
@@ -132,9 +147,11 @@ Apply these rules — they are the migration spec, follow them literally.
 #### Callbacks to promises
 
 - Convert `done()` callback patterns to `async` / `await`.
-- For setup / teardown SQL (e.g. `alter session set ...` in `beforeAll`), prefer the
-  `executeAsync(connection, sqlText, options?)` helper from `tests/e2e/utils` over an inline
-  `new Promise` wrapper around `connection.execute({ ..., complete })`.
+- Anywhere you'd otherwise hand-roll `new Promise((resolve, reject) => connection.execute({ ...,
+  complete: ... }))`, use the `executeAsync(connection, sqlText, options?)` helper from
+  `tests/e2e/utils` instead. This applies to setup/teardown SQL (`alter session set ...` in
+  `beforeAll`) *and* to test-body calls where you only need the resulting statement (e.g. to read
+  `statement.getQueryId()` after an `asyncExec: true` dispatch).
 - Reserve the inline `new Promise` pattern for callback APIs the helpers don't cover — e.g.
   `statement.cancel(cb)`, or mid-stream interactions where you need access to the live `stmt`
   inside `streamRows()` (`hasNext()` / `NextResult()` walking).
@@ -146,10 +163,11 @@ Apply these rules — they are the migration spec, follow them literally.
 
 #### Resource cleanup
 
-- Any test that opens a `Connection` (the default — see "Connection lifecycle" above) or creates
-  cluster-scoped resources (tables, stages, file formats, etc.) must wrap the cleanup in
-  `try { ... } finally { ... }` so a failing assertion doesn't leak state. The legacy Mocha tests
-  frequently leak on failure — don't carry that forward.
+- Any test that opens its own `Connection` (i.e. not using the shared `beforeAll` connection) or
+  creates cluster-scoped resources (tables, stages, file formats, etc.) must wrap the cleanup in
+  `try { ... } finally { ... }` so a failing assertion doesn't leak state. The shared
+  `beforeAll` / `afterAll` connection is already cleaned up by the harness — no `try/finally`
+  needed around individual `it()`s for that.
 - For best-effort destroy of multiple connections in a `finally`, swallow individual errors so one
   bad destroy doesn't mask the real test failure:
   `await Promise.all(conns.map((c) => destroyAsync(c).catch(() => undefined)))`.
@@ -159,6 +177,15 @@ Apply these rules — they are the migration spec, follow them literally.
 #### Assertions
 
 - Replace `assert.ok(!err)` / `testUtil.checkError(err)` with Vitest `expect()`.
+- For "this promise should reject with a particular shape", prefer
+  `await expect(promise).rejects.toMatchObject({ code: ..., name: ... })` over the legacy
+  `try { await promise; assert.fail(); } catch (err) { assert.strictEqual(err.code, ...); }`
+  pattern. It's shorter and the failure message is much better.
+- Drop tautological constant lookups when migrating status / enum assertions. The legacy form
+  `assert.strictEqual(QueryStatus[status], QueryStatus.SUCCESS)` is just
+  `expect(status).toBe('SUCCESS')` — both sides of the legacy check resolve to the same string,
+  the indirection adds nothing. Apply the same rule whenever you see an assertion that looks up
+  an enum on both sides of an equality.
 - **Fan-out tests must use distinct values per worker.** When a test runs N concurrent calls
   through the same driver method and asserts on the per-call result, each call should use a
   *different* input that produces a *different* expected output, and the assertion should compare
@@ -168,9 +195,23 @@ Apply these rules — they are the migration spec, follow them literally.
   `const expectedRowCounts = [2837, 6104, 1592, 8471, 3963]`) over `Math.random()` — tests must be
   deterministic.
 
+#### Test organisation
+
+- When a single source file covers multiple methods of the same surface, nest one
+  `describe('<methodName>()')` per method inside the outer file-level `describe`. This reads much
+  better than a flat list of `it()`s prefixed with the method name.
+- When several `it()`s inside the *same* nested `describe` need identical per-test setup, lift it
+  into a `beforeEach` and store the result in a `let` declared at the same scope. Do **not** put a
+  `beforeEach` on a `describe` whose tests don't all need the setup — every `it()` in that
+  describe pays for it. If only some tests need the setup, either keep it inline in those tests or
+  split the describe.
+
 #### Naming inside the file
 
-- `describe` block: human-readable title case (e.g. `"Query Cancellation"`).
+- Outer file-level `describe`: human-readable title case (e.g. `"Query Cancellation"`,
+  `"Async Query Execution"`).
+- Inner method-grouping `describe`s: bare method signature with parens
+  (e.g. `"getQueryStatus()"`, `"getResultsFromQueryId()"`).
 
 ### Step 5: Verify
 
@@ -233,7 +274,16 @@ This step is **not optional** — skipping it means the next run repeats the sam
 ## Reference: existing migrated tests
 
 For style examples, see:
-- `nodejs/tests/e2e/query-cancellation.test.ts`
-- `nodejs/tests/e2e/connection-serialization.test.ts`
-- `nodejs/tests/e2e/multi-statement.test.ts`
-- `nodejs/tests/e2e/utils/index.ts` (helpers — `createConnection`, `connectAsync`, `destroyAsync`, `executeAsync`, `sleepAsync`, `getSnowflakeSDK`)
+- `nodejs/tests/e2e/query-cancellation.test.ts` — minimal shared-connection shape, callback API
+  wrapped with inline `new Promise` (`statement.cancel`).
+- `nodejs/tests/e2e/connection-serialization.test.ts` — `it.skip` with TODO link for known driver
+  bugs; using `getSnowflakeSDK()` directly.
+- `nodejs/tests/e2e/multi-statement.test.ts` — multi-statement iteration with the
+  `FileAndStageBindStatement` cast.
+- `nodejs/tests/e2e/concurrent-execution.test.ts` — fan-out via `Promise.all`, distinct expected
+  values per worker, multi-connection cleanup pattern.
+- `nodejs/tests/e2e/query-execution-async.test.ts` — nested `describe`s grouped by SDK method,
+  `executeAsync` reused inside the test body for queryId setup, `beforeEach` to lift duplicated
+  setup, `expect(...).rejects.toMatchObject({ code: ErrorCode.... })` for error-path assertions.
+- `nodejs/tests/e2e/utils/index.ts` (helpers — `createConnection`, `connectAsync`, `destroyAsync`,
+  `executeAsync`, `sleepAsync`, `getSnowflakeSDK`).
