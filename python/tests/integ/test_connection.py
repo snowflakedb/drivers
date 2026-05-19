@@ -45,6 +45,21 @@ class TestConnectionParameters:
     These tests exercise that behavior against both drivers.
     """
 
+    def test_connect_with_empty_account_raises_missing_required(self, connector_adapter):
+        """An empty account string should be rejected by sf_core's validation,
+        matching the legacy 'Account must be specified' (251001) behavior.
+
+        Validation runs in sf_core before any network I/O, so this test does
+        not depend on the test backend being reachable.
+        """
+        with pytest.raises(ProgrammingError, match=r"[Mm]issing required parameter.*account"):
+            connector_adapter.connect(
+                account="",
+                user="u",
+                password="p",
+                host="h.example.com",
+            )
+
     def test_connect_with_account_only_no_host_or_server_url(self, connector_adapter):
         """Connection succeeds when only ``account`` is given — host/server_url are derived.
 

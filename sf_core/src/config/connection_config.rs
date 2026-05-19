@@ -573,7 +573,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
     // wrong-typed values can surface as InvalidType.
 
     // --- MissingRequired: account ---
-    if settings.get_string(ACCOUNT).is_none() {
+    if non_empty_string(settings, ACCOUNT).is_none() {
         issues.push(ValidationIssue {
             severity: ValidationSeverity::Error,
             parameter: ACCOUNT.into(),
@@ -1261,6 +1261,23 @@ mod tests {
             .filter(|i| i.parameter == "account" && i.code == ValidationCode::MissingRequired)
             .collect();
         assert!(!account_issues.is_empty());
+    }
+
+    #[test]
+    fn validate_empty_account_reports_issue() {
+        let settings = settings_from(&[
+            ("account", Setting::String(String::new())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.parameter == "account" && i.code == ValidationCode::MissingRequired),
+            "Expected empty account to be treated as missing, got: {issues:?}"
+        );
     }
 
     #[test]
