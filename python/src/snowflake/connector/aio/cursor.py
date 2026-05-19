@@ -35,7 +35,7 @@ from ..cursor._query_result import _MultiStatementQueryResultState, _QueryResult
 from ..cursor._query_result_waiter import QueryResultWaiter
 from ..cursor._result_metadata import ResultMetadata
 from ..errors import InterfaceError, ProgrammingError
-from ..result_batch import ResultBatch
+from ._result_batch import AsyncResultBatch
 
 
 if TYPE_CHECKING:
@@ -412,13 +412,13 @@ class AsyncSnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     @api_telemetry
     @_requires_open
     @_with_prefetch_hook
-    async def get_result_batches(self) -> list[ResultBatch] | None:
+    async def get_result_batches(self) -> list[AsyncResultBatch] | None:
         if self._immutable is None:
             return None
         result_chunks = await self._immutable.get_chunks()
         if result_chunks is None:
             return None
-        return ResultBatch.from_chunks(
+        return AsyncResultBatch.from_chunks(
             list(result_chunks.chunks),
             self._query_result.description,
             self._connection,
