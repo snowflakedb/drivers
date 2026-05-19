@@ -8,6 +8,12 @@ These tests drive a real Snowflake account / IdP through
 ``oauth.cpp`` E2E gating in ``odbc_tests/tests/e2e/authentication/`` and
 the ``oauth.rs`` E2E gating in ``sf_core/tests/e2e/authentication/``.
 
+TODO(SNOW-3552213): replace the ``pytest.skip``-on-missing-parameter
+gating with an ``oauth`` pytest marker so misconfigured CI runs fail
+loudly instead of skipping silently. Once that lands, the OAuth E2E
+suite can require the relevant ``SNOWFLAKE_TEST_OAUTH_*`` parameters
+and be opted out of via ``-m 'not oauth'``.
+
 The Authorization Code happy-path scenarios spawn the OS browser via
 sf_core's loopback listener; they are gated additionally behind
 ``SNOWFLAKE_OAUTH_E2E_BROWSER=1`` so a developer can opt in. The Client

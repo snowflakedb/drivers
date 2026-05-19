@@ -131,12 +131,20 @@ class ConnectionConfigMixin:
         "client_fetch_threads": "client_prefetch_threads",
         "client_request_mfa_token": "client_store_temporary_credential",
         "private_key_file_pwd": "private_key_password",
+        "oauth_socket_uri": "oauth_redirect_uri",
     }
     """Deprecated parameter names -> canonical replacements.
 
     Each hit emits a ``DeprecationWarning``.  Unlike ``_LEGACY_REWRITES`` these
     names are not silently supported forever — they exist so users migrating
     from ``snowflake-connector-python`` get a pointer to the new name.
+
+    ``oauth_socket_uri`` is mapped to ``oauth_redirect_uri``: the legacy
+    ``snowflake-connector-python`` allowed the loopback listener to bind
+    a different host/port than the URI advertised to the IdP. The
+    universal driver always binds the listener to ``oauth_redirect_uri``,
+    so a caller still using the legacy name receives the warning and the
+    value flows through under the canonical name.
     """
 
     _UNSUPPORTED_PARAMS: ClassVar[dict[str, str]] = {
@@ -149,9 +157,10 @@ class ConnectionConfigMixin:
         ),
         "oauth_credentials_in_body": (
             "not supported; the universal driver always sends client credentials "
-            "as HTTP Basic for OAUTH_CLIENT_CREDENTIALS"
+            "as HTTP Basic for OAUTH_CLIENT_CREDENTIALS. "
+            "IdPs that require client_id/client_secret in the request body are not yet supported; "
+            "follow-up tracked separately"
         ),
-        "oauth_socket_uri": ("not supported; the universal driver binds the loopback listener to oauth_redirect_uri"),
     }
     """Legacy kwargs that are accepted for source compatibility but have no effect."""
 

@@ -1,27 +1,30 @@
 """Python-only OAuth integration tests for the universal driver wrapper.
 
 These tests cover wrapper-level behaviour that is unique to the Python
-wrapper or that maps to shared Gherkin scenarios whose names contain
-characters (``=``) that cannot appear in Python identifiers. By living
-in a file whose name does not match the shared ``oauth.feature``, this
-suite is exempt from the tests-format-validator orphan check while
-still being picked up by ``pytest python/tests/integ``.
+wrapper and does not appear in the shared ``oauth.feature`` Gherkin
+file. By living in a file whose name does not match the shared
+``oauth.feature``, this suite is exempt from the tests-format-validator
+orphan check while still being picked up by ``pytest python/tests/integ``.
 
 Covered behaviours:
 
-* Forwarding ``AUTHENTICATOR=OAUTH`` with a ``token=`` kwarg to sf_core
-  without raising a synchronous missing-parameter error (no
-  ``=``-tagged shared scenario can match a Python method name).
-* Failing legacy ``AUTHENTICATOR=OAUTH`` when ``token`` is absent.
 * Rewriting the legacy ``oauth_token_url`` alias to the canonical
   ``oauth_token_request_url`` before forwarding (Python-only API
-  surface — Python column of the cross-driver configuration matrix / `_internal/oauth.py`).
+  surface — Python column of the cross-driver configuration matrix).
+* Rewriting the legacy ``oauth_socket_uri`` alias to the canonical
+  ``oauth_redirect_uri`` while emitting a ``DeprecationWarning``: the
+  universal driver always binds the loopback listener to
+  ``oauth_redirect_uri`` directly.
 * Emitting a ``DeprecationWarning`` for Python-only OAuth switches
-  (``oauth_enable_refresh_tokens``, ``oauth_credentials_in_body``,
-  ``oauth_socket_uri``) that the universal driver does not honour
-  (Python column of the cross-driver configuration matrix).
+  (``oauth_enable_refresh_tokens``, ``oauth_credentials_in_body``)
+  that the universal driver does not honour (Python column of the
+  cross-driver configuration matrix).
 * Redacting a legacy OAUTH ``token`` literal from the wrapper's
   exception chain.
+
+The cross-driver AUTHENTICATOR=OAUTH wrapper behaviour
+(token-missing failure, token-forward-to-core) lives in
+``test_oauth.py`` alongside the other shared @python_int scenarios.
 
 Happy-path coverage for the OAuth flows lives in
 ``python/tests/e2e/authentication/test_oauth.py``.
@@ -37,40 +40,6 @@ from ...compatibility import IS_UNIVERSAL_DRIVER
 
 
 pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires universal driver")
-
-
-# ---------------------------------------------------------------------------
-# Legacy AUTHENTICATOR=OAUTH — Python-only wiring (shared Gherkin scenario
-# names use `=` which Python identifiers cannot include).
-# ---------------------------------------------------------------------------
-
-
-class TestLegacyOAuthAuthenticator:
-    """Legacy AUTHENTICATOR=OAUTH requires a ``token`` kwarg and is case-insensitive."""
-
-    def test_should_fail_when_token_is_missing(self, int_test_connection_factory):
-        """Mirrors the @odbc_int scenario 'should fail AUTHENTICATOR=OAUTH when TOKEN is missing'."""
-        kwargs = {"authenticator": "OAUTH", "private_key_file": None}
-        exception = _attempt_oauth_connect(int_test_connection_factory, **kwargs)
-
-        text = _full_error_text(exception)
-        assert "token" in text.lower()
-
-    def test_should_forward_token_to_core_without_missing_param_error(self, int_test_connection_factory):
-        """Mirrors the @odbc_int scenario 'should forward AUTHENTICATOR=OAUTH with TOKEN to core'."""
-        kwargs = {
-            "authenticator": "OAUTH",
-            "private_key_file": None,
-            "token": "fake.jwt.token",
-        }
-        exception = _attempt_oauth_connect(int_test_connection_factory, **kwargs)
-
-        # The wrapper forwards the token to sf_core without raising a
-        # missing-parameter error for it. The connection still fails
-        # because the localhost test backend rejects the token — that
-        # is a *network* failure, not a *validation* failure.
-        text = _full_error_text(exception).lower()
-        assert "missing required parameter" not in text or "token" not in text.split("missing required parameter", 1)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +105,6 @@ class TestOAuthPythonOnlyKwargsDeprecation:
         [
             "oauth_enable_refresh_tokens",
             "oauth_credentials_in_body",
-            "oauth_socket_uri",
         ],
     )
     def test_should_emit_deprecation_warning_for_python_only_kwarg(
@@ -158,6 +126,34 @@ class TestOAuthPythonOnlyKwargsDeprecation:
                     oauth_client_id="test-client-id",
                     oauth_client_secret="test-client-secret",
                     **{python_only_kwarg: True},
+                )
+
+
+# ---------------------------------------------------------------------------
+# Python-only deprecated alias rewrite (``oauth_socket_uri`` →
+# ``oauth_redirect_uri``)
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthSocketUriDeprecatedAlias:
+    """``oauth_socket_uri`` is a deprecated alias for ``oauth_redirect_uri``.
+
+    The legacy ``snowflake-connector-python`` exposed ``oauth_socket_uri`` so
+    callers could bind the loopback listener to a different host/port than
+    the redirect URI advertised to the IdP. The universal driver always
+    binds the listener to ``oauth_redirect_uri``, so the legacy name is
+    rewritten to the canonical one and a ``DeprecationWarning`` is emitted.
+    """
+
+    def test_should_rewrite_oauth_socket_uri_to_oauth_redirect_uri_with_warning(self, int_test_connection_factory):
+        with pytest.warns(DeprecationWarning, match="oauth_socket_uri"):
+            with pytest.raises((DatabaseError, ProgrammingError, Error, Exception)):
+                int_test_connection_factory(
+                    authenticator="OAUTH_CLIENT_CREDENTIALS",
+                    private_key_file=None,
+                    oauth_client_id="test-client-id",
+                    oauth_client_secret="test-client-secret",
+                    oauth_socket_uri="http://127.0.0.1:8765",
                 )
 
 
