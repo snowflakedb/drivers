@@ -94,11 +94,9 @@ TEST_CASE("should handle concurrent close calls safely", "[session][logout]") {
   int success_count = 0;
   int error_count = 0;
   for (auto r : results) {
-    if (r == SQL_SUCCESS) success_count++;
-    // SQL_INVALID_HANDLE counts as a loser: unixODBC's DM frees the
-    // handle slot after the winning SQLDisconnect, so racing threads
-    // can legitimately see -2 instead of -1.
-    else if (r == SQL_ERROR || r == SQL_INVALID_HANDLE)
+    if (r == SQL_SUCCESS)
+      success_count++;
+    else if (r == SQL_ERROR)
       error_count++;
   }
   CHECK(success_count == 1);
