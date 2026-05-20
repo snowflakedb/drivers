@@ -24,10 +24,10 @@ public class SnowflakeSQLException extends SQLException {
   }
 
   public static SnowflakeSQLException fromServiceException(
-      String fallbackMessage, DatabaseDriverService.ServiceException exception) {
+      DatabaseDriverService.ServiceException exception) {
     DatabaseDriverV1.DriverException error = exception.error;
     if (error == null) {
-      return new SnowflakeSQLException(fallbackMessage, exception);
+      return new SnowflakeSQLException(exception.getMessage(), exception);
     }
     return new SnowflakeSQLException(error, exception);
   }

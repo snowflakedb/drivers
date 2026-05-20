@@ -33,23 +33,15 @@ import net.snowflake.client.internal.api.implementation.statement.SnowflakePrepa
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.ProtobufApis;
-import net.snowflake.client.internal.unicore.TransportException;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity.Builder;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
@@ -57,6 +49,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
   private final String url;
   private final Properties properties;
+  private final CoreDriverApi coreDriverApi;
   private boolean autoCommit = true;
   private final AtomicBoolean closed = new AtomicBoolean(false);
   private String catalog;
@@ -65,55 +58,54 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   public final ConnectionHandle connectionHandle;
 
   public SnowflakeConnectionImpl(String url, Properties properties) throws SQLException {
+    this(url, properties, ProtobufApis.coreDriverApi);
+  }
+
+  SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
+      throws SQLException {
     this.url = url;
     this.properties = properties;
-    Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
+    this.coreDriverApi = coreDriverApi;
+
     DatabaseHandle dbHandle = null;
     ConnectionHandle connHandle = null;
     try {
-      dbHandle =
-          ProtobufApis.databaseDriverV1
-              .databaseNew(DatabaseNewRequest.getDefaultInstance())
-              .getDbHandle();
-      DatabaseInitRequest databaseInitRequest =
-          DatabaseInitRequest.newBuilder().setDbHandle(dbHandle).build();
-      ProtobufApis.databaseDriverV1.databaseInit(databaseInitRequest);
-      connHandle =
-          ProtobufApis.databaseDriverV1
-              .connectionNew(ConnectionNewRequest.getDefaultInstance())
-              .getConnHandle();
+      dbHandle = coreDriverApi.databaseNew().getDbHandle();
+      coreDriverApi.databaseInit(dbHandle);
+      connHandle = coreDriverApi.connectionNew().getConnHandle();
 
+      Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
       setOptions(connHandle, connectionOptions);
 
-      WrapperIdentity.Builder identityBuilder =
-          WrapperIdentity.newBuilder()
-              .setDriverName("JDBC")
-              .setDriverVersion(determineClientAppVersion());
-      String runtimeName = System.getProperty("java.vm.name");
-      if (runtimeName != null && !runtimeName.trim().isEmpty()) {
-        identityBuilder.setLanguageRuntime(runtimeName);
-      }
-      String runtimeVersion = System.getProperty("java.version");
-      if (runtimeVersion != null && !runtimeVersion.trim().isEmpty()) {
-        identityBuilder.setLanguageVersion(runtimeVersion);
-      }
-      ConnectionInitRequest connectionInitRequest =
-          ConnectionInitRequest.newBuilder()
-              .setDbHandle(dbHandle)
-              .setConnHandle(connHandle)
-              .setWrapperIdentity(identityBuilder.build())
-              .build();
-      ProtobufApis.databaseDriverV1.connectionInit(connectionInitRequest);
+      WrapperIdentity identity = wrapperIdentity();
+      coreDriverApi.connectionInit(connHandle, dbHandle, identity);
 
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
-    } catch (DatabaseDriverService.ServiceException | TransportException e) {
-      releaseHandlesQuietly(connHandle, dbHandle);
-      throw new SQLException(e);
+    } catch (SQLException e) {
+      releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
+      throw e;
     }
   }
 
-  private void setOptions(ConnectionHandle connHandle, Properties connectionOptions) {
+  private WrapperIdentity wrapperIdentity() {
+    Builder identityBuilder =
+        WrapperIdentity.newBuilder()
+            .setDriverName("JDBC")
+            .setDriverVersion(determineClientAppVersion());
+    String runtimeName = System.getProperty("java.vm.name");
+    if (runtimeName != null && !runtimeName.trim().isEmpty()) {
+      identityBuilder.setLanguageRuntime(runtimeName);
+    }
+    String runtimeVersion = System.getProperty("java.version");
+    if (runtimeVersion != null && !runtimeVersion.trim().isEmpty()) {
+      identityBuilder.setLanguageVersion(runtimeVersion);
+    }
+    return identityBuilder.build();
+  }
+
+  private void setOptions(ConnectionHandle connHandle, Properties connectionOptions)
+      throws SQLException {
     Map<String, ConfigSetting> optionsMap = new HashMap<>();
 
     // JDBC convention: Connection.close() must not throw on logout failure.
@@ -135,11 +127,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
     if (!optionsMap.isEmpty()) {
       ConnectionSetOptionsResponse response =
-          ProtobufApis.databaseDriverV1.connectionSetOptions(
-              ConnectionSetOptionsRequest.newBuilder()
-                  .setConnHandle(connHandle)
-                  .putAllOptions(optionsMap)
-                  .build());
+          coreDriverApi.connectionSetOptions(connHandle, optionsMap);
       logConnectionOptionWarnings(response);
     }
   }
@@ -230,39 +218,38 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     throw new NotImplementedException();
   }
 
+  // TODO: track open statements and close them here (+ implement Statement.close() →
+  // statementRelease)
   @Override
   public void close() throws SQLException {
-    // TODO: track open statements and close them here (+ implement stmt close & release)
     if (!closed.compareAndSet(false, true)) {
       return;
     }
     logger.debug("Closing connection");
     try {
-      ProtobufApis.databaseDriverV1.connectionClose(
-          ConnectionCloseRequest.newBuilder().setConnHandle(connectionHandle).build());
-    } catch (DatabaseDriverService.ServiceException | TransportException e) {
+      coreDriverApi.connectionClose(connectionHandle);
+    } catch (SQLException e) {
       logger.warn("Error during connection close: {}", e.getMessage());
       logger.debug("Connection close error details", e);
-      throw new SQLException(e);
+      throw e;
     } finally {
-      releaseHandlesQuietly(connectionHandle, databaseHandle);
+      releaseHandlesQuietly(coreDriverApi, connectionHandle, databaseHandle);
     }
   }
 
-  private static void releaseHandlesQuietly(ConnectionHandle connHandle, DatabaseHandle dbHandle) {
+  private static void releaseHandlesQuietly(
+      CoreDriverApi driver, ConnectionHandle connHandle, DatabaseHandle dbHandle) {
     if (connHandle != null) {
       try {
-        ProtobufApis.databaseDriverV1.connectionRelease(
-            ConnectionReleaseRequest.newBuilder().setConnHandle(connHandle).build());
-      } catch (DatabaseDriverService.ServiceException | TransportException e) {
+        driver.connectionRelease(connHandle);
+      } catch (SQLException e) {
         logger.debug("Error releasing connection handle", e);
       }
     }
     if (dbHandle != null) {
       try {
-        ProtobufApis.databaseDriverV1.databaseRelease(
-            DatabaseReleaseRequest.newBuilder().setDbHandle(dbHandle).build());
-      } catch (DatabaseDriverService.ServiceException | TransportException e) {
+        driver.databaseRelease(dbHandle);
+      } catch (SQLException e) {
         logger.debug("Error releasing database handle", e);
       }
     }
