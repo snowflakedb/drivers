@@ -243,14 +243,13 @@ fn get_source_compression(
 }
 
 /// Returns the resolved compression type for the `AUTO_DETECT` path. When
-/// `treat_unsupported_compression_as_uncompressed` is true, legacy
-/// libsnowflakeclient behavior is restored: unsupported compression
-/// formats (e.g. `.xz`, `.lz`, `.parquet`) are silently treated as
-/// uncompressed and the upload continues. When false (Python / JDBC
-/// default), the error surfaces. The recovery is keyed on the
-/// `UnsupportedCompressionType` error variant, so it fires regardless of
-/// whether the detection went through the filename extension or the
-/// magic-bytes (infer crate) path.
+/// `treat_unsupported_compression_as_uncompressed` is true, unsupported
+/// compression formats (e.g. `.xz`, `.lz`, `.parquet`) are silently
+/// treated as uncompressed and the upload continues — restoring legacy
+/// libsnowflakeclient behavior. When false, the error surfaces. The
+/// recovery is keyed on the `UnsupportedCompressionType` error variant,
+/// so it fires regardless of whether the detection went through the
+/// filename extension or the magic-bytes (infer crate) path.
 fn auto_detect_source_compression(
     filename: &str,
     file_buffer: &[u8],
@@ -581,19 +580,19 @@ mod tests {
     ];
 
     #[test]
-    fn auto_detect_source_compression_true_swallows_error() {
+    fn auto_detect_source_compression_treat_unsupported_as_uncompressed_true_swallows_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
             let result = auto_detect_source_compression(filename, b"", true);
             assert_eq!(
                 result.unwrap(),
                 CompressionType::None,
-                "Swallow flag must fall back to None for {filename}",
+                "treat_unsupported_compression_as_uncompressed=true must fall back to None for {filename}",
             );
         }
     }
 
     #[test]
-    fn auto_detect_source_compression_false_propagates_error() {
+    fn auto_detect_source_compression_treat_unsupported_as_uncompressed_false_propagates_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
             let result = auto_detect_source_compression(filename, b"", false);
             assert!(
@@ -601,25 +600,27 @@ mod tests {
                     result,
                     Err(CompressionTypeError::UnsupportedCompressionType { .. })
                 ),
-                "Propagating flag must surface the unsupported error for {filename}, got: {result:?}",
+                "treat_unsupported_compression_as_uncompressed=false must surface the unsupported error for {filename}, got: {result:?}",
             );
         }
     }
 
     // Buffer-detection branch (infer crate): an extension-less file whose
     // magic bytes match an unsupported format must still trigger the
-    // swallow-flag fallback. Locks in that the recovery is keyed on the
-    // `UnsupportedCompressionType` error variant, not on the
-    // filename-extension detection path.
+    // `treat_unsupported_compression_as_uncompressed` fallback. Locks in
+    // that the recovery is keyed on the `UnsupportedCompressionType`
+    // error variant, not on the filename-extension detection path.
     #[test]
-    fn auto_detect_source_compression_true_swallows_buffer_detected_unsupported() {
+    fn auto_detect_source_compression_treat_unsupported_as_uncompressed_true_swallows_buffer_detected_unsupported()
+     {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
         let result = auto_detect_source_compression("noext", xz_magic, true);
         assert_eq!(result.unwrap(), CompressionType::None);
     }
 
     #[test]
-    fn auto_detect_source_compression_false_propagates_buffer_detected_unsupported() {
+    fn auto_detect_source_compression_treat_unsupported_as_uncompressed_false_propagates_buffer_detected_unsupported()
+     {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
         let result = auto_detect_source_compression("noext", xz_magic, false);
         assert!(
@@ -627,7 +628,7 @@ mod tests {
                 result,
                 Err(CompressionTypeError::UnsupportedCompressionType { .. })
             ),
-            "Propagating flag must surface the buffer-detected unsupported error, got: {result:?}",
+            "treat_unsupported_compression_as_uncompressed=false must surface the buffer-detected unsupported error, got: {result:?}",
         );
     }
 

@@ -42,10 +42,7 @@ impl WrapperPresets {
     /// Currently identical to `Default` — listed explicitly so that
     /// future Python-specific overrides have a clear home.
     pub fn python() -> Self {
-        Self {
-            put_get_resultset_flavor: PutGetResultsetFlavor::Python,
-            treat_unsupported_compression_as_uncompressed: false,
-        }
+        Self::default()
     }
 
     /// Presets for the ODBC driver.
@@ -60,10 +57,7 @@ impl WrapperPresets {
 
     /// Presets for the JDBC bridge.
     pub fn jdbc() -> Self {
-        Self {
-            put_get_resultset_flavor: PutGetResultsetFlavor::default(),
-            treat_unsupported_compression_as_uncompressed: false,
-        }
+        Self::default()
     }
 }
 
