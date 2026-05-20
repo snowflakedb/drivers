@@ -1,6 +1,10 @@
 name: ODBC CI
 
 on:
+  push:
+    branches:
+      - main
+      - 'release/**'
   pull_request:
     # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
     # a PR re-runs the workflow at the upgraded scope without needing a new
@@ -13,9 +17,9 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs; fall back to run ID for merge_group runs
-  # (each run is unique so they won't cancel each other).
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  # Group by PR number for PRs; by branch for pushes; fall back to run ID for
+  # merge_group runs (each run is unique so they won't cancel each other).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
