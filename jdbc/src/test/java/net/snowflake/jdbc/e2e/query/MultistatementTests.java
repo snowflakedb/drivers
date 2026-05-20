@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import org.junit.jupiter.api.Test;
@@ -169,5 +171,147 @@ public class MultistatementTests extends SnowflakeIntegrationTestBase {
             statement.execute("SELECT 1");
           }
         });
+  }
+
+  @Test
+  public void shouldExecuteMultistatementDmlWithPositionalParameters() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And A temporary table with column (id NUMBER) exists
+    String tableName = "ms_bind_dml";
+    try (Statement setup = connection.createStatement()) {
+      setup.execute("CREATE OR REPLACE TEMPORARY TABLE " + tableName + "(id NUMBER)");
+    }
+
+    // When Multistatement INSERT chain is executed with 3 positional parameters
+    String sql =
+        "INSERT INTO " + tableName + " VALUES(?);" + " INSERT INTO " + tableName + " VALUES(?),(?)";
+    try (PreparedStatement ps = connection.prepareStatement(sql)) {
+      ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
+      ps.setInt(1, 10);
+      ps.setInt(2, 20);
+      ps.setInt(3, 30);
+      ps.execute();
+
+      // Then 2 result sets are returned
+      assertEquals(null, ps.getResultSet(), "First INSERT should not produce a result set");
+
+      // And the first result set reports update count 1
+      assertEquals(1, ps.getUpdateCount(), "First INSERT should affect 1 row");
+
+      // And the second result set reports update count 2
+      assertFalse(ps.getMoreResults());
+      assertEquals(2, ps.getUpdateCount(), "Second INSERT should affect 2 rows");
+      assertFalse(ps.getMoreResults());
+      assertEquals(-1, ps.getUpdateCount(), "No more results");
+    }
+
+    // And the table contains rows [10, 20, 30]
+    try (Statement check = connection.createStatement();
+        ResultSet rs = check.executeQuery("SELECT id FROM " + tableName + " ORDER BY id")) {
+      assertTrue(rs.next());
+      assertEquals(10, rs.getInt(1));
+      assertTrue(rs.next());
+      assertEquals(20, rs.getInt(1));
+      assertTrue(rs.next());
+      assertEquals(30, rs.getInt(1));
+      assertFalse(rs.next(), "Table should contain exactly 3 rows");
+    }
+  }
+
+  @Test
+  public void shouldExecuteMultistatementSelectWithPositionalParameters() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Multistatement SELECT chain is executed with 6 positional parameters
+    try (PreparedStatement ps =
+        connection.prepareStatement("SELECT ?; SELECT ?, ?; SELECT ?, ?, ?")) {
+      ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 3);
+      ps.setInt(1, 10);
+      ps.setInt(2, 20);
+      ps.setInt(3, 30);
+      ps.setInt(4, 40);
+      ps.setInt(5, 50);
+      ps.setInt(6, 60);
+      boolean hasResultSet = ps.execute();
+
+      // Then 3 result sets are returned
+      assertTrue(hasResultSet, "First SELECT should produce a result set");
+
+      // And the first result set contains row [10]
+      try (ResultSet rs1 = ps.getResultSet()) {
+        assertTrue(rs1.next());
+        assertEquals(10, rs1.getInt(1));
+        assertFalse(rs1.next());
+      }
+
+      // And the second result set contains row [20, 30]
+      assertTrue(ps.getMoreResults());
+      try (ResultSet rs2 = ps.getResultSet()) {
+        assertTrue(rs2.next());
+        assertEquals(20, rs2.getInt(1));
+        assertEquals(30, rs2.getInt(2));
+        assertFalse(rs2.next());
+      }
+
+      // And the third result set contains row [40, 50, 60]
+      assertTrue(ps.getMoreResults());
+      try (ResultSet rs3 = ps.getResultSet()) {
+        assertTrue(rs3.next());
+        assertEquals(40, rs3.getInt(1));
+        assertEquals(50, rs3.getInt(2));
+        assertEquals(60, rs3.getInt(3));
+        assertFalse(rs3.next());
+      }
+
+      assertFalse(ps.getMoreResults(), "No more results after third statement");
+      assertEquals(-1, ps.getUpdateCount(), "No more results");
+    }
+  }
+
+  @Test
+  public void shouldFailWhenMultistatementQueryHasTooFewParameters() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Multistatement SELECT requires 3 parameters but only 1 is bound
+    assertThrows(
+        SQLException.class,
+        () -> {
+          // Then an error is returned indicating parameter count mismatch
+          try (PreparedStatement ps = connection.prepareStatement("SELECT ?; SELECT ?, ?")) {
+            ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
+            ps.setInt(1, 10);
+            ps.execute();
+          }
+        });
+  }
+
+  @Test
+  public void shouldFailWhenNullPositionalParametersAreUsedInMultistatementQuery()
+      throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // When Multistatement SELECT is executed with NULL positional parameters
+    SQLException ex =
+        assertThrows(
+            SQLException.class,
+            () -> {
+              // Then an error is returned indicating NULL bindings are not supported
+              try (PreparedStatement ps = connection.prepareStatement("SELECT ?; SELECT ?, ?")) {
+                ps.unwrap(SnowflakeStatement.class).setParameter("MULTI_STATEMENT_COUNT", 2);
+                ps.setNull(1, Types.INTEGER);
+                ps.setInt(2, 10);
+                ps.setNull(3, Types.INTEGER);
+                ps.execute();
+              }
+            });
+    // Server surfaces "Bind variable ? not set" — match loosely on "bind".
+    assertTrue(
+        ex.getMessage().toLowerCase().contains("bind"),
+        "Expected error to mention bind variables, got: " + ex.getMessage());
   }
 }
