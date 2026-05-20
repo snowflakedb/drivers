@@ -1189,9 +1189,9 @@ impl RefreshContext {
     ///
     /// On `SessionExpired`, refreshes the session token via master token and
     /// retries exactly once. Implemented on top of the generic
-    /// [`refresh::execute_with_refresh`] helper — see that module for the
-    /// shared retry-shape that this and the S3 STS refresher both use. Named
-    /// to parallel [`execute_with_retry`](crate::http::retry::execute_with_retry).
+    /// [`refresh::execute_with_refresh`](crate::refresh::execute_with_refresh)
+    /// helper. Named to parallel
+    /// [`execute_with_retry`](crate::http::retry::execute_with_retry).
     pub async fn execute_with_refresh<F, Fut, T>(&mut self, f: F) -> Result<T, ApiError>
     where
         F: Fn(SensitiveString) -> Fut,

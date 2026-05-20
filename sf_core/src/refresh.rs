@@ -1,16 +1,15 @@
-//! Generic refresh-and-retry pattern shared by the session-token and S3 STS
-//! credential paths.
+//! Generic refresh-and-retry pattern for refreshable resources (auth tokens,
+//! cloud-stage credentials, etc.).
 //!
-//! Both paths follow the same shape:
+//! Consumers follow the same shape:
 //!
-//! 1. read the current resource (token / credentials),
+//! 1. read the current resource,
 //! 2. run an operation that consumes it,
 //! 3. on a recoverable error, rotate the resource and retry.
 //!
-//! The differences live entirely in the `Refresher` impl: which error is
-//! recoverable, where the resource lives, whether to coalesce rapid-fire
-//! refreshes (session: one-shot state machine; STS: 10-minute wall-clock
-//! window). The loop itself is shared.
+//! What varies per consumer — which error is recoverable, where the resource
+//! is cached, how rapid-fire refreshes are coalesced — lives entirely in the
+//! `Refresher` impl. The loop itself is shared.
 //!
 //! # Termination
 //!

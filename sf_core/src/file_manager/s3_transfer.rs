@@ -40,8 +40,8 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 /// via the shared cache — no return-value plumbing required.
 ///
 /// When `refresher` is `Some`, the retry loop is driven by
-/// [`crate::refresh::execute_with_refresh`] — see that module for the shared
-/// retry-shape used by both the session-token and STS refresh paths.
+/// [`crate::refresh::execute_with_refresh`] via the [`S3StsRefresher`]
+/// implementation in this module.
 pub async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
     stage_info: &StageInfo,
@@ -74,23 +74,17 @@ pub async fn upload_to_s3_or_skip(
         }
     };
 
-    let outcome = match refresher.as_deref_mut() {
-        Some(r) => {
-            let mut adapter = StageCredsAdapter::new(r, &stage_info.creds, |e| {
-                upload_file_error::StageCredsRefreshSnafu.into_error(e)
-            });
-            execute_with_refresh(&mut adapter, attempt).await
-        }
-        None => attempt(stage_info.creds.clone()).await,
-    };
-
-    outcome.map_err(|e| match e {
-        S3AttemptError::Other(err) => err,
-        // The refresher declined to rotate (or there was none). Surface the
-        // original AWS error as a normal upload failure — same shape as any
-        // other S3 PUT error.
-        S3AttemptError::StsExpired(aws_err) => upload_file_error::S3UploadSnafu.into_error(aws_err),
-    })
+    run_s3_with_sts_refresh(
+        refresher,
+        &stage_info.creds,
+        |e| upload_file_error::StageCredsRefreshSnafu.into_error(e),
+        // Refresher declined to rotate (or there was none). Surface the
+        // original AWS error as a normal upload failure — same shape as
+        // any other S3 PUT error.
+        |aws_err| upload_file_error::S3UploadSnafu.into_error(aws_err),
+        attempt,
+    )
+    .await
 }
 
 /// Internal error type for one attempt of an S3 operation. The `StsExpired`
@@ -104,24 +98,28 @@ enum S3AttemptError<E> {
     Other(E),
 }
 
-/// Adapter that exposes a `StageCredsRefresher` (file-manager-facing trait)
-/// as a `Refresher<CloudCredentials, S3AttemptError<E>>` so the generic
-/// helper drives the retry loop. `wrap_refresh_err` translates a
-/// `StageCredsRefreshError` from the refresher into the operation's `E` —
-/// this avoids a blanket `From<StageCredsRefreshError>` impl on
-/// `UploadFileError`/`DownloadFileError`, which would skip snafu's
-/// source-location stamping. Tracks the last AWS key id handed out so a
-/// refresh that doesn't actually rotate (refresher inside its coalescing
-/// window) reports `Ok(false)` and the helper propagates the original
-/// error rather than spinning.
-struct StageCredsAdapter<'a, E, W> {
+/// S3 STS implementation of the generic [`Refresher`] trait. Drives the
+/// retry loop in `execute_with_refresh` by reading credentials from a
+/// `StageCredsRefresher`'s shared cache and asking it to rotate when the
+/// AWS SDK reports `ExpiredToken`.
+///
+/// `wrap_refresh_err` translates a `StageCredsRefreshError` from the
+/// refresher into the operation's `E` — this avoids a blanket
+/// `From<StageCredsRefreshError>` impl on `UploadFileError` /
+/// `DownloadFileError`, which would skip snafu's source-location stamping.
+///
+/// Tracks the last AWS key id handed out so a refresh that doesn't
+/// actually rotate (refresher inside its coalescing window) reports
+/// `Ok(false)` and the helper propagates the original error rather than
+/// spinning.
+struct S3StsRefresher<'a, E, W> {
     refresher: &'a mut dyn StageCredsRefresher,
     last_seen_key: Option<String>,
     wrap_refresh_err: W,
     _marker: PhantomData<fn() -> E>,
 }
 
-impl<'a, E, W> StageCredsAdapter<'a, E, W>
+impl<'a, E, W> S3StsRefresher<'a, E, W>
 where
     W: Fn(StageCredsRefreshError) -> E,
 {
@@ -139,7 +137,7 @@ where
     }
 }
 
-impl<'a, E, W> Refresher<CloudCredentials, S3AttemptError<E>> for StageCredsAdapter<'a, E, W>
+impl<'a, E, W> Refresher<CloudCredentials, S3AttemptError<E>> for S3StsRefresher<'a, E, W>
 where
     E: Send,
     W: Fn(StageCredsRefreshError) -> E + Send,
@@ -173,6 +171,42 @@ where
             Ok(true)
         })
     }
+}
+
+/// Runs `attempt` with the supplied credentials, driving STS refresh on
+/// `S3AttemptError::StsExpired` when a `refresher` is provided. With no
+/// refresher, runs the attempt once and folds any `StsExpired` back into
+/// the caller-supplied AWS error path — same shape as any other S3
+/// PUT/GET error.
+///
+/// Owns the refresher-vs-no-refresher branching that was previously
+/// duplicated by both upload and download. `wrap_refresh_err` /
+/// `wrap_sts_err` keep the call sites' snafu instrumentation at the
+/// boundary so source locations land on the operation's own error variants
+/// rather than on this helper.
+async fn run_s3_with_sts_refresh<F, Fut, T, E>(
+    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    initial_creds: &CloudCredentials,
+    wrap_refresh_err: impl Fn(StageCredsRefreshError) -> E + Send,
+    wrap_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
+    attempt: F,
+) -> Result<T, E>
+where
+    F: Fn(CloudCredentials) -> Fut,
+    Fut: Future<Output = Result<T, S3AttemptError<E>>>,
+    E: Send,
+{
+    let outcome = match refresher.as_deref_mut() {
+        Some(r) => {
+            let mut sts = S3StsRefresher::new(r, initial_creds, wrap_refresh_err);
+            execute_with_refresh(&mut sts, attempt).await
+        }
+        None => attempt(initial_creds.clone()).await,
+    };
+    outcome.map_err(|e| match e {
+        S3AttemptError::Other(err) => err,
+        S3AttemptError::StsExpired(aws_err) => wrap_sts_err(aws_err),
+    })
 }
 
 /// Returns the AWS key id from S3 credentials, or None for non-S3 variants.
@@ -303,22 +337,14 @@ pub async fn download_from_s3(
         }
     };
 
-    let outcome = match refresher.as_deref_mut() {
-        Some(r) => {
-            let mut adapter = StageCredsAdapter::new(r, &stage_info.creds, |e| {
-                download_file_error::StageCredsRefreshSnafu.into_error(e)
-            });
-            execute_with_refresh(&mut adapter, attempt).await
-        }
-        None => attempt(stage_info.creds.clone()).await,
-    };
-
-    let response = outcome.map_err(|e| match e {
-        S3AttemptError::Other(err) => err,
-        S3AttemptError::StsExpired(aws_err) => {
-            download_file_error::S3DownloadSnafu.into_error(aws_err)
-        }
-    })?;
+    let response = run_s3_with_sts_refresh(
+        refresher,
+        &stage_info.creds,
+        |e| download_file_error::StageCredsRefreshSnafu.into_error(e),
+        |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
+        attempt,
+    )
+    .await?;
 
     let metadata_map = response.metadata().cloned().unwrap_or_default();
 
@@ -878,9 +904,9 @@ mod tests {
         }
     }
 
-    // --- aws_key_id helper used by the adapter's rotation check ---
+    // --- aws_key_id helper used by S3StsRefresher's rotation check ---
     //
-    // The adapter compares AWS key ids before/after refresh: a different
+    // S3StsRefresher compares AWS key ids before/after refresh: a different
     // key id implies a fresh STS rotation from GS, the same key id means
     // we're inside the refresher's coalescing window and retrying would
     // loop. Non-S3 variants intentionally return None so the comparison
@@ -903,7 +929,7 @@ mod tests {
         assert_eq!(aws_key_id(&azure), None);
     }
 
-    // --- StageCredsAdapter::refresh ---
+    // --- S3StsRefresher::refresh ---
     //
     // A fake StageCredsRefresher records call counts and exposes a mutable
     // cache so tests can simulate "refresh rotated the creds" vs "refresh
@@ -956,13 +982,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adapter_refresh_returns_true_when_creds_rotate() {
+    async fn s3_sts_refresher_refresh_returns_true_when_creds_rotate() {
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
         let initial = s3_creds("AKIA1");
-        let mut adapter = StageCredsAdapter::new(&mut fake, &initial, passthrough_wrap);
+        let mut sts = S3StsRefresher::new(&mut fake, &initial, passthrough_wrap);
 
-        let rotated = adapter.refresh().await.unwrap();
+        let rotated = sts.refresh().await.unwrap();
 
         assert!(rotated);
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
@@ -974,39 +1000,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adapter_refresh_returns_false_when_creds_unchanged() {
+    async fn s3_sts_refresher_refresh_returns_false_when_creds_unchanged() {
         // FakeRefresher with no `arm()` leaves the cache holding the
         // initial creds — simulating a hit inside the refresher's
-        // coalescing window. The adapter must report Ok(false) so the
-        // generic helper propagates the original error rather than
+        // coalescing window. The S3StsRefresher must report Ok(false) so
+        // the generic helper propagates the original error rather than
         // spinning.
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         let initial = s3_creds("AKIA1");
-        let mut adapter = StageCredsAdapter::new(&mut fake, &initial, passthrough_wrap);
+        let mut sts = S3StsRefresher::new(&mut fake, &initial, passthrough_wrap);
 
-        let rotated = adapter.refresh().await.unwrap();
+        let rotated = sts.refresh().await.unwrap();
 
         assert!(
             !rotated,
-            "unchanged creds → adapter declines further rotations"
+            "unchanged creds → S3StsRefresher declines further rotations"
         );
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn adapter_refresh_tracks_last_seen_key_across_rotations() {
+    async fn s3_sts_refresher_refresh_tracks_last_seen_key_across_rotations() {
         // After a successful rotation, last_seen_key is updated. A
         // subsequent unchanged refresh against the new key should still
         // report Ok(false) — confirming the marker followed the rotation.
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
         let initial = s3_creds("AKIA1");
-        let mut adapter = StageCredsAdapter::new(&mut fake, &initial, passthrough_wrap);
+        let mut sts = S3StsRefresher::new(&mut fake, &initial, passthrough_wrap);
 
-        assert!(adapter.refresh().await.unwrap()); // AKIA1 -> AKIA2
+        assert!(sts.refresh().await.unwrap()); // AKIA1 -> AKIA2
         // Cache still holds AKIA2; arming nothing means refresh() leaves
-        // it as-is. Adapter must see "no rotation" against AKIA2 (not
-        // AKIA1).
-        assert!(!adapter.refresh().await.unwrap());
+        // it as-is. S3StsRefresher must see "no rotation" against AKIA2
+        // (not AKIA1).
+        assert!(!sts.refresh().await.unwrap());
     }
 }
