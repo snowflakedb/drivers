@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - 'release/**'
+      - 'release/odbc-**'
   pull_request:
     # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
     # a PR re-runs the workflow at the upgraded scope without needing a new
