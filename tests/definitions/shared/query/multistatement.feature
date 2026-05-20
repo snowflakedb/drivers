@@ -49,11 +49,26 @@ Feature: Multistatement query execution
     When Single SELECT is executed with multi_statement_count set to 3
     Then an error is returned indicating statement count mismatch
 
+  @jdbc_e2e @odbc_e2e @python_e2e
+  Scenario: should fail when multistatement query has too few parameters
+    Given Snowflake client is logged in
+    When Multistatement SELECT requires 3 parameters but only 1 is bound
+    Then an error is returned indicating parameter count mismatch
+
+  @jdbc_e2e @odbc_e2e @python_e2e
+  Scenario: should fail when NULL positional parameters are used in multistatement query
+    # Snowflake's SYSTEM$MULTISTMT server-side dispatcher rejects NULL bindings
+    # with "Bind variable ? not set" — confirmed against legacy snowflake-jdbc
+    # and legacy snowflake-odbc; the universal-driver inherits the same behavior.
+    Given Snowflake client is logged in
+    When Multistatement SELECT is executed with NULL positional parameters
+    Then an error is returned indicating NULL bindings are not supported
+
   # ============================================================================
   # POSITIONAL PARAMETER BINDING
   # ============================================================================
   # Combines MULTI_STATEMENT_COUNT with parameterized SQL. Bindings are
-  # positional and flatten across `;`-separated statements in source order —
+  # positional and flattened across `;`-separated statements in source order —
   # same contract as legacy snowflake-jdbc PreparedStatement, snowflake-odbc
   # SQLBindParameter, and snowflake-connector-python qmark paramstyle.
   #
@@ -80,18 +95,3 @@ Feature: Multistatement query execution
     And the first result set contains row [10]
     And the second result set contains row [20, 30]
     And the third result set contains row [40, 50, 60]
-
-  @jdbc_e2e @odbc_e2e @python_e2e
-  Scenario: should fail when multistatement query has too few parameters
-    Given Snowflake client is logged in
-    When Multistatement SELECT requires 3 parameters but only 1 is bound
-    Then an error is returned indicating parameter count mismatch
-
-  @jdbc_e2e @odbc_e2e @python_e2e
-  Scenario: should fail when NULL positional parameters are used in multistatement query
-    # Snowflake's SYSTEM$MULTISTMT server-side dispatcher rejects NULL bindings
-    # with "Bind variable ? not set" — confirmed against legacy snowflake-jdbc
-    # and legacy snowflake-odbc; the universal-driver inherits the same behavior.
-    Given Snowflake client is logged in
-    When Multistatement SELECT is executed with NULL positional parameters
-    Then an error is returned indicating NULL bindings are not supported
