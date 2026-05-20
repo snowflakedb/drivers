@@ -752,6 +752,14 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             ..
         }
         | ApiError::Configuration {
+            source: ConfigError::IniParse { .. },
+            ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::IniAlreadyLoaded { .. },
+            ..
+        }
+        | ApiError::Configuration {
             source: ConfigError::InsecurePermissions { .. },
             ..
         }
@@ -855,6 +863,14 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         } => StatusCode::InternalError,
         ApiError::Configuration {
             source: ConfigError::TomlParse { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::IniParse { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::IniAlreadyLoaded { .. },
             ..
         } => StatusCode::InternalError,
         ApiError::Configuration {

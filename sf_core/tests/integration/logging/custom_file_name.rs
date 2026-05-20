@@ -1,8 +1,8 @@
 use std::thread;
 use std::time::Duration;
 
+use sf_core::config::{IniConfig, logging_config_from_ini};
 use sf_core::logging::LogManager;
-use sf_core::logging::ini_config::parse_ini_file;
 
 /// Configure `LogFile=my_custom_driver.log`, emit an event, and verify a file
 /// matching that prefix exists in the log directory.
@@ -12,17 +12,13 @@ fn custom_log_file_name_is_used() {
     let log_dir = dir.path().join("logs");
     std::fs::create_dir_all(&log_dir).unwrap();
 
-    let ini_path = dir.path().join("sf.odbc.ini");
-    std::fs::write(
-        &ini_path,
-        format!(
-            "LogLevel=INFO\nLogPath={}\nLogFile=my_custom_driver.log\n",
-            log_dir.display()
-        ),
-    )
+    let ini = IniConfig::from_ini_content(&format!(
+        "LogLevel=INFO\nLogPath={}\nLogFile=my_custom_driver.log\n",
+        log_dir.display()
+    ))
     .unwrap();
 
-    let config = parse_ini_file(&ini_path).unwrap();
+    let config = logging_config_from_ini(&ini).unwrap();
     assert_eq!(
         config.log_file_name.as_deref(),
         Some("my_custom_driver.log")

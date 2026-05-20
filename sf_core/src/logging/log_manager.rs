@@ -181,18 +181,26 @@ impl LogManager {
         })
     }
 
-    /// Factory: read `sf.odbc.ini` via [`crate::config::sf_odbc_ini::SfOdbcIni`]
-    /// and initialise logging with the resulting [`LoggingConfig`].
+    /// Factory: derive a [`LoggingConfig`] from the process-wide INI
+    /// snapshot loaded via [`crate::config::load_ini_files`] and initialise
+    /// logging with it.
     ///
-    /// The INI file is the shared source of truth for the ODBC driver: the
-    /// same snapshot also drives the wide-string ABI wrappers. Reading
-    /// goes through [`crate::config::sf_odbc_ini::SfOdbcIni::global`] so
-    /// both subsystems see identical values without opening the file
-    /// twice.
+    /// Recoverable failures degrade silently to [`LoggingConfig::default`]:
+    /// if the wrapper never seeded the snapshot, or if `load_ini_files`
+    /// returned an error and left the global uninitialised (in which case
+    /// the wrapper itself has already emitted a diagnostic), or if a
+    /// recognised key carries an invalid value, the driver still comes up
+    /// with default logging.
     pub fn for_odbc() -> Option<Self> {
-        let config = crate::config::sf_odbc_ini::SfOdbcIni::global()
-            .logging()
-            .clone();
+        let config = match crate::config::get_ini_config() {
+            Some(ini) => crate::config::logging_config_from_ini(ini).unwrap_or_else(|e| {
+                eprintln!(
+                    "Failed to derive logging config from sf.odbc.ini: {e:?}; using defaults"
+                );
+                LoggingConfig::default()
+            }),
+            None => LoggingConfig::default(),
+        };
         match Self::init(config) {
             Ok(lm) => Some(lm),
             Err(e) => {
@@ -206,7 +214,7 @@ impl LogManager {
     /// defaults.
     pub fn for_toml() -> Option<Self> {
         let config = match crate::config::config_manager::load_config_section("log") {
-            Ok(Some(section)) => super::ini_config::load_from_toml_section(&section),
+            Ok(Some(section)) => crate::config::logging_config_from_toml_section(&section),
             _ => LoggingConfig::default(),
         };
         match Self::init(config) {

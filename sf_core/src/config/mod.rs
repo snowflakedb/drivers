@@ -1,8 +1,12 @@
 pub mod config_manager;
 pub mod connection_config;
+pub mod ini_loader;
+pub mod logging_config_loader;
 pub mod logout;
 pub mod param_registry;
 pub mod param_store;
+pub use ini_loader::{IniConfig, get_ini_config, load_ini_files};
+pub use logging_config_loader::{logging_config_from_ini, logging_config_from_toml_section};
 pub use param_registry::ParamKey;
 pub use param_registry::ParamScope;
 pub use param_registry::param_names;
@@ -12,7 +16,6 @@ pub mod resolver;
 pub mod rest_parameters;
 pub mod retry;
 pub mod settings;
-pub mod sf_odbc_ini;
 pub mod toml_loader;
 
 use error_trace::ErrorTrace;
@@ -54,6 +57,17 @@ pub enum ConfigError {
         path: String,
         #[snafu(source(from(toml::de::Error, Box::new)))]
         source: Box<toml::de::Error>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse INI: {message}"))]
+    IniParse {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("sf.odbc.ini has already been loaded"))]
+    IniAlreadyLoaded {
         #[snafu(implicit)]
         location: Location,
     },

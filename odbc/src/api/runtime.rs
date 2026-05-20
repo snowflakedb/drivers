@@ -130,6 +130,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         guard.env_count += 1;
         return Ok(());
     }
+    load_ini_config();
     let log_manager = sf_core::logging::LogManager::for_odbc();
     if let Some(lm) = &log_manager {
         crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());
@@ -173,4 +174,19 @@ pub fn env_freed() -> Result<(), OdbcRuntimeError> {
         }
     }
     Ok(())
+}
+
+/// Build the ordered candidate path list and seed `sf_core`'s process-wide
+/// INI snapshot before logging initialisation. A subsequent environment
+/// allocation in the same process re-enters this function; the underlying
+/// `OnceLock` accepts only the first successful load, so the
+/// `IniAlreadyLoaded` arm is benign and intentionally silenced.
+fn load_ini_config() {
+    let paths = crate::api::ini_paths::default_paths();
+    match sf_core::config::load_ini_files(&paths) {
+        Ok(()) | Err(sf_core::config::ConfigError::IniAlreadyLoaded { .. }) => {}
+        Err(e) => {
+            eprintln!("Failed to load sf.odbc.ini: {e:?}; using defaults");
+        }
+    }
 }

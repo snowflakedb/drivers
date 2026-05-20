@@ -1,29 +1,25 @@
 use std::thread;
 use std::time::Duration;
 
+use sf_core::config::{ConfigError, IniConfig, load_ini_files, logging_config_from_ini};
 use sf_core::logging::LogManager;
-use sf_core::logging::ini_config::{find_odbc_ini, parse_ini_file};
 use tracing::level_filters::LevelFilter;
 
-/// Single-init happy path: parse a temp INI, init `LogManager`, emit events,
-/// verify the log file.
+/// Single-init happy path: build a snapshot from an in-memory INI, init
+/// `LogManager`, emit events, verify the log file.
 #[test]
 fn ini_to_log_manager_happy_path() {
     let dir = tempfile::tempdir().unwrap();
     let log_dir = dir.path().join("logs");
     std::fs::create_dir_all(&log_dir).unwrap();
 
-    let ini_path = dir.path().join("sf.odbc.ini");
-    std::fs::write(
-        &ini_path,
-        format!(
-            "LogLevel=INFO\nLogPath={}\nLogFile=test_driver.log\n",
-            log_dir.display()
-        ),
-    )
+    let ini = IniConfig::from_ini_content(&format!(
+        "LogLevel=INFO\nLogPath={}\nLogFile=test_driver.log\n",
+        log_dir.display()
+    ))
     .unwrap();
 
-    let config = parse_ini_file(&ini_path).unwrap();
+    let config = logging_config_from_ini(&ini).unwrap();
     assert_eq!(config.level, LevelFilter::INFO);
     assert_eq!(config.log_path.as_deref(), Some(log_dir.as_path()));
     assert_eq!(config.log_file_name.as_deref(), Some("test_driver.log"));
@@ -64,29 +60,43 @@ fn ini_to_log_manager_happy_path() {
     );
 }
 
-/// Verify `find_odbc_ini` picks up the `SF_ODBC_INI` env var.
+/// `load_ini_files` walks the ordered path list and stops at the first
+/// existing file, ignoring earlier missing candidates. A repeat call hits
+/// the `OnceLock` and returns `IniAlreadyLoaded` without modifying the
+/// snapshot.
 #[test]
-fn find_odbc_ini_resolves_env_var() {
+fn load_ini_files_walks_paths_then_locks() {
     let dir = tempfile::tempdir().unwrap();
-    let ini_path = dir.path().join("sf.odbc.ini");
-    std::fs::write(&ini_path, "LogLevel=WARN\n").unwrap();
+    let missing = dir.path().join("missing.ini");
+    let present = dir.path().join("sf.odbc.ini");
+    std::fs::write(&present, "LogLevel=WARN\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&present, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
-    temp_env::with_var("SF_ODBC_INI", Some(ini_path.to_str().unwrap()), || {
-        let found = find_odbc_ini();
-        assert_eq!(found.as_deref(), Some(ini_path.as_path()));
-    });
-}
+    load_ini_files(&[missing.clone(), present.clone()]).expect("first load should succeed");
 
-/// Verify that a non-existent INI path returns an IO error.
-#[test]
-fn parse_nonexistent_ini_returns_io_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let missing = dir.path().join("sf.odbc.ini");
-    let result = parse_ini_file(&missing);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
+    let snapshot = sf_core::config::get_ini_config().expect("snapshot installed");
+    assert_eq!(snapshot.get("loglevel"), Some("WARN"));
+    assert_eq!(snapshot.source(), Some(present.as_path()));
+
+    let other = dir.path().join("other.ini");
+    std::fs::write(&other, "LogLevel=DEBUG\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let err = load_ini_files(&[other]).expect_err("second load must be rejected");
     assert!(
-        matches!(err, sf_core::logging::LogError::Io { .. }),
-        "expected Io error variant, got: {err:?}"
+        matches!(err, ConfigError::IniAlreadyLoaded { .. }),
+        "expected IniAlreadyLoaded, got: {err:?}"
+    );
+    // Snapshot remains the original WARN-level config.
+    assert_eq!(
+        sf_core::config::get_ini_config().and_then(|i| i.get("loglevel")),
+        Some("WARN")
     );
 }

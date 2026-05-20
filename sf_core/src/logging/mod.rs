@@ -11,7 +11,6 @@ use tracing_subscriber::Layer;
 pub mod c_api;
 pub(crate) mod callback_layer;
 pub(crate) mod error;
-pub mod ini_config;
 pub mod log_manager;
 pub(crate) mod opentelemetry;
 

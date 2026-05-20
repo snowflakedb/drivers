@@ -2,8 +2,10 @@
 
 ## Configuration via `sf.odbc.ini`
 
-On startup the driver reads a single `sf.odbc.ini` file. The first existing
-location wins:
+On startup the driver builds an ordered list of candidate paths
+([`odbc::api::ini_paths::default_paths`](src/api/ini_paths.rs)) and passes
+it to [`sf_core::config::load_ini_files`](../sf_core/src/config/ini_loader.rs).
+The first existing location wins:
 
 1. `$SF_ODBC_INI` (explicit override; useful in tests and CI),
 2. `<config_dir>/snowflake/sf.odbc.ini` (e.g. `~/Library/Application Support/snowflake/sf.odbc.ini` on macOS, `~/.config/snowflake/sf.odbc.ini` on Linux),
@@ -11,8 +13,11 @@ location wins:
 
 On Unix the file must be `chmod 600` (owner read/write only); otherwise the
 driver logs a warning and falls back to defaults. The file is read once,
-during environment allocation, and the snapshot is shared across all
-subsystems.
+during environment allocation, and cached in a process-wide `OnceLock`
+inside `sf_core::config`. Subsystem extractors fetch typed configs from
+that snapshot (logging today via
+[`sf_core::config::logging_config_from_ini`](../sf_core/src/config/logging_config_loader.rs)),
+so each section walks the file at most once.
 
 All keys live in the unnamed top-level section and are matched
 case-insensitively. The logging subsystem recognises:
@@ -30,8 +35,10 @@ case-insensitively. The logging subsystem recognises:
 | `LogQueryParameters` | bool    | Log bound parameter values.                                  |
 | `ErrorTraceEnabled`  | bool    | Capture error traces alongside the diagnostic record.        |
 
-Unknown keys are silently ignored by the logging subsystem and made
-available to other subsystems through the shared INI snapshot.
+Unknown keys are silently ignored by the logging subsystem and remain
+available to other subsystems by calling
+[`sf_core::config::get_ini_config`](../sf_core/src/config/ini_loader.rs) and
+reading the entries directly.
 
 ## Testing
 
