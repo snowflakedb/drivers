@@ -2,7 +2,7 @@ name: Python Release Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   workflow_dispatch:
 
 env:
