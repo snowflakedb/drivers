@@ -15,6 +15,8 @@ from snowflake.connector._internal.status_codes import (
 )
 from snowflake.connector.errors import DatabaseError, Error, OperationalError
 
+from ..config_utils import create_config_settings_from_dict
+from ..logout_config_mapping import LogoutOptionKeys
 from ..protobuf_gen.database_driver_v1_pb2 import (
     AuthenticationError as ProtoAuthenticationError,
 )
@@ -272,22 +274,10 @@ def _derive_sqlstate(driver_exception: Any) -> str | None:
 
 
 class ProtoTransport:
-    """Synchronous FFI bridge to the Rust core RPC layer.
-
-    The FFI call (``sf_core_api_call_proto``) is blocking but releases the GIL,
-    so other Python threads can make progress while a call is in flight. We call
-    it directly inside the coroutine rather than via ``asyncio.to_thread()``
-    because all current callers go through
-    :class:`DatabaseDriverBlockingClient._run` which blocks the calling thread
-    on ``.result()`` anyway — ``to_thread`` would add no parallelism benefit
-    while introducing atexit hang/failure modes when the thread-pool executor is
-    torn down during interpreter shutdown.
-    """
-
     async def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
-        return self._call_ffi(api, method, message)
+        return await asyncio.to_thread(self._handle_message_sync, api, method, message)
 
-    def _call_ffi(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
+    def _handle_message_sync(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
         response = ctypes.POINTER(ctypes.c_ubyte)()
         response_len = ctypes.c_size_t()
         api_bytes: c_char_p = ctypes.c_char_p(api.encode("utf-8"))
@@ -319,11 +309,16 @@ def _run_background_loop(loop: asyncio.AbstractEventLoop) -> None:
     """Entry point for the background event-loop thread.
 
     After ``loop.stop()`` is called (from the atexit handler or elsewhere),
-    ``run_forever`` returns and we close the loop.
+    ``run_forever`` returns and we clean up the default executor so that no
+    stale ``asyncio.to_thread`` work is leaked.
     """
     try:
         loop.run_forever()
     finally:
+        try:
+            loop.run_until_complete(loop.shutdown_default_executor())
+        except Exception:
+            pass
         loop.close()
 
 
@@ -646,6 +641,88 @@ class CoreDriver:
 
 
 core_driver = CoreDriver()
+
+# ---------------------------------------------------------------------------
+# Sync FFI close for atexit
+# ---------------------------------------------------------------------------
+
+_sync_transport = ProtoTransport()
+
+
+def _call_ffi_sync(method: str, request_bytes: bytes) -> bytes:
+    """Direct synchronous FFI call bypassing the async event loop.
+
+    Used exclusively by :func:`connection_close_at_exit` so that atexit
+    handlers never depend on ``asyncio.to_thread`` or the background loop
+    (both are fragile during interpreter shutdown).
+    """
+    code, response_bytes = _sync_transport._handle_message_sync("DatabaseDriver", method, request_bytes)
+    if code == 0:
+        return response_bytes
+    # Best-effort: swallow application/transport errors during atexit
+    return b""
+
+
+def connection_close_at_exit(
+    conn_handle: ConnectionHandle,
+    db_handle: DatabaseHandle | None,
+) -> None:
+    """Close a connection synchronously for atexit — bypass the async event loop.
+
+    Performs the same steps as ``Connection.close(retry=False)`` followed by
+    handle release, but calls ``sf_core_api_call_proto`` directly instead of
+    routing through ``asyncio.to_thread``.  This avoids the hang/failure that
+    occurs when the thread-pool executor is torn down during interpreter
+    shutdown.
+    """
+    try:
+        resp_bytes = _call_ffi_sync(
+            "connection_is_closed",
+            ConnectionIsClosedRequest(conn_handle=conn_handle).SerializeToString(),
+        )
+        if resp_bytes:
+            resp = ConnectionIsClosedResponse()
+            resp.ParseFromString(resp_bytes)
+            if resp.is_closed:
+                return
+    except Exception:
+        pass
+
+    try:
+        _call_ffi_sync(
+            "connection_set_options",
+            ConnectionSetOptionsRequest(
+                conn_handle=conn_handle,
+                options=create_config_settings_from_dict({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
+            ).SerializeToString(),
+        )
+    except Exception:
+        pass
+
+    try:
+        _call_ffi_sync(
+            "connection_close",
+            ConnectionCloseRequest(conn_handle=conn_handle).SerializeToString(),
+        )
+    except Exception:
+        pass
+
+    try:
+        _call_ffi_sync(
+            "connection_release",
+            ConnectionReleaseRequest(conn_handle=conn_handle).SerializeToString(),
+        )
+    except Exception:
+        pass
+
+    if db_handle is not None:
+        try:
+            _call_ffi_sync(
+                "database_release",
+                DatabaseReleaseRequest(db_handle=db_handle).SerializeToString(),
+            )
+        except Exception:
+            pass
 
 
 class AsyncCoreDriver:

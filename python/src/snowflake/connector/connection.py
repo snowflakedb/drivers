@@ -18,7 +18,7 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, TypeVar, cast
 
-from ._internal.api_client.client_api import core_driver
+from ._internal.api_client.client_api import connection_close_at_exit, core_driver
 from ._internal.binding_converters import ParamStyle
 from ._internal.config_utils import create_config_settings_from_dict
 from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
@@ -308,26 +308,12 @@ class Connection(ErrorHandlerMixin):
             logger.warning("Failed to release database handle", exc_info=True)
 
     def _close_at_process_exit(self) -> None:
-        """
-        Cleanup handler called by atexit when process exits.
+        """Cleanup handler called by atexit when process exits.
 
-        If close() was called successfully, this handler should have been unregistered
-        and should NOT run. If it runs for an already-closed connection, that indicates
-        a potential bug (unregister failed, race condition, or multiple registrations).
-
-        The entire body is wrapped in try/except because during interpreter shutdown,
-        any call (FFI, logging, warnings) may fail due to torn-down module state.
+        Uses a direct synchronous FFI path (bypassing the async event loop)
+        because asyncio.to_thread can hang during interpreter shutdown.
         """
         try:
-            if self.is_closed():
-                logger.debug(
-                    "atexit handler ran for already-closed connection. "
-                    "This may indicate atexit.unregister() failed or a race condition occurred."
-                )
-                return
-
-            # Connection is leaked (not explicitly closed) — emit FutureWarning.
-            # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
             try:
                 warnings.warn(
                     "Connection was not explicitly closed before process exit. "
@@ -337,14 +323,19 @@ class Connection(ErrorHandlerMixin):
                     stacklevel=2,
                 )
             except Exception:
-                pass  # Interpreter shutting down; warning emission is best-effort
+                pass
 
-            self._try_close()
+            conn_handle = self.conn_handle
+            db_handle = self.db_handle
+            self.conn_handle = None
+            self.db_handle = None
+            if conn_handle is not None:
+                connection_close_at_exit(conn_handle, db_handle)
         except Exception:
             try:
                 logger.warning("_close_at_process_exit failed during interpreter shutdown")
             except Exception:
-                pass  # logger itself may be torn down
+                pass
 
     @property
     @pep249
