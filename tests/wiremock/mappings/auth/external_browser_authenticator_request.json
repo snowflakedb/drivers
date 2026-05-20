@@ -1,0 +1,22 @@
+{
+  "name": "Snowflake authenticator-request for external browser",
+  "request": {
+    "urlPathPattern": "/session/authenticator-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "ssoUrl": "https://idp.example.com/sso",
+        "proofKey": "mock_proof_key_abc123"
+      }
+    }
+  }
+}

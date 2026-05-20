@@ -1,0 +1,26 @@
+{
+  "name": "Successful external browser authentication login",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token",
+        "masterToken": "mock_master_token",
+        "sessionId": 12345,
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": true}
+        ]
+      }
+    }
+  }
+}
