@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -346,10 +346,11 @@ impl DatabaseDriverV1 {
                     )
                     .await;
 
-                    // Populate the lock-free session id cache so entry-point
-                    // methods can stamp `snowflake.session.id` on their spans
-                    // without taking the connection mutex.
-                    conn.session_id_cache.store(session_id, Ordering::Relaxed);
+                    // Publish the session id to the parallel `session_ids`
+                    // map on `DatabaseDriverV1` so entry-point methods can
+                    // stamp `snowflake.session.id` on their spans without
+                    // taking the connection mutex.
+                    self.register_session_id(conn_handle, session_id);
 
                     // Telemetry setup: check if the server has opted this session
                     // into in-band telemetry and a session registry is configured,
@@ -454,14 +455,11 @@ impl DatabaseDriverV1 {
     /// Idempotent. Each driver operation emits a bounded span that ends when the
     /// operation returns, so there is no long-lived parent span to drop here.
     pub async fn flush_connection_telemetry(&self, conn_handle: Handle) {
-        let Some(conn_ptr) = self.connections.get_obj(conn_handle) else {
-            return;
-        };
-        let tokens_arc = {
-            let conn = conn_ptr.lock().await;
-            conn.tokens.clone()
-        };
-        let session_id = tokens_arc.read().await.as_ref().map(|t| t.session_id);
+        // Read the session id from the parallel cache without locking the
+        // connection mutex. After flushing we drop the entry so a later
+        // operation on a re-used handle id can never resolve to a stale
+        // session.
+        let session_id = self.session_id_for_conn(conn_handle);
 
         if let Some(id) = session_id {
             self.flush_telemetry_session(id).await;
@@ -473,6 +471,8 @@ impl DatabaseDriverV1 {
                     .remove(&id);
             }
         }
+
+        self.deregister_session_id(conn_handle);
     }
 
     pub async fn connection_set_option(
@@ -801,12 +801,6 @@ pub struct Connection {
     pub final_session_names: RwLock<FinalSessionNames>,
     /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
-    /// Snowflake session id, populated from `tokens.session_id` immediately after
-    /// `connection_init` succeeds. Stored as `AtomicI64` so entry-point methods
-    /// can resolve it lock-free when stamping `snowflake.session.id` on their
-    /// telemetry spans. `0` means "not yet populated"; resolvers must treat `0`
-    /// as `None` to avoid colliding with a real session id of zero.
-    pub(crate) session_id_cache: AtomicI64,
     /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
     pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
 }
@@ -837,7 +831,6 @@ impl Connection {
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
-            session_id_cache: AtomicI64::new(0),
             heartbeat_handle: None,
         }
     }
@@ -1820,7 +1813,7 @@ impl DatabaseDriverV1 {
     /// Returns `true` if the session is valid, `false` otherwise.
     /// Automatically attempts one token refresh on 401 (session expired).
     pub async fn connection_heartbeat(&self, conn_handle: Handle) -> Result<bool, ApiError> {
-        let session_id = self.session_id_for_conn(conn_handle).await;
+        let session_id = self.session_id_for_conn(conn_handle);
         async {
             let conn_ptr = self
                 .connections

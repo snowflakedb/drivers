@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use opentelemetry::trace::TracerProvider;
+use tracing::Level;
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -252,9 +253,14 @@ impl LogManager {
                 .with_span_processor(processor)
                 .build();
             let tracer = provider.tracer("snowflake.telemetry");
-            // No filter — the processor handles routing and drops
-            // spans that cannot be resolved to a session.
-            let layer = OpenTelemetryLayer::new(tracer);
+            // Restrict the OpenTelemetryLayer to spans emitted by sf_core itself.
+            // Without this filter every span from tokio, hyper, tower, tonic, …
+            // would flow through `SnowflakeSpanProcessor::on_end`, take the
+            // per-session buffers mutex, scan attributes for `snowflake.session.id`
+            // (always absent), and be dropped — pure overhead on the hot path.
+            let layer = OpenTelemetryLayer::new(tracer).with_filter(
+                tracing_subscriber::filter::Targets::new().with_target("sf_core", Level::TRACE),
+            );
             (Some(layer), Some(provider), Some(flush_handle))
         } else {
             (None, None, None)
