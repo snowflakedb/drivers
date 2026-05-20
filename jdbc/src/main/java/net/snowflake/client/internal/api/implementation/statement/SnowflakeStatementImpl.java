@@ -12,13 +12,14 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
-import net.snowflake.client.internal.unicore.ProtobufApis;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.MultiStatementResult;
@@ -32,8 +33,10 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeStatementImpl.class);
 
-  protected final SnowflakeConnectionImpl connection;
-  protected boolean closed = false;
+  protected final InternalSnowflakeConnection connection;
+  protected final CoreDriverApi coreDriverApi;
+
+  private final AtomicBoolean closed = new AtomicBoolean(false);
   protected int maxRows = 0;
   protected int queryTimeout = 0;
   protected int fetchSize = 0;
@@ -45,11 +48,12 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   /** Non-null only while navigating a multi-statement result set sequence. */
   private MultiStatementState multiState;
 
-  public SnowflakeStatementImpl(SnowflakeConnectionImpl connection) {
+  public SnowflakeStatementImpl(
+      InternalSnowflakeConnection connection, CoreDriverApi coreDriverApi) {
     this.connection = connection;
+    this.coreDriverApi = coreDriverApi;
     try {
-      this.statementHandle =
-          ProtobufApis.coreDriverApi.statementNew(connection.connectionHandle).getStmtHandle();
+      this.statementHandle = coreDriverApi.statementNew(connection.getHandle()).getStmtHandle();
     } catch (SQLException e) {
       throw new RuntimeException(e);
     }
@@ -89,15 +93,14 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     boolean hasBindings = bindings != null;
     logger.debug("Statement executeWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
     prepareForExecution();
-    ProtobufApis.coreDriverApi.statementSetSqlQuery(statementHandle, sql);
-    ExecuteQueryResponse response =
-        ProtobufApis.coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+    coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+    ExecuteQueryResponse response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
     logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
     return response;
   }
 
   private ResultSetResponse fetchResultSetByQueryId(String queryId) throws SQLException {
-    return ProtobufApis.coreDriverApi.connectionGetResultSet(connection.connectionHandle, queryId);
+    return coreDriverApi.connectionGetResultSet(connection.getHandle(), queryId);
   }
 
   /**
@@ -109,7 +112,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   private ResultSetGetStreamResponse fetchStreamAndRelease(ResultSetHandle handle)
       throws SQLException {
     try {
-      ResultSetGetStreamResponse response = ProtobufApis.coreDriverApi.resultSetGetStream(handle);
+      ResultSetGetStreamResponse response = coreDriverApi.resultSetGetStream(handle);
       releaseResultSet(handle);
       return response;
     } catch (SQLException e) {
@@ -120,7 +123,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   private void releaseResultSet(ResultSetHandle handle) {
     try {
-      ProtobufApis.coreDriverApi.resultSetRelease(handle);
+      coreDriverApi.resultSetRelease(handle);
     } catch (SQLException e) {
       logger.warn("Failed to release ResultSet handle", e);
     }
@@ -277,11 +280,16 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public void close() throws SQLException {
-    if (closed) {
+    if (!closed.compareAndSet(false, true)) {
       return;
     }
     clearExecutionState();
-    closed = true;
+    try {
+      coreDriverApi.statementRelease(statementHandle);
+    } catch (SQLException e) {
+      logger.debug("Error releasing statement handle", e);
+    }
+    connection.removeStatement(this);
   }
 
   @Override
@@ -508,7 +516,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public boolean isClosed() throws SQLException {
-    return closed;
+    return closed.get();
   }
 
   @Override
@@ -549,7 +557,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   }
 
   protected void checkClosed() throws SQLException {
-    if (closed) {
+    if (isClosed()) {
       throw new SQLException("Statement is closed");
     }
     if (connection.isClosed()) {
@@ -577,7 +585,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     } else {
       settingBuilder.setStringValue(String.valueOf(value));
     }
-    ProtobufApis.coreDriverApi.statementSetOptions(
+    coreDriverApi.statementSetOptions(
         statementHandle, Collections.singletonMap(name, settingBuilder.build()));
   }
 
