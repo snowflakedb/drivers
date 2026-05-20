@@ -1,9 +1,42 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import java.sql.SQLException;
+import java.util.Properties;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.snowflake.client.internal.unicore.ProtobufApis;
+import net.snowflake.client.internal.unicore.TransportException;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakeConnectionImplTest {
@@ -43,5 +76,183 @@ public class SnowflakeConnectionImplTest {
   @Test
   public void toConfigSettingReturnsNullForUnsupportedValues() {
     assertNull(SnowflakeConnectionImpl.toConfigSetting(new Object()));
+  }
+
+  @Nested
+  class Close {
+
+    private DatabaseDriverService originalClient;
+    private DatabaseDriverService mockClient;
+
+    @BeforeEach
+    void setUp() {
+      originalClient = ProtobufApis.databaseDriverV1;
+      mockClient = mock(DatabaseDriverService.class);
+      ProtobufApis.databaseDriverV1 = mockClient;
+    }
+
+    @AfterEach
+    void tearDown() {
+      ProtobufApis.databaseDriverV1 = originalClient;
+    }
+
+    private SnowflakeConnectionImpl createConnection() throws SQLException {
+      DatabaseHandle dbHandle = DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
+      ConnectionHandle connHandle = ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+
+      when(mockClient.databaseNew(any()))
+          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
+      when(mockClient.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
+      when(mockClient.connectionNew(any()))
+          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
+      when(mockClient.connectionSetOptions(any()))
+          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
+      when(mockClient.connectionInit(any()))
+          .thenReturn(ConnectionInitResponse.getDefaultInstance());
+
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "test_password");
+      return new SnowflakeConnectionImpl("jdbc:snowflake://test.snowflakecomputing.com", props);
+    }
+
+    private void stubSuccessfulClose() {
+      when(mockClient.connectionClose(any()))
+          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
+      when(mockClient.connectionRelease(any()))
+          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+      when(mockClient.databaseRelease(any()))
+          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+    }
+
+    @Test
+    void sendsConnectionCloseAndReleasesHandles() throws Exception {
+      stubSuccessfulClose();
+
+      SnowflakeConnectionImpl conn = createConnection();
+      conn.close();
+
+      verify(mockClient).connectionClose(any(ConnectionCloseRequest.class));
+      verify(mockClient).connectionRelease(any(ConnectionReleaseRequest.class));
+      verify(mockClient).databaseRelease(any(DatabaseReleaseRequest.class));
+    }
+
+    @Test
+    void isClosedReturnsTrueAfterClose() throws Exception {
+      stubSuccessfulClose();
+
+      SnowflakeConnectionImpl conn = createConnection();
+      assertFalse(conn.isClosed());
+
+      conn.close();
+      assertTrue(conn.isClosed());
+    }
+
+    @Test
+    void isIdempotent() throws Exception {
+      stubSuccessfulClose();
+
+      SnowflakeConnectionImpl conn = createConnection();
+      conn.close();
+      conn.close();
+      conn.close();
+
+      verify(mockClient, times(1)).connectionClose(any());
+      verify(mockClient, times(1)).connectionRelease(any());
+      verify(mockClient, times(1)).databaseRelease(any());
+    }
+
+    @Test
+    void releasesHandlesEvenWhenConnectionCloseThrowsTransportException() throws Exception {
+      when(mockClient.connectionClose(any())).thenThrow(new TransportException("network error"));
+      when(mockClient.connectionRelease(any()))
+          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+      when(mockClient.databaseRelease(any()))
+          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+
+      SnowflakeConnectionImpl conn = createConnection();
+      assertThrows(SQLException.class, conn::close);
+
+      verify(mockClient).connectionRelease(any(ConnectionReleaseRequest.class));
+      verify(mockClient).databaseRelease(any(DatabaseReleaseRequest.class));
+      assertTrue(conn.isClosed());
+    }
+
+    @Test
+    void releasesHandlesEvenWhenConnectionCloseThrowsServiceException() throws Exception {
+      when(mockClient.connectionClose(any()))
+          .thenThrow(
+              new DatabaseDriverService.ServiceException(DriverException.getDefaultInstance()));
+      when(mockClient.connectionRelease(any()))
+          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+      when(mockClient.databaseRelease(any()))
+          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+
+      SnowflakeConnectionImpl conn = createConnection();
+      assertThrows(SQLException.class, conn::close);
+
+      verify(mockClient).connectionRelease(any(ConnectionReleaseRequest.class));
+      verify(mockClient).databaseRelease(any(DatabaseReleaseRequest.class));
+    }
+
+    @Test
+    void operationsThrowAfterClose() throws Exception {
+      stubSuccessfulClose();
+
+      SnowflakeConnectionImpl conn = createConnection();
+      conn.close();
+
+      assertThrows(SQLException.class, conn::createStatement);
+      assertThrows(SQLException.class, () -> conn.prepareStatement("SELECT 1"));
+    }
+
+    @Test
+    void concurrentCallsResultInSingleLogout() throws Exception {
+      stubSuccessfulClose();
+
+      SnowflakeConnectionImpl conn = createConnection();
+      int threadCount = 5;
+      CyclicBarrier barrier = new CyclicBarrier(threadCount);
+      AtomicInteger exceptions = new AtomicInteger(0);
+
+      Thread[] threads = new Thread[threadCount];
+      for (int i = 0; i < threadCount; i++) {
+        threads[i] =
+            new Thread(
+                () -> {
+                  try {
+                    barrier.await();
+                    conn.close();
+                  } catch (Exception e) {
+                    exceptions.incrementAndGet();
+                  }
+                });
+        threads[i].start();
+      }
+
+      for (Thread t : threads) {
+        t.join();
+      }
+
+      verify(mockClient, times(1)).connectionClose(any());
+      assertTrue(conn.isClosed());
+      assertEquals(0, exceptions.get(), "No thread should have thrown an exception");
+    }
+
+    @Test
+    void doesNotCallRpcsWhenAlreadyClosed() throws Exception {
+      stubSuccessfulClose();
+
+      SnowflakeConnectionImpl conn = createConnection();
+      conn.close();
+
+      org.mockito.Mockito.clearInvocations(mockClient);
+      conn.close();
+
+      verify(mockClient, never()).connectionClose(any());
+      verify(mockClient, never()).connectionRelease(any());
+      verify(mockClient, never()).databaseRelease(any());
+    }
   }
 }

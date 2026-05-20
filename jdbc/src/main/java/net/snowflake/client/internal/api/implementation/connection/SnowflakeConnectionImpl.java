@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
@@ -33,68 +34,57 @@ import net.snowflake.client.internal.api.implementation.statement.SnowflakeState
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ProtobufApis;
+import net.snowflake.client.internal.unicore.TransportException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
+
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
   private final String url;
   private final Properties properties;
   private boolean autoCommit = true;
-  private boolean closed = false;
+  private final AtomicBoolean closed = new AtomicBoolean(false);
   private String catalog;
   private String schema;
-  private DatabaseHandle databaseHandle;
-  public ConnectionHandle connectionHandle;
+  private final DatabaseHandle databaseHandle;
+  public final ConnectionHandle connectionHandle;
 
   public SnowflakeConnectionImpl(String url, Properties properties) throws SQLException {
     this.url = url;
     this.properties = properties;
     Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
+    DatabaseHandle dbHandle = null;
+    ConnectionHandle connHandle = null;
     try {
-      this.databaseHandle =
+      dbHandle =
           ProtobufApis.databaseDriverV1
               .databaseNew(DatabaseNewRequest.getDefaultInstance())
               .getDbHandle();
       DatabaseInitRequest databaseInitRequest =
-          DatabaseInitRequest.newBuilder().setDbHandle(databaseHandle).build();
+          DatabaseInitRequest.newBuilder().setDbHandle(dbHandle).build();
       ProtobufApis.databaseDriverV1.databaseInit(databaseInitRequest);
-      this.connectionHandle =
+      connHandle =
           ProtobufApis.databaseDriverV1
               .connectionNew(ConnectionNewRequest.getDefaultInstance())
               .getConnHandle();
-      Map<String, ConfigSetting> optionsMap = new HashMap<>();
-      connectionOptions.forEach(
-          (key, value) -> {
-            if (!(key instanceof String)) {
-              return;
-            }
-            String keyStr = (String) key;
-            ConfigSetting configSetting = toConfigSetting(value);
-            if (configSetting != null) {
-              optionsMap.put(keyStr, configSetting);
-            }
-          });
-      if (!optionsMap.isEmpty()) {
-        ConnectionSetOptionsResponse response =
-            ProtobufApis.databaseDriverV1.connectionSetOptions(
-                ConnectionSetOptionsRequest.newBuilder()
-                    .setConnHandle(connectionHandle)
-                    .putAllOptions(optionsMap)
-                    .build());
-        logConnectionOptionWarnings(response);
-      }
+
+      setOptions(connHandle, connectionOptions);
+
       WrapperIdentity.Builder identityBuilder =
           WrapperIdentity.newBuilder()
               .setDriverName("JDBC")
@@ -109,13 +99,48 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
       }
       ConnectionInitRequest connectionInitRequest =
           ConnectionInitRequest.newBuilder()
-              .setDbHandle(databaseHandle)
-              .setConnHandle(connectionHandle)
+              .setDbHandle(dbHandle)
+              .setConnHandle(connHandle)
               .setWrapperIdentity(identityBuilder.build())
               .build();
       ProtobufApis.databaseDriverV1.connectionInit(connectionInitRequest);
-    } catch (DatabaseDriverService.ServiceException e) {
+
+      this.databaseHandle = dbHandle;
+      this.connectionHandle = connHandle;
+    } catch (DatabaseDriverService.ServiceException | TransportException e) {
+      releaseHandlesQuietly(connHandle, dbHandle);
       throw new SQLException(e);
+    }
+  }
+
+  private void setOptions(ConnectionHandle connHandle, Properties connectionOptions) {
+    Map<String, ConfigSetting> optionsMap = new HashMap<>();
+
+    // JDBC convention: Connection.close() must not throw on logout failure.
+    // Users can opt into Strict via the "logout_error_strategy" connection property.
+    optionsMap.put(
+        "logout_error_strategy", ConfigSetting.newBuilder().setStringValue("best_effort").build());
+
+    connectionOptions.forEach(
+        (key, value) -> {
+          if (!(key instanceof String)) {
+            return;
+          }
+          String keyStr = (String) key;
+          ConfigSetting configSetting = toConfigSetting(value);
+          if (configSetting != null) {
+            optionsMap.put(keyStr, configSetting);
+          }
+        });
+
+    if (!optionsMap.isEmpty()) {
+      ConnectionSetOptionsResponse response =
+          ProtobufApis.databaseDriverV1.connectionSetOptions(
+              ConnectionSetOptionsRequest.newBuilder()
+                  .setConnHandle(connHandle)
+                  .putAllOptions(optionsMap)
+                  .build());
+      logConnectionOptionWarnings(response);
     }
   }
 
@@ -207,14 +232,45 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void close() throws SQLException {
-    if (!closed) {
-      closed = true;
+    // TODO: track open statements and close them here (+ implement stmt close & release)
+    if (!closed.compareAndSet(false, true)) {
+      return;
+    }
+    logger.debug("Closing connection");
+    try {
+      ProtobufApis.databaseDriverV1.connectionClose(
+          ConnectionCloseRequest.newBuilder().setConnHandle(connectionHandle).build());
+    } catch (DatabaseDriverService.ServiceException | TransportException e) {
+      logger.warn("Error during connection close: {}", e.getMessage());
+      logger.debug("Connection close error details", e);
+      throw new SQLException(e);
+    } finally {
+      releaseHandlesQuietly(connectionHandle, databaseHandle);
+    }
+  }
+
+  private static void releaseHandlesQuietly(ConnectionHandle connHandle, DatabaseHandle dbHandle) {
+    if (connHandle != null) {
+      try {
+        ProtobufApis.databaseDriverV1.connectionRelease(
+            ConnectionReleaseRequest.newBuilder().setConnHandle(connHandle).build());
+      } catch (DatabaseDriverService.ServiceException | TransportException e) {
+        logger.debug("Error releasing connection handle", e);
+      }
+    }
+    if (dbHandle != null) {
+      try {
+        ProtobufApis.databaseDriverV1.databaseRelease(
+            DatabaseReleaseRequest.newBuilder().setDbHandle(dbHandle).build());
+      } catch (DatabaseDriverService.ServiceException | TransportException e) {
+        logger.debug("Error releasing database handle", e);
+      }
     }
   }
 
   @Override
   public boolean isClosed() throws SQLException {
-    return closed;
+    return closed.get();
   }
 
   @Override
