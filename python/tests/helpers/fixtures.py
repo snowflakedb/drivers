@@ -38,7 +38,34 @@ def mock_db_api():
     old_client = core_driver._client
     core_driver.client = db_api
 
+    from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+        ConnectionCloseResponse,
+        ConnectionGetInfoResponse,
+        ConnectionInitResponse,
+        ConnectionNewResponse,
+        ConnectionReleaseResponse,
+        ConnectionSetSessionParametersResponse,
+        DatabaseInitResponse,
+        DatabaseNewResponse,
+        DatabaseReleaseResponse,
+    )
+
     async_api = AsyncMock()
+    # Connection lifecycle mocks (used by AsyncConnection.create)
+    async_api.database_new.return_value = DatabaseNewResponse(db_handle=DatabaseHandle(id=1))
+    async_api.database_init.return_value = DatabaseInitResponse()
+    async_api.connection_new.return_value = ConnectionNewResponse(conn_handle=ConnectionHandle(id=42))
+    async_api.connection_init.return_value = ConnectionInitResponse()
+    async_api.connection_set_options.return_value = ConnectionSetOptionsResponse(warnings=[])
+    async_api.connection_set_session_parameters.return_value = ConnectionSetSessionParametersResponse()
+    async_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=False)
+    async_api.connection_get_parameter.return_value = MagicMock(value="")
+    async_api.connection_get_all_parameters.return_value = MagicMock(parameters={})
+    async_api.connection_get_info.return_value = ConnectionGetInfoResponse()
+    async_api.connection_close.return_value = ConnectionCloseResponse()
+    async_api.connection_release.return_value = ConnectionReleaseResponse()
+    async_api.database_release.return_value = DatabaseReleaseResponse()
+    # Statement lifecycle mocks (used by cursors)
     async_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
     async_api.statement_set_sql_query.return_value = MagicMock()
     async_api.statement_execute_query.return_value = ExecuteQueryResponse(
@@ -52,7 +79,7 @@ def mock_db_api():
     old_async_client = async_core_driver._client
     async_core_driver.client = async_api
 
-    yield db_api
+    yield async_api
 
     core_driver.client = old_client
     async_core_driver.client = old_async_client

@@ -111,7 +111,7 @@ class AsyncResultBatch:
 
     async def _fetch_arrow_stream_ptr(self, connection: Connection) -> int:
         response = await async_core_driver.database_fetch_chunk(
-            db_handle=connection.db_handle,  # type: ignore[arg-type]
+            db_handle=connection.db_handle,
             chunk=self._chunk,
             columns=self._columns,
         )

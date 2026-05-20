@@ -127,7 +127,7 @@ class SnowflakeRestful:
             encoded_body = None
 
         response = core_driver.connection_send_http(
-            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            conn_handle=self._connection.conn_handle,
             method=method,
             url=url,
             headers=headers or {},
@@ -205,7 +205,7 @@ class SnowflakeRestful:
             raise ValueError(f"Unknown token request type: {request_type!r}. Must be 'ISSUE' or 'RENEW'.")
 
         response = core_driver.connection_request_token(
-            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            conn_handle=self._connection.conn_handle,
             request_type=proto_type,
         )
         data: dict = {"sessionToken": response.session_token}

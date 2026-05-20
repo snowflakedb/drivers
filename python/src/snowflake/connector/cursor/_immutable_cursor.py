@@ -96,7 +96,7 @@ def _require_open_conn_handle(connection: Connection) -> ConnectionHandle:
     connection — surface that as an :class:`InterfaceError` instead of
     propagating a confusing protobuf type error from a downstream call.
     """
-    handle = connection.conn_handle
+    handle: ConnectionHandle | None = connection.conn_handle
     if handle is None:
         raise InterfaceError(msg="Connection is closed")
     return handle

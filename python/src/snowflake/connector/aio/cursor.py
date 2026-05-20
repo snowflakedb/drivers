@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pyarrow import Table
 
     from ..connection import Connection
+    from .connection import AsyncConnection
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +57,13 @@ class AsyncSnowflakeCursorBase(CursorMixin, ErrorHandlerMixin, abc.ABC):
     :pymeth:`fetchone`.
     """
 
-    def __init__(self, connection: Connection) -> None:
+    def __init__(self, connection: Connection | AsyncConnection) -> None:
         self._init_cursor_mixin(connection)
         self._immutable: ImmutableCursor | None = None
+
+    def is_closed(self) -> bool:
+        """Override to avoid awaiting AsyncConnection.is_closed() in sync context."""
+        return self._closed
 
     @property
     def _errorhandler_cursor(self) -> AsyncSnowflakeCursorBase:

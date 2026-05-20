@@ -83,14 +83,18 @@ _TRACKING: ContextVar[bool] = ContextVar("_api_tracking", default=True)
 
 def _send_telemetry(self: Any, func_name: str) -> None:
     """Send api_usage telemetry for either a Connection or a cursor instance."""
+    from snowflake.connector.aio.connection import AsyncConnection
     from snowflake.connector.connection import Connection
     from snowflake.connector.cursor._cursor_mixin import CursorMixin
 
     api_name = f"{type(self).__name__}.{func_name}"
-    if isinstance(self, Connection):
-        self._telemetry_client.send_api_usage(api_name)
+    if isinstance(self, (Connection, AsyncConnection)):
+        if self._telemetry_client is not None:
+            self._telemetry_client.send_api_usage(api_name)
     elif isinstance(self, CursorMixin):
-        self._connection._telemetry_client.send_api_usage(api_name)
+        tc = self._connection._telemetry_client
+        if tc is not None:
+            tc.send_api_usage(api_name)
 
 
 def api_telemetry(func: F) -> F:

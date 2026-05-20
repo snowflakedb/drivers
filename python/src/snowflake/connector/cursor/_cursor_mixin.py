@@ -136,9 +136,9 @@ class CursorMixin(abc.ABC):
     their own I/O methods (execute, fetch, close, reset, etc.).
     """
 
-    def _init_cursor_mixin(self, connection: Connection) -> None:
+    def _init_cursor_mixin(self, connection: Any) -> None:
         """Initialize shared cursor state. Called from subclass ``__init__``."""
-        self._connection: Connection = connection
+        self._connection = connection
         self._closed: bool = False
         self._messages: list[tuple[type[Exception], ErrorValue]] = []
         self._errorhandler: Callable[..., None] = Error.default_errorhandler
@@ -162,7 +162,7 @@ class CursorMixin(abc.ABC):
     @property
     @pep249
     def connection(self) -> Connection:
-        return self._connection
+        return self._connection  # type: ignore[no-any-return]
 
     @property
     @pep249
@@ -272,7 +272,7 @@ class CursorMixin(abc.ABC):
     # ------------------------------------------------------------------
 
     def _format_query_for_log(self, query: str) -> str:
-        return self._connection._format_query_for_log(query)
+        return self._connection._format_query_for_log(query)  # type: ignore[no-any-return]
 
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         json_str, length = JsonBindingConverter.serialize_parameters(parameters)
@@ -329,37 +329,40 @@ class CursorMixin(abc.ABC):
     # Session parameter accessors
     # ------------------------------------------------------------------
 
+    def _session_param(self, name: str) -> str | None:
+        return self._connection._get_session_parameter(name)  # type: ignore[no-any-return]
+
     @property
     def timestamp_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("TIMESTAMP_OUTPUT_FORMAT")
+        return self._session_param("TIMESTAMP_OUTPUT_FORMAT")
 
     @property
     def timestamp_ltz_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("TIMESTAMP_LTZ_OUTPUT_FORMAT") or self.timestamp_output_format
+        return self._session_param("TIMESTAMP_LTZ_OUTPUT_FORMAT") or self.timestamp_output_format
 
     @property
     def timestamp_tz_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("TIMESTAMP_TZ_OUTPUT_FORMAT") or self.timestamp_output_format
+        return self._session_param("TIMESTAMP_TZ_OUTPUT_FORMAT") or self.timestamp_output_format
 
     @property
     def timestamp_ntz_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("TIMESTAMP_NTZ_OUTPUT_FORMAT") or self.timestamp_output_format
+        return self._session_param("TIMESTAMP_NTZ_OUTPUT_FORMAT") or self.timestamp_output_format
 
     @property
     def date_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("DATE_OUTPUT_FORMAT")
+        return self._session_param("DATE_OUTPUT_FORMAT")
 
     @property
     def time_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("TIME_OUTPUT_FORMAT")
+        return self._session_param("TIME_OUTPUT_FORMAT")
 
     @property
     def timezone(self) -> str | None:
-        return self._connection._get_session_parameter("TIMEZONE")
+        return self._session_param("TIMEZONE")
 
     @property
     def binary_output_format(self) -> str | None:
-        return self._connection._get_session_parameter("BINARY_OUTPUT_FORMAT")
+        return self._session_param("BINARY_OUTPUT_FORMAT")
 
     # ------------------------------------------------------------------
     # Error handling
@@ -378,7 +381,7 @@ class CursorMixin(abc.ABC):
 
     @property
     def _errorhandler_connection(self) -> Connection:
-        return self._connection
+        return self._connection  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------
     # Dependency checks
