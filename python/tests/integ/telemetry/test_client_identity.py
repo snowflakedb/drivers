@@ -9,7 +9,7 @@ from tests.compatibility import is_old_driver
 pytestmark = pytest.mark.skipif(is_old_driver(), reason="Universal driver only")
 
 
-def _login_request_data(wiremock) -> dict:
+def _get_login_request_data(wiremock) -> dict:
     login_requests = wiremock.get_requests("/session/v1/login-request.*")
     assert login_requests, "Expected at least one login request"
     return json.loads(login_requests[0]["body"])["data"]
@@ -75,8 +75,55 @@ def test_custom_application_only_affects_client_environment_application(int_test
         application="SNOWCLI.STAGE.COPY",
     )
     try:
-        data = _login_request_data(wiremock)
+        data = _get_login_request_data(wiremock)
         assert data["CLIENT_APP_ID"] == "PythonConnector"
         assert data["CLIENT_ENVIRONMENT"]["APPLICATION"] == "SNOWCLI.STAGE.COPY"
+    finally:
+        connection.close()
+
+
+def test_internal_application_name_overrides_client_app_id(int_test_connection_factory, wiremock):
+    """``internal_application_name`` (used by SnowSQL / Snow CLI) overrides
+    CLIENT_APP_ID. CLIENT_ENVIRONMENT.APPLICATION stays at the default."""
+    wiremock.add_mapping("auth/login_success_jwt.json")
+
+    connection = int_test_connection_factory(
+        server_url=wiremock.http_url(),
+        internal_application_name="SnowSQL",
+    )
+    try:
+        data = _get_login_request_data(wiremock)
+        assert data["CLIENT_APP_ID"] == "SnowSQL"
+        assert data["CLIENT_ENVIRONMENT"]["APPLICATION"] == "PythonConnector"
+    finally:
+        connection.close()
+
+
+def test_internal_application_name_with_application_uses_both_independently(int_test_connection_factory, wiremock):
+    wiremock.add_mapping("auth/login_success_jwt.json")
+
+    connection = int_test_connection_factory(
+        server_url=wiremock.http_url(),
+        internal_application_name="SnowSQL",
+        application="SNOWCLI.STAGE.COPY",
+    )
+    try:
+        data = _get_login_request_data(wiremock)
+        assert data["CLIENT_APP_ID"] == "SnowSQL"
+        assert data["CLIENT_ENVIRONMENT"]["APPLICATION"] == "SNOWCLI.STAGE.COPY"
+    finally:
+        connection.close()
+
+
+def test_internal_application_version_overrides_client_app_version(int_test_connection_factory, wiremock):
+    wiremock.add_mapping("auth/login_success_jwt.json")
+
+    connection = int_test_connection_factory(
+        server_url=wiremock.http_url(),
+        internal_application_version="1.2.3",
+    )
+    try:
+        data = _get_login_request_data(wiremock)
+        assert data["CLIENT_APP_VERSION"] == "1.2.3"
     finally:
         connection.close()

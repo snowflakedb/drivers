@@ -188,6 +188,34 @@ class TestFromConnectionArgs:
         with pytest.raises(ProgrammingError, match="wrapper-internal parameter"):
             ConnectionConfig.from_connection_args(user="u", client_app_version="9.9.9")
 
+    def test_internal_application_name_overrides_client_app_id(self):
+        config = ConnectionConfig.from_connection_args(user="u", internal_application_name="SnowSQL")
+        assert config.client_app_id == "SnowSQL"
+
+    def test_internal_application_version_overrides_client_app_version(self):
+        config = ConnectionConfig.from_connection_args(user="u", internal_application_version="1.2.3")
+        assert config.client_app_version == "1.2.3"
+
+    def test_client_app_version_defaults_to_driver_version(self):
+        """When ``internal_application_version`` is omitted, ``client_app_version``
+        falls back to the Python driver's own ``__version__`` — matching the
+        old connector's wire behaviour."""
+        from snowflake.connector.version import __version__
+
+        config = ConnectionConfig.from_connection_args(user="u")
+        assert config.client_app_version == __version__
+
+    def test_internal_application_name_popped_from_extra(self):
+        """internal_application_name is consumed by from_connection_args and
+        must not leak into ``_extra`` (otherwise it would reach the Rust core
+        as an unknown parameter)."""
+        config = ConnectionConfig.from_connection_args(user="u", internal_application_name="SnowSQL")
+        assert "internal_application_name" not in config._extra
+
+    def test_internal_application_version_popped_from_extra(self):
+        config = ConnectionConfig.from_connection_args(user="u", internal_application_version="1.2.3")
+        assert "internal_application_version" not in config._extra
+
     def test_autocommit_true_injects_session_parameter(self):
         config = ConnectionConfig.from_connection_args(user="u", autocommit=True)
         assert config.session_parameters["AUTOCOMMIT"] == "true"
