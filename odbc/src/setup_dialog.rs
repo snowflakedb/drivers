@@ -194,6 +194,8 @@ const IDC_OAUTH_REDIRECT_URI_EDIT: i32 = 1026;
 const IDC_OAUTH_CLIENT_ID_EDIT: i32 = 1027;
 const IDC_OAUTH_CLIENT_SECRET_EDIT: i32 = 1028;
 const IDC_OAUTH_SCOPE_EDIT: i32 = 1029;
+const IDC_PROXY_USER_EDIT: i32 = 1030;
+const IDC_PROXY_PWD_EDIT: i32 = 1031;
 
 /// Maps dialog control IDs to DSN registry key names.
 const FIELD_MAP: &[(i32, &str)] = &[
@@ -205,8 +207,13 @@ const FIELD_MAP: &[(i32, &str)] = &[
     (IDC_ROLEEDIT, "ROLE"),
     (IDC_TRACINGEDIT, "TRACING"),
     (IDC_AUTHENTICATOREDIT, "AUTHENTICATOR"),
-    (IDC_PROXYEDIT, "PROXY"),
+    // Use PROXY_HOST as the canonical DSN key. The legacy "PROXY" key is
+    // accepted as an alias by `sf_core::param_registry`, so existing DSNs
+    // written by the pre-PROXY_HOST dialog continue to work.
+    (IDC_PROXYEDIT, "PROXY_HOST"),
     (IDC_NO_PROXYEDIT, "NO_PROXY"),
+    (IDC_PROXY_USER_EDIT, "PROXY_USER"),
+    (IDC_PROXY_PWD_EDIT, "PROXY_PASSWORD"),
     (IDC_PRIV_KEY_FILE_EDIT, "PRIV_KEY_FILE"),
     (IDC_PRIV_KEY_FILE_PWD_EDIT, "PRIV_KEY_FILE_PWD"),
     (IDC_OAUTH_CLIENT_ID_EDIT, "OAUTH_CLIENT_ID"),

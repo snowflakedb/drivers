@@ -208,3 +208,72 @@ fn telemetry_rpcs_accept_unknown_handles_silently() {
             .expect("telemetry_send_wrapper_error on unknown handle must not error");
     });
 }
+
+/// Forwards UPPERCASE proxy DSN keys (as the ODBC layer does after
+/// `normalize_connection_string_options`) through the protobuf API, proving
+/// that sf_core's param registry resolves them via the registered aliases.
+/// If the aliases were missing, `connection_set_options` would either reject
+/// the keys or warn "Unknown parameter" without populating ProxyConfig.
+#[test]
+fn smoke_connection_set_proxy_options_uppercase_dsn_keys() {
+    let client = database_driver_client();
+    let db = client
+        .database_new_blocking(DatabaseNewRequest {})
+        .expect("database_new ok");
+    client
+        .database_init_blocking(DatabaseInitRequest {
+            db_handle: db.db_handle,
+        })
+        .expect("database_init ok");
+    let conn = client
+        .connection_new_blocking(ConnectionNewRequest {})
+        .unwrap()
+        .conn_handle
+        .unwrap();
+
+    client
+        .connection_set_options_blocking(ConnectionSetOptionsRequest {
+            conn_handle: Some(conn),
+            options: vec![
+                config_option("PROXY_HOST", "proxy.example.com"),
+                config_option("PROXY_PORT", 8080_i64),
+                config_option("PROXY_USER", "puser"),
+                config_option("PROXY_PASSWORD", "ppass"),
+                config_option("NO_PROXY", "internal.example.com,*.local"),
+            ]
+            .into_iter()
+            .collect(),
+        })
+        .expect("set proxy options");
+}
+
+/// Legacy ODBC DSNs written before this change use `PROXY` (not `PROXY_HOST`)
+/// as the host key. sf_core registers `PROXY` as a back-compat alias of
+/// `proxy_host`, so existing DSN registry entries must continue to work
+/// after upgrade.
+#[test]
+fn smoke_connection_set_proxy_options_legacy_proxy_alias() {
+    let client = database_driver_client();
+    let db = client
+        .database_new_blocking(DatabaseNewRequest {})
+        .expect("database_new ok");
+    client
+        .database_init_blocking(DatabaseInitRequest {
+            db_handle: db.db_handle,
+        })
+        .expect("database_init ok");
+    let conn = client
+        .connection_new_blocking(ConnectionNewRequest {})
+        .unwrap()
+        .conn_handle
+        .unwrap();
+
+    client
+        .connection_set_options_blocking(ConnectionSetOptionsRequest {
+            conn_handle: Some(conn),
+            options: vec![config_option("PROXY", "proxy.example.com")]
+                .into_iter()
+                .collect(),
+        })
+        .expect("set legacy PROXY alias");
+}

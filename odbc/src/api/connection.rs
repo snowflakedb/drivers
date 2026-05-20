@@ -1348,6 +1348,43 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_forwards_proxy_keys_for_core_aliases() {
+        // Proxy keys are forwarded UPPERCASE; sf_core's param registry resolves
+        // them to canonical lowercase names via the registered aliases.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PROXY_HOST".to_owned(), "p.example.com".to_owned()),
+            ("PROXY_PORT".to_owned(), "8080".to_owned()),
+            ("PROXY_USER".to_owned(), "puser".to_owned()),
+            ("PROXY_PASSWORD".to_owned(), "ppass".to_owned()),
+            ("NO_PROXY".to_owned(), "internal,*.local".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "PROXY_HOST"), Some("p.example.com"));
+        assert_eq!(config_string(&options, "PROXY_PORT"), Some("8080"));
+        assert_eq!(config_string(&options, "PROXY_USER"), Some("puser"));
+        assert_eq!(config_string(&options, "PROXY_PASSWORD"), Some("ppass"));
+        assert_eq!(config_string(&options, "NO_PROXY"), Some("internal,*.local"));
+        // Pre-canonicalisation is the registry's job; ODBC layer does not
+        // emit lowercase canonical keys.
+        assert!(!options.contains_key("proxy_host"));
+        assert!(!options.contains_key("no_proxy"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_legacy_proxy_alias_passes_through() {
+        // DSNs written by the pre-PROXY_HOST dialog used `PROXY` as the host
+        // key. sf_core's param registry registers `PROXY` as a back-compat
+        // alias of `proxy_host`, so this DSN must continue to flow through
+        // unchanged from the ODBC layer.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "PROXY".to_owned(),
+            "p.example.com".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "PROXY"), Some("p.example.com"));
+    }
+
+    #[test]
     fn normalize_connection_string_options_maps_passcodeinpassword() {
         let options = normalize_connection_string_options(HashMap::from([(
             "PASSCODEINPASSWORD".to_owned(),
