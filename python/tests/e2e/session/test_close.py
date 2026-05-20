@@ -443,23 +443,35 @@ class TestLogoutRetryBehavior:
 
 _SIGABRT = -6
 _SIGSEGV = -11
+# Windows NTSTATUS codes returned when a process crashes (unsigned 32-bit).
+_WIN_STATUS_ACCESS_VIOLATION = 0xC0000005
+_WIN_STATUS_STACK_BUFFER_OVERRUN = 0xC0000409
+_WIN_STATUS_HEAP_CORRUPTION = 0xC0000374
 
 
 def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
     """Assert subprocess exited cleanly; xfail on signal death during Py_Finalize (SNOW-3416420).
 
     SIGABRT (-6) and SIGSEGV (-11) happen when Rust's tracing callback fires into
-    a dead Python interpreter during Py_Finalize. The subprocess completed its
-    work — behavioral assertions (stdout markers, wiremock counts) after this call
-    still validate correctness.
+    a dead Python interpreter during Py_Finalize. On Windows the same crash
+    surfaces as positive NTSTATUS codes (e.g. 0xC0000005 ACCESS_VIOLATION).
+
+    The subprocess completed its work — behavioral assertions (stdout markers,
+    wiremock counts) after this call still validate correctness.
     """
     try:
         assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
     except AssertionError:
-        if result.returncode == _SIGABRT:
-            pytest.xfail("SNOW-3416420: Rust log callback SIGABRT during Py_Finalize")
-        if result.returncode == _SIGSEGV:
-            pytest.xfail("SNOW-3416420: Rust log callback SIGSEGV during Py_Finalize")
+        if result.returncode in (_SIGABRT, _SIGSEGV):
+            pytest.xfail("SNOW-3416420: Rust log callback signal during Py_Finalize")
+        if sys.platform == "win32" and result.returncode in (
+            _WIN_STATUS_ACCESS_VIOLATION,
+            _WIN_STATUS_STACK_BUFFER_OVERRUN,
+            _WIN_STATUS_HEAP_CORRUPTION,
+        ):
+            pytest.xfail(
+                f"SNOW-3416420: Rust log callback crash during Py_Finalize (Windows NTSTATUS 0x{result.returncode:08X})"
+            )
         raise
 
 

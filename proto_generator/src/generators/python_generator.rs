@@ -340,6 +340,8 @@ class {service_name}BlockingClient:
         self._loop = loop
 
     def _run(self, coro):
+        if not self._loop.is_running():
+            raise RuntimeError("Background event loop is not running")
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
 "#
