@@ -168,11 +168,18 @@ jobs:
           SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSIONS: "true"
           PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
 
+      # Keep protobuf-gen around long enough that "Re-run this job" on a
+      # downstream build_wheels matrix entry can still fetch it. Cibuildwheel
+      # re-runs are common (esp. manylinux_aarch64), and GitHub's per-job re-run
+      # does NOT re-run upstream `needs: generate_proto`, so the artifact must
+      # outlive the workflow run itself. We previously deleted it eagerly in a
+      # cleanup job, which made any single-job re-run impossible.
       - name: Upload protobuf artifacts
         uses: actions/upload-artifact@v4
         with:
           name: protobuf-gen
           path: python/src/snowflake/connector/_internal/protobuf_gen/
+          retention-days: 7
 
   # ── Build source distribution (platform-independent, runs once) ────
   build_sdist:
@@ -560,20 +567,3 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: python/dist/*.whl
-
-  # ── Clean up intermediate build artifacts ──────────────────────────
-  cleanup_build_artifacts:
-    needs: [build_wheels, build_wheel]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete intermediate artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
-            --paginate -q '.artifacts[] | select(.name == "protobuf-gen") | .id' |
-          while read id; do
-            echo "Deleting artifact $id"
-            gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
-          done
