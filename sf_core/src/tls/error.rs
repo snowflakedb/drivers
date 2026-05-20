@@ -43,4 +43,11 @@ pub enum TlsError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Invalid proxy configuration: {reason}"))]
+    ProxyConfig {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

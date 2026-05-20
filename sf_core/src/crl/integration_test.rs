@@ -4,7 +4,7 @@ mod integration_tests {
     use crate::config::rest_parameters::test_fixtures::test_client_info;
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
     use crate::rest::snowflake;
-    use crate::tls::config::TlsConfig;
+    use crate::tls::config::{ProxyConfig, TlsConfig};
 
     #[test]
     fn test_crl_config_disabled_defaults() {
@@ -96,10 +96,13 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Disabled,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client_with_config(TlsConfig {
-            crl_config: config,
-            ..Default::default()
-        })
+        let client = crate::tls::create_tls_client_with_config(
+            TlsConfig {
+                crl_config: config,
+                ..Default::default()
+            },
+            &ProxyConfig::default(),
+        )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
 
@@ -108,10 +111,13 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Enabled,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client_with_config(TlsConfig {
-            crl_config: config,
-            ..Default::default()
-        })
+        let client = crate::tls::create_tls_client_with_config(
+            TlsConfig {
+                crl_config: config,
+                ..Default::default()
+            },
+            &ProxyConfig::default(),
+        )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
 
@@ -120,10 +126,13 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Advisory,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client_with_config(TlsConfig {
-            crl_config: config,
-            ..Default::default()
-        })
+        let client = crate::tls::create_tls_client_with_config(
+            TlsConfig {
+                crl_config: config,
+                ..Default::default()
+            },
+            &ProxyConfig::default(),
+        )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
     }

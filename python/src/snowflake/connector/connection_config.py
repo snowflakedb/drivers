@@ -11,7 +11,6 @@ rewrites, application validation, Python-only fields) live in
 :mod:`snowflake.connector._internal.connection_config_mixin` and are inherited
 via :class:`ConnectionConfigMixin`.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,7 +20,6 @@ from snowflake.connector._internal.connection_config_mixin import (
     ConnectionConfigMixin,
     OptionsModifier,
 )
-
 
 __all__ = ["ConnectionConfig", "OptionsModifier"]
 
@@ -63,7 +61,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_cache_dir: str | None = None
     """Directory for CRL cache files"""
 
-    crl_check_mode: str | None = "DISABLED"
+    crl_check_mode: str | None = 'DISABLED'
     """Certificate revocation check mode (DISABLED, ENABLED, ADVISORY). Default: 'DISABLED'"""
 
     crl_connection_timeout: int | None = 10
@@ -113,6 +111,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     logout_total_timeout_seconds: int | None = None
     """Total timeout budget for logout operation including retries"""
+
+    no_proxy: str | None = None
+    """Comma-separated list of hosts that bypass the proxy"""
 
     oauth_authorization_url: str | None = None
     """IdP authorization endpoint (defaults to https://{host}/oauth/authorize)"""
@@ -177,6 +178,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     protocol: str | None = None
     """Connection protocol (http or https)"""
 
+    proxy: str | None = None
+    """Proxy URL ([user:pass@]host[:port]) for outgoing connections"""
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 
@@ -188,6 +192,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+
+    use_proxy_env: bool | None = False
+    """Use HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables. Default: False"""
 
     user: str | None = None
     """Login username. Required"""
@@ -228,12 +235,14 @@ class ConnectionConfig(ConnectionConfigMixin):
         "clientstoretemporarycredential": "client_store_temporary_credential",
         "crl_enabled": "crl_check_mode",
         "crl_mode": "crl_check_mode",
+        "noproxy": "no_proxy",
         "oauth_token_url": "oauth_token_request_url",
         "passcodeinpassword": "passcode_in_password",
         "priv_key_base64": "private_key",
         "priv_key_file": "private_key_file",
         "priv_key_file_pwd": "private_key_password",
         "priv_key_pwd": "private_key_password",
+        "proxywithenv": "use_proxy_env",
         "pwd": "password",
         "server": "host",
         "tls_custom_root_store_path": "custom_root_store_path",
@@ -252,14 +261,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     }
     """Python field name -> Rust canonical name (only for names that differ)."""
 
-    _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "oauth_client_secret",
-            "passcode",
-            "password",
-            "private_key",
-            "private_key_password",
-            "token",
-        }
-    )
+    _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset({
+        "oauth_client_secret",
+        "passcode",
+        "password",
+        "private_key",
+        "private_key_password",
+        "proxy",
+        "token",
+    })
     """Fields that contain secrets (for log redaction)."""

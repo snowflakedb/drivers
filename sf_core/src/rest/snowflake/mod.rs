@@ -1819,7 +1819,8 @@ where
 
 #[track_caller]
 fn build_tls_http_client(client_info: &ClientInfo) -> Result<reqwest::Client, RestError> {
-    create_tls_client_with_config(client_info.tls_config.clone()).context(CrlValidationSnafu)
+    create_tls_client_with_config(client_info.tls_config.clone(), &client_info.proxy_config)
+        .context(CrlValidationSnafu)
 }
 
 pub(crate) fn authorization_header(session_token: &str) -> header::HeaderValue {

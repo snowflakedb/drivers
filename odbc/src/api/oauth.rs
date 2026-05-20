@@ -208,6 +208,8 @@ pub const SENSITIVE_LOGGING_KEYS: &[&str] = &[
     "PRIV_KEY_PWD",
     "PRIV_KEY_BASE64",
     "PASSCODE",
+    // Proxy URL may contain credentials (user:pass@host:port).
+    "PROXY",
     // OAuth keys (OAUTH_CLIENT_SECRET + TOKEN). TOKEN was already in
     // the legacy redaction list; routing it through the OAuth list
     // keeps the source of truth in one place.
@@ -310,6 +312,7 @@ mod tests {
             ("OAUTH_CLIENT_ID", "abc"),
             ("OAUTH_CLIENT_SECRET", "shhh"),
             ("TOKEN", "jwt.value"),
+            ("PROXY", "user:pass@proxy:8080"),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))

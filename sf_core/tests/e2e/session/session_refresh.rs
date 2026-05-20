@@ -9,7 +9,7 @@ use sf_core::config::rest_parameters::{LoginMethod, LoginParameters};
 use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::client::create_tls_client_with_config;
-use sf_core::tls::config::TlsConfig;
+use sf_core::tls::config::{ProxyConfig, TlsConfig};
 use std::fs;
 
 #[test]
@@ -104,8 +104,9 @@ fn should_refresh_session_proactively() {
             spcs_token: None,
         };
 
-        let http_client = create_tls_client_with_config(TlsConfig::insecure())
-            .expect("Failed to create HTTP client");
+        let http_client =
+            create_tls_client_with_config(TlsConfig::insecure(), &ProxyConfig::default())
+                .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
         let login_result = snowflake_login_with_client(&http_client, &login_parameters, None, None)

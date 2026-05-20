@@ -22,7 +22,7 @@ use crate::config::{
 };
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::sensitive::SensitiveString;
-use crate::tls::config::TlsConfig;
+use crate::tls::config::{ProxyConfig, TlsConfig};
 
 // ---------------------------------------------------------------------------
 // Typed config structs
@@ -35,6 +35,7 @@ pub struct ConnectionConfig {
     pub auth: AuthConfig,
     pub session: SessionContext,
     pub tls: TlsConfig,
+    pub proxy: ProxyConfig,
 }
 
 #[derive(Debug)]
@@ -321,6 +322,27 @@ fn build_crl_config(settings: &ParamStore) -> CrlConfig {
     }
 }
 
+fn build_proxy_config(settings: &ParamStore) -> ProxyConfig {
+    let allow_empty_proxy = settings
+        .get_bool(crate::config::param_names::ALLOW_EMPTY_PROXY)
+        .unwrap_or(true);
+    let raw_proxy = settings.get_string(crate::config::param_names::PROXY);
+    let proxy_url = match raw_proxy {
+        Some(ref s) if s.is_empty() && !allow_empty_proxy => None,
+        other => other,
+    };
+    let no_proxy = settings.get_string(crate::config::param_names::NO_PROXY);
+    let use_proxy_env = settings
+        .get_bool(crate::config::param_names::USE_PROXY_ENV)
+        .unwrap_or(false);
+    ProxyConfig {
+        proxy_url,
+        no_proxy,
+        use_proxy_env,
+        allow_empty_proxy,
+    }
+}
+
 fn build_tls_config(settings: &ParamStore) -> TlsConfig {
     let crl_config = build_crl_config(settings);
     let custom_root_store_path = settings
@@ -500,6 +522,7 @@ impl ConnectionConfig {
         let server_url = derive_server_url(settings)?;
         let auth = build_auth_config(settings)?;
         let tls = build_tls_config(settings);
+        let proxy = build_proxy_config(settings);
 
         let session = SessionContext {
             database: settings.get_string(DATABASE),
@@ -516,6 +539,7 @@ impl ConnectionConfig {
             auth,
             session,
             tls,
+            proxy,
         })
     }
 }
@@ -2056,5 +2080,39 @@ mod tests {
             config.server.server_url,
             "https://myaccount.snowflakecomputing.com"
         );
+    }
+
+    #[test]
+    fn build_proxy_config_from_settings() {
+        let mut settings = minimal_password_settings();
+        settings.insert(
+            "proxy".into(),
+            Setting::String("http://proxy.corp:3128".into()),
+        );
+        settings.insert(
+            "no_proxy".into(),
+            Setting::String("localhost,.internal".into()),
+        );
+        settings.insert("use_proxy_env".into(), Setting::Bool(true));
+
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(
+            config.proxy.proxy_url.as_deref(),
+            Some("http://proxy.corp:3128")
+        );
+        assert_eq!(
+            config.proxy.no_proxy.as_deref(),
+            Some("localhost,.internal")
+        );
+        assert!(config.proxy.use_proxy_env);
+    }
+
+    #[test]
+    fn build_proxy_config_defaults_when_absent() {
+        let settings = minimal_password_settings();
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(config.proxy.proxy_url.is_none());
+        assert!(config.proxy.no_proxy.is_none());
+        assert!(!config.proxy.use_proxy_env);
     }
 }

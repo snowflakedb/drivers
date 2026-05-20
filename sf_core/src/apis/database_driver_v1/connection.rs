@@ -238,7 +238,7 @@ impl DatabaseDriverV1 {
                     )
                 };
 
-                let http_client = create_tls_client_with_config(config.tls.clone())
+                let http_client = create_tls_client_with_config(config.tls.clone(), &config.proxy)
                     .context(TlsClientCreationSnafu)?;
                 let login_parameters = LoginParameters::from_connection_config(
                     &config,

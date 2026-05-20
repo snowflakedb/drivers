@@ -96,6 +96,12 @@ fn normalize_connection_string_option(
         "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
             Some(("private_key_password".to_owned(), value.into()))
         }
+        "PROXY" => Some(("proxy".to_owned(), value.into())),
+        "NO_PROXY" | "NOPROXY" => Some(("no_proxy".to_owned(), value.into())),
+        "USE_PROXY_ENV" | "PROXYWITHENV" => Some(("use_proxy_env".to_owned(), value.into())),
+        "ALLOWEMPTYPROXY" | "ALLOW_EMPTY_PROXY" => {
+            Some(("allow_empty_proxy".to_owned(), value.into()))
+        }
         // Forward other keys (e.g. SERVER, UID, SSL) for `sf_core` alias resolution; do not
         // pre-canonicalize here to avoid duplicate seed keys.
         _ => Some((upper, value.into())),
@@ -1791,6 +1797,38 @@ mod tests {
 
         assert_eq!(config_string(&options, "private_key"), Some("attr-key"));
         assert!(!options.contains_key("private_key_file"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_proxy_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PROXY".to_owned(), "http://proxy:3128".to_owned()),
+            ("NO_PROXY".to_owned(), "localhost,.internal".to_owned()),
+            ("USE_PROXY_ENV".to_owned(), "true".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "proxy"), Some("http://proxy:3128"));
+        assert_eq!(
+            config_string(&options, "no_proxy"),
+            Some("localhost,.internal")
+        );
+        assert_eq!(config_string(&options, "use_proxy_env"), Some("true"));
+        assert!(!options.contains_key("PROXY"));
+        assert!(!options.contains_key("NO_PROXY"));
+        assert!(!options.contains_key("USE_PROXY_ENV"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_proxy_aliases() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("NOPROXY".to_owned(), "*.corp".to_owned()),
+            ("PROXYWITHENV".to_owned(), "1".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "no_proxy"), Some("*.corp"));
+        assert_eq!(config_string(&options, "use_proxy_env"), Some("1"));
+        assert!(!options.contains_key("NOPROXY"));
+        assert!(!options.contains_key("PROXYWITHENV"));
     }
 
     #[test_case("UID=admin;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "basic")]

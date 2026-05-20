@@ -118,6 +118,11 @@ pub mod param_names {
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
     pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
+    // Proxy
+    pub const PROXY: ParamKey = ParamKey("proxy");
+    pub const NO_PROXY: ParamKey = ParamKey("no_proxy");
+    pub const USE_PROXY_ENV: ParamKey = ParamKey("use_proxy_env");
+    pub const ALLOW_EMPTY_PROXY: ParamKey = ParamKey("allow_empty_proxy");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -833,6 +838,63 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: true,
         mutable_after_connect: false,
     },
+    // ── Proxy ───────────────────────────────────────────────────────────
+    ParamDef {
+        canonical_name: param_names::PROXY.as_str(),
+        aliases: &["PROXY"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Proxy URL ([user:pass@]host[:port]) for outgoing connections",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::NO_PROXY.as_str(),
+        aliases: &["NO_PROXY", "NOPROXY"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Comma-separated list of hosts that bypass the proxy",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::USE_PROXY_ENV.as_str(),
+        aliases: &["USE_PROXY_ENV", "PROXYWITHENV"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Use HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ALLOW_EMPTY_PROXY.as_str(),
+        aliases: &["ALLOW_EMPTY_PROXY", "ALLOWEMPTYPROXY"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(true)),
+        sensitive: false,
+        description: "Allow empty proxy value to override config/env proxy settings",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
     // ── Client ──────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::CONNECTION_NAME.as_str(),
@@ -1194,6 +1256,13 @@ mod tests {
             ("CRL_MODE", "crl_check_mode"),
             ("CRL_ENABLED", "crl_check_mode"),
             ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
+            ("PROXY", "proxy"),
+            ("NO_PROXY", "no_proxy"),
+            ("NOPROXY", "no_proxy"),
+            ("USE_PROXY_ENV", "use_proxy_env"),
+            ("PROXYWITHENV", "use_proxy_env"),
+            ("ALLOW_EMPTY_PROXY", "allow_empty_proxy"),
+            ("ALLOWEMPTYPROXY", "allow_empty_proxy"),
         ];
         for (alias, expected_canonical) in cases {
             let def = r

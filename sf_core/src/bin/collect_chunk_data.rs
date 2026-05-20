@@ -128,6 +128,7 @@ fn default_client_info() -> ClientInfo {
         compiler: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
+        proxy_config: sf_core::tls::ProxyConfig::default(),
         platforms: Vec::new(),
         os_details: None,
     }
@@ -404,7 +405,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::fs::create_dir_all(&cli.output_dir).await?;
 
-    let tls_client = sf_core::tls::create_tls_client_with_config(TlsConfig::default())?;
+    let tls_client = sf_core::tls::create_tls_client_with_config(
+        TlsConfig::default(),
+        &sf_core::tls::ProxyConfig::default(),
+    )?;
 
     let format_label = match cli.format {
         ResultFormat::Arrow => "arrow",

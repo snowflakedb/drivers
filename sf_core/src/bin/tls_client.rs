@@ -178,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result_file = matches.get_one::<String>("result-file").cloned();
 
-    let client = create_tls_client_with_config(tls_config)
+    let client = create_tls_client_with_config(tls_config, &sf_core::tls::ProxyConfig::default())
         .map_err(|e| format!("Failed to build TLS client: {:?}", e))?;
 
     let method = matches.get_one::<String>("method").unwrap();
