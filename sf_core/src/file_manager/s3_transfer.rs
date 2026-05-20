@@ -103,10 +103,11 @@ enum S3AttemptError<E> {
 /// `StageCredsRefresher`'s shared cache and asking it to rotate when the
 /// AWS SDK reports `ExpiredToken`.
 ///
-/// `wrap_refresh_err` translates a `StageCredsRefreshError` from the
-/// refresher into the operation's `E` — this avoids a blanket
+/// `map_refresh_err` keeps snafu's source-location stamping at the call
+/// site: each operation translates `StageCredsRefreshError` into its own
+/// error variant locally rather than via a blanket
 /// `From<StageCredsRefreshError>` impl on `UploadFileError` /
-/// `DownloadFileError`, which would skip snafu's source-location stamping.
+/// `DownloadFileError`, which would lose location info.
 ///
 /// Tracks the last AWS key id handed out so a refresh that doesn't
 /// actually rotate (refresher inside its coalescing window) reports
@@ -115,7 +116,7 @@ enum S3AttemptError<E> {
 struct S3StsRefresher<'a, E, W> {
     refresher: &'a mut dyn StageCredsRefresher,
     last_seen_key: Option<String>,
-    wrap_refresh_err: W,
+    map_refresh_err: W,
     _marker: PhantomData<fn() -> E>,
 }
 
@@ -126,12 +127,12 @@ where
     fn new(
         refresher: &'a mut dyn StageCredsRefresher,
         initial: &CloudCredentials,
-        wrap_refresh_err: W,
+        map_refresh_err: W,
     ) -> Self {
         Self {
             refresher,
             last_seen_key: aws_key_id(initial).map(str::to_string),
-            wrap_refresh_err,
+            map_refresh_err,
             _marker: PhantomData,
         }
     }
@@ -159,7 +160,7 @@ where
             self.refresher
                 .refresh()
                 .await
-                .map_err(|e| S3AttemptError::Other((self.wrap_refresh_err)(e)))?;
+                .map_err(|e| S3AttemptError::Other((self.map_refresh_err)(e)))?;
             let new = self.refresher.cache().snapshot();
             let new_key = aws_key_id(&new).map(str::to_string);
             if new_key == self.last_seen_key {
@@ -173,22 +174,20 @@ where
     }
 }
 
-/// Runs `attempt` with the supplied credentials, driving STS refresh on
-/// `S3AttemptError::StsExpired` when a `refresher` is provided. With no
-/// refresher, runs the attempt once and folds any `StsExpired` back into
-/// the caller-supplied AWS error path — same shape as any other S3
-/// PUT/GET error.
+/// Runs `attempt` once (no refresher) or in a refresh-retry loop (with
+/// refresher), folding `S3AttemptError<E>` back to `E` at the boundary so
+/// callers see a uniform error type. With no refresher, an `StsExpired`
+/// outcome surfaces as the caller-supplied AWS error path — same shape as
+/// any other S3 PUT/GET error.
 ///
-/// Owns the refresher-vs-no-refresher branching that was previously
-/// duplicated by both upload and download. `wrap_refresh_err` /
-/// `wrap_sts_err` keep the call sites' snafu instrumentation at the
-/// boundary so source locations land on the operation's own error variants
-/// rather than on this helper.
+/// `map_refresh_err` / `map_sts_err` keep the call sites' snafu
+/// instrumentation at the boundary so source locations land on the
+/// operation's own error variants rather than on this helper.
 async fn run_s3_with_sts_refresh<F, Fut, T, E>(
     refresher: &mut Option<&mut dyn StageCredsRefresher>,
     initial_creds: &CloudCredentials,
-    wrap_refresh_err: impl Fn(StageCredsRefreshError) -> E + Send,
-    wrap_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
+    map_refresh_err: impl Fn(StageCredsRefreshError) -> E + Send,
+    map_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
     attempt: F,
 ) -> Result<T, E>
 where
@@ -198,14 +197,14 @@ where
 {
     let outcome = match refresher.as_deref_mut() {
         Some(r) => {
-            let mut sts = S3StsRefresher::new(r, initial_creds, wrap_refresh_err);
-            execute_with_refresh(&mut sts, attempt).await
+            let mut sts_refresher = S3StsRefresher::new(r, initial_creds, map_refresh_err);
+            execute_with_refresh(&mut sts_refresher, attempt).await
         }
         None => attempt(initial_creds.clone()).await,
     };
     outcome.map_err(|e| match e {
         S3AttemptError::Other(err) => err,
-        S3AttemptError::StsExpired(aws_err) => wrap_sts_err(aws_err),
+        S3AttemptError::StsExpired(aws_err) => map_sts_err(aws_err),
     })
 }
 
@@ -975,9 +974,9 @@ mod tests {
         }
     }
 
-    /// Identity wrap_refresh_err keeps the StageCredsRefreshError as-is
-    /// for tests that don't care about translation.
-    fn passthrough_wrap(e: StageCredsRefreshError) -> StageCredsRefreshError {
+    /// Identity `map_refresh_err` for tests that don't care about error
+    /// translation — keeps the `StageCredsRefreshError` as-is.
+    fn identity_map(e: StageCredsRefreshError) -> StageCredsRefreshError {
         e
     }
 
@@ -986,9 +985,9 @@ mod tests {
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
         let initial = s3_creds("AKIA1");
-        let mut sts = S3StsRefresher::new(&mut fake, &initial, passthrough_wrap);
+        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
 
-        let rotated = sts.refresh().await.unwrap();
+        let rotated = sts_refresher.refresh().await.unwrap();
 
         assert!(rotated);
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
@@ -1008,9 +1007,9 @@ mod tests {
         // spinning.
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         let initial = s3_creds("AKIA1");
-        let mut sts = S3StsRefresher::new(&mut fake, &initial, passthrough_wrap);
+        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
 
-        let rotated = sts.refresh().await.unwrap();
+        let rotated = sts_refresher.refresh().await.unwrap();
 
         assert!(
             !rotated,
@@ -1027,12 +1026,12 @@ mod tests {
         let mut fake = FakeRefresher::new(s3_creds("AKIA1"));
         fake.arm(s3_creds("AKIA2"));
         let initial = s3_creds("AKIA1");
-        let mut sts = S3StsRefresher::new(&mut fake, &initial, passthrough_wrap);
+        let mut sts_refresher = S3StsRefresher::new(&mut fake, &initial, identity_map);
 
-        assert!(sts.refresh().await.unwrap()); // AKIA1 -> AKIA2
+        assert!(sts_refresher.refresh().await.unwrap()); // AKIA1 -> AKIA2
         // Cache still holds AKIA2; arming nothing means refresh() leaves
         // it as-is. S3StsRefresher must see "no rotation" against AKIA2
         // (not AKIA1).
-        assert!(!sts.refresh().await.unwrap());
+        assert!(!sts_refresher.refresh().await.unwrap());
     }
 }

@@ -8,15 +8,16 @@
 //! 3. on a recoverable error, rotate the resource and retry.
 //!
 //! What varies per consumer — which error is recoverable, where the resource
-//! is cached, how rapid-fire refreshes are coalesced — lives entirely in the
+//! is cached, how rapid-fire refreshes are *coalesced* (collapsed into one
+//! upstream call when they arrive close together) — lives entirely in the
 //! `Refresher` impl. The loop itself is shared.
 //!
 //! # Termination
 //!
 //! `execute_with_refresh` retries at most as many times as the refresher
-//! agrees to rotate. A refresher that returns `Ok(false)` from `refresh`
-//! (meaning "I won't rotate again — recent refresh still considered valid,
-//! or I've exhausted my retries") forces the loop to propagate the original
+//! agrees to rotate. A refresher returns `Ok(false)` from `refresh` when it
+//! declines further rotation (e.g. recent refresh still considered valid, or
+//! retry budget exhausted), and the helper then propagates the original
 //! error. Callers that want a stricter cap can encode it inside `refresh`.
 //!
 //! # Object safety
@@ -61,12 +62,12 @@ where
     fn refresh(&mut self) -> RefreshFuture<'_, Result<bool, Err>>;
 }
 
-/// Run `op` against `refresher`'s resource, refreshing once on recoverable
-/// errors. Loops until either `op` succeeds, the error is non-recoverable,
-/// or the refresher declines to rotate again.
+/// Run `operation` against `refresher`'s resource, refreshing once on
+/// recoverable errors. Loops until either `operation` succeeds, the error
+/// is non-recoverable, or the refresher declines to rotate again.
 pub async fn execute_with_refresh<R, Resource, Err, Op, Fut, T>(
     refresher: &mut R,
-    op: Op,
+    operation: Op,
 ) -> Result<T, Err>
 where
     R: Refresher<Resource, Err> + ?Sized,
@@ -77,7 +78,7 @@ where
 {
     loop {
         let resource = refresher.current().await?;
-        let err = match op(resource).await {
+        let err = match operation(resource).await {
             Ok(value) => return Ok(value),
             Err(e) => e,
         };
@@ -85,9 +86,9 @@ where
             return Err(err);
         }
         if !refresher.refresh().await? {
-            // Refresher declined to rotate (coalescing window, exhausted
-            // budget). Retrying without a fresh resource would loop, so
-            // propagate the original error.
+            // Retrying without a fresh resource would loop, so propagate.
+            // Refresher declined to rotate: coalescing window or exhausted
+            // budget.
             return Err(err);
         }
     }

@@ -1214,9 +1214,10 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
                 .as_ref()
                 .map(|t| t.session_token.clone())
                 .context(ConnectionNotInitializedSnafu)?;
-            // Stamp the token into the state machine on first read so that
-            // `refresh()` can detect the "another request already rotated
-            // while we waited" race.
+            // Stamp the token into the state machine on first read so
+            // that `refresh()` can detect — by comparing this token
+            // against the cache after acquiring the write lock — whether
+            // another request already rotated while we were waiting.
             if matches!(self.state, RefreshState::Initial) {
                 self.state = RefreshState::FirstToken(token.clone());
             }
@@ -1239,13 +1240,24 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
 
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, ApiError>> {
         Box::pin(async move {
-            // The existing one-shot state machine: the first refresh call
-            // does the work, subsequent calls return Ok(false) so the
-            // generic helper propagates the original error.
+            // One-shot state machine: the first refresh call does the
+            // work, subsequent calls return Ok(false) so the generic
+            // helper propagates the original error. `Initial` is
+            // unreachable in practice — `execute_with_refresh` always
+            // calls `current()` first, which transitions Initial →
+            // FirstToken — but we keep a safe fallback rather than
+            // panicking on a misuse from a future caller.
             let failed_token = match &self.state {
                 RefreshState::FirstToken(t) => t.clone(),
                 RefreshState::Refreshed => return Ok(false),
-                RefreshState::Initial => return Ok(false),
+                RefreshState::Initial => {
+                    debug_assert!(
+                        false,
+                        "RefreshContext::refresh() called before current(); \
+                         execute_with_refresh always calls current() first"
+                    );
+                    return Ok(false);
+                }
             };
             self.state = RefreshState::Refreshed;
 
