@@ -26,10 +26,7 @@ pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
 pub use error::ApiError;
-pub use global_state::{
-    CompressionAutoDetectFlavor, DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor,
-    WrapperPresets,
-};
+pub use global_state::{DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor, WrapperPresets};
 pub use result_set::{
     ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult, InlineData,
     ResultSetDescriptor, ResultSetInfo,

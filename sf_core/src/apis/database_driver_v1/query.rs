@@ -88,7 +88,7 @@ pub(super) async fn perform_put_get_transfer(
             let file_upload_data = data
                 .to_file_upload_data(
                     wrapper_presets.put_get_resultset_flavor.clone(),
-                    wrapper_presets.compression_autodetect_flavor.clone(),
+                    wrapper_presets.treat_unsupported_compression_as_uncompressed,
                     use_s3_regional_url_session_param,
                 )
                 .context(FileTransferPreparationSnafu)?;
