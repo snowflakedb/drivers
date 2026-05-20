@@ -702,15 +702,8 @@ mod tests {
     // = true`) restores that behavior; Python / JDBC (false) keep surfacing
     // the error. JDBC behavior verified equivalent to Python via
     // `SnowflakeFileTransferAgent.java:3163-3308`.
-    const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] = &[
-        "test.xz",
-        "test.lzma",
-        "test.lz",
-        "test.lzo",
-        "test.Z",
-        "test.parquet",
-        "test.orc",
-    ];
+    const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] =
+        &["test.xz", "test.lzma", "test.lz", "test.lzo", "test.Z"];
 
     #[test]
     fn auto_detect_source_compression_legacy_flag_true_swallows_unsupported_error() {
@@ -787,6 +780,54 @@ mod tests {
         }
     }
 
+    #[test]
+    fn auto_detect_source_compression_recognizes_parquet_regardless_of_flag() {
+        for legacy in [false, true] {
+            let result = auto_detect_source_compression("test.parquet", b"", legacy);
+            assert_eq!(
+                result.unwrap(),
+                CompressionType::Parquet,
+                "must recognize .parquet regardless of legacy flag (legacy={legacy})",
+            );
+        }
+    }
+
+    #[test]
+    fn auto_detect_source_compression_recognizes_orc_regardless_of_flag() {
+        for legacy in [false, true] {
+            let result = auto_detect_source_compression("test.orc", b"", legacy);
+            assert_eq!(
+                result.unwrap(),
+                CompressionType::Orc,
+                "must recognize .orc regardless of legacy flag (legacy={legacy})",
+            );
+        }
+    }
+
+    #[test]
+    fn auto_detect_source_compression_recognizes_parquet_magic_regardless_of_flag() {
+        for legacy in [false, true] {
+            let result = auto_detect_source_compression("noext", b"PAR1payload", legacy);
+            assert_eq!(
+                result.unwrap(),
+                CompressionType::Parquet,
+                "must recognize PAR1 magic regardless of legacy flag (legacy={legacy})",
+            );
+        }
+    }
+
+    #[test]
+    fn auto_detect_source_compression_recognizes_orc_magic_regardless_of_flag() {
+        for legacy in [false, true] {
+            let result = auto_detect_source_compression("noext", b"ORCpayload", legacy);
+            assert_eq!(
+                result.unwrap(),
+                CompressionType::Orc,
+                "must recognize ORC magic regardless of legacy flag (legacy={legacy})",
+            );
+        }
+    }
+
     // Partial-prefix detection: `\x1F\x8B` is the first 2 bytes of gzip's
     // 3-byte magic. With the legacy flag false (Python/JDBC default)
     // `infer` requires the full 3 bytes and returns `None` here. With the
@@ -813,15 +854,119 @@ mod tests {
         // auto-detect path, so the flag branch is a no-op here.
         for legacy in [false, true] {
             assert_eq!(
-                get_source_compression("ignored.xz", b"", &SourceCompressionParam::Gzip, legacy,)
+                get_source_compression("ignored.xz", b"", &SourceCompressionParam::Gzip, legacy)
                     .unwrap(),
                 CompressionType::Gzip,
             );
             assert_eq!(
-                get_source_compression("ignored.xz", b"", &SourceCompressionParam::None, legacy,)
+                get_source_compression("ignored.xz", b"", &SourceCompressionParam::None, legacy)
                     .unwrap(),
                 CompressionType::None,
             );
+        }
+    }
+
+    // Upload-prep passthrough: a `.parquet` source under
+    // `auto_compress = true` must NOT be re-wrapped in gzip. The target
+    // filename keeps its original `.parquet` suffix (no `.gz` appended)
+    // and `target_compression` is reported as `Parquet`. Asserting the
+    // payload is bit-identical to the input distinguishes "didn't gzip"
+    // from "gzipped a tiny buffer that happens to start with PAR1".
+    #[test]
+    fn preprocess_parquet_passthrough_under_auto_compress() {
+        let payload = b"PAR1\x00\x01\x02\x03some-parquet-bytes-go-here".to_vec();
+        let data = SingleUploadData {
+            file_path: "/tmp/data.parquet".to_string(),
+            filename: "data.parquet".to_string(),
+            stage_info: dummy_stage_info(),
+            encryption_material: None,
+            auto_compress: true,
+            source_compression: SourceCompressionParam::AutoDetect,
+            overwrite: false,
+            flavor: PutGetResultsetFlavor::Python,
+            legacy_compression_autodetect_libsnowflakeclient_behavior: false,
+        };
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Parquet);
+        assert_eq!(metadata.source_compression, CompressionType::Parquet);
+        assert_eq!(
+            prepared.data, payload,
+            "payload must pass through bit-identical (no gzip wrap)",
+        );
+    }
+
+    #[test]
+    fn preprocess_orc_passthrough_under_auto_compress() {
+        let payload = b"ORC\x00\x01\x02some-orc-bytes-go-here".to_vec();
+        let data = SingleUploadData {
+            file_path: "/tmp/data.orc".to_string(),
+            filename: "data.orc".to_string(),
+            stage_info: dummy_stage_info(),
+            encryption_material: None,
+            auto_compress: true,
+            source_compression: SourceCompressionParam::AutoDetect,
+            overwrite: false,
+            flavor: PutGetResultsetFlavor::Python,
+            legacy_compression_autodetect_libsnowflakeclient_behavior: false,
+        };
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Orc);
+        assert_eq!(metadata.source_compression, CompressionType::Orc);
+        assert_eq!(
+            prepared.data, payload,
+            "payload must pass through bit-identical"
+        );
+    }
+
+    #[test]
+    fn preprocess_parquet_passthrough_when_unsupported_compression_swallowed() {
+        // Locks in PR2 of Gap-12: parquet detection is independent of the
+        // unsupported-compression flag (ODBC sets the flag to true,
+        // matching legacy libsnowflakeclient which detects PAR1 magic via
+        // FileCompressionType::PARQUET with isSupported=true).
+        let payload = b"PAR1\x00\x01\x02\x03more-bytes".to_vec();
+        let data = SingleUploadData {
+            file_path: "/tmp/data.parquet".to_string(),
+            filename: "data.parquet".to_string(),
+            stage_info: dummy_stage_info(),
+            encryption_material: None,
+            auto_compress: true,
+            source_compression: SourceCompressionParam::AutoDetect,
+            overwrite: false,
+            flavor: PutGetResultsetFlavor::Odbc,
+            legacy_compression_autodetect_libsnowflakeclient_behavior: true,
+        };
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.parquet");
+        assert_eq!(metadata.target_compression, CompressionType::Parquet);
+        assert_eq!(prepared.data, payload);
+    }
+
+    fn dummy_stage_info() -> StageInfo {
+        StageInfo {
+            location_type: LocationType::S3,
+            bucket: "b".to_string(),
+            key_prefix: "p".to_string(),
+            region: "us-east-1".to_string(),
+            creds: CloudCredentials::S3 {
+                aws_key_id: String::new(),
+                aws_secret_key: crate::sensitive::SensitiveString::from(String::new()),
+                aws_token: crate::sensitive::SensitiveString::from(String::new()),
+            },
+            endpoint: None,
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
         }
     }
 }

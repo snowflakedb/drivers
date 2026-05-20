@@ -320,6 +320,10 @@ impl Data {
     /// result set; it is forwarded into `SingleUploadData` so that
     /// `file_manager::upload_single_file` can populate the `message` column
     /// per `BehaviorDifferences.yaml` BD#3.
+    /// `legacy_compression_autodetect_libsnowflakeclient_behavior` opts the
+    /// PUT auto-detect path into the libsnowflakeclient-parity behaviors
+    /// (short-prefix magic-byte detection plus error-swallowing on
+    /// unsupported formats). See `WrapperPresets` for the full doc-comment.
     pub fn to_file_upload_data(
         &self,
         flavor: PutGetResultsetFlavor,
