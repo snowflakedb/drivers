@@ -119,6 +119,11 @@ pub mod param_names {
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
     pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
+    // PUT/GET — S3 regional endpoint override. Server pushes this as the
+    // session parameter `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1`; the
+    // canonical name matches the field on `StageInfo` (and libsfclient's
+    // `use_s3_regional_url` connection attribute).
+    pub const USE_S3_REGIONAL_URL: ParamKey = ParamKey("use_s3_regional_url");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -1104,6 +1109,30 @@ static PARAM_DEFS: &[ParamDef] = &[
         scope: ParamScope::Session,
         used_at_connect: true,
         mutable_after_connect: false,
+    },
+    // ── PUT/GET — S3 regional endpoint ─────────────────────────────────
+    //
+    // Forces the regional S3 endpoint (`s3.<region>.amazonaws.com[.cn]`) for
+    // PUT/GET. Mirrors the OR-with-stage-info-flags semantics that the
+    // Python connector, snowflake-jdbc, and libsnowflakeclient all implement.
+    //
+    // `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` is the server-pushed
+    // session-parameter key. `enable_stage_s3_privatelink_for_us_east_1` is
+    // the legacy Python kwarg name (kept as a deprecated alias via the
+    // Python wrapper's `_DEPRECATED_REWRITES`).
+    ParamDef {
+        canonical_name: param_names::USE_S3_REGIONAL_URL.as_str(),
+        aliases: &["ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Force the S3 regional endpoint for PUT/GET (PrivateLink-to-S3)",
+        deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: false,
+        mutable_after_connect: true,
     },
 ];
 

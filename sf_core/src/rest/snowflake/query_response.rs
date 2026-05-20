@@ -323,6 +323,7 @@ impl Data {
     pub fn to_file_upload_data(
         &self,
         flavor: PutGetResultsetFlavor,
+        use_s3_regional_url_session_param: bool,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
@@ -342,13 +343,17 @@ impl Data {
             })?
             .clone();
 
-        let stage_info: file_manager::StageInfo = self
+        let mut stage_info: file_manager::StageInfo = self
             .stage_info
             .as_ref()
             .context(MissingParameterSnafu {
                 parameter: "stage info",
             })?
             .try_into()?;
+
+        if use_s3_regional_url_session_param {
+            stage_info.use_s3_regional_url = true;
+        }
 
         let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
             .encryption_material
@@ -418,6 +423,7 @@ impl Data {
     pub fn to_file_download_data(
         &self,
         flavor: &PutGetResultsetFlavor,
+        use_s3_regional_url_session_param: bool,
     ) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
@@ -434,13 +440,17 @@ impl Data {
             .fail()?;
         }
 
-        let stage_info: file_manager::StageInfo = self
+        let mut stage_info: file_manager::StageInfo = self
             .stage_info
             .as_ref()
             .context(MissingParameterSnafu {
                 parameter: "stage info",
             })?
             .try_into()?;
+
+        if use_s3_regional_url_session_param {
+            stage_info.use_s3_regional_url = true;
+        }
 
         let encryption_materials: Vec<Option<file_manager::EncryptionMaterial>> =
             match &self.encryption_material {
@@ -782,6 +792,42 @@ fn parse_vector_row_type(
         dimension,
         element_type,
     ))
+}
+
+/// Server-pushed session parameter that ORs into `StageInfo.use_s3_regional_url`.
+/// All three reference drivers (Python connector, JDBC, libsnowflakeclient)
+/// read this exact key from the login response. The canonical name on the
+/// Rust side is `use_s3_regional_url`; this string is only the wire-level key
+/// that GS uses.
+const ENABLE_STAGE_S3_PRIVATELINK_SERVER_KEY: &str = "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1";
+
+/// Reads the `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session parameter as
+/// a boolean.
+///
+/// `session_parameters` keys are uppercased upstream — see the write sites in
+/// `apis::database_driver_v1::connection` (`session_parameters.write()` at
+/// login merge and post-query response) and the corresponding read in
+/// `connection_get_parameter` which uppercases its lookup key. We therefore
+/// do a direct `HashMap::get` on the canonical uppercase form rather than
+/// scanning the map.
+///
+/// Accepted value forms: `"true"` (case-insensitive) and `"1"`. JSON `true`
+/// and JSON `1` from GS land here as those exact strings after the
+/// post-response stringification at `apis::database_driver_v1::connection`.
+/// JDBC additionally accepts `"on"`; we don't currently, since GS doesn't
+/// emit that form.
+///
+/// Called at the PUT/GET dispatch site rather than passing the whole
+/// session-parameter map down: PUT/GET only needs this one key, and reading
+/// it eagerly avoids cloning the entire `HashMap<String, String>` on every
+/// transfer.
+pub fn read_use_s3_regional_url_session_param(
+    session_parameters: &HashMap<String, String>,
+) -> bool {
+    session_parameters
+        .get(ENABLE_STAGE_S3_PRIVATELINK_SERVER_KEY)
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false)
 }
 
 impl TryFrom<&StageInfo> for file_manager::StageInfo {
@@ -1229,7 +1275,7 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": null,"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1239,7 +1285,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1249,7 +1295,7 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": [],"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1261,7 +1307,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1273,7 +1319,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default())
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1287,7 +1333,7 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result = data.to_file_upload_data(PutGetResultsetFlavor::default());
+        let result = data.to_file_upload_data(PutGetResultsetFlavor::default(), false);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -1301,7 +1347,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Python)
+            .to_file_upload_data(PutGetResultsetFlavor::Python, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Python);
     }
@@ -1311,7 +1357,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Odbc)
+            .to_file_upload_data(PutGetResultsetFlavor::Odbc, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
     }
@@ -1334,7 +1380,7 @@ mod tests {
     fn download_data_forwards_flavor_python() {
         let data: Data = serde_json::from_str(&make_download_json()).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Python)
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Python);
     }
@@ -1343,7 +1389,7 @@ mod tests {
     fn download_data_forwards_flavor_odbc() {
         let data: Data = serde_json::from_str(&make_download_json()).unwrap();
         let download = data
-            .to_file_download_data(&PutGetResultsetFlavor::Odbc)
+            .to_file_download_data(&PutGetResultsetFlavor::Odbc, false)
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Odbc);
     }
@@ -1893,5 +1939,116 @@ mod tests {
         // we keep talking to the global `s3.amazonaws.com` endpoint.
         let info = parse_s3_stage_info(s3_stage_info_value(None, None));
         assert!(!info.use_s3_regional_url);
+    }
+
+    // --- Session-parameter lookup (ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1) ---
+    //
+    // Tests `read_use_s3_regional_url_session_param` directly. The boolean
+    // result is OR'd into `StageInfo.use_s3_regional_url` at the PUT/GET
+    // dispatch site (see `to_file_upload_data` / `to_file_download_data`).
+    // Mirrors the OR-with-session-parameter semantics implemented in the
+    // Python connector, JDBC, and libsnowflakeclient.
+
+    fn build_session_params(entries: &[(&str, &str)]) -> HashMap<String, String> {
+        entries
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn read_session_param_returns_true_when_set() {
+        let params = build_session_params(&[("ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1", "true")]);
+        assert!(read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_value_lookup_is_case_insensitive() {
+        // GS may push the value as `TRUE` or `True`; we must accept all
+        // common cases. Keys, by contrast, are uppercased upstream by
+        // `apis::database_driver_v1::connection`, so the helper does a
+        // direct `get` on the canonical uppercase key and we don't need
+        // to test other key casings here.
+        let params = build_session_params(&[("ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1", "TRUE")]);
+        assert!(read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_lowercase_key_returns_false() {
+        // Documents the upstream invariant: `session_parameters` keys are
+        // uppercased by `connection.rs` write sites. A lowercase key must
+        // not be matched here, because if it ever appears the bug is in
+        // the upstream normalization, not in this lookup.
+        let params = build_session_params(&[("enable_stage_s3_privatelink_for_us_east_1", "true")]);
+        assert!(!read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_accepts_numeric_one() {
+        let params = build_session_params(&[("ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1", "1")]);
+        assert!(read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_returns_false_when_absent() {
+        assert!(!read_use_s3_regional_url_session_param(&HashMap::new()));
+    }
+
+    #[test]
+    fn read_session_param_returns_false_when_explicitly_false() {
+        let params =
+            build_session_params(&[("ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1", "false")]);
+        assert!(!read_use_s3_regional_url_session_param(&params));
+    }
+
+    #[test]
+    fn read_session_param_unrelated_keys_ignored() {
+        let params = build_session_params(&[
+            ("CLIENT_PREFETCH_THREADS", "8"),
+            ("CLIENT_SESSION_KEEP_ALIVE", "true"),
+        ]);
+        assert!(!read_use_s3_regional_url_session_param(&params));
+    }
+
+    // Integration check: the boolean parameter wires through
+    // `to_file_upload_data` and ORs into `StageInfo.use_s3_regional_url`.
+
+    fn make_upload_data_for_s3_regional_url_test(
+        stage_info_value: serde_json::Value,
+        use_s3_regional_url_session_param: bool,
+    ) -> file_manager::UploadData {
+        let payload = serde_json::json!({
+            "command": "UPLOAD",
+            "src_locations": ["/tmp/upload.csv"],
+            "stageInfo": stage_info_value,
+            "autoCompress": true,
+            "sourceCompression": "NONE",
+        });
+        let data: Data = serde_json::from_value(payload).expect("build upload Data");
+        data.to_file_upload_data(
+            PutGetResultsetFlavor::default(),
+            use_s3_regional_url_session_param,
+        )
+        .expect("convert to UploadData")
+    }
+
+    #[test]
+    fn upload_data_session_param_true_forces_regional_when_stage_info_false() {
+        let upload = make_upload_data_for_s3_regional_url_test(
+            s3_stage_info_value(Some(false), Some(false)),
+            true,
+        );
+        assert!(upload.stage_info.use_s3_regional_url);
+    }
+
+    #[test]
+    fn upload_data_session_param_false_does_not_mask_stage_info_true() {
+        // Stage-info already true; session-parameter false must not flip it
+        // back to false. The OR is one-directional.
+        let upload = make_upload_data_for_s3_regional_url_test(
+            s3_stage_info_value(Some(true), Some(false)),
+            false,
+        );
+        assert!(upload.stage_info.use_s3_regional_url);
     }
 }

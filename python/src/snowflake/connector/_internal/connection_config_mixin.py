@@ -131,6 +131,7 @@ class ConnectionConfigMixin:
     _DEPRECATED_REWRITES: ClassVar[dict[str, str]] = {
         "client_fetch_threads": "client_prefetch_threads",
         "client_request_mfa_token": "client_store_temporary_credential",
+        "enable_stage_s3_privatelink_for_us_east_1": "use_s3_regional_url",
         "private_key_file_pwd": "private_key_password",
         "oauth_socket_uri": "oauth_redirect_uri",
     }

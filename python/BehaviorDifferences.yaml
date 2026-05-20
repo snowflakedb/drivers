@@ -302,3 +302,24 @@ behavior_differences:
       Support for the body-encoded form (`client_secret_post`) is tracked as
       a follow-up; IdPs that *require* `client_secret_post` are not yet
       supported on the universal driver.
+
+  30:
+    name: "enable_stage_s3_privatelink_for_us_east_1 renamed to use_s3_regional_url"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      `enable_stage_s3_privatelink_for_us_east_1` is the connection kwarg / session
+      parameter that forces PUT/GET to use the S3 regional endpoint
+      (`s3.<region>.amazonaws.com[.cn]`) instead of the global one. Required for
+      accounts using PrivateLink-to-S3 and for Snowpipe Streaming. The misleading
+      `_for_us_east_1` suffix is historical: the feature applies to any S3 region.
+    new_driver_behavior: |
+      `use_s3_regional_url` is the canonical connection kwarg. The name matches
+      the `StageInfo.use_s3_regional_url` field that drives endpoint selection
+      and aligns with libsnowflakeclient's connection-level `use_s3_regional_url`
+      attribute. `enable_stage_s3_privatelink_for_us_east_1` is accepted as a
+      deprecated alias and emits a `DeprecationWarning`. The server-pushed session
+      parameter `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` continues to be honored
+      verbatim (it is the same string all reference drivers — Python, JDBC,
+      libsnowflakeclient — read from the login response).

@@ -59,11 +59,18 @@ pub struct StageCredsRefreshContext {
 /// When `stage_creds_refresh_context` is `Some`, an S3 `ExpiredToken` during a
 /// file transfer triggers a re-issue of the original PUT/GET SQL to obtain fresh
 /// STS credentials and the operation is retried. Non-PUT/GET callers pass `None`.
+///
+/// `use_s3_regional_url_session_param` is the resolved value of the
+/// `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session parameter (read at the
+/// dispatch site via `read_use_s3_regional_url_session_param`). When `true`,
+/// it ORs into the S3 regional-URL decision, matching the Python connector,
+/// JDBC, and libsnowflakeclient behavior.
 pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
     stage_creds_refresh_context: Option<StageCredsRefreshContext>,
+    use_s3_regional_url_session_param: bool,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial creds.
     let initial_creds = data
@@ -79,7 +86,10 @@ pub(super) async fn perform_put_get_transfer(
     match command {
         "UPLOAD" => {
             let file_upload_data = data
-                .to_file_upload_data(wrapper_presets.put_get_resultset_flavor.clone())
+                .to_file_upload_data(
+                    wrapper_presets.put_get_resultset_flavor.clone(),
+                    use_s3_regional_url_session_param,
+                )
                 .context(FileTransferPreparationSnafu)?;
             let upload_results = upload_files(&file_upload_data, refresher_handle)
                 .await
@@ -88,7 +98,10 @@ pub(super) async fn perform_put_get_transfer(
         }
         "DOWNLOAD" => {
             let file_download_data = data
-                .to_file_download_data(&wrapper_presets.put_get_resultset_flavor)
+                .to_file_download_data(
+                    &wrapper_presets.put_get_resultset_flavor,
+                    use_s3_regional_url_session_param,
+                )
                 .map_err(|e| {
                     if e.to_string().contains("source locations") {
                         RemoteFileNotFoundSnafu.build()

@@ -110,6 +110,31 @@ class TestFromKwargs:
         config = ConnectionConfig.from_kwargs(CLIENT_SESSION_KEEP_ALIVE=True)
         assert config.client_session_keep_alive is True
 
+    def test_enable_stage_s3_privatelink_for_us_east_1_maps_with_warning(self):
+        # The reference Python connector exposes this kwarg as
+        # `enable_stage_s3_privatelink_for_us_east_1`. The universal driver
+        # demotes it to a deprecated alias for the canonical
+        # `use_s3_regional_url` name (which matches the StageInfo field).
+        with pytest.warns(DeprecationWarning, match="enable_stage_s3_privatelink_for_us_east_1"):
+            config = ConnectionConfig.from_kwargs(enable_stage_s3_privatelink_for_us_east_1=True)
+        assert config.use_s3_regional_url is True
+
+    def test_use_s3_regional_url_canonical_kwarg_no_warning(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            config = ConnectionConfig.from_kwargs(use_s3_regional_url=True)
+        assert config.use_s3_regional_url is True
+
+    def test_use_s3_regional_url_legacy_does_not_override_canonical(self):
+        with pytest.warns(DeprecationWarning):
+            config = ConnectionConfig.from_kwargs(
+                enable_stage_s3_privatelink_for_us_east_1=True,
+                use_s3_regional_url=False,
+            )
+        assert config.use_s3_regional_url is False
+
 
 class TestFromConnectionArgs:
     """Test ConnectionConfig.from_connection_args factory method."""
