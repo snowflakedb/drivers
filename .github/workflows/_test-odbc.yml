@@ -267,7 +267,8 @@ jobs:
           export DRIVER_TYPE=NEW
           export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
-          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS
+          ./scripts/odbc/run_tests_unix.sh -LE flaky $REPEAT_ARGS \
+            --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
       - name: Run flaky ODBC tests (Unix)
         if: runner.os != 'Windows'
@@ -289,7 +290,8 @@ jobs:
           $env:DRIVER_TYPE = "NEW"
           $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
           $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
-          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs
+          .\scripts\odbc\run_tests_windows.ps1 -LE flaky @repeatArgs `
+            --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
       - name: Run flaky ODBC tests (Windows)
         if: runner.os == 'Windows'
@@ -301,6 +303,14 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: NEW
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odbc-tests-${{ matrix.name }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
+          path: odbc-junit.xml
+          if-no-files-found: warn
 
       - name: Cleanup orphaned test schemas
         if: always() && runner.os == 'Linux'
