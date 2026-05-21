@@ -19,23 +19,15 @@ import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResul
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ProtobufApis;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetResultSetRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.MultiStatementResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetOptionsRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryRequest;
 
 public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeStatementImpl.class);
@@ -56,12 +48,10 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   public SnowflakeStatementImpl(SnowflakeConnectionImpl connection) {
     this.connection = connection;
-    StatementNewRequest statementNewRequest =
-        StatementNewRequest.newBuilder().setConnHandle(connection.connectionHandle).build();
     try {
       this.statementHandle =
-          ProtobufApis.databaseDriverV1.statementNew(statementNewRequest).getStmtHandle();
-    } catch (DatabaseDriverService.ServiceException e) {
+          ProtobufApis.coreDriverApi.statementNew(connection.connectionHandle).getStmtHandle();
+    } catch (SQLException e) {
       throw new RuntimeException(e);
     }
   }
@@ -100,51 +90,15 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     boolean hasBindings = bindings != null;
     logger.debug("Statement executeWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
     prepareForExecution();
-    StatementSetSqlQueryRequest statementSetSqlQueryRequest =
-        StatementSetSqlQueryRequest.newBuilder()
-            .setStmtHandle(statementHandle)
-            .setQuery(sql)
-            .build();
-    try {
-      ProtobufApis.databaseDriverV1.statementSetSqlQuery(statementSetSqlQueryRequest);
-    } catch (DatabaseDriverService.ServiceException e) {
-      logger.warn("statementSetSqlQuery failed: sql={}, hasBindings={}", sql, hasBindings, e);
-      throw SnowflakeSQLException.fromServiceException("Failed to set SQL query on statement", e);
-    }
-
-    StatementExecuteQueryRequest.Builder executeQueryRequestBuilder =
-        StatementExecuteQueryRequest.newBuilder().setStmtHandle(statementHandle);
-    if (bindings != null) {
-      executeQueryRequestBuilder.setBindings(bindings);
-    }
-    StatementExecuteQueryRequest executeQueryRequest = executeQueryRequestBuilder.build();
-    logger.debug(
-        "statementExecuteQuery request prepared: hasBindings={}, requestBytes={}",
-        hasBindings,
-        executeQueryRequest.getSerializedSize());
-    try {
-      ExecuteQueryResponse response =
-          ProtobufApis.databaseDriverV1.statementExecuteQuery(executeQueryRequest);
-      logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
-      return response;
-    } catch (DatabaseDriverService.ServiceException e) {
-      logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
-      throw SnowflakeSQLException.fromServiceException("Failed to execute statement query", e);
-    }
+    ProtobufApis.coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+    ExecuteQueryResponse response =
+        ProtobufApis.coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+    logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
+    return response;
   }
 
   private ResultSetResponse fetchResultSetByQueryId(String queryId) throws SQLException {
-    ConnectionGetResultSetRequest request =
-        ConnectionGetResultSetRequest.newBuilder()
-            .setConnHandle(connection.connectionHandle)
-            .setQueryId(queryId)
-            .build();
-    try {
-      return ProtobufApis.databaseDriverV1.connectionGetResultSet(request);
-    } catch (DatabaseDriverService.ServiceException e) {
-      throw SnowflakeSQLException.fromServiceException(
-          "Failed to fetch result set for query ID: " + queryId, e);
-    }
+    return ProtobufApis.coreDriverApi.connectionGetResultSet(connection.connectionHandle, queryId);
   }
 
   /**
@@ -155,24 +109,20 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
    */
   private ResultSetGetStreamResponse fetchStreamAndRelease(ResultSetHandle handle)
       throws SQLException {
-    ResultSetGetStreamRequest request =
-        ResultSetGetStreamRequest.newBuilder().setResultSetHandle(handle).build();
     try {
-      ResultSetGetStreamResponse response =
-          ProtobufApis.databaseDriverV1.resultSetGetStream(request);
+      ResultSetGetStreamResponse response = ProtobufApis.coreDriverApi.resultSetGetStream(handle);
       releaseResultSet(handle);
       return response;
-    } catch (DatabaseDriverService.ServiceException e) {
+    } catch (SQLException e) {
       releaseResultSet(handle);
-      throw SnowflakeSQLException.fromServiceException("Failed to fetch Arrow stream", e);
+      throw e;
     }
   }
 
   private void releaseResultSet(ResultSetHandle handle) {
     try {
-      ProtobufApis.databaseDriverV1.resultSetRelease(
-          ResultSetReleaseRequest.newBuilder().setResultSetHandle(handle).build());
-    } catch (DatabaseDriverService.ServiceException e) {
+      ProtobufApis.coreDriverApi.resultSetRelease(handle);
+    } catch (SQLException e) {
       logger.warn("Failed to release ResultSet handle", e);
     }
   }
@@ -633,24 +583,14 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   @Override
   public void setParameter(String name, Object value) throws SQLException {
     checkClosed();
-    try {
-      ConfigSetting.Builder settingBuilder = ConfigSetting.newBuilder();
-      if (value instanceof Number) {
-        settingBuilder.setIntValue(((Number) value).longValue());
-      } else {
-        settingBuilder.setStringValue(String.valueOf(value));
-      }
-
-      StatementSetOptionsRequest request =
-          StatementSetOptionsRequest.newBuilder()
-              .setStmtHandle(statementHandle)
-              .putOptions(name, settingBuilder.build())
-              .build();
-      ProtobufApis.databaseDriverV1.statementSetOptions(request);
-    } catch (DatabaseDriverService.ServiceException e) {
-      throw SnowflakeSQLException.fromServiceException(
-          "Failed to set statement parameter: " + name, e);
+    ConfigSetting.Builder settingBuilder = ConfigSetting.newBuilder();
+    if (value instanceof Number) {
+      settingBuilder.setIntValue(((Number) value).longValue());
+    } else {
+      settingBuilder.setStringValue(String.valueOf(value));
     }
+    ProtobufApis.coreDriverApi.statementSetOptions(
+        statementHandle, Collections.singletonMap(name, settingBuilder.build()));
   }
 
   @Override
