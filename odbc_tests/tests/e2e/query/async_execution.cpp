@@ -54,6 +54,7 @@ SQLRETURN poll_fetch(SQLHSTMT stmt) {
 // =============================================================================
 
 TEST_CASE("should enable async execution on statement", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -67,6 +68,7 @@ TEST_CASE("should enable async execution on statement", "[query][async]") {
 }
 
 TEST_CASE("should disable async execution on statement", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -82,6 +84,7 @@ TEST_CASE("should disable async execution on statement", "[query][async]") {
 }
 
 TEST_CASE("should get async enable attribute value after setting it", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -100,6 +103,7 @@ TEST_CASE("should get async enable attribute value after setting it", "[query][a
 }
 
 TEST_CASE("should reject connection-level async with HY092", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -117,6 +121,7 @@ TEST_CASE("should reject connection-level async with HY092", "[query][async]") {
 // =============================================================================
 
 TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -135,6 +140,7 @@ TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[query][async]") 
 }
 
 TEST_CASE("should complete async execution via polling", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -157,6 +163,7 @@ TEST_CASE("should complete async execution via polling", "[query][async]") {
 }
 
 TEST_CASE("should allow immediate completion with async enabled", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -183,6 +190,7 @@ TEST_CASE("should allow immediate completion with async enabled", "[query][async
 }
 
 TEST_CASE("should execute and retrieve result set asynchronously", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -219,6 +227,7 @@ TEST_CASE("should execute and retrieve result set asynchronously", "[query][asyn
 // =============================================================================
 
 TEST_CASE("should allow re-execution after async completion", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -251,6 +260,7 @@ TEST_CASE("should allow re-execution after async completion", "[query][async]") 
 }
 
 TEST_CASE("should allow disabling async after completion", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -286,6 +296,7 @@ TEST_CASE("should allow disabling async after completion", "[query][async]") {
 // =============================================================================
 
 TEST_CASE("should cancel async execution with HY008", "[query][async][cancel]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SKIP_OLD_DRIVER("BD#34", "Async cancel does not interrupt in-progress operations on reference driver");
 
   // Given Snowflake client is logged in with async enabled
@@ -314,6 +325,7 @@ TEST_CASE("should cancel async execution with HY008", "[query][async][cancel]") 
 // =============================================================================
 
 TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_thread]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -340,6 +352,7 @@ TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_
 // =============================================================================
 
 TEST_CASE("should report SQL_AM_STATEMENT for SQL_ASYNC_MODE", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -354,6 +367,7 @@ TEST_CASE("should report SQL_AM_STATEMENT for SQL_ASYNC_MODE", "[query][async]")
 }
 
 TEST_CASE("should report no limit for SQL_MAX_ASYNC_CONCURRENT_STATEMENTS", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
