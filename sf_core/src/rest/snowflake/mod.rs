@@ -344,6 +344,25 @@ const EXT_AUTHN_ERROR_CODES: [i32; 5] = [
     390129, // EXT_AUTHN_EXCEPTION
 ];
 
+/// Sets the DUO second-factor fields on the login request.
+/// Matches the behavior of the old JDBC, .NET, and ODBC drivers:
+/// always sends `EXT_AUTHN_DUO_METHOD`, defaulting to `"push"` when
+/// no passcode is provided.
+fn set_duo_authn_fields(
+    data: &mut AuthRequestData,
+    passcode_in_password: bool,
+    passcode: Option<SensitiveString>,
+) {
+    data.ext_authn_duo_method = Some(if passcode.is_some() || passcode_in_password {
+        "passcode".to_string()
+    } else {
+        "push".to_string()
+    });
+    if !passcode_in_password {
+        data.passcode = passcode;
+    }
+}
+
 fn extract_host_from_url(server_url: &str) -> Option<String> {
     Url::parse(server_url)
         .ok()?
@@ -542,9 +561,15 @@ pub async fn auth_request_data(
             data.dpop_jwk_json = acquired.dpop_jwk_json;
         }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
-            Credentials::Password { username, password } => {
+            Credentials::Password {
+                username,
+                password,
+                passcode_in_password,
+                passcode,
+            } => {
                 data.login_name = Some(username);
                 data.password = Some(password);
+                set_duo_authn_fields(&mut data, passcode_in_password, passcode);
             }
             Credentials::Jwt { username, token } => {
                 data.login_name = Some(username);
@@ -595,15 +620,7 @@ pub async fn auth_request_data(
                 if let Some(cached_token) = cached_mfa_token {
                     data.token = Some(cached_token);
                 } else {
-                    data.ext_authn_duo_method =
-                        Some(if passcode.is_some() || passcode_in_password {
-                            "passcode".to_string()
-                        } else {
-                            "push".to_string()
-                        });
-                    if !passcode_in_password {
-                        data.passcode = passcode.clone();
-                    }
+                    set_duo_authn_fields(&mut data, passcode_in_password, passcode.clone());
                     if store_temp_cred {
                         data.client_request_mfa_token = Some(store_temp_cred);
                     }
@@ -2109,6 +2126,8 @@ mod tests {
             login_method: LoginMethod::Password {
                 username: "testuser".to_string(),
                 password: "testpass".into(),
+                passcode_in_password: false,
+                passcode: None,
             },
             server_url: "https://testaccount.snowflakecomputing.com".to_string(),
             database: None,

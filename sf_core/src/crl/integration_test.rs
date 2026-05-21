@@ -81,7 +81,7 @@ mod integration_tests {
         );
 
         match &config.auth {
-            AuthConfig::Password { user, password } => {
+            AuthConfig::Password { user, password, .. } => {
                 assert_eq!(user, "test_user");
                 assert_eq!(password.reveal(), "test_password");
             }

@@ -318,6 +318,8 @@ fn build_login_params(
         LoginMethod::Password {
             username: user,
             password: SensitiveString::from(password.clone()),
+            passcode_in_password: false,
+            passcode: None,
         }
     } else {
         return Err("No authentication method available: set private_key_file, private_key_contents, or password in parameters".into());
