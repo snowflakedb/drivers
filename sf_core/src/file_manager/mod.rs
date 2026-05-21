@@ -66,6 +66,7 @@ pub async fn upload_files(
             flavor: data.flavor.clone(),
             treat_unsupported_compression_as_uncompressed: data
                 .treat_unsupported_compression_as_uncompressed,
+            accept_partial_magic_byte_prefix: data.accept_partial_magic_byte_prefix,
         };
 
         let result = upload_single_file(single_upload_data, &mut refresher).await?;
@@ -176,6 +177,7 @@ fn preprocess_file_before_upload(
         file_buffer.as_slice(),
         &data.source_compression,
         data.treat_unsupported_compression_as_uncompressed,
+        data.accept_partial_magic_byte_prefix,
     )
     .context(CompressionTypeSnafu)?;
 
@@ -225,12 +227,14 @@ fn get_source_compression(
     file_buffer: &[u8],
     source_compression: &SourceCompressionParam,
     treat_unsupported_compression_as_uncompressed: bool,
+    accept_partial_magic_byte_prefix: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
     match source_compression {
         SourceCompressionParam::AutoDetect => auto_detect_source_compression(
             filename,
             file_buffer,
             treat_unsupported_compression_as_uncompressed,
+            accept_partial_magic_byte_prefix,
         ),
         SourceCompressionParam::None => Ok(CompressionType::None),
         SourceCompressionParam::Gzip => Ok(CompressionType::Gzip),
@@ -242,20 +246,28 @@ fn get_source_compression(
     }
 }
 
-/// Returns the resolved compression type for the `AUTO_DETECT` path. When
-/// `treat_unsupported_compression_as_uncompressed` is true, unsupported
-/// compression formats (e.g. `.xz`, `.lz`, `.parquet`) are silently
-/// treated as uncompressed and the upload continues — restoring legacy
-/// libsnowflakeclient behavior. When false, the error surfaces. The
-/// recovery is keyed on the `UnsupportedCompressionType` error variant,
-/// so it fires regardless of whether the detection went through the
-/// filename extension or the magic-bytes (infer crate) path.
+/// Returns the resolved compression type for the `AUTO_DETECT` path. Two
+/// independent flags shape the behavior:
+///
+/// - `treat_unsupported_compression_as_uncompressed` (true): unsupported
+///   formats (e.g. `.xz`, `.lz`, `.parquet`) are silently treated as
+///   uncompressed and the upload continues — restoring legacy
+///   libsnowflakeclient behavior. False propagates the error. The
+///   recovery is keyed on the `UnsupportedCompressionType` error variant,
+///   so it fires regardless of whether detection went through the
+///   filename extension or the magic-bytes (infer crate) path.
+/// - `accept_partial_magic_byte_prefix` (true): a libsnowflakeclient-style
+///   short-prefix table runs ahead of the `infer` crate, allowing a
+///   2-byte gzip header / 2-byte zlib stream / 4-byte snowflake brotli
+///   marker to be detected even though `infer` requires more bytes.
 fn auto_detect_source_compression(
     filename: &str,
     file_buffer: &[u8],
     treat_unsupported_compression_as_uncompressed: bool,
+    accept_partial_magic_byte_prefix: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
-    let detected = try_guess_compression_type(filename, file_buffer);
+    let detected =
+        try_guess_compression_type(filename, file_buffer, accept_partial_magic_byte_prefix);
     if treat_unsupported_compression_as_uncompressed {
         match detected {
             Err(CompressionTypeError::UnsupportedCompressionType { .. }) => {
@@ -582,7 +594,7 @@ mod tests {
     #[test]
     fn auto_detect_source_compression_treat_unsupported_as_uncompressed_true_swallows_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
-            let result = auto_detect_source_compression(filename, b"", true);
+            let result = auto_detect_source_compression(filename, b"", true, false);
             assert_eq!(
                 result.unwrap(),
                 CompressionType::None,
@@ -594,7 +606,7 @@ mod tests {
     #[test]
     fn auto_detect_source_compression_treat_unsupported_as_uncompressed_false_propagates_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
-            let result = auto_detect_source_compression(filename, b"", false);
+            let result = auto_detect_source_compression(filename, b"", false, false);
             assert!(
                 matches!(
                     result,
@@ -614,7 +626,7 @@ mod tests {
     fn auto_detect_source_compression_treat_unsupported_as_uncompressed_true_swallows_buffer_detected_unsupported()
      {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
-        let result = auto_detect_source_compression("noext", xz_magic, true);
+        let result = auto_detect_source_compression("noext", xz_magic, true, false);
         assert_eq!(result.unwrap(), CompressionType::None);
     }
 
@@ -622,7 +634,7 @@ mod tests {
     fn auto_detect_source_compression_treat_unsupported_as_uncompressed_false_propagates_buffer_detected_unsupported()
      {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
-        let result = auto_detect_source_compression("noext", xz_magic, false);
+        let result = auto_detect_source_compression("noext", xz_magic, false, false);
         assert!(
             matches!(
                 result,
@@ -639,6 +651,7 @@ mod tests {
                 "test.csv.gz",
                 b"",
                 treat_unsupported_compression_as_uncompressed,
+                false,
             );
             assert_eq!(
                 result.unwrap(),
@@ -655,6 +668,7 @@ mod tests {
                 "test.csv",
                 b"",
                 treat_unsupported_compression_as_uncompressed,
+                false,
             );
             assert_eq!(
                 result.unwrap(),
@@ -662,6 +676,58 @@ mod tests {
                 "Flag={treat_unsupported_compression_as_uncompressed} must report None for plain files",
             );
         }
+    }
+
+    // The two flags are independent. ODBC's preset enables both
+    // (`treat_unsupported_compression_as_uncompressed=true`,
+    // `accept_partial_magic_byte_prefix=true`); Python and JDBC keep
+    // both off. The partial-magic flag only widens what gets detected,
+    // never narrows it — flipping it from false to true cannot break a
+    // call that previously detected a known format.
+    #[test]
+    fn auto_detect_source_compression_partial_magic_flag_true_detects_2byte_gzip() {
+        let two_byte_gzip: &[u8] = &[0x1F, 0x8B];
+        let result = auto_detect_source_compression("noext", two_byte_gzip, false, true);
+        assert_eq!(result.unwrap(), CompressionType::Gzip);
+    }
+
+    #[test]
+    fn auto_detect_source_compression_partial_magic_flag_false_misses_2byte_gzip() {
+        let two_byte_gzip: &[u8] = &[0x1F, 0x8B];
+        let result = auto_detect_source_compression("noext", two_byte_gzip, false, false);
+        assert_eq!(result.unwrap(), CompressionType::None);
+    }
+
+    #[test]
+    fn auto_detect_source_compression_partial_magic_flag_independent_of_swallow_flag() {
+        // Crossed flag values: `swallow=true` + `partial_magic=false`
+        // exercises the ODBC-historic config (xz/.lz swallowed, but no
+        // 2-byte gzip detection). `swallow=false` + `partial_magic=true`
+        // is a hypothetical Python-with-libsnowflakeclient-magic config —
+        // not used by any current preset, but the flag pair must compose
+        // without surprises.
+        let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
+        let two_byte_gzip: &[u8] = &[0x1F, 0x8B];
+
+        // swallow=true, partial=false: xz swallowed, 2-byte gzip not detected.
+        assert_eq!(
+            auto_detect_source_compression("noext", xz_magic, true, false).unwrap(),
+            CompressionType::None,
+        );
+        assert_eq!(
+            auto_detect_source_compression("noext", two_byte_gzip, true, false).unwrap(),
+            CompressionType::None,
+        );
+
+        // swallow=false, partial=true: xz still errors, 2-byte gzip detected.
+        assert!(matches!(
+            auto_detect_source_compression("noext", xz_magic, false, true),
+            Err(CompressionTypeError::UnsupportedCompressionType { .. })
+        ));
+        assert_eq!(
+            auto_detect_source_compression("noext", two_byte_gzip, false, true).unwrap(),
+            CompressionType::Gzip,
+        );
     }
 
     #[test]
@@ -675,6 +741,7 @@ mod tests {
                     b"",
                     &SourceCompressionParam::Gzip,
                     treat_unsupported_compression_as_uncompressed,
+                    false,
                 )
                 .unwrap(),
                 CompressionType::Gzip,
@@ -685,6 +752,7 @@ mod tests {
                     b"",
                     &SourceCompressionParam::None,
                     treat_unsupported_compression_as_uncompressed,
+                    false,
                 )
                 .unwrap(),
                 CompressionType::None,

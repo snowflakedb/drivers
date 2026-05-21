@@ -89,6 +89,7 @@ pub(super) async fn perform_put_get_transfer(
                 .to_file_upload_data(
                     wrapper_presets.put_get_resultset_flavor.clone(),
                     wrapper_presets.treat_unsupported_compression_as_uncompressed,
+                    wrapper_presets.accept_partial_magic_byte_prefix,
                     use_s3_regional_url_session_param,
                 )
                 .context(FileTransferPreparationSnafu)?;

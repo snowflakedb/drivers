@@ -34,6 +34,13 @@ pub struct WrapperPresets {
     /// instead of producing an error. Mirrors legacy libsnowflakeclient
     /// behavior; required for ODBC backward compatibility.
     pub treat_unsupported_compression_as_uncompressed: bool,
+    /// When true, magic-byte detection consults
+    /// libsnowflakeclient's short-prefix table (2-byte gzip header,
+    /// 2-byte zlib stream, 4-byte snowflake brotli marker) ahead of
+    /// the `infer` crate. Required for ODBC parity; Python and JDBC
+    /// keep this off — both connectors require a 4-byte read before
+    /// declaring a magic-byte match.
+    pub accept_partial_magic_byte_prefix: bool,
 }
 
 impl WrapperPresets {
@@ -51,6 +58,7 @@ impl WrapperPresets {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
             treat_unsupported_compression_as_uncompressed: true,
+            accept_partial_magic_byte_prefix: true,
             ..Self::default()
         }
     }

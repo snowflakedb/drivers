@@ -40,6 +40,12 @@ pub struct UploadData {
     /// instead of producing an error. Mirrors legacy libsnowflakeclient
     /// behavior; required for ODBC backward compatibility.
     pub treat_unsupported_compression_as_uncompressed: bool,
+    /// When true, magic-byte detection consults libsnowflakeclient's
+    /// short-prefix table (2-byte gzip, 2-byte zlib, 4-byte snowflake
+    /// brotli marker) ahead of the `infer` crate. Required for ODBC
+    /// parity; Python and JDBC keep this off (their connectors require
+    /// the full 4-byte read before declaring a magic-byte match).
+    pub accept_partial_magic_byte_prefix: bool,
 }
 
 pub struct SingleUploadData {
@@ -52,6 +58,7 @@ pub struct SingleUploadData {
     pub overwrite: bool,
     pub flavor: PutGetResultsetFlavor,
     pub treat_unsupported_compression_as_uncompressed: bool,
+    pub accept_partial_magic_byte_prefix: bool,
 }
 
 #[derive(Debug)]
