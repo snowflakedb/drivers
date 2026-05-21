@@ -292,6 +292,173 @@ TEST_CASE("should allow disabling async after completion", "[query][async]") {
 }
 
 // =============================================================================
+// ASYNC PREPARE + EXECUTE
+// =============================================================================
+
+TEST_CASE("should prepare asynchronously and poll to completion", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in with async enabled
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // When SQLPrepare is called asynchronously
+  const char* query = "SELECT ? AS val";
+  ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+
+  // Then it may return SQL_STILL_EXECUTING or complete immediately
+  if (ret == SQL_STILL_EXECUTING) {
+    int polls = 0;
+    while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+      std::this_thread::sleep_for(kPollInterval);
+      ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+    }
+  }
+  REQUIRE(ret != SQL_STILL_EXECUTING);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+}
+
+TEST_CASE("should execute prepared statement asynchronously", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in with async enabled and a prepared statement
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // Prepare (poll if needed)
+  const char* query = "SELECT 123 AS val";
+  ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+  if (ret == SQL_STILL_EXECUTING) {
+    int polls = 0;
+    while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+      std::this_thread::sleep_for(kPollInterval);
+      ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+    }
+  }
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // When SQLExecute is called asynchronously
+  ret = SQLExecute(stmt.getHandle());
+  if (ret == SQL_STILL_EXECUTING) {
+    int polls = 0;
+    while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+      std::this_thread::sleep_for(kPollInterval);
+      ret = SQLExecute(stmt.getHandle());
+    }
+  }
+
+  // Then it should complete successfully
+  REQUIRE(ret != SQL_STILL_EXECUTING);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // And results should be retrievable
+  SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
+  REQUIRE_THAT(OdbcResult(fetch_ret, stmt), OdbcMatchers::Succeeded());
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
+}
+
+TEST_CASE("should prepare and execute with bound parameters asynchronously", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in with async enabled
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // Prepare with parameter marker (poll if needed)
+  const char* query = "SELECT ? AS val";
+  ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+  if (ret == SQL_STILL_EXECUTING) {
+    int polls = 0;
+    while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+      std::this_thread::sleep_for(kPollInterval);
+      ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+    }
+  }
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // Bind a parameter
+  SQLINTEGER param_val = 456;
+  SQLLEN ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param_val, 0, &ind);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // When SQLExecute is called asynchronously
+  ret = SQLExecute(stmt.getHandle());
+  if (ret == SQL_STILL_EXECUTING) {
+    int polls = 0;
+    while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+      std::this_thread::sleep_for(kPollInterval);
+      ret = SQLExecute(stmt.getHandle());
+    }
+  }
+
+  // Then it should complete and return the bound value
+  REQUIRE(ret != SQL_STILL_EXECUTING);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
+  REQUIRE_THAT(OdbcResult(fetch_ret, stmt), OdbcMatchers::Succeeded());
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 456);
+}
+
+TEST_CASE("should re-execute prepared statement multiple times asynchronously", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in with async enabled and a prepared statement
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // Prepare once (poll if needed)
+  const char* query = "SELECT ? AS val";
+  ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+  if (ret == SQL_STILL_EXECUTING) {
+    int polls = 0;
+    while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+      std::this_thread::sleep_for(kPollInterval);
+      ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+    }
+  }
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  SQLINTEGER param_val = 0;
+  SQLLEN ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param_val, 0, &ind);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+  // When the prepared statement is executed multiple times with different values
+  for (int i = 1; i <= 3; i++) {
+    param_val = i * 10;
+
+    ret = SQLExecute(stmt.getHandle());
+    if (ret == SQL_STILL_EXECUTING) {
+      int polls = 0;
+      while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
+        std::this_thread::sleep_for(kPollInterval);
+        ret = SQLExecute(stmt.getHandle());
+      }
+    }
+    REQUIRE(ret != SQL_STILL_EXECUTING);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+
+    SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
+    REQUIRE_THAT(OdbcResult(fetch_ret, stmt), OdbcMatchers::Succeeded());
+
+    // Then each execution should return the correct bound value
+    CHECK(get_data<SQL_C_LONG>(stmt, 1) == i * 10);
+
+    SQLCloseCursor(stmt.getHandle());
+  }
+}
+
+// =============================================================================
 // ASYNC CANCEL
 // =============================================================================
 
