@@ -1,4 +1,4 @@
-package net.snowflake.client.utils;
+package net.snowflake.jdbc.utils;
 
 import java.util.Random;
 

@@ -1,4 +1,4 @@
-package net.snowflake.client;
+package net.snowflake.jdbc.utils;
 
 import java.util.Optional;
 import org.junit.jupiter.api.extension.ConditionEvaluationResult;

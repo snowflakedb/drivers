@@ -1,4 +1,4 @@
-package net.snowflake.client;
+package net.snowflake.jdbc.utils;
 
 import java.io.FileInputStream;
 import java.io.InputStream;

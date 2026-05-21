@@ -10,8 +10,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
 import net.snowflake.client.internal.util.NotImplementedException;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {

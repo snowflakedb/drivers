@@ -1,4 +1,4 @@
-package net.snowflake.jdbc.testutil;
+package net.snowflake.jdbc.utils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

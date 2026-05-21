@@ -1,4 +1,4 @@
-package net.snowflake.jdbc.testutil;
+package net.snowflake.jdbc.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -13,7 +13,7 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
-import net.snowflake.jdbc.testutil.HttpTestClient.Response;
+import net.snowflake.jdbc.utils.HttpTestClient.Response;
 import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
