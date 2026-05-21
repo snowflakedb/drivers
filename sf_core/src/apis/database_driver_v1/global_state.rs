@@ -29,18 +29,26 @@ pub enum PutGetResultsetFlavor {
 #[derive(Debug, Clone, Default)]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
-    /// When true, unsupported compression formats (e.g. `.xz`, `.lz`)
-    /// detected during PUT auto-detect are treated as uncompressed
-    /// instead of producing an error. Mirrors legacy libsnowflakeclient
-    /// behavior; required for ODBC backward compatibility.
-    pub treat_unsupported_compression_as_uncompressed: bool,
-    /// When true, magic-byte detection consults
-    /// libsnowflakeclient's short-prefix table (2-byte gzip header,
-    /// 2-byte zlib stream, 4-byte snowflake brotli marker) ahead of
-    /// the `infer` crate. Required for ODBC parity; Python and JDBC
-    /// keep this off — both connectors require a 4-byte read before
-    /// declaring a magic-byte match.
-    pub accept_partial_magic_byte_prefix: bool,
+    /// When true, the PUT auto-detect path mirrors legacy
+    /// libsnowflakeclient behavior. Required for ODBC backward
+    /// compatibility; Python and JDBC keep this off. Two behaviors are
+    /// gated under the single flag because both exist solely to bring
+    /// UD's auto-detect in line with libsnowflakeclient — a wrapper that
+    /// wants one of these almost certainly wants the other:
+    ///
+    /// 1. Unsupported compression formats (`.xz`, `.lz`, `.lzma`,
+    ///    `.lzo`, `.Z`, and the buffer-detected equivalents) are
+    ///    silently treated as uncompressed instead of erroring. Without
+    ///    this flag, UD surfaces an `UnsupportedCompressionType` error
+    ///    and the upload aborts.
+    /// 2. Magic-byte detection consults a short-prefix table (2-byte
+    ///    gzip header `\x1F\x8B`, 2-byte zlib stream headers
+    ///    `\x78\x01 / \x9C / \xDA` mapped to `Deflate`, 4-byte
+    ///    snowflake-specific brotli marker `\xCE\xB2\xCF\x81`) ahead
+    ///    of the `infer` crate. Without this flag, only formats that
+    ///    `infer` can identify from a full-buffer probe (≥3 bytes for
+    ///    gzip, plus zstd/bzip2/etc.) are detected via magic.
+    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
 impl WrapperPresets {
@@ -57,8 +65,7 @@ impl WrapperPresets {
     pub fn odbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
-            treat_unsupported_compression_as_uncompressed: true,
-            accept_partial_magic_byte_prefix: true,
+            legacy_compression_autodetect_libsnowflakeclient_behavior: true,
             ..Self::default()
         }
     }

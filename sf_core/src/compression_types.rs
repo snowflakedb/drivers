@@ -72,8 +72,8 @@ fn get_compression_type_from_extension(
 /// `FileCompressionType.cpp`. Each entry is matched with `starts_with` —
 /// shorter than what the `infer` crate requires (e.g. infer's gzip matcher
 /// needs the 3-byte `1F 8B 08`; ODBC accepts the 2-byte `1F 8B`). Used
-/// only when `accept_partial_magic_byte_prefix` is true; Python/JDBC do
-/// not consult this table.
+/// only when `legacy_compression_autodetect_libsnowflakeclient_behavior`
+/// is true; Python/JDBC do not consult this table.
 ///
 /// `0x78 0x01 / 0x9C / 0xDA` are zlib stream headers. UD has no separate
 /// `Zlib` variant, so they map to `Deflate` (matching how zlib-wrapped
@@ -95,14 +95,16 @@ const SHORT_MAGIC_PREFIXES: &[(&[u8], CompressionType)] = &[
 // If both fail, it returns CompressionType::None
 // Returns an error if the compression type is unsupported
 //
-// `accept_partial_magic_byte_prefix` enables a libsnowflakeclient-style
-// short-prefix match (see `SHORT_MAGIC_PREFIXES`) ahead of the `infer`
-// crate's full-buffer detection. ODBC sets this to true to keep parity
-// with legacy behavior; Python / JDBC keep it false.
+// `legacy_compression_autodetect_libsnowflakeclient_behavior` enables a
+// libsnowflakeclient-style short-prefix match (see `SHORT_MAGIC_PREFIXES`)
+// ahead of the `infer` crate's full-buffer detection. ODBC sets this to
+// true to keep parity with legacy behavior; Python / JDBC keep it false.
+// (Error swallowing — the second half of the legacy behavior — is
+// applied one layer up, in `auto_detect_source_compression`.)
 pub fn try_guess_compression_type(
     filename: &str,
     file_buffer: &[u8],
-    accept_partial_magic_byte_prefix: bool,
+    legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
     let compression_type = try_guess_compression_type_from_filename(filename)?;
 
@@ -110,7 +112,7 @@ pub fn try_guess_compression_type(
         return Ok(compression_type);
     }
 
-    if accept_partial_magic_byte_prefix
+    if legacy_compression_autodetect_libsnowflakeclient_behavior
         && let Some(compression_type) = try_match_short_prefix(file_buffer)
     {
         return Ok(compression_type);
@@ -336,21 +338,19 @@ mod tests {
     // Extension/magic conflict: filename says gzip, magic bytes say bzip2.
     // The filename branch runs first and short-circuits on the recognized
     // `.gz` extension, so the magic-byte buffer is never consulted —
-    // result is `Gzip` regardless of the partial-prefix flag. This
-    // matches Python (`mimetypes.guess_type` first) and JDBC
-    // (`Files.probeContentType` first); it diverges from
-    // libsnowflakeclient's ODBC, which iterates magic bytes first and
-    // would return `Bzip2` here.
+    // result is `Gzip` regardless of the legacy flag. This matches Python
+    // (`mimetypes.guess_type` first) and JDBC (`Files.probeContentType`
+    // first); it diverges from libsnowflakeclient's ODBC, which iterates
+    // magic bytes first and would return `Bzip2` here.
     #[test]
     fn extension_gz_with_bzip2_magic_resolves_via_extension_to_gzip_for_both_flag_values() {
         let bzip2_magic: &[u8] = &[0x42, 0x5A, 0x68, 0x39];
-        for accept_partial in [false, true] {
-            let result =
-                try_guess_compression_type("file.gz", bzip2_magic, accept_partial).unwrap();
+        for legacy in [false, true] {
+            let result = try_guess_compression_type("file.gz", bzip2_magic, legacy).unwrap();
             assert_eq!(
                 result,
                 CompressionType::Gzip,
-                "Extension must win over conflicting magic bytes (accept_partial={accept_partial})",
+                "Extension must win over conflicting magic bytes (legacy={legacy})",
             );
         }
     }
@@ -361,14 +361,14 @@ mod tests {
     // default), the short-prefix table matches first and returns `Gzip`,
     // mirroring `libsnowflakeclient`'s `m_magicBytes = 2` for gzip.
     #[test]
-    fn magic_bytes_partial_gzip_2_bytes_undetected_when_flag_false() {
+    fn magic_bytes_partial_gzip_2_bytes_undetected_when_legacy_flag_false() {
         let two_bytes: &[u8] = &[0x1F, 0x8B];
         let result = try_guess_compression_type("noext", two_bytes, false).unwrap();
         assert_eq!(result, CompressionType::None);
     }
 
     #[test]
-    fn magic_bytes_partial_gzip_2_bytes_detected_when_flag_true() {
+    fn magic_bytes_partial_gzip_2_bytes_detected_when_legacy_flag_true() {
         let two_bytes: &[u8] = &[0x1F, 0x8B];
         let result = try_guess_compression_type("noext", two_bytes, true).unwrap();
         assert_eq!(result, CompressionType::Gzip);
@@ -377,12 +377,12 @@ mod tests {
     #[test]
     fn magic_bytes_full_gzip_3_bytes_detected_for_both_flag_values() {
         let three_bytes: &[u8] = &[0x1F, 0x8B, 0x08];
-        for accept_partial in [false, true] {
-            let result = try_guess_compression_type("noext", three_bytes, accept_partial).unwrap();
+        for legacy in [false, true] {
+            let result = try_guess_compression_type("noext", three_bytes, legacy).unwrap();
             assert_eq!(
                 result,
                 CompressionType::Gzip,
-                "Full gzip magic must always be detected (accept_partial={accept_partial})",
+                "Full gzip magic must always be detected (legacy={legacy})",
             );
         }
     }
@@ -392,14 +392,14 @@ mod tests {
     // surfacing zlib-wrapped streams as `Deflate` (UD has no separate
     // `Zlib` variant).
     #[test]
-    fn magic_bytes_zlib_default_compressed_undetected_when_flag_false() {
+    fn magic_bytes_zlib_default_compressed_undetected_when_legacy_flag_false() {
         let zlib_magic: &[u8] = &[0x78, 0x9C, 0x00, 0x00];
         let result = try_guess_compression_type("noext", zlib_magic, false).unwrap();
         assert_eq!(result, CompressionType::None);
     }
 
     #[test]
-    fn magic_bytes_zlib_default_compressed_detected_as_deflate_when_flag_true() {
+    fn magic_bytes_zlib_default_compressed_detected_as_deflate_when_legacy_flag_true() {
         for header in [0x01u8, 0x9C, 0xDA] {
             let zlib_magic: &[u8] = &[0x78, header, 0x00, 0x00];
             let result = try_guess_compression_type("noext", zlib_magic, true).unwrap();
@@ -416,14 +416,14 @@ mod tests {
     // avoid breaking the Python/JDBC contract (they detect brotli purely
     // via `.br` extension, never magic).
     #[test]
-    fn magic_bytes_brotli_marker_undetected_when_flag_false() {
+    fn magic_bytes_brotli_marker_undetected_when_legacy_flag_false() {
         let brotli_magic: &[u8] = &[0xCE, 0xB2, 0xCF, 0x81, 0x00];
         let result = try_guess_compression_type("noext", brotli_magic, false).unwrap();
         assert_eq!(result, CompressionType::None);
     }
 
     #[test]
-    fn magic_bytes_brotli_marker_detected_when_flag_true() {
+    fn magic_bytes_brotli_marker_detected_when_legacy_flag_true() {
         let brotli_magic: &[u8] = &[0xCE, 0xB2, 0xCF, 0x81, 0x00];
         let result = try_guess_compression_type("noext", brotli_magic, true).unwrap();
         assert_eq!(result, CompressionType::Brotli);
@@ -435,12 +435,12 @@ mod tests {
     // return None — matches Python, JDBC, and ODBC.
     #[test]
     fn magic_bytes_empty_buffer_returns_none_for_both_flag_values() {
-        for accept_partial in [false, true] {
-            let result = try_guess_compression_type("noext", b"", accept_partial).unwrap();
+        for legacy in [false, true] {
+            let result = try_guess_compression_type("noext", b"", legacy).unwrap();
             assert_eq!(
                 result,
                 CompressionType::None,
-                "Empty buffer must report None (accept_partial={accept_partial})",
+                "Empty buffer must report None (legacy={legacy})",
             );
         }
     }

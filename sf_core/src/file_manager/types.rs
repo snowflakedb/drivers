@@ -35,17 +35,14 @@ pub struct UploadData {
     /// `SingleUploadData` so that `upload_single_file` can populate the
     /// `message` column according to the active wrapper's contract.
     pub flavor: PutGetResultsetFlavor,
-    /// When true, unsupported compression formats (e.g. `.xz`, `.lz`)
-    /// detected during PUT auto-detect are treated as uncompressed
-    /// instead of producing an error. Mirrors legacy libsnowflakeclient
-    /// behavior; required for ODBC backward compatibility.
-    pub treat_unsupported_compression_as_uncompressed: bool,
-    /// When true, magic-byte detection consults libsnowflakeclient's
-    /// short-prefix table (2-byte gzip, 2-byte zlib, 4-byte snowflake
-    /// brotli marker) ahead of the `infer` crate. Required for ODBC
-    /// parity; Python and JDBC keep this off (their connectors require
-    /// the full 4-byte read before declaring a magic-byte match).
-    pub accept_partial_magic_byte_prefix: bool,
+    /// When true, PUT auto-detect mirrors legacy libsnowflakeclient
+    /// behavior: (1) unsupported compression formats are silently
+    /// treated as uncompressed instead of erroring, and (2) magic-byte
+    /// detection consults a short-prefix table (2-byte gzip, 2-byte
+    /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
+    /// of the `infer` crate. See `WrapperPresets` for the full
+    /// specification.
+    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
 pub struct SingleUploadData {
@@ -57,8 +54,7 @@ pub struct SingleUploadData {
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
     pub flavor: PutGetResultsetFlavor,
-    pub treat_unsupported_compression_as_uncompressed: bool,
-    pub accept_partial_magic_byte_prefix: bool,
+    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
 #[derive(Debug)]
