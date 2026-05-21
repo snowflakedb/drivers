@@ -161,6 +161,27 @@ fn upload_result_message(status: UploadStatus, flavor: &PutGetResultsetFlavor) -
     }
 }
 
+/// Returns the `source` column value for a completed upload, gated on the
+/// active wrapper flavor and host platform. Legacy driver provides full path
+/// verbatim on Windows, the `Odbc` flavor restores that behaviour; every other
+/// combination keeps the `Path::file_name()` basename that UD-Python has always
+/// reported.
+///
+/// `is_windows` is parameterized rather than read from `cfg!(windows)`
+/// inside the helper so the unit tests can exercise both branches on
+/// any host.
+fn upload_result_source(
+    file_path: &str,
+    filename: &str,
+    flavor: &PutGetResultsetFlavor,
+    is_windows: bool,
+) -> String {
+    match (is_windows, flavor) {
+        (true, PutGetResultsetFlavor::Odbc) => file_path.replace('\\', "/"),
+        _ => filename.to_string(),
+    }
+}
+
 /// Sets file metadata, compresses the file if needed, and optionally encrypts the data.
 /// For SSE stages (no encryption material), the data is uploaded without client-side encryption.
 fn preprocess_file_before_upload(
@@ -177,7 +198,12 @@ fn preprocess_file_before_upload(
     )
     .context(CompressionTypeSnafu)?;
 
-    let source = data.filename.clone();
+    let source = upload_result_source(
+        data.file_path.as_str(),
+        data.filename.as_str(),
+        &data.flavor,
+        cfg!(windows),
+    );
     let mut target = data.filename.clone();
 
     let target_compression = if data.auto_compress && source_compression == CompressionType::None {
@@ -506,6 +532,103 @@ mod tests {
             ODBC_PUT_MESSAGE_SKIPPED,
             "File with same name already exists. SKIPPED",
         );
+    }
+
+    // BD#17 — `upload_result_source` must return the full source path
+    // under `Odbc` on Windows with `\` normalised to `/` (matching the
+    // legacy libsnowflakeclient wire-level value, whose `srcFileName`
+    // came from the file:// URI parser and was therefore already
+    // all-forward-slash), and the basename everywhere else (matching
+    // the historical UD-Python behaviour).
+    const WINDOWS_BACKSLASH_PATH: &str = r"C:\Users\test\test_data.csv";
+    const WINDOWS_MIXED_PATH: &str = r"D:/a\universal-driver\tests\test_data.csv";
+    const WINDOWS_FORWARD_SLASH_PATH: &str = "C:/Users/test/test_data.csv";
+    const WINDOWS_BACKSLASH_PATH_NORMALISED: &str = "C:/Users/test/test_data.csv";
+    const WINDOWS_MIXED_PATH_NORMALISED: &str = "D:/a/universal-driver/tests/test_data.csv";
+    const UNIX_FULL_PATH: &str = "/home/test/test_data.csv";
+    const BASENAME: &str = "test_data.csv";
+
+    #[test]
+    fn upload_result_source_windows_odbc_returns_full_path_with_forward_slashes() {
+        // Pure backslash input — the form a path-like API surface might
+        // produce; must be normalised to forward slashes to match legacy.
+        assert_eq!(
+            upload_result_source(
+                WINDOWS_BACKSLASH_PATH,
+                BASENAME,
+                &PutGetResultsetFlavor::Odbc,
+                true,
+            ),
+            WINDOWS_BACKSLASH_PATH_NORMALISED,
+        );
+        // Mixed-separator input — the actual shape `glob` produces on
+        // Windows when fed a file:// URI pattern (drive letter and first
+        // segment as `/`, deeper segments rewritten to `\` during
+        // filesystem traversal). This is the case that broke PR4 in CI.
+        assert_eq!(
+            upload_result_source(
+                WINDOWS_MIXED_PATH,
+                BASENAME,
+                &PutGetResultsetFlavor::Odbc,
+                true,
+            ),
+            WINDOWS_MIXED_PATH_NORMALISED,
+        );
+        // Already-normalised input must be returned unchanged.
+        assert_eq!(
+            upload_result_source(
+                WINDOWS_FORWARD_SLASH_PATH,
+                BASENAME,
+                &PutGetResultsetFlavor::Odbc,
+                true,
+            ),
+            WINDOWS_FORWARD_SLASH_PATH,
+        );
+    }
+
+    #[test]
+    fn upload_result_source_windows_python_returns_basename() {
+        for full_path in [
+            WINDOWS_BACKSLASH_PATH,
+            WINDOWS_MIXED_PATH,
+            WINDOWS_FORWARD_SLASH_PATH,
+        ] {
+            assert_eq!(
+                upload_result_source(full_path, BASENAME, &PutGetResultsetFlavor::Python, true),
+                BASENAME,
+                "Python on Windows must continue stripping directories from `{full_path}`",
+            );
+        }
+    }
+
+    #[test]
+    fn upload_result_source_non_windows_returns_basename_for_both_flavors() {
+        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+            assert_eq!(
+                upload_result_source(UNIX_FULL_PATH, BASENAME, &flavor, false),
+                BASENAME,
+                "{flavor:?} on non-Windows must always return the basename — \
+                 legacy ODBC's `find_last_of('/')` worked correctly on Unix paths",
+            );
+        }
+    }
+
+    #[test]
+    fn upload_result_source_basename_only_input_unchanged_for_all_combinations() {
+        // When `file_path` already equals the basename (e.g. the user
+        // passed a relative single-segment path) the two branches must
+        // collapse to the same value regardless of host or flavor.
+        // Backslash-free input guarantees the Odbc-on-Windows
+        // normalisation is a no-op here.
+        for is_windows in [false, true] {
+            for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+                assert_eq!(
+                    upload_result_source(BASENAME, BASENAME, &flavor, is_windows),
+                    BASENAME,
+                    "is_windows={is_windows}, flavor={flavor:?} must return {BASENAME}",
+                );
+            }
+        }
     }
 
     // BD#4 — `download_single_file` must report the on-cloud
