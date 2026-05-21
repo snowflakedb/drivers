@@ -40,8 +40,7 @@ pub struct UploadData {
     /// treated as uncompressed instead of erroring, and (2) magic-byte
     /// detection consults a short-prefix table (2-byte gzip, 2-byte
     /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
-    /// of the `infer` crate. See `WrapperPresets` for the full
-    /// specification.
+    /// of the `infer` crate.
     pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
