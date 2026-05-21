@@ -142,11 +142,11 @@ fn try_match_short_prefix(file_buffer: &[u8]) -> Option<CompressionType> {
 }
 
 // Parquet and ORC magic bytes are sniffed explicitly because the `infer`
-// crate (as of 0.16) has no matchers for them. Mirrors the legacy
-// libsnowflakeclient `FileCompressionType` table — PAR1 (4 bytes) for
-// Parquet, ORC (3 bytes) for Orc. Sniffing happens before the `infer`
-// fallback so a buffer that *also* happens to look like something else
-// to `infer` still gets identified correctly.
+// crate has no matchers for them. Mirrors the legacy libsnowflakeclient
+// `FileCompressionType` table — PAR1 (4 bytes) for Parquet, ORC (3 bytes)
+// for Orc. Sniffing happens before the `infer` fallback so a buffer that
+// *also* happens to look like something else to `infer` still gets
+// identified correctly.
 // TODO: DEFLATE cannot be detected by the infer crate - we might need a custom implementation for that
 fn try_guess_compression_type_from_buffer(
     file_buffer: &[u8],
