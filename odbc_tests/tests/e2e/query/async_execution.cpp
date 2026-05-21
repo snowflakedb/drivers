@@ -148,14 +148,14 @@ TEST_CASE("should complete async execution via polling and retrieve data", "[que
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // When a fast query is executed (may complete immediately or go async)
+  // When a query is executed asynchronously
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)kFastQuery, SQL_NTS);
-  if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), kFastQuery);
-  }
 
-  // Then the final result should indicate success
-  REQUIRE(ret != SQL_STILL_EXECUTING);
+  // Then the first call must return SQL_STILL_EXECUTING
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+
+  // And polling eventually completes
+  ret = poll_until_complete(stmt.getHandle(), kFastQuery);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // And data should be retrievable (SQLFetch is also async-capable)
@@ -176,10 +176,9 @@ TEST_CASE("should execute and retrieve result set asynchronously", "[query][asyn
   // When a query returning multiple rows is executed asynchronously
   const char* query = "SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id";
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
+  REQUIRE(ret == SQL_STILL_EXECUTING);
 
-  if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), query);
-  }
+  ret = poll_until_complete(stmt.getHandle(), query);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // Then all rows should be fetchable after async completion
@@ -213,9 +212,8 @@ TEST_CASE("should allow re-execution after async completion", "[query][async]") 
   // When first async query completes
   const char* query1 = "SELECT 1 AS val";
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query1, SQL_NTS);
-  if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), query1);
-  }
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+  ret = poll_until_complete(stmt.getHandle(), query1);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // And we close the cursor and execute a second query
@@ -223,9 +221,8 @@ TEST_CASE("should allow re-execution after async completion", "[query][async]") 
 
   const char* query2 = "SELECT 99 AS val";
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query2, SQL_NTS);
-  if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), query2);
-  }
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+  ret = poll_until_complete(stmt.getHandle(), query2);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // Then the second query should produce correct results
@@ -246,9 +243,8 @@ TEST_CASE("should allow disabling async after completion", "[query][async]") {
   // When an async query completes
   const char* query = "SELECT 1";
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
-  if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), query);
-  }
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+  ret = poll_until_complete(stmt.getHandle(), query);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
   SQLCloseCursor(stmt.getHandle());
 
@@ -280,10 +276,10 @@ TEST_CASE("should prepare asynchronously and poll to completion", "[query][async
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // When SQLPrepare is called asynchronously
+  // Note: SQLPrepare may complete immediately (spec-valid) since the driver
+  // can resolve metadata without a server round-trip for simple queries.
   const char* query = "SELECT ? AS val";
   ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
-
-  // Then it may return SQL_STILL_EXECUTING or complete immediately
   if (ret == SQL_STILL_EXECUTING) {
     int polls = 0;
     while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
@@ -291,7 +287,8 @@ TEST_CASE("should prepare asynchronously and poll to completion", "[query][async
       ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
     }
   }
-  REQUIRE(ret != SQL_STILL_EXECUTING);
+
+  // Then the prepare completes successfully
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 }
 
@@ -304,7 +301,7 @@ TEST_CASE("should execute prepared statement asynchronously", "[query][async]") 
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // Prepare (poll if needed)
+  // Prepare (may complete immediately — spec-valid for simple queries)
   const char* query = "SELECT 123 AS val";
   ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
   if (ret == SQL_STILL_EXECUTING) {
@@ -316,9 +313,10 @@ TEST_CASE("should execute prepared statement asynchronously", "[query][async]") 
   }
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // When SQLExecute is called asynchronously
+  // When SQLExecute is called asynchronously — must go async
   ret = SQLExecute(stmt.getHandle());
-  if (ret == SQL_STILL_EXECUTING) {
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+  {
     int polls = 0;
     while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
       std::this_thread::sleep_for(kPollInterval);
@@ -326,11 +324,8 @@ TEST_CASE("should execute prepared statement asynchronously", "[query][async]") 
     }
   }
 
-  // Then it should complete successfully
-  REQUIRE(ret != SQL_STILL_EXECUTING);
+  // Then execution completes and results are retrievable
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-
-  // And results should be retrievable
   SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
   REQUIRE_THAT(OdbcResult(fetch_ret, stmt), OdbcMatchers::Succeeded());
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
@@ -345,7 +340,7 @@ TEST_CASE("should prepare and execute with bound parameters asynchronously", "[q
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // Prepare with parameter marker (poll if needed)
+  // Prepare (may complete immediately)
   const char* query = "SELECT ? AS val";
   ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
   if (ret == SQL_STILL_EXECUTING) {
@@ -363,20 +358,19 @@ TEST_CASE("should prepare and execute with bound parameters asynchronously", "[q
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param_val, 0, &ind);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // When SQLExecute is called asynchronously
+  // When SQLExecute is called asynchronously — must go async
   ret = SQLExecute(stmt.getHandle());
-  if (ret == SQL_STILL_EXECUTING) {
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+  {
     int polls = 0;
     while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
       std::this_thread::sleep_for(kPollInterval);
       ret = SQLExecute(stmt.getHandle());
     }
   }
-
-  // Then it should complete and return the bound value
-  REQUIRE(ret != SQL_STILL_EXECUTING);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
+  // Then it should return the bound value
   SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
   REQUIRE_THAT(OdbcResult(fetch_ret, stmt), OdbcMatchers::Succeeded());
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 456);
@@ -391,7 +385,7 @@ TEST_CASE("should re-execute prepared statement multiple times asynchronously", 
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // Prepare once (poll if needed)
+  // Prepare once (may complete immediately)
   const char* query = "SELECT ? AS val";
   ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
   if (ret == SQL_STILL_EXECUTING) {
@@ -412,15 +406,16 @@ TEST_CASE("should re-execute prepared statement multiple times asynchronously", 
   for (int i = 1; i <= 3; i++) {
     param_val = i * 10;
 
+    // SQLExecute must go async
     ret = SQLExecute(stmt.getHandle());
-    if (ret == SQL_STILL_EXECUTING) {
+    REQUIRE(ret == SQL_STILL_EXECUTING);
+    {
       int polls = 0;
       while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
         std::this_thread::sleep_for(kPollInterval);
         ret = SQLExecute(stmt.getHandle());
       }
     }
-    REQUIRE(ret != SQL_STILL_EXECUTING);
     REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
     SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
