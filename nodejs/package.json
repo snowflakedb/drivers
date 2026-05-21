@@ -35,5 +35,8 @@
     "snowflake-sdk": "^2.4.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "big-integer": "^1.6.52"
   }
 }

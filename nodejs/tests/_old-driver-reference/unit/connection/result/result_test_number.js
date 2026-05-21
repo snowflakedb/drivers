@@ -3,6 +3,8 @@ const Logger = require('./../../../../lib/logger').default;
 const assert = require('assert');
 const ResultTestCommon = require('./result_test_common');
 
+// TODO:
+// New driver needs coverage for precision loss warning and telemetry
 describe('Result: test number', function () {
   let logWarnSpy;
 
