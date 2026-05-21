@@ -29,6 +29,10 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setWarehouse(String warehouse);
 
+  void setAuthenticator(String authenticator);
+
+  void setToken(String token);
+
   String getUrl();
 
   Properties getProperties();
