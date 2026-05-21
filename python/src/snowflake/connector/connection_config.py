@@ -180,6 +180,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     protocol: str | None = None
     """Connection protocol (http or https)"""
 
+    put_get_max_attempts: int | None = None
+    """Maximum total attempts for a single PUT/GET file transfer (1 = no retry; default 6). Bounds the per-file
+    HTTP/transport retry loop inside the cloud SDK; STS-token and Snowflake session-token refreshes have their own
+    budgets. JDBC's `putGetMaxRetries` and libsnowflakeclient's `SF_CON_PUT_MAXRETRIES`/`SF_CON_GET_MAXRETRIES` are
+    wrapper-side aliases that should be translated into this attempts-semantics value (attempts = retries + 1).
+    """
+
     server_session_keep_alive: bool | None = None
     """Control server session lifecycle: true=keep alive, false=always logout, null=auto-detect"""
 

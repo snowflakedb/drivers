@@ -56,6 +56,9 @@ pub struct StageCredsRefreshContext {
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
 ///
+/// `put_get_config` carries user-supplied PUT/GET tunables (e.g. retry count,
+/// `put_get_max_attempts`) that override the per-cloud defaults.
+///
 /// When `stage_creds_refresh_context` is `Some`, an S3 `ExpiredToken` during a
 /// file transfer triggers a re-issue of the original PUT/GET SQL to obtain fresh
 /// STS credentials and the operation is retried. Non-PUT/GET callers pass `None`.
@@ -69,6 +72,7 @@ pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
+    put_get_config: crate::config::put_get::PutGetConfig,
     stage_creds_refresh_context: Option<StageCredsRefreshContext>,
     use_s3_regional_url_session_param: bool,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
@@ -92,7 +96,7 @@ pub(super) async fn perform_put_get_transfer(
                     use_s3_regional_url_session_param,
                 )
                 .context(FileTransferPreparationSnafu)?;
-            let upload_results = upload_files(&file_upload_data, refresher_handle)
+            let upload_results = upload_files(&file_upload_data, put_get_config, refresher_handle)
                 .await
                 .context(FileUploadSnafu)?;
             Ok(RowsetData::Upload(upload_results))
@@ -110,9 +114,10 @@ pub(super) async fn perform_put_get_transfer(
                         FileTransferPreparationSnafu.into_error(e)
                     }
                 })?;
-            let download_results = download_files(file_download_data, refresher_handle)
-                .await
-                .context(FileDownloadSnafu)?;
+            let download_results =
+                download_files(file_download_data, put_get_config, refresher_handle)
+                    .await
+                    .context(FileDownloadSnafu)?;
             Ok(RowsetData::Download(download_results))
         }
         _ => UnsupportedCommandSnafu {

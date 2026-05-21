@@ -112,6 +112,8 @@ pub mod param_names {
     pub const LOGOUT_TOTAL_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_total_timeout_seconds");
     pub const LOGOUT_MAX_ATTEMPTS: ParamKey = ParamKey("logout_max_attempts");
     pub const LOGOUT_REQUEST_TIMEOUT_SECONDS: ParamKey = ParamKey("logout_request_timeout_seconds");
+    // PUT/GET file transfer configuration
+    pub const PUT_GET_MAX_ATTEMPTS: ParamKey = ParamKey("put_get_max_attempts");
     // Application identity
     pub const CLIENT_APP_ID: ParamKey = ParamKey("client_app_id");
     pub const CLIENT_APP_VERSION: ParamKey = ParamKey("client_app_version");
@@ -982,6 +984,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         default: None,
         sensitive: false,
         description: "Per-request socket timeout for individual logout attempts",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: true,
+    },
+    ParamDef {
+        canonical_name: param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Maximum total attempts for a single PUT/GET file transfer (1 = no retry; default 6). Bounds the per-file HTTP/transport retry loop inside the cloud SDK; STS-token and Snowflake session-token refreshes have their own budgets. JDBC's `putGetMaxRetries` and libsnowflakeclient's `SF_CON_PUT_MAXRETRIES`/`SF_CON_GET_MAXRETRIES` are wrapper-side aliases that should be translated into this attempts-semantics value (attempts = retries + 1).",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: false,

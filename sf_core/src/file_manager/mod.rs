@@ -13,6 +13,7 @@ pub use gcs_transfer::download_from_gcs;
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
+use crate::config::put_get::PutGetConfig;
 use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
 use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
 use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
@@ -34,6 +35,7 @@ const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIP
 
 pub async fn upload_files(
     data: &UploadData,
+    put_get_config: PutGetConfig,
     mut refresher: Option<&mut dyn StageCredsRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
@@ -67,7 +69,7 @@ pub async fn upload_files(
             legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
         };
 
-        let result = upload_single_file(single_upload_data, &mut refresher).await?;
+        let result = upload_single_file(single_upload_data, put_get_config, &mut refresher).await?;
         results.push(result);
     }
 
@@ -91,6 +93,7 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageCredsRefresh
 /// refresher's `StageCredsCache` rather than returned here.
 pub async fn upload_single_file(
     data: SingleUploadData,
+    put_get_config: PutGetConfig,
     refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
@@ -106,10 +109,15 @@ pub async fn upload_single_file(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            put_get_config,
             refresher,
         )
         .await
         .context(S3UploadSnafu)?,
+        // GCS and Azure transfers do not yet honor `put_get_config` —
+        // their retry budgets stay on the per-cloud built-in defaults.
+        // Wire it through here when the same gap is filled for those
+        // backends.
         LocationType::Gcs => upload_to_gcs_or_skip(
             prepared,
             &data.stage_info,
@@ -302,6 +310,7 @@ fn auto_detect_source_compression(
 
 pub async fn download_files(
     mut data: DownloadData,
+    put_get_config: PutGetConfig,
     mut refresher: Option<&mut dyn StageCredsRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
@@ -320,7 +329,8 @@ pub async fn download_files(
             flavor: data.flavor.clone(),
         };
 
-        let result = download_single_file(single_download_data, &mut refresher).await?;
+        let result =
+            download_single_file(single_download_data, put_get_config, &mut refresher).await?;
         results.push(result);
     }
 
@@ -330,6 +340,7 @@ pub async fn download_files(
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
 pub async fn download_single_file(
     data: SingleDownloadData,
+    put_get_config: PutGetConfig,
     refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
     let DownloadResponse {
@@ -338,11 +349,16 @@ pub async fn download_single_file(
         file_metadata,
         cloud_byte_count,
     } = match data.stage_info.location_type {
-        LocationType::S3 => {
-            download_from_s3(&data.stage_info, data.src_location.as_str(), refresher)
-                .await
-                .context(S3DownloadSnafu)?
-        }
+        LocationType::S3 => download_from_s3(
+            &data.stage_info,
+            data.src_location.as_str(),
+            put_get_config,
+            refresher,
+        )
+        .await
+        .context(S3DownloadSnafu)?,
+        // GCS/Azure download paths do not yet honor `put_get_config`; see
+        // the matching note in `upload_single_file`.
         LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
             .await
             .context(GcsDownloadSnafu)?,

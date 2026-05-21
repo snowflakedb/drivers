@@ -12,6 +12,7 @@ pub use param_registry::ParamScope;
 pub use param_registry::param_names;
 pub use param_store::ParamStore;
 pub mod path_resolver;
+pub mod put_get;
 pub mod resolver;
 pub mod rest_parameters;
 pub mod retry;

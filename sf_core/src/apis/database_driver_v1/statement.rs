@@ -18,6 +18,7 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
+use crate::config::put_get::PutGetConfig;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
@@ -352,15 +353,28 @@ impl DatabaseDriverV1 {
                     query_parameters: query_parameters.clone(),
                     conn: conn_arc.clone(),
                 };
-                let use_s3_regional_url_session_param = conn_arc
-                    .lock()
-                    .await
-                    .use_s3_regional_url_session_param()
-                    .await;
+                // Snapshot per-PUT/GET state from the connection. PutGetConfig is
+                // re-derived from the connection seed so post-init
+                // `connection_set_option_int` overrides take effect at PUT/GET
+                // time (mirroring LogoutConfig's late-binding pattern in
+                // `connection_close`). On parse error, fall back to the
+                // init-time snapshot.
+                let (put_get_config, use_s3_regional_url_session_param) = {
+                    let conn = conn_arc.lock().await;
+                    let put_get_config =
+                        PutGetConfig::from_settings(&conn.connection_seed).unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, "Failed to re-derive PutGetConfig at PUT/GET-time; using init-time config");
+                            conn.put_get_config
+                        });
+                    let use_s3_regional_url_session_param =
+                        conn.use_s3_regional_url_session_param().await;
+                    (put_get_config, use_s3_regional_url_session_param)
+                };
                 perform_put_get_transfer(
                     command,
                     &data,
                     &self.wrapper_presets,
+                    put_get_config,
                     Some(stage_creds_refresh_context),
                     use_s3_regional_url_session_param,
                 )
@@ -462,15 +476,28 @@ impl DatabaseDriverV1 {
 
             let rowset_data = match data.command.as_deref() {
                 Some(command) => {
-                    let use_s3_regional_url_session_param = conn_ptr
-                        .lock()
-                        .await
-                        .use_s3_regional_url_session_param()
-                        .await;
+                    // Snapshot per-PUT/GET state from the connection. PutGetConfig is
+                    // re-derived from the connection seed so post-init
+                    // `connection_set_option_int` overrides take effect at PUT/GET
+                    // time (mirroring LogoutConfig's late-binding pattern in
+                    // `connection_close`). On parse error, fall back to the
+                    // init-time snapshot.
+                    let (put_get_config, use_s3_regional_url_session_param) = {
+                        let conn = conn_ptr.lock().await;
+                        let put_get_config =
+                            PutGetConfig::from_settings(&conn.connection_seed).unwrap_or_else(|e| {
+                                tracing::warn!(error = %e, "Failed to re-derive PutGetConfig at PUT/GET-time; using init-time config");
+                                conn.put_get_config
+                            });
+                        let use_s3_regional_url_session_param =
+                            conn.use_s3_regional_url_session_param().await;
+                        (put_get_config, use_s3_regional_url_session_param)
+                    };
                     perform_put_get_transfer(
                         command,
                         &data,
                         &self.wrapper_presets,
+                        put_get_config,
                         None,
                         use_s3_regional_url_session_param,
                     )
