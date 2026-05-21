@@ -58,7 +58,7 @@ export function executeAsync(
   additionalParameters: Partial<Omit<StatementOption, 'sqlText' | 'complete'>> = {},
 ): Promise<{
   statement: RowStatement | FileAndStageBindStatement;
-  rows: unknown[] | undefined;
+  rows: Record<string, unknown>[];
 }> {
   return new Promise((resolve, reject) => {
     connection.execute({
@@ -66,9 +66,9 @@ export function executeAsync(
       ...additionalParameters,
       complete: (error, statement, rows) => {
         if (error) {
-          reject({ error, statement, rows });
+          reject({ error, statement });
         } else {
-          resolve({ statement, rows });
+          resolve({ statement, rows: rows as Record<string, unknown>[] });
         }
       },
     });

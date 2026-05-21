@@ -8,7 +8,6 @@ const bigInt = require('big-integer');
 
 describe('Test DataType', function () {
   let connection;
-  const createTableWithString = 'create or replace table testString(colA string)';
   const createTableWithVariant = 'create or replace table testVariant(colA variant)';
   const createTableWithArray = 'create or replace table testArray(colA array)';
   const createTableWithNumber = 'create or replace table testNumber(colA number)';
@@ -18,8 +17,6 @@ describe('Test DataType', function () {
   const createTableWithTimestamp =
     'create or replace table testTimestamp(colA timestamp_ltz, ' +
     'colB timestamp_tz, colC timestamp_ntz)';
-  const createTableWithBoolean =
-    'create or replace table testBoolean(colA boolean, colB boolean, colC boolean)';
   const dropTableWithString = 'drop table if exists testString';
   const dropTableWithVariant = 'drop table if exists testVariant';
   const dropTableWithArray = 'drop table if exists testArray';
@@ -47,8 +44,6 @@ describe('Test DataType', function () {
     'insert into testTimestamp values(to_timestamp_ltz(' +
     "'Thu, 21 Jan 2016 06:32:44 -0800'), to_timestamp_tz('Thu, 21 Jan 2016 06:32:44 -0800'), " +
     "to_timestamp_ntz('Thu, 21 Jan 2016 06:32:44 -0800'))";
-  const insertBoolean = 'insert into testBoolean values(true, false, null)';
-  const insertString = "insert into testString values('string with space')";
   const selectDouble = 'select * from testDouble';
   const selectNumber = 'select * from testNumber';
   const selectVariant = 'select * from testVariant';
@@ -56,8 +51,6 @@ describe('Test DataType', function () {
   const selectDate = 'select * from testDate';
   const selectTime = 'select * from testTime';
   const selectTimestamp = 'select * from testTimestamp';
-  const selectBoolean = 'select * from testBoolean';
-  const selectString = 'select * from testString';
 
   before(function (done) {
     connection = testUtil.createConnection();
@@ -265,9 +258,6 @@ describe('Test DataType', function () {
             done,
           );
         });
-
-        // TODO SNOW - 830291: add custom xml parser test
-        //it('testXMLCustomParser', function (done) {});
       });
     });
 
@@ -365,60 +355,6 @@ describe('Test DataType', function () {
                   COLC: '2016-01-21 06:32:44.000',
                 },
               ],
-              callback,
-            );
-          },
-        ],
-        done,
-      );
-    });
-  });
-
-  describe('testBoolean', function () {
-    it('testTrue', function (done) {
-      async.series(
-        [
-          function (callback) {
-            testUtil.executeCmd(connection, createTableWithBoolean, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, insertBoolean, callback);
-          },
-          function (callback) {
-            testUtil.executeQueryAndVerify(
-              connection,
-              selectBoolean,
-              [
-                {
-                  COLA: true,
-                  COLB: false,
-                  COLC: null,
-                },
-              ],
-              callback,
-            );
-          },
-        ],
-        done,
-      );
-    });
-  });
-
-  describe('testText', function () {
-    it('testString', function (done) {
-      async.series(
-        [
-          function (callback) {
-            testUtil.executeCmd(connection, createTableWithString, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, insertString, callback);
-          },
-          function (callback) {
-            testUtil.executeQueryAndVerify(
-              connection,
-              selectString,
-              [{ COLA: 'string with space' }],
               callback,
             );
           },
