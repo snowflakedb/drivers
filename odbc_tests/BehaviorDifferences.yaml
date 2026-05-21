@@ -862,3 +862,30 @@ behavior_differences:
       SQLCancel on an async statement sends a cancel request to the server, and subsequent polling returns SQL_ERROR with SQLSTATE HY008 ("Operation canceled") once the cancellation is acknowledged.
     impact: |
       Applications that rely on SQLCancel to abort long-running async queries will not get timely cancellation on the old driver. The query may run to completion despite the cancel request.
+
+  61:
+    name: "Unknown ODBC-range connection attribute returns HYC00; old driver silently ignores on set and returns HY092 on get"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      SQLSetConnectAttr with an unrecognised standard ODBC connection attribute (e.g. SQL_ATTR_TRACE = 114) returns SQL_SUCCESS silently.
+      SQLGetConnectAttr with the same attribute returns SQL_ERROR with SQLSTATE HY092 (Invalid attribute/option identifier).
+    new_driver_behavior: |
+      Both SQLSetConnectAttr and SQLGetConnectAttr return SQL_ERROR with SQLSTATE HYC00 (Optional feature not implemented) for standard ODBC-defined connection attribute IDs (101–117, 1209, 10001, 10014) that the driver does not support.
+      Completely unrecognised attribute IDs outside the ODBC-defined ranges are still silently ignored on set and return HY092 on get.
+    impact: |
+      Applications that set ODBC-range connection attributes not supported by the driver (e.g. SQL_ATTR_TRACE) will now receive an error instead of silent success. Applications that specifically check for HY092 on get of these attributes will now see HYC00.
+
+  62:
+    name: "Unknown ODBC-range statement attribute returns HYC00; old driver returns HY092"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      SQLSetStmtAttr and SQLGetStmtAttr with any unrecognised attribute ID return SQL_ERROR with SQLSTATE HY092 (Invalid attribute/option identifier), regardless of whether the ID falls within the ODBC-defined range.
+    new_driver_behavior: |
+      Standard ODBC-defined statement attribute IDs (-2 to 27, 10010–10014) that the driver does not implement return SQL_ERROR with SQLSTATE HYC00 (Optional feature not implemented).
+      Completely invalid attribute IDs outside those ranges return SQL_ERROR with SQLSTATE HY092.
+    impact: |
+      Applications checking for HY092 on unimplemented but valid ODBC statement attribute IDs (e.g. SQL_ATTR_FETCH_BOOKMARK_PTR = 16) will now see HYC00 instead.

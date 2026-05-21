@@ -684,8 +684,11 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         None if ConnectionAttribute::is_snowflake_custom(attribute) => {
             return UnknownAttributeSnafu { attribute }.fail();
         }
+        None if ConnectionAttribute::is_odbc_range(attribute) => {
+            return UnsupportedAttributeSnafu { attribute }.fail();
+        }
         None => {
-            tracing::debug!("set_connect_attr: ignoring standard attribute {attribute}");
+            tracing::debug!("set_connect_attr: ignoring unknown attribute {attribute}");
             return Ok(());
         }
     };
@@ -896,6 +899,9 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
+        None if ConnectionAttribute::is_odbc_range(attribute) => {
+            return UnsupportedAttributeSnafu { attribute }.fail();
+        }
         None => {
             tracing::warn!("get_connect_attr: unknown attribute {attribute}");
             return UnknownAttributeSnafu { attribute }.fail();
@@ -1152,6 +1158,12 @@ pub fn get_connect_attr<E: OdbcEncoding>(
         | ConnectionAttribute::PrivKeyPassword
         | ConnectionAttribute::PrivKeyBase64
         | ConnectionAttribute::Application => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
             let value = connection
                 .pre_connection_attrs
                 .get(&attr)

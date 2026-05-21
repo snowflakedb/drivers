@@ -112,6 +112,15 @@ pub enum ConnectionAttribute {
 }
 
 impl ConnectionAttribute {
+    /// Returns true if `raw` is a standard ODBC-defined connection attribute ID.
+    /// ODBC spec (sql.h / sqlext.h) defines connection attributes in the ranges
+    /// 101–117, 1209, 10001, and 10014.  IDs in these ranges that the driver does
+    /// not handle should return HYC00 (optional feature not implemented) rather
+    /// than HY092 (invalid attribute identifier).
+    pub fn is_odbc_range(raw: i32) -> bool {
+        matches!(raw, 101..=117 | 1209 | 10001 | 10014)
+    }
+
     /// Convert a raw ODBC attribute ID to a `ConnectionAttribute`.
     /// Returns `None` for unrecognized attributes.
     pub fn from_raw(value: i32) -> Option<Self> {
@@ -415,10 +424,20 @@ impl TryFrom<i32> for StmtAttr {
             16648 => Ok(StmtAttr::SnowflakeMultiStatementCount),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
-                Err(OdbcError::UnknownAttribute {
-                    attribute: value,
-                    location: snafu::location!(),
-                })
+                // ODBC-defined range (spec IDs -2..=27 and 10010..=10014): the driver
+                // doesn't support it but it's a valid ODBC ID → HYC00.
+                // Everything else is completely invalid → HY092.
+                if matches!(value, -2..=27 | 10010..=10014) {
+                    Err(OdbcError::UnsupportedAttribute {
+                        attribute: value,
+                        location: snafu::location!(),
+                    })
+                } else {
+                    Err(OdbcError::UnknownAttribute {
+                        attribute: value,
+                        location: snafu::location!(),
+                    })
+                }
             }
         }
     }
