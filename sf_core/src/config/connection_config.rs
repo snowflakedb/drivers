@@ -48,6 +48,8 @@ pub enum AuthConfig {
     Password {
         user: String,
         password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
     },
     Mfa {
         user: String,
@@ -377,6 +379,8 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
                 })?,
+            passcode_in_password: settings.get_bool(PASSCODE_IN_PASSWORD).unwrap_or(false),
+            passcode: settings.get_sensitive_string(PASSCODE),
         }),
         "USERNAME_PASSWORD_MFA" => Ok(AuthConfig::Mfa {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
@@ -526,9 +530,16 @@ impl ConnectionConfig {
 
 fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
     match auth {
-        AuthConfig::Password { user, password } => LoginMethod::Password {
+        AuthConfig::Password {
+            user,
+            password,
+            passcode_in_password,
+            passcode,
+        } => LoginMethod::Password {
             username: user.clone(),
             password: password.clone(),
+            passcode_in_password: *passcode_in_password,
+            passcode: passcode.clone(),
         },
         AuthConfig::Mfa {
             user,
@@ -1014,7 +1025,7 @@ mod tests {
                 .contains("myaccount.snowflakecomputing.com")
         );
         match &config.auth {
-            AuthConfig::Password { user, password } => {
+            AuthConfig::Password { user, password, .. } => {
                 assert_eq!(user, "myuser");
                 assert_eq!(password.reveal(), "mypassword");
             }
@@ -1193,7 +1204,7 @@ mod tests {
         ]);
         let config = ConnectionConfig::build(&settings).unwrap();
         match &config.auth {
-            AuthConfig::Password { user, password } => {
+            AuthConfig::Password { user, password, .. } => {
                 assert_eq!(user, "u");
                 assert_eq!(password.reveal(), "p");
             }

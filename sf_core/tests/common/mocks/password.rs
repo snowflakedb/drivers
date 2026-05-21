@@ -42,15 +42,17 @@ pub fn success_login_response() -> ResponseTemplate {
     }))
 }
 
-/// Successful password login — matches a POST to login-request with LOGIN_NAME and PASSWORD
-/// and verifies the AUTHENTICATOR field is absent (matching old driver behavior).
+/// Successful password login — matches a POST to login-request with LOGIN_NAME, PASSWORD,
+/// and EXT_AUTHN_DUO_METHOD="push" (implicit MFA hint matching old driver behavior).
+/// Also verifies the AUTHENTICATOR field is absent.
 pub fn login_success() -> Mock {
     Mock::given(method("POST"))
         .and(path_regex(r"/session/v1/login-request"))
         .and(body_partial_json(json!({
             "data": {
                 "LOGIN_NAME": "test_user",
-                "PASSWORD": "test_password"
+                "PASSWORD": "test_password",
+                "EXT_AUTHN_DUO_METHOD": "push"
             }
         })))
         .and(AuthenticatorFieldAbsent)
@@ -64,7 +66,8 @@ pub fn login_failure_wrong_credentials() -> Mock {
         .and(body_partial_json(json!({
             "data": {
                 "LOGIN_NAME": "test_user",
-                "PASSWORD": "wrong_password"
+                "PASSWORD": "wrong_password",
+                "EXT_AUTHN_DUO_METHOD": "push"
             }
         })))
         .and(AuthenticatorFieldAbsent)

@@ -25,6 +25,8 @@ pub enum Credentials {
     Password {
         username: String,
         password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
     },
     Jwt {
         username: String,
@@ -130,9 +132,16 @@ fn generate_jwt_token(
 
 pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credentials, AuthError> {
     match &login_parameters.login_method {
-        LoginMethod::Password { username, password } => Ok(Credentials::Password {
+        LoginMethod::Password {
+            username,
+            password,
+            passcode_in_password,
+            passcode,
+        } => Ok(Credentials::Password {
             username: username.clone(),
             password: password.clone(),
+            passcode_in_password: *passcode_in_password,
+            passcode: passcode.clone(),
         }),
         // NativeOkta and ExternalBrowser perform their own multi-step flows in
         // auth_request_data() and never reach create_credentials(). Return an error

@@ -388,6 +388,8 @@ pub enum LoginMethod {
     Password {
         username: String,
         password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
     },
     NativeOkta(NativeOktaConfig),
     PrivateKey {
@@ -709,6 +711,16 @@ impl LoginMethod {
                         parameter: "password",
                     })?
                     .into(),
+                passcode_in_password: settings
+                    .get_bool("passcodeInPassword")
+                    .or_else(|| {
+                        settings
+                            .get_string("passcodeInPassword")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
+                    .unwrap_or(false),
+                passcode: settings.get_string("passcode").map(SensitiveString::from),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: non_empty_string(settings, "user")
@@ -967,7 +979,9 @@ mod tests {
         let result = LoginMethod::from_settings(&settings);
         assert!(result.is_ok());
         match result.unwrap() {
-            LoginMethod::Password { username, password } => {
+            LoginMethod::Password {
+                username, password, ..
+            } => {
                 assert_eq!(username, "test_user");
                 assert_eq!(password.reveal(), "test_password");
             }
@@ -986,7 +1000,9 @@ mod tests {
         let result = LoginMethod::from_settings(&settings);
         assert!(result.is_ok());
         match result.unwrap() {
-            LoginMethod::Password { username, password } => {
+            LoginMethod::Password {
+                username, password, ..
+            } => {
                 assert_eq!(username, "test_user");
                 assert_eq!(password.reveal(), "test_password");
             }
