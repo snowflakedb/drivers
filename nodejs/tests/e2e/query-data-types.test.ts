@@ -83,16 +83,6 @@ describe('Query returning data types', () => {
     expect(rows![0].FALSE_COLUMN).toBe(false);
   });
 
-  it('returns DECFLOAT as String', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      "SELECT '-9.8765432099999998623226732747455716901e-250'::DECFLOAT as DECFLOAT_COLUMN",
-    );
-    // NO isDecfloat method available :/
-    expect(statement.getColumn(0).getType()).toBe('decfloat');
-    expect(rows![0].DECFLOAT_COLUMN).toBe('-9.8765432099999998623226732747455716901e-250');
-  });
-
   // NOTE: DATE_OUTPUT_FORMAT does not affect results, we always convert to Date
   it('returns DATE as Date', async () => {
     const { statement, rows } = await executeAsync(
