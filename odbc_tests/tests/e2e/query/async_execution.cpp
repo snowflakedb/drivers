@@ -139,7 +139,7 @@ TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[query][async]") 
   poll_until_complete(stmt.getHandle(), kLongQuery);
 }
 
-TEST_CASE("should complete async execution via polling", "[query][async]") {
+TEST_CASE("should complete async execution via polling and retrieve data", "[query][async]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in with async enabled
   Connection conn;
@@ -148,45 +148,20 @@ TEST_CASE("should complete async execution via polling", "[query][async]") {
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // When a query is executed and polled to completion
-  // Use a shorter query so the test doesn't take 30 seconds
-  const char* query = "SELECT COUNT(*) FROM TABLE(GENERATOR(ROWCOUNT => 1000000))";
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query, SQL_NTS);
-
+  // When a fast query is executed (may complete immediately or go async)
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)kFastQuery, SQL_NTS);
   if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), query);
+    ret = poll_until_complete(stmt.getHandle(), kFastQuery);
   }
 
   // Then the final result should indicate success
   REQUIRE(ret != SQL_STILL_EXECUTING);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-}
-
-TEST_CASE("should allow immediate completion with async enabled", "[query][async]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  // Given Snowflake client is logged in with async enabled
-  Connection conn;
-  auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-
-  // When a fast query is executed
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)kFastQuery, SQL_NTS);
-
-  // Then the driver may return SQL_SUCCESS directly or SQL_STILL_EXECUTING
-  // (both are spec-valid — the spec says "the first call MAY complete immediately")
-  if (ret == SQL_STILL_EXECUTING) {
-    ret = poll_until_complete(stmt.getHandle(), kFastQuery);
-  }
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // And data should be retrievable (SQLFetch is also async-capable)
   SQLRETURN fetch_ret = poll_fetch(stmt.getHandle());
   REQUIRE_THAT(OdbcResult(fetch_ret, stmt), OdbcMatchers::Succeeded());
-
-  auto value = get_data<SQL_C_LONG>(stmt, 1);
-  CHECK(value == 42);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 42);
 }
 
 TEST_CASE("should execute and retrieve result set asynchronously", "[query][async]") {
