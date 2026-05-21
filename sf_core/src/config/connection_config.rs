@@ -69,6 +69,7 @@ pub enum AuthConfig {
     ExternalBrowser {
         user: String,
         authentication_timeout_secs: u64,
+        client_store_temporary_credential: bool,
     },
     /// Legacy pre-acquired OAuth access token (`AUTHENTICATOR=OAUTH` +
     /// raw `token=`). Forwarded unchanged to Snowflake
@@ -460,6 +461,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 parameter: String::from(USER),
             })?,
             authentication_timeout_secs: parse_authentication_timeout(settings),
+            client_store_temporary_credential: settings
+                .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
+                .unwrap_or(false),
         }),
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
@@ -563,9 +567,11 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
         AuthConfig::ExternalBrowser {
             user,
             authentication_timeout_secs,
+            client_store_temporary_credential,
         } => LoginMethod::ExternalBrowser {
             username: user.clone(),
             authentication_timeout_secs: *authentication_timeout_secs,
+            client_store_temporary_credential: *client_store_temporary_credential,
         },
         AuthConfig::OAuthAccessToken { user, token } => LoginMethod::OAuthAccessToken {
             username: user.clone(),

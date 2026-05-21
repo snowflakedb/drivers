@@ -14,6 +14,16 @@ where
     Ok(secs.map(Duration::from_secs))
 }
 
+/// Wire-format authenticator values sent in the `AUTHENTICATOR` field of the login-request body.
+pub mod authenticator {
+    pub const EXTERNAL_BROWSER: &str = "EXTERNALBROWSER";
+    pub const ID_TOKEN: &str = "ID_TOKEN";
+    pub const OAUTH: &str = "OAUTH";
+    pub const SNOWFLAKE_JWT: &str = "SNOWFLAKE_JWT";
+    pub const PROGRAMMATIC_ACCESS_TOKEN: &str = "PROGRAMMATIC_ACCESS_TOKEN";
+    pub const USERNAME_PASSWORD_MFA: &str = "USERNAME_PASSWORD_MFA";
+}
+
 // TODO: Delete all unused fields when we are sure they are not needed
 
 #[derive(Debug, Serialize, Default)]
@@ -104,6 +114,16 @@ pub struct AuthRequestData {
     /// (matching JDBC's `DPoPUtil` pattern).
     #[serde(skip)]
     pub dpop_jwk_json: Option<String>,
+    /// Whether this request uses a cached token (ID token or MFA token).
+    /// Guards the evict-and-retry path so we don't retry pointlessly when
+    /// the original login didn't use a cached token.
+    #[serde(skip)]
+    pub token_from_cache_used: bool,
+    /// Transient flag (not serialized): whether the IdP consented to ID
+    /// token caching. `None` when the browser flow was skipped (cache hit)
+    /// or when the callback was a plain GET redirect without consent info.
+    #[serde(skip)]
+    pub consent_cache_id_token: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -155,7 +175,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "mfaToken")]
     pub mfa_token: Option<SensitiveString>,
     #[serde(rename = "idToken")]
-    pub _id_token: Option<SensitiveString>,
+    pub id_token: Option<SensitiveString>,
     #[serde(rename = "idTokenValidityInSeconds")]
     pub _id_token_validity: Option<u64>,
     #[serde(rename = "displayUserName")]

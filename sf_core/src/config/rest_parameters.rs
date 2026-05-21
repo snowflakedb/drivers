@@ -409,6 +409,7 @@ pub enum LoginMethod {
     ExternalBrowser {
         username: String,
         authentication_timeout_secs: u64,
+        client_store_temporary_credential: bool,
     },
     /// Pre-acquired OAuth access token (legacy `AUTHENTICATOR=OAUTH` with
     /// raw `token=`). The driver forwards the token to Snowflake unchanged.
@@ -794,19 +795,10 @@ impl LoginMethod {
                     .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
                     .unwrap_or(false),
                 passcode: settings.get_string("passcode").map(SensitiveString::from),
-                client_store_temporary_credential: settings
-                    .get_bool("client_store_temporary_credential")
-                    .or_else(|| {
-                        settings
-                            .get_string("client_store_temporary_credential")
-                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-                    })
-                    .or_else(|| {
-                        settings
-                            .get_int("client_store_temporary_credential")
-                            .map(|v| v != 0)
-                    })
-                    .unwrap_or(false),
+                client_store_temporary_credential: get_flexible_bool(
+                    settings,
+                    "client_store_temporary_credential",
+                ),
             }),
             "EXTERNALBROWSER" => {
                 let authentication_timeout_secs = settings
@@ -817,6 +809,10 @@ impl LoginMethod {
                     username: non_empty_string(settings, "user")
                         .context(MissingParameterSnafu { parameter: "user" })?,
                     authentication_timeout_secs,
+                    client_store_temporary_credential: get_flexible_bool(
+                        settings,
+                        "client_store_temporary_credential",
+                    ),
                 })
             }
             _ => InvalidParameterValueSnafu {
@@ -1524,7 +1520,7 @@ mod tests {
 
     // ─── External Browser config tests ───────────────────────────────────
 
-    fn external_browser_config(extras: Vec<(&str, Setting)>) -> (String, u64) {
+    fn external_browser_config(extras: Vec<(&str, Setting)>) -> (String, u64, bool) {
         let mut base = vec![
             ("user", Setting::String("browser_user".to_string())),
             (
@@ -1543,21 +1539,27 @@ mod tests {
             LoginMethod::ExternalBrowser {
                 username,
                 authentication_timeout_secs,
-            } => (username, authentication_timeout_secs),
+                client_store_temporary_credential,
+            } => (
+                username,
+                authentication_timeout_secs,
+                client_store_temporary_credential,
+            ),
             other => panic!("Expected ExternalBrowser, got {other:?}"),
         }
     }
 
     #[test]
     fn test_external_browser_happy_path() {
-        let (user, timeout) = external_browser_config(vec![]);
+        let (user, timeout, store_cred) = external_browser_config(vec![]);
         assert_eq!(user, "browser_user");
         assert_eq!(timeout, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+        assert!(!store_cred);
     }
 
     #[test]
     fn test_external_browser_custom_timeout() {
-        let (_, timeout) = external_browser_config(vec![(
+        let (_, timeout, _) = external_browser_config(vec![(
             "authentication_timeout",
             Setting::String("30".to_string()),
         )]);
@@ -1566,11 +1568,20 @@ mod tests {
 
     #[test]
     fn test_external_browser_invalid_timeout_uses_default() {
-        let (_, timeout) = external_browser_config(vec![(
+        let (_, timeout, _) = external_browser_config(vec![(
             "authentication_timeout",
             Setting::String("abc".to_string()),
         )]);
         assert_eq!(timeout, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn test_external_browser_with_credential_caching_enabled() {
+        let (_, _, store_cred) = external_browser_config(vec![(
+            "client_store_temporary_credential",
+            Setting::String("true".to_string()),
+        )]);
+        assert!(store_cred);
     }
 
     #[test]

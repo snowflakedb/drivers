@@ -32,7 +32,7 @@ use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientCapabilities, AuthRequestClientEnvironment, AuthRequestData,
-    AuthResponse,
+    AuthResponse, authenticator,
 };
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::external_browser::{
@@ -336,12 +336,15 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
-const EXT_AUTHN_ERROR_CODES: [i32; 5] = [
+const EXT_AUTHN_ERROR_CODES: [i32; 8] = [
     390120, // EXT_AUTHN_DENIED
+    390122, // EXT_AUTHN_NOT_ENROLLED
     390123, // EXT_AUTHN_LOCKED
     390126, // EXT_AUTHN_TIMEOUT
     390127, // EXT_AUTHN_INVALID
     390129, // EXT_AUTHN_EXCEPTION
+    390132, // EXT_AUTHN_DUO_PUSH_DISABLED
+    390195, // ID_TOKEN_INVALID
 ];
 
 fn extract_host_from_url(server_url: &str) -> Option<String> {
@@ -351,64 +354,66 @@ fn extract_host_from_url(server_url: &str) -> Option<String> {
         .map(|h| h.to_string())
 }
 
-fn try_get_cached_mfa_token(
+fn try_get_cached_token(
     server_url: &str,
     username: &str,
+    token_type: TokenType,
     token_cache: Option<&dyn TokenCache>,
 ) -> Option<SensitiveString> {
     let host = extract_host_from_url(server_url)?;
     let cache = token_cache?;
-    match cache.get_token(&host, username, TokenType::MfaToken) {
+    match cache.get_token(&host, username, token_type) {
         Ok(Some(token)) if !token.is_empty() => {
-            tracing::info!("Found cached MFA token");
+            tracing::info!(%token_type, "Found cached token");
             Some(token.into())
         }
         Ok(_) => None,
         Err(e) => {
-            tracing::warn!(error = %e, "Failed to retrieve cached MFA token");
+            tracing::warn!(%token_type, error = %e, "Failed to retrieve cached token");
             None
         }
     }
 }
 
-fn store_mfa_token_in_cache(
+fn store_token_in_cache(
     server_url: &str,
     username: &str,
-    mfa_token: &str,
+    token_type: TokenType,
+    token_value: &str,
     token_cache: Option<&dyn TokenCache>,
 ) {
     let Some(host) = extract_host_from_url(server_url) else {
-        tracing::warn!("Cannot cache MFA token: unable to extract host from server URL");
+        tracing::warn!(%token_type, "Cannot cache token: unable to extract host from server URL");
         return;
     };
     let Some(cache) = token_cache else {
-        tracing::debug!("No token cache available for MFA token storage");
+        tracing::debug!(%token_type, "No token cache available");
         return;
     };
-    if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
-        tracing::warn!(error = %e, "Failed to cache MFA token");
+    if let Err(e) = cache.add_token(&host, username, token_type, token_value) {
+        tracing::warn!(%token_type, error = %e, "Failed to cache token");
     } else {
-        tracing::info!("Cached MFA token for future use");
+        tracing::info!(%token_type, "Cached token for future use");
     }
 }
 
-fn remove_mfa_token_from_cache(
+fn remove_token_from_cache(
     server_url: &str,
     username: &str,
+    token_type: TokenType,
     token_cache: Option<&dyn TokenCache>,
 ) {
     let Some(host) = extract_host_from_url(server_url) else {
-        tracing::warn!("Cannot remove cached MFA token: unable to extract host from server URL");
+        tracing::warn!(%token_type, "Cannot remove cached token: unable to extract host");
         return;
     };
     let Some(cache) = token_cache else {
-        tracing::debug!("No token cache available for MFA token removal");
         return;
     };
-    if let Err(e) = cache.remove_token(&host, username, TokenType::MfaToken) {
-        tracing::warn!(error = %e, "Failed to remove cached MFA token");
+    if let Err(e) = cache.remove_token(&host, username, token_type) {
+        tracing::warn!(%token_type, error = %e, "Failed to remove cached token");
     } else {
-        tracing::info!("Removed cached MFA token due to authentication error");
+        tracing::info!(%token_type, "Removed cached token");
     }
 }
 
@@ -478,27 +483,56 @@ pub async fn auth_request_data(
         LoginMethod::ExternalBrowser {
             username,
             authentication_timeout_secs,
+            client_store_temporary_credential,
         } => {
-            // TODO: cache SSO tokens (same approach as MFA tokens)
-            let result = external_browser_authenticate(
-                client,
-                login_parameters,
-                username,
-                *authentication_timeout_secs,
-                &DefaultBrowserOpener,
-            )
-            .await
-            .context(ExternalBrowserSnafu)?;
-
             data.login_name = Some(username.clone());
-            data.authenticator = Some("EXTERNALBROWSER".to_string());
-            data.token = Some(result.token);
-            data.proof_key = Some(result.proof_key);
+            data.authenticator = Some(authenticator::EXTERNAL_BROWSER.to_string());
+
+            if *client_store_temporary_credential {
+                data.session_parameters
+                    .get_or_insert_with(HashMap::new)
+                    .insert(
+                        "CLIENT_STORE_TEMPORARY_CREDENTIAL".to_string(),
+                        serde_json::Value::Bool(true),
+                    );
+            }
+
+            let cached_id_token = if *client_store_temporary_credential {
+                try_get_cached_token(
+                    &login_parameters.server_url,
+                    username,
+                    TokenType::IdToken,
+                    token_cache,
+                )
+            } else {
+                None
+            };
+
+            if let Some(cached_token) = cached_id_token {
+                tracing::info!("Using cached SSO ID token for external browser login");
+                data.authenticator = Some(authenticator::ID_TOKEN.to_string());
+                data.token = Some(cached_token);
+                data.token_from_cache_used = true;
+            } else {
+                let result = external_browser_authenticate(
+                    client,
+                    login_parameters,
+                    username,
+                    *authentication_timeout_secs,
+                    &DefaultBrowserOpener,
+                )
+                .await
+                .context(ExternalBrowserSnafu)?;
+
+                data.token = Some(result.token);
+                data.proof_key = Some(result.proof_key);
+                data.consent_cache_id_token = result.consent_cache_id_token;
+            }
         }
         // Authorization Code orchestration runs the PKCE/state/loopback flow
         // (and any cache hits / refresh-token exchange) before forwarding the
         // resulting access token to Snowflake under AUTHENTICATOR=OAUTH.
-        // The body always uses uppercase "OAUTH" — never the user-supplied
+        // The body always uses uppercase OAUTH — never the user-supplied
         // authenticator string verbatim — and tags the request with
         // OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so GS knows which flow
         // produced the token. LOGIN_NAME is always set.
@@ -514,7 +548,7 @@ pub async fn auth_request_data(
                     .context(OAuthFlowSnafu)?;
             data.login_name = Some(cfg.username.clone());
             data.token = Some(acquired.access_token);
-            data.authenticator = Some("OAUTH".to_string());
+            data.authenticator = Some(authenticator::OAUTH.to_string());
             data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
             // `dpop_jwk_json` is `Option<String>`: `Some` when DPoP was
             // enabled, `None` otherwise, so the assignment is implicitly
@@ -536,7 +570,7 @@ pub async fn auth_request_data(
                 .context(OAuthFlowSnafu)?;
             data.login_name = Some(cfg.username.clone());
             data.token = Some(acquired.access_token);
-            data.authenticator = Some("OAUTH".to_string());
+            data.authenticator = Some(authenticator::OAUTH.to_string());
             data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
             // See AC branch above for why dpop_jwk_json is carried here.
             data.dpop_jwk_json = acquired.dpop_jwk_json;
@@ -549,12 +583,12 @@ pub async fn auth_request_data(
             Credentials::Jwt { username, token } => {
                 data.login_name = Some(username);
                 data.token = Some(token);
-                data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+                data.authenticator = Some(authenticator::SNOWFLAKE_JWT.to_string());
             }
             Credentials::Pat { username, token } => {
                 data.login_name = Some(username);
                 data.token = Some(token);
-                data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+                data.authenticator = Some(authenticator::PROGRAMMATIC_ACCESS_TOKEN.to_string());
             }
             // Legacy pre-acquired access token: forward unchanged (analysis
             // §6 / §10.1). LOGIN_NAME is always set (§14 #10) — never the
@@ -566,7 +600,7 @@ pub async fn auth_request_data(
             } => {
                 data.login_name = Some(username);
                 data.token = Some(access_token);
-                data.authenticator = Some("OAUTH".to_string());
+                data.authenticator = Some(authenticator::OAUTH.to_string());
             }
             Credentials::UserPasswordMfa {
                 username,
@@ -583,17 +617,23 @@ pub async fn auth_request_data(
                 );
 
                 let cached_mfa_token = if store_temp_cred {
-                    try_get_cached_mfa_token(&login_parameters.server_url, &username, token_cache)
+                    try_get_cached_token(
+                        &login_parameters.server_url,
+                        &username,
+                        TokenType::MfaToken,
+                        token_cache,
+                    )
                 } else {
                     None
                 };
 
                 data.login_name = Some(username);
                 data.password = Some(password);
-                data.authenticator = Some("USERNAME_PASSWORD_MFA".to_string());
+                data.authenticator = Some(authenticator::USERNAME_PASSWORD_MFA.to_string());
 
                 if let Some(cached_token) = cached_mfa_token {
                     data.token = Some(cached_token);
+                    data.token_from_cache_used = true;
                 } else {
                     data.ext_authn_duo_method =
                         Some(if passcode.is_some() || passcode_in_password {
@@ -749,10 +789,6 @@ pub async fn snowflake_login_with_client(
     let login_request_data =
         auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
-    let used_cached_mfa_token = matches!(
-        &login_parameters.login_method,
-        LoginMethod::UserPasswordMfa { .. }
-    ) && login_request_data.token.is_some();
     let login_request = AuthRequest {
         data: login_request_data,
     };
@@ -763,50 +799,58 @@ pub async fn snowflake_login_with_client(
         "Login request prepared (secrets redacted)"
     );
 
+    // Send the actual login request
     let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
 
-    // TODO: cache SSO tokens (same approach as MFA tokens)
-    // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
-    // via the normal DUO push/passcode flow.
-    if !auth_response.success && used_cached_mfa_token {
-        let code = auth_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
-        if EXT_AUTHN_ERROR_CODES.contains(&code)
-            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
-        {
-            tracing::warn!(
-                code = code,
-                "MFA authentication error detected, removing cached MFA token"
-            );
-            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
-            tracing::info!("Retrying login without cached MFA token");
-            let retry_data =
-                auth_request_data(client, login_parameters, session_parameters, token_cache)
-                    .await?;
-            let retry_request = AuthRequest { data: retry_data };
-            auth_response = send_login_request(client, login_parameters, &retry_request).await?;
-        }
-    }
-
-    // OAuth refresh-on-failure: when GS rejects the OAuth access token
-    // with 390303 / 390318, replay the login once. For Authorization Code
-    // we first evict the cached access token (and any DPoP-bundled entry)
-    // so the replay exercises the refresh-token leg or, failing that, the
-    // interactive flow. For Client Credentials there is no cache to evict
-    // (CC tokens are not persisted), so the replay re-hits the IdP token
-    // endpoint to fetch a fresh access token. Cross-driver consensus:
-    // JDBC, ODBC, .NET, Go all retry both flows. Legacy `OAuthAccessToken`
-    // bubbles the error since the caller supplies the token directly.
+    // Revoke cached token and retry if cached token caused failure
     if !auth_response.success {
         let code = auth_response
             .code
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
-        if OAUTH_REFRESH_ERROR_CODES.contains(&code) {
+
+        // Cached token (ID token or MFA) rejected with an EXT_AUTHN error:
+        // evict it and retry via the normal interactive flow.
+        if login_request.data.token_from_cache_used && EXT_AUTHN_ERROR_CODES.contains(&code) {
+            if let Some((username, token_type)) = match &login_parameters.login_method {
+                LoginMethod::ExternalBrowser { username, .. } => {
+                    Some((username.as_str(), TokenType::IdToken))
+                }
+                LoginMethod::UserPasswordMfa { username, .. } => {
+                    Some((username.as_str(), TokenType::MfaToken))
+                }
+                _ => None,
+            } {
+                tracing::warn!(
+                    code,
+                    %token_type,
+                    "Cached token rejected, evicting and retrying"
+                );
+                remove_token_from_cache(
+                    &login_parameters.server_url,
+                    username,
+                    token_type,
+                    token_cache,
+                );
+                let retry_data =
+                    auth_request_data(client, login_parameters, session_parameters, token_cache)
+                        .await?;
+                let retry_request = AuthRequest { data: retry_data };
+                auth_response =
+                    send_login_request(client, login_parameters, &retry_request).await?;
+            }
+        }
+        // OAuth refresh-on-failure: when GS rejects the OAuth access token
+        // with 390303 / 390318, replay the login once. For Authorization Code
+        // we first evict the cached access token (and any DPoP-bundled entry)
+        // so the replay exercises the refresh-token leg or, failing that, the
+        // interactive flow. For Client Credentials there is no cache to evict
+        // (CC tokens are not persisted), so the replay re-hits the IdP token
+        // endpoint to fetch a fresh access token. Cross-driver consensus:
+        // JDBC, ODBC, .NET, Go all retry both flows. Legacy `OAuthAccessToken`
+        // bubbles the error since the caller supplies the token directly.
+        else if OAUTH_REFRESH_ERROR_CODES.contains(&code) {
             let mut should_retry = false;
             match &login_parameters.login_method {
                 LoginMethod::OAuthAuthorizationCode(cfg) => {
@@ -846,6 +890,7 @@ pub async fn snowflake_login_with_client(
         }
     }
 
+    // If retry failed or unrecoverable, evict tokens from cache and fail
     if !auth_response.success {
         let message = auth_response
             .message
@@ -856,37 +901,66 @@ pub async fn snowflake_login_with_client(
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
-        if EXT_AUTHN_ERROR_CODES.contains(&code)
-            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
-        {
-            tracing::warn!(
-                code = code,
-                "MFA authentication error detected, removing cached MFA token"
-            );
-            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+        if EXT_AUTHN_ERROR_CODES.contains(&code) {
+            let evictable = match &login_parameters.login_method {
+                LoginMethod::UserPasswordMfa { username, .. } => {
+                    Some((username.as_str(), TokenType::MfaToken))
+                }
+                LoginMethod::ExternalBrowser { username, .. } => {
+                    Some((username.as_str(), TokenType::IdToken))
+                }
+                _ => None,
+            };
+            if let Some((username, token_type)) = evictable {
+                tracing::warn!(code, %token_type, "Evicting cached token after terminal login failure");
+                remove_token_from_cache(
+                    &login_parameters.server_url,
+                    username,
+                    token_type,
+                    token_cache,
+                );
+            }
         }
         LoginSnafu { message, code }.fail()?;
     }
 
     tracing::debug!("Login successful, extracting session tokens");
 
-    // TODO: cache SSO tokens (same approach as MFA tokens)
-    // Cache MFA token from response if caching is enabled
-    if let LoginMethod::UserPasswordMfa {
-        username,
-        client_store_temporary_credential: true,
-        ..
-    } = &login_parameters.login_method
-        && let Some(mfa_token) = &auth_response.data.mfa_token
-    {
-        store_mfa_token_in_cache(
+    // If success - cache response tokens (MFA or ID token) when caching is enabled.
+    // Also, for IdToken, respect IdP consent: skip caching when explicitly denied.
+    let cacheable_token: Option<(&str, TokenType, &SensitiveString)> =
+        match &login_parameters.login_method {
+            LoginMethod::UserPasswordMfa {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } => auth_response
+                .data
+                .mfa_token
+                .as_ref()
+                .map(|t| (username.as_str(), TokenType::MfaToken, t)),
+            LoginMethod::ExternalBrowser {
+                username,
+                client_store_temporary_credential: true,
+                ..
+            } if login_request.data.consent_cache_id_token != Some(false) => auth_response
+                .data
+                .id_token
+                .as_ref()
+                .map(|t| (username.as_str(), TokenType::IdToken, t)),
+            _ => None,
+        };
+    if let Some((username, token_type, token)) = cacheable_token {
+        store_token_in_cache(
             &login_parameters.server_url,
             username,
-            mfa_token.reveal(),
+            token_type,
+            token.reveal(),
             token_cache,
         );
     }
 
+    // Extract tokens and session id from response
     let session_token = auth_response
         .data
         .token
@@ -2121,105 +2195,116 @@ mod tests {
         }
     }
 
-    mod try_get_cached_mfa_token_tests {
+    mod token_cache_helpers_tests {
         use super::*;
 
-        #[test]
-        fn returns_cached_token_on_hit() {
-            let cache = StubTokenCache::with_token(
-                "host.example.com",
-                "alice",
-                TokenType::MfaToken,
-                "tok123",
-            );
-            let result =
-                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
-            assert_eq!(result.unwrap().reveal(), "tok123");
-        }
-
-        #[test]
-        fn returns_none_on_cache_miss() {
-            let cache = StubTokenCache::new();
-            let result =
-                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_when_no_cache_provided() {
-            let result = try_get_cached_mfa_token("https://host.example.com", "alice", None);
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_for_invalid_url() {
-            let cache = StubTokenCache::new();
-            let result = try_get_cached_mfa_token("not-a-url", "alice", Some(&cache));
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_for_empty_cached_token() {
+        fn assert_get_store_remove_for(token_type: TokenType) {
+            // try_get: returns cached token on hit
             let cache =
-                StubTokenCache::with_token("host.example.com", "alice", TokenType::MfaToken, "");
-            let result =
-                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
-            assert!(result.is_none());
-        }
-    }
+                StubTokenCache::with_token("host.example.com", "alice", token_type, "tok_val");
+            let result = try_get_cached_token(
+                "https://host.example.com",
+                "alice",
+                token_type,
+                Some(&cache),
+            );
+            assert_eq!(result.unwrap().reveal(), "tok_val");
 
-    mod store_mfa_token_in_cache_tests {
-        use super::*;
+            // try_get: returns None on cache miss
+            let empty = StubTokenCache::new();
+            assert!(
+                try_get_cached_token(
+                    "https://host.example.com",
+                    "alice",
+                    token_type,
+                    Some(&empty),
+                )
+                .is_none()
+            );
 
-        #[test]
-        fn stores_token_successfully() {
+            // try_get: returns None when no cache provided
+            assert!(
+                try_get_cached_token("https://host.example.com", "alice", token_type, None)
+                    .is_none()
+            );
+
+            // try_get: returns None for invalid URL
+            assert!(try_get_cached_token("not-a-url", "alice", token_type, Some(&empty)).is_none());
+
+            // try_get: returns None for empty cached value
+            let empty_val = StubTokenCache::with_token("host.example.com", "alice", token_type, "");
+            assert!(
+                try_get_cached_token(
+                    "https://host.example.com",
+                    "alice",
+                    token_type,
+                    Some(&empty_val),
+                )
+                .is_none()
+            );
+
+            // store + get round-trip
             let cache = StubTokenCache::new();
-            store_mfa_token_in_cache("https://host.example.com", "alice", "new_tok", Some(&cache));
+            store_token_in_cache(
+                "https://host.example.com",
+                "alice",
+                token_type,
+                "new_tok",
+                Some(&cache),
+            );
             let stored = cache
-                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .get_token("host.example.com", "alice", token_type)
                 .unwrap();
             assert_eq!(stored.as_deref(), Some("new_tok"));
-        }
 
-        #[test]
-        fn no_panic_when_no_cache() {
-            store_mfa_token_in_cache("https://host.example.com", "alice", "tok", None);
-        }
+            // store: no panic when no cache
+            store_token_in_cache("https://host.example.com", "alice", token_type, "tok", None);
 
-        #[test]
-        fn no_panic_for_invalid_url() {
-            let cache = StubTokenCache::new();
-            store_mfa_token_in_cache("not-a-url", "alice", "tok", Some(&cache));
-        }
-    }
-
-    mod remove_mfa_token_from_cache_tests {
-        use super::*;
-
-        #[test]
-        fn removes_existing_token() {
-            let cache = StubTokenCache::with_token(
-                "host.example.com",
+            // store: no panic for invalid URL
+            store_token_in_cache(
+                "not-a-url",
                 "alice",
-                TokenType::MfaToken,
-                "tok_to_remove",
+                token_type,
+                "tok",
+                Some(&StubTokenCache::new()),
             );
-            remove_mfa_token_from_cache("https://host.example.com", "alice", Some(&cache));
-            let stored = cache
-                .get_token("host.example.com", "alice", TokenType::MfaToken)
-                .unwrap();
-            assert!(stored.is_none());
+
+            // remove evicts token
+            let cache =
+                StubTokenCache::with_token("host.example.com", "alice", token_type, "to_remove");
+            remove_token_from_cache(
+                "https://host.example.com",
+                "alice",
+                token_type,
+                Some(&cache),
+            );
+            assert!(
+                cache
+                    .get_token("host.example.com", "alice", token_type)
+                    .unwrap()
+                    .is_none()
+            );
+
+            // remove: no panic when no cache
+            remove_token_from_cache("https://host.example.com", "alice", token_type, None);
+
+            // remove: no panic for invalid URL
+            remove_token_from_cache(
+                "not-a-url",
+                "alice",
+                token_type,
+                Some(&StubTokenCache::new()),
+            );
         }
 
         #[test]
-        fn no_panic_when_no_cache() {
-            remove_mfa_token_from_cache("https://host.example.com", "alice", None);
+        fn mfa_token_cache_operations() {
+            assert_get_store_remove_for(TokenType::MfaToken);
         }
 
         #[test]
-        fn no_panic_for_invalid_url() {
-            let cache = StubTokenCache::new();
-            remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
+        fn id_token_cache_operations() {
+            assert_get_store_remove_for(TokenType::IdToken);
         }
     }
 
