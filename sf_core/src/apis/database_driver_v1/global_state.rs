@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
@@ -75,18 +75,6 @@ pub struct DatabaseDriverV1 {
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
     pub(super) results: HandleManager<Mutex<ResultSet>>,
-    /// Cached `connection_handle.id → Snowflake session_id` populated on login
-    /// and removed on connection release. Keeping this off the `Connection`
-    /// struct (which is behind a `tokio::Mutex`) lets entry-point methods
-    /// resolve the session id without taking the connection mutex — the only
-    /// writers are login / logout, so reads under the parallel `RwLock` are
-    /// uncontended in normal operation.
-    pub(super) session_ids: RwLock<HashMap<u64, i64>>,
-    /// Cached `statement_handle.id → owning connection_handle.id` populated
-    /// when a statement is created and removed on statement release. Lets
-    /// statement-scoped entry points map to their connection's session id
-    /// without locking the statement mutex.
-    pub(super) stmt_to_conn: RwLock<HashMap<u64, u64>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
     platforms: tokio::sync::OnceCell<Vec<String>>,
@@ -111,8 +99,6 @@ impl DatabaseDriverV1 {
             connections: HandleManager::new(),
             statements: HandleManager::new(),
             results: HandleManager::new(),
-            session_ids: RwLock::new(HashMap::new()),
-            stmt_to_conn: RwLock::new(HashMap::new()),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
@@ -126,73 +112,28 @@ impl DatabaseDriverV1 {
         self.log_manager.as_ref().map(|lm| lm.telemetry_sessions())
     }
 
-    /// Record a connection's Snowflake session id. Called once on successful
-    /// login so subsequent entry-point methods can stamp `snowflake.session.id`
-    /// on their telemetry spans without locking the connection mutex.
-    pub(crate) fn register_session_id(&self, conn_handle: Handle, session_id: i64) {
-        self.session_ids
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(conn_handle.id, session_id);
+    /// Resolve the Snowflake session id for a connection handle by reading
+    /// `Connection::session_id` under the connection mutex. Returns `None`
+    /// when the handle is unknown, login has not completed, or the connection
+    /// has been released.
+    pub(crate) async fn session_id_for_conn(&self, conn_handle: Handle) -> Option<i64> {
+        let conn_ptr = self.connections.get_obj(conn_handle)?;
+        let conn = conn_ptr.lock().await;
+        conn.session_id
     }
 
-    /// Forget a connection's session id. Called during connection release so a
-    /// re-used handle id never resolves to a stale session.
-    pub(crate) fn deregister_session_id(&self, conn_handle: Handle) {
-        self.session_ids
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&conn_handle.id);
-    }
-
-    /// Resolve the Snowflake session id for a connection handle. Returns
-    /// `None` when login has not populated the cache (or after release). Reads
-    /// take only the parallel-map's read lock — does **not** touch the
-    /// connection mutex, so it can be called while a query is executing on
-    /// the same connection without contending.
-    pub(crate) fn session_id_for_conn(&self, conn_handle: Handle) -> Option<i64> {
-        self.session_ids
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&conn_handle.id)
-            .copied()
-    }
-
-    /// Record a statement's owning connection handle id. Called when the
-    /// statement is created so [`Self::session_id_for_stmt`] can resolve
-    /// without locking the statement mutex.
-    pub(crate) fn register_stmt_conn(&self, stmt_handle: Handle, conn_handle: Handle) {
-        self.stmt_to_conn
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(stmt_handle.id, conn_handle.id);
-    }
-
-    /// Forget a statement's owning connection mapping. Called on statement
-    /// release so a re-used handle id never resolves to a stale connection.
-    pub(crate) fn deregister_stmt_conn(&self, stmt_handle: Handle) {
-        self.stmt_to_conn
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&stmt_handle.id);
-    }
-
-    /// Resolve the Snowflake session id for a statement handle by reading the
-    /// parallel `stmt → conn_handle` map then the parallel `conn_handle →
-    /// session_id` map. Same lock-free properties as
-    /// [`Self::session_id_for_conn`] — no statement / connection mutex taken.
-    pub(crate) fn session_id_for_stmt(&self, stmt_handle: Handle) -> Option<i64> {
-        let conn_handle_id = self
-            .stmt_to_conn
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&stmt_handle.id)
-            .copied()?;
-        self.session_ids
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&conn_handle_id)
-            .copied()
+    /// Resolve the Snowflake session id for a statement handle by traversing
+    /// to its owning connection. Acquires the statement mutex to read the
+    /// `Arc<Mutex<Connection>>`, then the connection mutex to read its
+    /// cached `session_id`.
+    pub(crate) async fn session_id_for_stmt(&self, stmt_handle: Handle) -> Option<i64> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle)?;
+        let conn_arc = {
+            let stmt = stmt_ptr.lock().await;
+            stmt.conn.clone()
+        };
+        let conn = conn_arc.lock().await;
+        conn.session_id
     }
 
     /// Flush buffered telemetry spans for a specific session.

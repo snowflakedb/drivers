@@ -14,9 +14,11 @@ pub mod platform_detection;
 
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-/// Span attribute key for the Snowflake session id. Carried on every span
-/// the driver emits so the exporter can route it to the correct session
-/// without relying on parent-child trace relationships.
+/// Span attribute key for the Snowflake session id. Read by the exporter to
+/// route spans to the right session. The [`snowflake_op_span!`] macro stamps
+/// the same string as a literal field name (it has to — `tracing::info_span!`
+/// requires field names at macro-expansion time, not runtime values), so any
+/// rename here must be mirrored in the macro.
 pub const SESSION_ID_FIELD: &str = "snowflake.session.id";
 
 /// Build a bounded span for a single FFI / driver operation tagged with the
@@ -31,6 +33,8 @@ pub const SESSION_ID_FIELD: &str = "snowflake.session.id";
 /// `event_kind = "span"` is stamped so downstream consumers can distinguish
 /// per-operation span records from event records (`session_init`, `api_call`,
 /// `exception`) that share the same `/telemetry/send` payload shape.
+///
+/// The `"snowflake.session.id"` literal must match [`SESSION_ID_FIELD`].
 #[macro_export]
 macro_rules! snowflake_op_span {
     ($name:expr, $session_id:expr) => {

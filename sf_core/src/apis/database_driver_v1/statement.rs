@@ -93,9 +93,6 @@ impl DatabaseDriverV1 {
             Some(conn_ptr) => {
                 let stmt = Mutex::new(Statement::new(conn_ptr));
                 let handle = self.statements.add_handle(stmt);
-                // Publish stmt → conn handle mapping so telemetry can resolve
-                // the owning session id without locking the statement mutex.
-                self.register_stmt_conn(handle, conn_handle);
                 Ok(handle)
             }
             None => InvalidArgumentSnafu {
@@ -107,10 +104,7 @@ impl DatabaseDriverV1 {
 
     pub fn statement_release(&self, stmt_handle: Handle) -> Result<(), ApiError> {
         match self.statements.delete_handle(stmt_handle) {
-            true => {
-                self.deregister_stmt_conn(stmt_handle);
-                Ok(())
-            }
+            true => Ok(()),
             false => InvalidArgumentSnafu {
                 argument: "Failed to release statement handle".to_string(),
             }
@@ -208,7 +202,7 @@ pub struct PrepareResult {
 
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-        let session_id = self.session_id_for_stmt(stmt_handle);
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
         async {
             let result = self
                 .execute_query_internal(stmt_handle, None, Some(true), None)
@@ -256,7 +250,7 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let session_id = self.session_id_for_stmt(stmt_handle);
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
         self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
             .instrument(crate::snowflake_op_span!(
                 "statement_execute_query",
@@ -450,7 +444,7 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let session_id = self.session_id_for_conn(conn_handle);
+        let session_id = self.session_id_for_conn(conn_handle).await;
         async {
             let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
                 InvalidArgumentSnafu {
@@ -500,7 +494,7 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<(), ApiError> {
-        let session_id = self.session_id_for_conn(conn_handle);
+        let session_id = self.session_id_for_conn(conn_handle).await;
         async {
             let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
                 InvalidArgumentSnafu {

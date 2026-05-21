@@ -12,10 +12,8 @@ use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::SessionTokens;
 use crate::rest::snowflake::telemetry as rest;
 
+use super::SESSION_ID_FIELD;
 use super::serialization;
-
-/// Span attribute key used to route telemetry to the correct session.
-const SESSION_ID_ATTR: &str = "snowflake.session.id";
 
 /// Shared registry mapping session IDs to their exporter sessions.
 /// Connections register on init, deregister on release.
@@ -88,7 +86,7 @@ async fn send_with_token(session: &ExporterSession, payload: &serde_json::Value)
 pub(crate) fn extract_session_id(attrs: &[KeyValue]) -> Option<i64> {
     use opentelemetry::Value;
     attrs.iter().find_map(|kv| {
-        if kv.key.as_str() == SESSION_ID_ATTR {
+        if kv.key.as_str() == SESSION_ID_FIELD {
             match &kv.value {
                 Value::I64(id) => Some(*id),
                 Value::String(s) => s.as_str().parse::<i64>().ok(),
@@ -232,7 +230,7 @@ mod tests {
     fn make_test_span(session_id: Option<i64>) -> SpanData {
         let mut attributes = vec![];
         if let Some(id) = session_id {
-            attributes.push(KeyValue::new(SESSION_ID_ATTR, id.to_string()));
+            attributes.push(KeyValue::new(SESSION_ID_FIELD, id.to_string()));
         }
 
         SpanData {
@@ -359,13 +357,13 @@ mod tests {
 
     #[test]
     fn extract_session_id_handles_i64_value() {
-        let attrs = vec![KeyValue::new(SESSION_ID_ATTR, 42i64)];
+        let attrs = vec![KeyValue::new(SESSION_ID_FIELD, 42i64)];
         assert_eq!(extract_session_id(&attrs), Some(42));
     }
 
     #[test]
     fn extract_session_id_handles_string_value() {
-        let attrs = vec![KeyValue::new(SESSION_ID_ATTR, "99")];
+        let attrs = vec![KeyValue::new(SESSION_ID_FIELD, "99")];
         assert_eq!(extract_session_id(&attrs), Some(99));
     }
 
