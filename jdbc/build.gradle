@@ -158,10 +158,17 @@ jar {
     }
 }
 
+// Copy the cargo-built native lib into the JAR's resources so JNICoreTransport
+// can extract it at runtime (no CORE_PATH env var required for end users).
+// Path inside the JAR: net/snowflake/client/internal/unicore/native/.
+// The actual filenames produced by `cargo build --package jdbc_bridge`:
+//   - linux:   libjdbc_bridge.so
+//   - macos:   libjdbc_bridge.dylib
+//   - windows: jdbc_bridge.dll
 def copyNativeLib = tasks.register('copyNativeLib', Copy) {
     from '../target/release'
-    include 'libjdbc.*'
-    into 'build/resources/main'
+    include 'libjdbc_bridge.*', 'jdbc_bridge.dll'
+    into 'build/resources/main/net/snowflake/client/internal/unicore/native'
 }
 
 tasks.named('processResources') {
