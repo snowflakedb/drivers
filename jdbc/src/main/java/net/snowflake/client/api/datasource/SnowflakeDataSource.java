@@ -1,5 +1,6 @@
 package net.snowflake.client.api.datasource;
 
+import java.security.PrivateKey;
 import java.util.Properties;
 import javax.sql.DataSource;
 
@@ -32,6 +33,12 @@ public interface SnowflakeDataSource extends DataSource {
   void setAuthenticator(String authenticator);
 
   void setToken(String token);
+
+  void setPrivateKey(PrivateKey privateKey);
+
+  void setPrivateKeyFile(String location, String password);
+
+  void setPrivateKeyBase64(String privateKeyBase64, String password);
 
   String getUrl();
 

@@ -1,10 +1,12 @@
 package net.snowflake.client.internal.api.implementation.datasource;
 
 import java.io.PrintWriter;
+import java.security.PrivateKey;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.util.Base64;
 import java.util.Properties;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -176,6 +178,32 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   @Override
   public void setToken(String token) {
     this.properties.setProperty(SnowflakeSessionProperty.TOKEN.getPropertyKey(), token);
+  }
+
+  @Override
+  public void setPrivateKey(PrivateKey privateKey) {
+    String base64 = Base64.getEncoder().encodeToString(privateKey.getEncoded());
+    this.properties.setProperty(SnowflakeSessionProperty.PRIVATE_KEY.getPropertyKey(), base64);
+  }
+
+  @Override
+  public void setPrivateKeyFile(String location, String password) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.PRIVATE_KEY_FILE.getPropertyKey(), location);
+    if (password != null) {
+      this.properties.setProperty(
+          SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
+    }
+  }
+
+  @Override
+  public void setPrivateKeyBase64(String privateKeyBase64, String password) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.PRIVATE_KEY.getPropertyKey(), privateKeyBase64);
+    if (password != null) {
+      this.properties.setProperty(
+          SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
+    }
   }
 
   @Override

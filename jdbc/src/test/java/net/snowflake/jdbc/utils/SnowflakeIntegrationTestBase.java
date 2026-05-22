@@ -3,9 +3,6 @@ package net.snowflake.jdbc.utils;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -16,7 +13,6 @@ import java.util.Properties;
 import java.util.UUID;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import org.json.JSONObject;
-import org.json.JSONTokener;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
@@ -50,16 +46,7 @@ public abstract class SnowflakeIntegrationTestBase {
   }
 
   protected Properties loadConnectionProperties() throws Exception {
-    // Load parameters.json from test resources
-    String paramPath = System.getenv("PARAMETER_PATH");
-    if (paramPath == null) {
-      paramPath = "/parameters.json";
-    }
-    JSONObject params;
-    try (InputStream input = new FileInputStream(paramPath)) {
-      params = new JSONObject(new JSONTokener(new InputStreamReader(input)));
-    }
-    params = params.getJSONObject("testconnection");
+    JSONObject params = TestParameters.get();
 
     Properties props = new Properties();
     props.setProperty("user", params.getString("SNOWFLAKE_TEST_USER"));
