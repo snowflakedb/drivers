@@ -124,10 +124,11 @@ class TestFromKwargs:
         assert config.proxy_password == "ppass"
         assert config.no_proxy == "internal.example.com,*.local"
 
-    def test_proxy_alias_to_proxy_host(self):
-        # Back-compat: legacy ODBC DSN dialog and other callers may pass `PROXY`.
-        config = ConnectionConfig.from_kwargs(PROXY="proxy.example.com")
-        assert config.proxy_host == "proxy.example.com"
+    def test_proxy_legacy_url_form_kwarg(self):
+        # Legacy ODBC `PROXY` URL is its own canonical param now (NOT an alias
+        # of proxy_host); URL is parsed by sf_core's ProxyConfig::from_settings.
+        config = ConnectionConfig.from_kwargs(PROXY="http://user:pass@proxy.example.com:8080")
+        assert config.proxy == "http://user:pass@proxy.example.com:8080"
 
     def test_proxy_uppercase_kwargs(self):
         # Resolution is case-insensitive; ODBC DSN strings deliver UPPERCASE keys.
@@ -139,6 +140,21 @@ class TestFromKwargs:
         assert config.proxy_host == "proxy.example.com"
         assert config.proxy_port == 8080
         assert config.no_proxy == "internal.example.com"
+
+    def test_use_proxy_env_kwarg_aliases(self):
+        # Legacy ODBC `PROXYWITHENV` aliases to `use_proxy_env`; default False.
+        config = ConnectionConfig.from_kwargs(PROXYWITHENV=True)
+        assert config.use_proxy_env is True
+
+    def test_allow_empty_proxy_kwarg_aliases(self):
+        # Legacy ODBC `ALLOWEMPTYPROXY` aliases to `allow_empty_proxy`; default True.
+        config = ConnectionConfig.from_kwargs(ALLOWEMPTYPROXY=False)
+        assert config.allow_empty_proxy is False
+
+    def test_noproxy_kwarg_aliases(self):
+        # Legacy ODBC `NOPROXY` (no underscore) aliases to `no_proxy`.
+        config = ConnectionConfig.from_kwargs(NOPROXY="*.corp")
+        assert config.no_proxy == "*.corp"
 
 
 class TestFromConnectionArgs:
@@ -330,8 +346,22 @@ class TestToOptions:
     def test_proxy_fields_omitted_when_unset(self):
         config = ConnectionConfig(user="u")
         opts = config.to_options()
-        for key in ("proxy_host", "proxy_port", "proxy_user", "proxy_password", "no_proxy"):
+        for key in ("proxy", "proxy_host", "proxy_port", "proxy_user", "proxy_password", "no_proxy"):
             assert key not in opts
+
+    def test_proxy_url_form_forwarded(self):
+        # Legacy ODBC `proxy` URL is forwarded as its own option; sf_core
+        # parses it and merges with individual fields when both are present.
+        config = ConnectionConfig(proxy="http://user:pass@proxy.example.com:8080")
+        opts = config.to_options()
+        assert opts["proxy"] == "http://user:pass@proxy.example.com:8080"
+
+    def test_use_proxy_env_forwarded_with_default_false(self):
+        config = ConnectionConfig()
+        opts = config.to_options()
+        # Default is False — forwarded so sf_core sees the explicit choice.
+        assert opts["use_proxy_env"] is False
+        assert opts["allow_empty_proxy"] is True
 
     def test_includes_extra(self):
         config = ConnectionConfig(user="u")
@@ -360,6 +390,14 @@ class TestRedactedOptions:
         assert opts["proxy_host"] == "proxy.example.com"
         assert opts["proxy_user"] == "puser"
         assert opts["proxy_password"] == "***"
+
+    def test_proxy_url_redacted_because_may_contain_creds(self):
+        # The legacy `proxy` URL may embed `user:pass@host:port`; the field
+        # is marked sensitive in sf_core's param registry and must redact in
+        # log output.
+        config = ConnectionConfig(proxy="http://user:pass@proxy.example.com:8080")
+        opts = config.redacted_options()
+        assert opts["proxy"] == "***"
 
 
 class TestToProtoOptions:
@@ -395,15 +433,28 @@ class TestClassVariables:
     def test_alias_map_contains_uid(self):
         assert ConnectionConfig._ALIAS_MAP["uid"] == "user"
 
-    def test_alias_map_contains_proxy(self):
-        # Back-compat alias for legacy ODBC dialog DSN key.
-        assert ConnectionConfig._ALIAS_MAP["proxy"] == "proxy_host"
+    def test_proxy_is_distinct_canonical_param_not_alias_of_proxy_host(self):
+        # `PROXY` (legacy ODBC URL form) and `proxy_host` (legacy Python
+        # hostname) have *different* value formats, so `proxy` must not be
+        # an alias of `proxy_host`. They are merged later in sf_core's
+        # `ProxyConfig::from_settings`.
+        assert "proxy" not in ConnectionConfig._ALIAS_MAP
+
+    def test_alias_map_contains_legacy_odbc_proxy_aliases(self):
+        # ODBC connection-string conventions: PROXYWITHENV / NOPROXY /
+        # ALLOWEMPTYPROXY (no underscores, uppercase).
+        assert ConnectionConfig._ALIAS_MAP["proxywithenv"] == "use_proxy_env"
+        assert ConnectionConfig._ALIAS_MAP["noproxy"] == "no_proxy"
+        assert ConnectionConfig._ALIAS_MAP["allowemptyproxy"] == "allow_empty_proxy"
 
     def test_sensitive_params(self):
         assert "password" in ConnectionConfig._SENSITIVE_PARAMS
         assert "private_key" in ConnectionConfig._SENSITIVE_PARAMS
         assert "token" in ConnectionConfig._SENSITIVE_PARAMS
+        # Both proxy_password (separate field) and proxy (URL may embed creds)
+        # must be redacted.
         assert "proxy_password" in ConnectionConfig._SENSITIVE_PARAMS
+        assert "proxy" in ConnectionConfig._SENSITIVE_PARAMS
 
     def test_python_only_fields(self):
         assert "numpy" in ConnectionConfig._PYTHON_ONLY

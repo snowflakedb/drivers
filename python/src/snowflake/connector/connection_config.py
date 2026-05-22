@@ -11,7 +11,6 @@ rewrites, application validation, Python-only fields) live in
 :mod:`snowflake.connector._internal.connection_config_mixin` and are inherited
 via :class:`ConnectionConfigMixin`.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,7 +20,6 @@ from snowflake.connector._internal.connection_config_mixin import (
     ConnectionConfigMixin,
     OptionsModifier,
 )
-
 
 __all__ = ["ConnectionConfig", "OptionsModifier"]
 
@@ -38,6 +36,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     # -- Connection parameters --------------------------------------------------
     account: str | None = None
     """Snowflake account identifier. Required"""
+
+    allow_empty_proxy: bool | None = True
+    """Empty PROXY value explicitly disables proxy (overrides env). Default: True"""
 
     application: str | None = None
     """User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION (falls back to client_app_id)"""
@@ -66,7 +67,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     crl_cache_dir: str | None = None
     """Directory for CRL cache files"""
 
-    crl_check_mode: str | None = "DISABLED"
+    crl_check_mode: str | None = 'DISABLED'
     """Certificate revocation check mode (DISABLED, ENABLED, ADVISORY). Default: 'DISABLED'"""
 
     crl_connection_timeout: int | None = 10
@@ -183,6 +184,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     protocol: str | None = None
     """Connection protocol (http or https)"""
 
+    proxy: str | None = None
+    """Proxy URL ([scheme://][user:pass@]host[:port]); legacy ODBC `PROXY` form"""
+
     proxy_host: str | None = None
     """Proxy server hostname"""
 
@@ -206,6 +210,9 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     token: str | None = None
     """Pre-acquired bearer token (PAT or legacy OAUTH). Required when authenticator=PROGRAMMATIC_ACCESS_TOKEN"""
+
+    use_proxy_env: bool | None = False
+    """Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set. Default: False"""
 
     user: str | None = None
     """Login username. Required"""
@@ -242,17 +249,19 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Default warehouse to use"""
 
     _ALIAS_MAP: ClassVar[dict[str, str]] = {
+        "allowemptyproxy": "allow_empty_proxy",
         "allowunderscoresinhost": "preserve_underscores_in_hostname",
         "clientstoretemporarycredential": "client_store_temporary_credential",
         "crl_enabled": "crl_check_mode",
         "crl_mode": "crl_check_mode",
+        "noproxy": "no_proxy",
         "oauth_token_url": "oauth_token_request_url",
         "passcodeinpassword": "passcode_in_password",
         "priv_key_base64": "private_key",
         "priv_key_file": "private_key_file",
         "priv_key_file_pwd": "private_key_password",
         "priv_key_pwd": "private_key_password",
-        "proxy": "proxy_host",
+        "proxywithenv": "use_proxy_env",
         "pwd": "password",
         "server": "host",
         "tls_custom_root_store_path": "custom_root_store_path",
@@ -271,15 +280,14 @@ class ConnectionConfig(ConnectionConfigMixin):
     }
     """Python field name -> Rust canonical name (only for names that differ)."""
 
-    _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "oauth_client_secret",
-            "passcode",
-            "password",
-            "private_key",
-            "private_key_password",
-            "proxy_password",
-            "token",
-        }
-    )
+    _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset({
+        "oauth_client_secret",
+        "passcode",
+        "password",
+        "private_key",
+        "private_key_password",
+        "proxy",
+        "proxy_password",
+        "token",
+    })
     """Fields that contain secrets (for log redaction)."""

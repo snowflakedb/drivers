@@ -304,17 +304,31 @@ behavior_differences:
       supported on the universal driver.
 
   30:
-    name: "Proxy connection params take precedence over HTTP_PROXY/HTTPS_PROXY env vars"
+    name: "HTTP_PROXY/HTTPS_PROXY env vars are not consulted by default"
     status: unknown
     type: api_incompatibility
     reviewed: false
     old_driver_behavior: |
-      Since 3.17.0, the legacy connector consults `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
-      env vars before the explicit `proxy_host`/`proxy_port` connection parameters,
-      so a globally-set proxy env var silently overrides per-connection settings.
+      Since 3.17.0, the legacy connector unconditionally consults
+      `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars and lets them override
+      explicit `proxy_host`/`proxy_port` connection parameters. A globally-set
+      env var silently overrides per-connection settings.
     new_driver_behavior: |
-      Connection parameters take precedence over env vars, matching JDBC/Go/Node/ODBC.
-      Standard env vars (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, plus lowercase variants)
-      are still consulted as a fallback when no explicit `proxy_*` parameter is set.
-      Standardizes precedence across the Snowflake driver fleet. Tracking design
-      doc: `.ai/plans/proxy.md` (in review).
+      Two changes that together standardize proxy precedence with
+      JDBC/Go/Node.js/ODBC:
+
+      1. Default-deny env detection. The new `use_proxy_env` parameter
+         (default: `false`) gates whether `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
+         are consulted at all. Customers who relied on env-var auto-pickup
+         must set `use_proxy_env=True` (or pass the env-equivalent ODBC alias
+         `PROXYWITHENV=true`).
+
+      2. Explicit params win. When both `use_proxy_env=True` AND an explicit
+         `proxy_host`/`proxy_port` (or legacy `PROXY` URL) are set, the
+         explicit param wins; env vars are ignored.
+
+      Both legacy formats are accepted: snowflake-connector-python
+      `proxy_host`/`proxy_port`/`proxy_user`/`proxy_password`/`no_proxy`
+      kwargs, and the legacy ODBC `PROXY=[scheme://][user:pass@]host[:port]`
+      URL form. When both are set, individual fields override URL components
+      per-field. Tracking design doc: `.ai/plans/proxy.md` (in review).

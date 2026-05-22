@@ -30,7 +30,9 @@ pub fn create_tls_client_with_proxy(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
 ) -> Result<Client, TlsError> {
-    let proxy = proxy.filter(|p| p.is_explicit());
+    // Note: `proxy` is always forwarded to `configure_http_client` even when
+    // `proxy.host` is `None`.  That path needs the full `ProxyConfig` to
+    // honor `use_proxy_env=false` (default-deny env detection).
 
     // Handle insecure configurations
     if !tls_config.verify_certificates {
@@ -167,19 +169,35 @@ fn configure_http_client(
         .pool_max_idle_per_host(32)
         .tcp_keepalive(Some(Duration::from_secs(60)));
 
+    // No ProxyConfig → preserve historical behaviour (reqwest auto-detects
+    // HTTP_PROXY etc.). All connection paths now construct one explicitly,
+    // but tests/bins may still pass `None`.
     let Some(proxy) = proxy else {
         return Ok(builder);
     };
-    let Some(host) = proxy.host.as_deref().filter(|s| !s.is_empty()) else {
-        return Ok(builder);
-    };
+    eprintln!(
+        "PROXY_DEBUG: host={:?} use_proxy_env={} explicitly_disabled={}",
+        proxy.host, proxy.use_proxy_env, proxy.explicitly_disabled,
+    );
 
-    let url = build_proxy_url(host, proxy);
-    let reqwest_proxy = Proxy::all(&url)
-        .context(ProxyBuildSnafu { url: url.clone() })?
-        .no_proxy(proxy.no_proxy.as_deref().and_then(NoProxy::from_string));
+    if let Some(host) = proxy.host.as_deref().filter(|s| !s.is_empty()) {
+        // Explicit proxy → applied for all schemes; reqwest's `.proxy()` call
+        // disables auto env detection (matches JDBC/Go/Node precedence).
+        let url = build_proxy_url(host, proxy);
+        let reqwest_proxy = Proxy::all(&url)
+            .context(ProxyBuildSnafu { url: url.clone() })?
+            .no_proxy(proxy.no_proxy.as_deref().and_then(NoProxy::from_string));
+        return Ok(builder.proxy(reqwest_proxy));
+    }
 
-    Ok(builder.proxy(reqwest_proxy))
+    // No explicit proxy.  Either the customer asked us to honour env vars
+    // (legacy POSIX behaviour) or they explicitly disabled the proxy via the
+    // legacy ODBC `PROXY=""` + `AllowEmptyProxy=true` form.
+    if proxy.use_proxy_env && !proxy.explicitly_disabled {
+        Ok(builder)
+    } else {
+        Ok(builder.no_proxy())
+    }
 }
 
 /// Build an `http://[user:pass@]host[:port]` URL from a `ProxyConfig`.
@@ -224,7 +242,7 @@ mod tests {
             port,
             user: user.map(String::from),
             password: password.map(|s| SensitiveString::from(s.to_string())),
-            no_proxy: None,
+            ..Default::default()
         }
     }
 
@@ -312,5 +330,41 @@ mod tests {
         builder
             .build()
             .expect("client with explicit proxy must build");
+    }
+
+    #[test]
+    fn configure_http_client_disables_env_when_use_proxy_env_false() {
+        // Default ProxyConfig has use_proxy_env=false: the builder should
+        // invoke `.no_proxy()` so reqwest does not auto-detect HTTP_PROXY.
+        let p = ProxyConfig::default();
+        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        builder
+            .build()
+            .expect("default-deny env path must build cleanly");
+    }
+
+    #[test]
+    fn configure_http_client_allows_env_when_use_proxy_env_true() {
+        let p = ProxyConfig {
+            use_proxy_env: true,
+            ..Default::default()
+        };
+        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        builder.build().expect("env-fallback path must build");
+    }
+
+    #[test]
+    fn configure_http_client_explicitly_disabled_overrides_env() {
+        // Empty PROXY with allow_empty_proxy=true: customer says "no proxy"
+        // even though use_proxy_env is true.
+        let p = ProxyConfig {
+            use_proxy_env: true,
+            explicitly_disabled: true,
+            ..Default::default()
+        };
+        let builder = configure_http_client(Client::builder(), Some(&p)).unwrap();
+        builder
+            .build()
+            .expect("explicit disable must build cleanly");
     }
 }

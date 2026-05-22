@@ -132,15 +132,7 @@ impl ClientInfo {
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
-        let proxy_config = ProxyConfig {
-            host: settings.get_string("proxy_host"),
-            port: settings.get_int("proxy_port"),
-            user: settings.get_string("proxy_user"),
-            password: settings
-                .get_string("proxy_password")
-                .map(SensitiveString::from),
-            no_proxy: settings.get_string("no_proxy"),
-        };
+        let proxy_config = ProxyConfig::from_settings(settings);
 
         let client_app_id = settings
             .get_string("client_app_id")

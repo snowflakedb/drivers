@@ -2,8 +2,8 @@
 
 Tests live in ``tests/e2e`` so they execute against both the universal driver
 (``dev`` env) and the reference connector (``reference`` env) — the precedence
-test in particular demonstrates the deliberate behaviour difference recorded in
-``BehaviorDifferences.yaml`` entry 27.
+test in particular demonstrates the deliberate behaviour difference recorded
+in ``BehaviorDifferences.yaml`` entry 30.
 
 Wiremock is started with ``--enable-browser-proxying --proxy-pass-through=false``
 in ``WiremockClient``, so it acts as a forward HTTP proxy that matches incoming
@@ -64,7 +64,8 @@ class TestProxyConnectionParams:
     """Connection-parameter-driven proxy routing."""
 
     def test_proxy_host_routes_request_through_proxy(self, connector_adapter):
-        """Driver configured with proxy_host/port should route login through the proxy."""
+        """Driver configured with proxy_host/port should route login through
+        the proxy. Legacy snowflake-connector-python kwargs."""
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
 
@@ -76,6 +77,26 @@ class TestProxyConnectionParams:
 
             assert len(_login_requests(wiremock)) >= 1, (
                 "Login request should have been routed through the proxy"
+            )
+            conn.close(retry=False)
+
+    @pytest.mark.skip_reference(
+        reason="Legacy ODBC PROXY URL form is universal-driver-only; reference connector "
+        "uses proxy_host/proxy_port instead"
+    )
+    def test_legacy_odbc_proxy_url_routes_request_through_proxy(self, connector_adapter):
+        """Legacy ODBC ``PROXY=http://host:port`` URL form is parsed by sf_core
+        and merged with individual fields."""
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+
+            conn = _build_connection(
+                connector_adapter,
+                proxy=f"http://localhost:{wiremock.http_port}",
+            )
+
+            assert len(_login_requests(wiremock)) >= 1, (
+                "Login should have been routed through the proxy URL"
             )
             conn.close(retry=False)
 
@@ -105,17 +126,24 @@ class TestProxyConnectionParams:
 class TestProxyEnvVars:
     """Environment-variable-driven proxy routing.
 
-    Both legacy and universal drivers honour standard ``HTTP_PROXY``/``HTTPS_PROXY``
-    when no explicit proxy_host is set.
+    Universal driver: ``HTTP_PROXY``/``HTTPS_PROXY``/``NO_PROXY`` are ignored
+    by default; ``use_proxy_env=True`` opts in to env detection. Legacy
+    connector: env vars are always honoured. The precedence test below makes
+    this divergence explicit.
     """
 
-    def test_http_proxy_env_var_routes_request_through_proxy(self, connector_adapter, monkeypatch):
+    @pytest.mark.skip_reference(
+        reason="use_proxy_env is a universal-driver-only opt-in; reference connector always reads env vars"
+    )
+    def test_http_proxy_env_var_routes_request_when_use_proxy_env_true(
+        self, connector_adapter, monkeypatch
+    ):
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
 
             monkeypatch.setenv("HTTP_PROXY", wiremock.http_url())
 
-            conn = _build_connection(connector_adapter)
+            conn = _build_connection(connector_adapter, use_proxy_env=True)
 
             # WiremockClient admin queries use the requests library, which
             # also honours HTTP_PROXY. Unset before asserting so the admin
@@ -123,25 +151,50 @@ class TestProxyEnvVars:
             monkeypatch.delenv("HTTP_PROXY")
 
             assert len(_login_requests(wiremock)) >= 1, (
-                "HTTP_PROXY env var should route the login through the proxy"
+                "use_proxy_env=True with HTTP_PROXY env var should route through proxy"
             )
             conn.close(retry=False)
+
+    @pytest.mark.skip_reference(
+        reason="Reference connector always reads env vars; default-deny is universal-only"
+    )
+    def test_http_proxy_env_var_ignored_by_default(self, connector_adapter, monkeypatch):
+        """Default ``use_proxy_env=False``: env vars are NOT consulted, so the
+        login attempt fails on direct DNS resolution rather than transiting
+        the proxy."""
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+
+            monkeypatch.setenv("HTTP_PROXY", wiremock.http_url())
+
+            with pytest.raises(Exception):  # noqa: PT011 — driver-specific class varies
+                _build_connection(connector_adapter)
+
+            monkeypatch.delenv("HTTP_PROXY")
+
+            assert len(_login_requests(wiremock)) == 0, (
+                "Default-deny: HTTP_PROXY env var must not be picked up without use_proxy_env=True"
+            )
 
 
 class TestProxyPrecedence:
     """Connection params vs env vars precedence.
 
-    This is the load-bearing cross-version test. The legacy connector (>=3.17.0)
-    consults env vars *before* connection params; the universal driver inverts
-    that to match JDBC/Go/Node/ODBC. See ``BehaviorDifferences.yaml`` entry 27.
+    Cross-version test that locks in ``BehaviorDifferences.yaml`` entry 30:
+
+    - Legacy connector ≥3.17.0: ``HTTP_PROXY`` env var overrides explicit
+      ``proxy_host`` connection parameters.
+    - Universal driver: explicit ``proxy_host`` always wins. Env vars are only
+      consulted as a fallback when no explicit param is set, AND the customer
+      has opted in via ``use_proxy_env=True``.
     """
 
     def test_explicit_proxy_param_takes_precedence_over_env_var(
         self, connector_adapter, monkeypatch
     ):
-        """When both are set, only the explicit proxy_host should receive requests
-        on the universal driver. On the legacy driver this assertion is inverted —
-        it intentionally documents the divergence rather than skipping."""
+        """When both are set, only the explicit proxy_host should receive
+        requests on the universal driver. The legacy branch documents the
+        inverted behaviour rather than skipping."""
         with (
             WiremockClient().start() as proxy_via_param,
             WiremockClient().start() as proxy_via_env,
@@ -155,12 +208,12 @@ class TestProxyPrecedence:
                 connector_adapter,
                 proxy_host="localhost",
                 proxy_port=proxy_via_param.http_port,
+                # Even with use_proxy_env=True, the explicit param must win.
+                use_proxy_env=True,
             )
 
-            # Unset HTTP_PROXY before querying wiremock admin: the requests
-            # library used by WiremockClient.get_all_requests() also honours
-            # HTTP_PROXY, which would route admin queries through the wrong
-            # wiremock and return spurious empty results.
+            # WiremockClient admin queries use the requests library, which
+            # also honours HTTP_PROXY. Unset before asserting.
             monkeypatch.delenv("HTTP_PROXY")
 
             param_hits = len(_login_requests(proxy_via_param))
@@ -172,9 +225,7 @@ class TestProxyPrecedence:
                     f"(param hits={param_hits}, env hits={env_hits})"
                 )
             else:
-                # Legacy connector >=3.17.0 inverts precedence: env var wins.
-                # This branch documents the behaviour the universal driver
-                # deliberately changes.
+                # Legacy connector ≥3.17.0 inverts precedence: env var wins.
                 assert env_hits >= 1 and param_hits == 0, (
                     "Legacy connector: HTTP_PROXY env var overrides proxy_host param "
                     f"(param hits={param_hits}, env hits={env_hits})"

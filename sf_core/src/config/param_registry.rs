@@ -125,6 +125,19 @@ pub mod param_names {
     pub const PROXY_USER: ParamKey = ParamKey("proxy_user");
     pub const PROXY_PASSWORD: ParamKey = ParamKey("proxy_password");
     pub const NO_PROXY: ParamKey = ParamKey("no_proxy");
+    /// Full proxy URL `[scheme://][user:pass@]host[:port]`, accepted as the
+    /// legacy ODBC `PROXY` connection string key.  Parsed in
+    /// `build_proxy_config` and merged with the individual `proxy_*` fields,
+    /// which override URL components when both are set.
+    pub const PROXY: ParamKey = ParamKey("proxy");
+    /// Whether to fall back to `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`
+    /// environment variables when no explicit proxy is configured.
+    /// Default `false`: env detection is suppressed.
+    pub const USE_PROXY_ENV: ParamKey = ParamKey("use_proxy_env");
+    /// When `true` (default), an empty `PROXY` value explicitly disables the
+    /// proxy and overrides config/env settings, mirroring legacy ODBC
+    /// `AllowEmptyProxy=true`. When `false`, an empty value is ignored.
+    pub const ALLOW_EMPTY_PROXY: ParamKey = ParamKey("allow_empty_proxy");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -1114,9 +1127,11 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Proxy ──────────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::PROXY_HOST.as_str(),
-        // "PROXY" preserves backward-compat with DSNs written by the
-        // pre-registry ODBC setup dialog (which used PROXY as the host key).
-        aliases: &["PROXY_HOST", "PROXY"],
+        // The legacy ODBC `PROXY` DSN key uses a different *format* (full URL
+        // with embedded creds), so it is registered as a distinct canonical
+        // param `proxy` rather than aliased here. `build_proxy_config` parses
+        // the URL and merges it with the fields below.
+        aliases: &["PROXY_HOST"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
@@ -1172,13 +1187,56 @@ static PARAM_DEFS: &[ParamDef] = &[
     },
     ParamDef {
         canonical_name: param_names::NO_PROXY.as_str(),
-        aliases: &["NO_PROXY"],
+        aliases: &["NO_PROXY", "NOPROXY"],
         value_type: ValueType::String,
         additional_value_type: None,
         required: Required::Never,
         default: None,
         sensitive: false,
         description: "Comma-separated list of hosts to bypass the proxy for",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    // Legacy ODBC PROXY URL form (parsed and merged with the fields above).
+    ParamDef {
+        canonical_name: param_names::PROXY.as_str(),
+        aliases: &["PROXY"],
+        value_type: ValueType::String,
+        additional_value_type: None,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "Proxy URL ([scheme://][user:pass@]host[:port]); legacy ODBC `PROXY` form",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::USE_PROXY_ENV.as_str(),
+        aliases: &["USE_PROXY_ENV", "PROXYWITHENV"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Honour HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars when no explicit proxy is set",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::ALLOW_EMPTY_PROXY.as_str(),
+        aliases: &["ALLOW_EMPTY_PROXY", "ALLOWEMPTYPROXY"],
+        value_type: ValueType::Bool,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(true)),
+        sensitive: false,
+        description: "Empty PROXY value explicitly disables proxy (overrides env)",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
@@ -1289,11 +1347,16 @@ mod tests {
             ("CRL_ENABLED", "crl_check_mode"),
             ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
             ("PROXY_HOST", "proxy_host"),
-            ("PROXY", "proxy_host"),
             ("PROXY_PORT", "proxy_port"),
             ("PROXY_USER", "proxy_user"),
             ("PROXY_PASSWORD", "proxy_password"),
             ("NO_PROXY", "no_proxy"),
+            ("NOPROXY", "no_proxy"),
+            ("PROXY", "proxy"),
+            ("USE_PROXY_ENV", "use_proxy_env"),
+            ("PROXYWITHENV", "use_proxy_env"),
+            ("ALLOW_EMPTY_PROXY", "allow_empty_proxy"),
+            ("ALLOWEMPTYPROXY", "allow_empty_proxy"),
         ];
         for (alias, expected_canonical) in cases {
             let def = r
@@ -1502,6 +1565,9 @@ mod tests {
             "proxy_user",
             "proxy_password",
             "no_proxy",
+            "proxy",
+            "use_proxy_env",
+            "allow_empty_proxy",
         ] {
             let d = r
                 .resolve(key)
@@ -1514,7 +1580,14 @@ mod tests {
         assert_eq!(port.value_type, ValueType::Int);
         let pw = r.resolve("proxy_password").unwrap();
         assert!(pw.sensitive, "proxy_password must be marked sensitive");
+        let proxy = r.resolve("proxy").unwrap();
+        assert!(
+            proxy.sensitive,
+            "proxy URL must be sensitive (may contain creds)"
+        );
         let host = r.resolve("proxy_host").unwrap();
         assert!(!host.sensitive);
+        // PROXY must NOT alias proxy_host: their formats differ (URL vs hostname).
+        assert_eq!(r.resolve("PROXY").unwrap().canonical_name, "proxy");
     }
 }

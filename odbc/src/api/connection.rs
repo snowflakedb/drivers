@@ -1371,17 +1371,34 @@ mod tests {
     }
 
     #[test]
-    fn normalize_connection_string_options_legacy_proxy_alias_passes_through() {
-        // DSNs written by the pre-PROXY_HOST dialog used `PROXY` as the host
-        // key. sf_core's param registry registers `PROXY` as a back-compat
-        // alias of `proxy_host`, so this DSN must continue to flow through
-        // unchanged from the ODBC layer.
+    fn normalize_connection_string_options_passes_through_legacy_proxy_url_form() {
+        // Legacy ODBC DSNs use `PROXY=[scheme://][user:pass@]host[:port]`.
+        // sf_core's `ProxyConfig::from_settings` parses the URL.  The ODBC
+        // layer just forwards the value unchanged.
         let options = normalize_connection_string_options(HashMap::from([(
             "PROXY".to_owned(),
-            "p.example.com".to_owned(),
+            "http://user:pass@p.example.com:8080".to_owned(),
         )]));
 
-        assert_eq!(config_string(&options, "PROXY"), Some("p.example.com"));
+        assert_eq!(
+            config_string(&options, "PROXY"),
+            Some("http://user:pass@p.example.com:8080")
+        );
+    }
+
+    #[test]
+    fn normalize_connection_string_options_passes_through_legacy_odbc_proxy_aliases() {
+        // Legacy ODBC also accepts NOPROXY / PROXYWITHENV / ALLOWEMPTYPROXY.
+        // These flow through as UPPERCASE and sf_core's registry resolves
+        // them to canonical names.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("NOPROXY".to_owned(), "*.corp".to_owned()),
+            ("PROXYWITHENV".to_owned(), "true".to_owned()),
+            ("ALLOWEMPTYPROXY".to_owned(), "false".to_owned()),
+        ]));
+        assert_eq!(config_string(&options, "NOPROXY"), Some("*.corp"));
+        assert_eq!(config_string(&options, "PROXYWITHENV"), Some("true"));
+        assert_eq!(config_string(&options, "ALLOWEMPTYPROXY"), Some("false"));
     }
 
     #[test]
