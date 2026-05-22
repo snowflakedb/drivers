@@ -41,7 +41,7 @@
 # team. Domain-specific routing lives here.
 
 all @sfc-gh-daniszewski @sfc-gh-boler
-jdbc @sfc-gh-pfus @sfc-gh-dheyman @sfc-gh-rkowalski
+jdbc @sfc-gh-asolarski @sfc-gh-dheyman @sfc-gh-rkowalski
 nodejs @sfc-gh-rsavenok @sfc-gh-rkowalski @sfc-gh-pbulawa
 odbc @sfc-gh-mcepiga @sfc-gh-mhofman @sfc-gh-jszczerbinski @sfc-gh-ddas @sfc-gh-makowalski @sfc-gh-rkowalski @sfc-gh-pbulawa
 python @sfc-gh-asolarski @sfc-gh-fpawlowski @sfc-gh-pczajka @sfc-gh-turbaszek
