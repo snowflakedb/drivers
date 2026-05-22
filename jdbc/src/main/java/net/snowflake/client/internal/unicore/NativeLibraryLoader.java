@@ -23,8 +23,9 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  * <p>The JAR-resource path is the default for end users: it works in sandboxed JVMs (e.g. UDFs,
  * BucketFS, Lambda) where host env vars and host filesystem layouts aren't predictable.
  *
- * <p>The load runs once, in this class's static initializer. {@link JNICoreTransport} triggers
- * initialization via {@link #init()} so the native lib is in place before any JNI call.
+ * <p>The load runs once, in this class's static initializer. {@link JNICoreTransport}'s constructor
+ * calls {@link #init()} to trigger that initialization, ensuring the native lib is in place before
+ * any JNI call.
  */
 final class NativeLibraryLoader {
 

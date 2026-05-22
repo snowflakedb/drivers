@@ -6,7 +6,7 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 public class JNICoreTransport implements CoreTransport {
   private static final SFLogger logger = SFLoggerFactory.getLogger(JNICoreTransport.class);
 
-  static {
+  public JNICoreTransport() {
     NativeLibraryLoader.init();
   }
 
