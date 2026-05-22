@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
+import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
@@ -92,7 +93,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     Builder identityBuilder =
         WrapperIdentity.newBuilder()
             .setDriverName("JDBC")
-            .setDriverVersion(determineClientAppVersion());
+            .setDriverVersion(SnowflakeDriver.DRIVER_VERSION);
     String runtimeName = System.getProperty("java.vm.name");
     if (runtimeName != null && !runtimeName.trim().isEmpty()) {
       identityBuilder.setLanguageRuntime(runtimeName);
@@ -184,17 +185,6 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
           warning.getCode(),
           warning.getMessage());
     }
-  }
-
-  private String determineClientAppVersion() {
-    Package pkg = SnowflakeConnectionImpl.class.getPackage();
-    if (pkg != null) {
-      String version = pkg.getImplementationVersion();
-      if (version != null && !version.trim().isEmpty()) {
-        return version;
-      }
-    }
-    return "4.0.0";
   }
 
   @Override
