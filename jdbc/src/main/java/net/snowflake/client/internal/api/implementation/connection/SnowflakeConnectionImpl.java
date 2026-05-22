@@ -58,6 +58,9 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   private final DatabaseHandle databaseHandle;
   public final ConnectionHandle connectionHandle;
 
+  private volatile String cachedDatabaseVersion;
+  private final Object databaseVersionLock = new Object();
+
   public SnowflakeConnectionImpl(String url, Properties properties) throws SQLException {
     this(url, properties, ProtobufApis.coreDriverApi);
   }
@@ -539,16 +542,51 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public int getDatabaseMajorVersion() throws SQLException {
-    throw new NotImplementedException();
+    return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 0);
   }
 
   @Override
   public int getDatabaseMinorVersion() throws SQLException {
-    throw new NotImplementedException();
+    return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 1);
   }
 
+  /** Issues a single {@code SELECT CURRENT_VERSION()} on first call per connection; cached. */
   @Override
   public String getDatabaseVersion() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    String cached = cachedDatabaseVersion;
+    if (cached != null) {
+      return cached;
+    }
+    synchronized (databaseVersionLock) {
+      if (cachedDatabaseVersion == null) {
+        cachedDatabaseVersion = fetchDatabaseVersion();
+      }
+      return cachedDatabaseVersion;
+    }
+  }
+
+  private String fetchDatabaseVersion() throws SQLException {
+    try (Statement stmt = createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_VERSION()")) {
+      if (!rs.next()) {
+        throw new SQLException("SELECT CURRENT_VERSION() returned no rows");
+      }
+      String raw = rs.getString(1);
+      if (raw == null) {
+        throw new SQLException("SELECT CURRENT_VERSION() returned NULL");
+      }
+      return stripVersionSuffix(raw);
+    }
+  }
+
+  // The server returns e.g. "8.46.1 abcdef"; the build suffix is not part of the public version.
+  static String stripVersionSuffix(String raw) {
+    if (raw == null) {
+      return null;
+    }
+    String trimmed = raw.trim();
+    int spaceIdx = trimmed.indexOf(' ');
+    return spaceIdx < 0 ? trimmed : trimmed.substring(0, spaceIdx);
   }
 }

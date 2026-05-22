@@ -2,6 +2,9 @@ package net.snowflake.client.internal.api.implementation.metadata;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
@@ -40,5 +43,12 @@ class SnowflakeDatabaseMetaDataImplTest {
   void getJDBCMajorMinorReturnFourTwo() throws Exception {
     assertEquals(4, metadata.getJDBCMajorVersion());
     assertEquals(2, metadata.getJDBCMinorVersion());
+  }
+
+  @Test
+  void getDatabaseProductVersionDelegatesToConnection() throws Exception {
+    when(connection.getDatabaseVersion()).thenReturn("8.46.1");
+    assertEquals("8.46.1", metadata.getDatabaseProductVersion());
+    verify(connection, times(1)).getDatabaseVersion();
   }
 }
