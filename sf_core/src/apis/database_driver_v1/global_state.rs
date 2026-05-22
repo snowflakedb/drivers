@@ -8,7 +8,7 @@ use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
-use crate::handle_manager::HandleManager;
+use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::LogManager;
 use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::telemetry::snowflake_exporter::SessionRegistry;
@@ -110,6 +110,37 @@ impl DatabaseDriverV1 {
     /// Returns the session registry if telemetry was configured via `DriverProviders`.
     pub(super) fn telemetry_sessions(&self) -> Option<&SessionRegistry> {
         self.log_manager.as_ref().map(|lm| lm.telemetry_sessions())
+    }
+
+    /// Resolve the Snowflake session id for a connection handle by reading
+    /// `Connection::session_id` under the connection mutex. Returns `None`
+    /// when the handle is unknown, login has not completed, or the connection
+    /// has been released.
+    pub(crate) async fn session_id_for_conn(&self, conn_handle: Handle) -> Option<i64> {
+        let conn_ptr = self.connections.get_obj(conn_handle)?;
+        let conn = conn_ptr.lock().await;
+        conn.session_id
+    }
+
+    /// Resolve the Snowflake session id for a statement handle by traversing
+    /// to its owning connection. Acquires the statement mutex to read the
+    /// `Arc<Mutex<Connection>>`, then the connection mutex to read its
+    /// cached `session_id`.
+    pub(crate) async fn session_id_for_stmt(&self, stmt_handle: Handle) -> Option<i64> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle)?;
+        let conn_arc = {
+            let stmt = stmt_ptr.lock().await;
+            stmt.conn.clone()
+        };
+        let conn = conn_arc.lock().await;
+        conn.session_id
+    }
+
+    /// Flush buffered telemetry spans for a specific session.
+    pub(super) async fn flush_telemetry_session(&self, session_id: i64) {
+        if let Some(ref lm) = self.log_manager {
+            lm.flush_session(session_id).await;
+        }
     }
 
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {

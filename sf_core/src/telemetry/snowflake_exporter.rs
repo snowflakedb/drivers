@@ -12,10 +12,8 @@ use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::SessionTokens;
 use crate::rest::snowflake::telemetry as rest;
 
+use super::SESSION_ID_FIELD;
 use super::serialization;
-
-/// Span attribute key used to route telemetry to the correct session.
-const SESSION_ID_ATTR: &str = "snowflake.session.id";
 
 /// Shared registry mapping session IDs to their exporter sessions.
 /// Connections register on init, deregister on release.
@@ -38,10 +36,9 @@ impl std::fmt::Debug for ExporterSession {
 
 /// Custom OTel exporter that sends telemetry to Snowflake's in-band `/telemetry/send` endpoint.
 ///
-/// Uses a shared session registry to route spans to the correct connection based on
-/// the `snowflake.session.id` span attribute. Spans without this attribute are silently
-/// dropped — this is the security/privacy boundary ensuring only explicitly tagged spans
-/// are sent to Snowflake.
+/// Routes spans by the `snowflake.session.id` attribute every driver operation
+/// stamps on its own bounded span. Spans that lack the attribute are silently
+/// dropped — they don't belong to a Snowflake session.
 ///
 /// All errors are treated as non-fatal — telemetry must never break the user's workflow.
 #[derive(Debug, Clone)]
@@ -86,10 +83,10 @@ async fn send_with_token(session: &ExporterSession, payload: &serde_json::Value)
 
 /// Extract the `snowflake.session.id` attribute value from a span's attributes.
 /// Handles both I64 (from tracing i64 fields) and String representations.
-fn extract_session_id(attrs: &[KeyValue]) -> Option<i64> {
+pub(crate) fn extract_session_id(attrs: &[KeyValue]) -> Option<i64> {
     use opentelemetry::Value;
     attrs.iter().find_map(|kv| {
-        if kv.key.as_str() == SESSION_ID_ATTR {
+        if kv.key.as_str() == SESSION_ID_FIELD {
             match &kv.value {
                 Value::I64(id) => Some(*id),
                 Value::String(s) => s.as_str().parse::<i64>().ok(),
@@ -117,11 +114,11 @@ impl SpanExporter for SnowflakeInBandExporter {
             }
 
             let do_export = move || async move {
-                // Group spans by session_id. Spans without the attribute are dropped.
+                // Group spans by session_id from the span attribute.
                 let mut by_session: HashMap<i64, Vec<SpanData>> = HashMap::new();
                 for span in batch {
-                    if let Some(session_id) = extract_session_id(&span.attributes) {
-                        by_session.entry(session_id).or_default().push(span);
+                    if let Some(id) = extract_session_id(&span.attributes) {
+                        by_session.entry(id).or_default().push(span);
                     }
                 }
 
@@ -233,7 +230,7 @@ mod tests {
     fn make_test_span(session_id: Option<i64>) -> SpanData {
         let mut attributes = vec![];
         if let Some(id) = session_id {
-            attributes.push(KeyValue::new(SESSION_ID_ATTR, id.to_string()));
+            attributes.push(KeyValue::new(SESSION_ID_FIELD, id.to_string()));
         }
 
         SpanData {
@@ -360,13 +357,13 @@ mod tests {
 
     #[test]
     fn extract_session_id_handles_i64_value() {
-        let attrs = vec![KeyValue::new(SESSION_ID_ATTR, 42i64)];
+        let attrs = vec![KeyValue::new(SESSION_ID_FIELD, 42i64)];
         assert_eq!(extract_session_id(&attrs), Some(42));
     }
 
     #[test]
     fn extract_session_id_handles_string_value() {
-        let attrs = vec![KeyValue::new(SESSION_ID_ATTR, "99")];
+        let attrs = vec![KeyValue::new(SESSION_ID_FIELD, "99")];
         assert_eq!(extract_session_id(&attrs), Some(99));
     }
 

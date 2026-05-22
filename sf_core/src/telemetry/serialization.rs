@@ -1,5 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use opentelemetry::KeyValue;
+use opentelemetry::trace::Status;
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 use opentelemetry_sdk::trace::SpanData;
 use serde_json::{Value, json};
@@ -15,24 +17,39 @@ pub fn spans_to_snowflake_payload(spans: &[SpanData]) -> Value {
 fn span_to_log_entries(span: &SpanData) -> Vec<Value> {
     let mut entries = Vec::new();
 
-    if span.events.is_empty() {
-        // No events — emit the span itself as a single log entry (e.g. session_init
-        // when emitted as a standalone span for backward compatibility).
-        entries.push(attrs_to_log_entry(
-            &span.name,
-            &span.attributes,
-            span.start_time,
-        ));
-    } else {
-        // Each event on the span becomes its own log entry. The span's
-        // attributes are inherited so every entry carries session_id etc.
-        for event in span.events.iter() {
-            let mut attrs: Vec<opentelemetry::KeyValue> = span.attributes.clone();
-            for kv in &event.attributes {
-                attrs.push(kv.clone());
-            }
-            entries.push(attrs_to_log_entry(&event.name, &attrs, event.timestamp));
+    // Events on the span (wrapper api_call, exception, session_init) —
+    // each becomes its own log entry, inheriting span attributes. We override
+    // `event_kind` to "event" so downstream consumers can distinguish event
+    // records from span records that happen to share the same payload shape.
+    for event in span.events.iter() {
+        let mut attrs: Vec<KeyValue> = span
+            .attributes
+            .iter()
+            .filter(|kv| kv.key.as_str() != "event_kind")
+            .cloned()
+            .collect();
+        attrs.push(KeyValue::new("event_kind", "event"));
+        for kv in &event.attributes {
+            attrs.push(kv.clone());
         }
+        entries.push(attrs_to_log_entry(&event.name, &attrs, event.timestamp));
+    }
+
+    // Operation spans (sf_core entry-points like execute_query, heartbeat)
+    // have no events — emit the span itself as a log entry with duration
+    // and status. The span's `event_kind="span"` attribute carries through.
+    if span.events.is_empty() {
+        let mut attrs = span.attributes.clone();
+        if let Ok(duration) = span.end_time.duration_since(span.start_time) {
+            attrs.push(KeyValue::new("duration_ms", duration.as_millis() as i64));
+        }
+        if let Status::Error { description } = &span.status {
+            attrs.push(KeyValue::new("status", "ERROR"));
+            if !description.is_empty() {
+                attrs.push(KeyValue::new("status_description", description.to_string()));
+            }
+        }
+        entries.push(attrs_to_log_entry(&span.name, &attrs, span.start_time));
     }
 
     entries
@@ -205,5 +222,59 @@ mod tests {
 
         let payload = spans_to_snowflake_payload(&[span]);
         assert_eq!(payload["logs"][0]["message"]["login_timeout"], 30);
+    }
+
+    #[test]
+    fn child_span_includes_duration_ms() {
+        // Child span: no events, 1 second duration (end - start = 1000ms)
+        let span = make_test_span("statement_execute_query", vec![]);
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let entry = &payload["logs"][0];
+        assert_eq!(entry["message"]["type"], "statement_execute_query");
+        assert_eq!(entry["message"]["duration_ms"], 1000);
+    }
+
+    #[test]
+    fn child_span_ok_status_has_no_error_fields() {
+        let span = make_test_span("connection_heartbeat", vec![]);
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let msg = &payload["logs"][0]["message"];
+        assert!(
+            msg.get("status").is_none(),
+            "OK span should not have status field"
+        );
+    }
+
+    #[test]
+    fn child_span_error_status_includes_description() {
+        let mut span = make_test_span("statement_execute_query", vec![]);
+        span.status = Status::Error {
+            description: "SQL compilation error".into(),
+        };
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let msg = &payload["logs"][0]["message"];
+        assert_eq!(msg["status"], "ERROR");
+        assert_eq!(msg["status_description"], "SQL compilation error");
+        // duration_ms still present
+        assert_eq!(msg["duration_ms"], 1000);
+    }
+
+    #[test]
+    fn child_span_error_empty_description() {
+        let mut span = make_test_span("statement_execute_query", vec![]);
+        span.status = Status::Error {
+            description: "".into(),
+        };
+
+        let payload = spans_to_snowflake_payload(&[span]);
+        let msg = &payload["logs"][0]["message"];
+        assert_eq!(msg["status"], "ERROR");
+        assert!(
+            msg.get("status_description").is_none(),
+            "empty description should be omitted"
+        );
     }
 }

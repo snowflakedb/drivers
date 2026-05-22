@@ -117,28 +117,34 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
 
     message = entry["message"]
 
-    # Event attributes (from record_api_call) + inherited connection-span
-    # attributes. `snowflake.session.id` comes from the login mapping
-    # (tests/wiremock/mappings/auth/login_success_jwt.json -> sessionId).
-    # The `code.*`, `busy_ns`, `idle_ns`, `thread.id` attributes are
-    # auto-populated by `tracing::info_span!` at
-    # sf_core/src/apis/database_driver_v1/connection.rs where the
-    # "connection" span is created.
+    # Event attributes (from record_api_call) + bounded wrapper_api_usage
+    # span attributes. `snowflake.session.id` is stamped on the span from
+    # the login mapping (tests/wiremock/mappings/auth/login_success_jwt.json
+    # -> sessionId). The `code.*`, `busy_ns`, `idle_ns`, `thread.id`
+    # attributes are auto-populated by `tracing::info_span!` at the FFI
+    # entry-point where the per-call wrapper_api_usage span is opened.
     expected_exact = {
         "type": "api_call",
         "api_method": "Connection.cursor",
         "snowflake.session.id": 12345,
-        "code.filepath": "sf_core/src/apis/database_driver_v1/connection.rs",
-        "code.namespace": "sf_core::apis::database_driver_v1::connection",
+        "db.system": "snowflake",
+        "event_kind": "event",
     }
     for key, expected in expected_exact.items():
-        actual = message.get(key)
-        # Normalize path separators for cross-platform compatibility (Windows uses backslashes)
-        if key == "code.filepath" and isinstance(actual, str):
-            actual = actual.replace("\\", "/")
-        assert actual == expected, (
+        assert message.get(key) == expected, (
             f"api_call message[{key!r}] expected {expected!r}, got {message.get(key)!r}. Full message: {message}"
         )
+
+    # Verify code-location and timing attributes are present and well-typed.
+    # We do NOT pin `code.filepath` / `code.namespace` to a specific path —
+    # it's auto-populated by tracing and changes whenever the FFI entry-point
+    # moves, which is purely a refactor concern unrelated to telemetry behavior.
+    assert isinstance(message.get("code.filepath"), str) and message["code.filepath"], (
+        f"code.filepath must be a non-empty string, got: {message.get('code.filepath')!r}"
+    )
+    assert isinstance(message.get("code.namespace"), str) and message["code.namespace"], (
+        f"code.namespace must be a non-empty string, got: {message.get('code.namespace')!r}"
+    )
 
     numeric_attrs = {"code.lineno", "busy_ns", "idle_ns", "thread.id"}
     for key in numeric_attrs:
@@ -148,10 +154,9 @@ def test_api_usage_telemetry_sent_on_cursor_creation(int_test_connection_factory
 
     # Guard against the event silently gaining or losing attributes: the
     # api_call message is the union of the exact and numeric attribute
-    # sets above — nothing more, nothing less.
-    assert set(message.keys()) == set(expected_exact.keys()) | numeric_attrs, (
-        f"Unexpected api_call message keys: {sorted(message.keys())}"
-    )
+    # sets above plus code.filepath / code.namespace.
+    expected_keys = set(expected_exact.keys()) | numeric_attrs | {"code.filepath", "code.namespace"}
+    assert set(message.keys()) == expected_keys, f"Unexpected api_call message keys: {sorted(message.keys())}"
 
 
 def _jwt_private_key_params() -> dict:

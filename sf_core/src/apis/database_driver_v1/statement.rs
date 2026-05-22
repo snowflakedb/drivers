@@ -1,5 +1,6 @@
 use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::sync::Mutex;
+use tracing::Instrument;
 
 use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
@@ -201,39 +202,44 @@ pub struct PrepareResult {
 
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-        let result = self
-            .execute_query_internal(stmt_handle, None, Some(true), None)
-            .await?;
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
+        async {
+            let result = self
+                .execute_query_internal(stmt_handle, None, Some(true), None)
+                .await?;
 
-        // Multi-statement query prepare is not supported.
-        let ExecuteQueryResult::Single(rs_info) = result else {
-            return Err(InvalidArgumentSnafu {
-                argument: "Multi-statement queries cannot be prepared".to_string(),
-            }
-            .build());
-        };
-        let stream = self.result_set_get_stream(rs_info.handle).await?;
-        self.result_set_release(rs_info.handle)?;
+            // Multi-statement query prepare is not supported.
+            let ExecuteQueryResult::Single(rs_info) = result else {
+                return Err(InvalidArgumentSnafu {
+                    argument: "Multi-statement queries cannot be prepared".to_string(),
+                }
+                .build());
+            };
+            let stream = self.result_set_get_stream(rs_info.handle).await?;
+            self.result_set_release(rs_info.handle)?;
 
-        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Statement handle not found".to_string(),
-            }
-            .build()
-        })?;
-        // TODO: re-lock the statement to just copy the query
-        //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
-        let stmt = stmt_ptr.lock().await;
-        let query = stmt.query.clone().unwrap_or_default();
+            let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Statement handle not found".to_string(),
+                }
+                .build()
+            })?;
+            // TODO: re-lock the statement to just copy the query
+            //       consider to carry query text in ExecuteQueryResult to avoid the re-lock
+            let stmt = stmt_ptr.lock().await;
+            let query = stmt.query.clone().unwrap_or_default();
 
-        Ok(PrepareResult {
-            stream,
-            query_id: rs_info.descriptor.query_id,
-            columns: rs_info.descriptor.columns,
-            number_of_binds: rs_info.descriptor.number_of_binds,
-            query,
-            sql_state: rs_info.descriptor.sql_state,
-        })
+            Ok(PrepareResult {
+                stream,
+                query_id: rs_info.descriptor.query_id,
+                columns: rs_info.descriptor.columns,
+                number_of_binds: rs_info.descriptor.number_of_binds,
+                query,
+                sql_state: rs_info.descriptor.sql_state,
+            })
+        }
+        .instrument(crate::snowflake_op_span!("statement_prepare", session_id))
+        .await
     }
 }
 
@@ -244,7 +250,12 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
     ) -> Result<ExecuteQueryResult, ApiError> {
+        let session_id = self.session_id_for_stmt(stmt_handle).await;
         self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
+            .instrument(crate::snowflake_op_span!(
+                "statement_execute_query",
+                session_id
+            ))
             .await
     }
 
@@ -433,41 +444,49 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<ExecuteQueryResult, ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
+        let session_id = self.session_id_for_conn(conn_handle).await;
+        async {
+            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                }
+                .build()
+            })?;
+
+            let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
+            let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
+
+            if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
+                return Ok(multi);
             }
-            .build()
-        })?;
 
-        let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
-        let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-
-        if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
-            return Ok(multi);
-        }
-
-        let rowset_data = match data.command.as_deref() {
-            Some(command) => {
-                let use_s3_regional_url_session_param = conn_ptr
-                    .lock()
+            let rowset_data = match data.command.as_deref() {
+                Some(command) => {
+                    let use_s3_regional_url_session_param = conn_ptr
+                        .lock()
+                        .await
+                        .use_s3_regional_url_session_param()
+                        .await;
+                    perform_put_get_transfer(
+                        command,
+                        &data,
+                        &self.wrapper_presets,
+                        None,
+                        use_s3_regional_url_session_param,
+                    )
                     .await
-                    .use_s3_regional_url_session_param()
-                    .await;
-                perform_put_get_transfer(
-                    command,
-                    &data,
-                    &self.wrapper_presets,
-                    None,
-                    use_s3_regional_url_session_param,
-                )
-                .await
-                .context(QueryResponseProcessingSnafu)?
-            }
-            None => data.into_rowset_data(),
-        };
-        let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
-        Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+                    .context(QueryResponseProcessingSnafu)?
+                }
+                None => data.into_rowset_data(),
+            };
+            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+        }
+        .instrument(crate::snowflake_op_span!(
+            "connection_get_query_result",
+            session_id
+        ))
+        .await
     }
 
     pub async fn connection_abort_query(
@@ -475,23 +494,32 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         query_id: String,
     ) -> Result<(), ApiError> {
-        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            }
-            .build()
-        })?;
+        let session_id = self.session_id_for_conn(conn_handle).await;
+        async {
+            let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+                InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                }
+                .build()
+            })?;
 
-        let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
+            let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
 
-        with_valid_session(&conn_ptr, |token| {
-            let http_client = &http_client;
-            let query_parameters = &query_parameters;
-            let query_id = &query_id;
-            async move {
-                snowflake_abort_query(http_client, query_parameters, token.reveal(), query_id).await
-            }
-        })
+            with_valid_session(&conn_ptr, |token| {
+                let http_client = &http_client;
+                let query_parameters = &query_parameters;
+                let query_id = &query_id;
+                async move {
+                    snowflake_abort_query(http_client, query_parameters, token.reveal(), query_id)
+                        .await
+                }
+            })
+            .await
+        }
+        .instrument(crate::snowflake_op_span!(
+            "connection_abort_query",
+            session_id
+        ))
         .await
     }
 }
