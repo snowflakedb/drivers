@@ -92,7 +92,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     Builder identityBuilder =
         WrapperIdentity.newBuilder()
             .setDriverName("JDBC")
-            .setDriverVersion(determineClientAppVersion());
+            .setDriverVersion(net.snowflake.client.api.driver.SnowflakeDriver.getDriverVersion());
     String runtimeName = System.getProperty("java.vm.name");
     if (runtimeName != null && !runtimeName.trim().isEmpty()) {
       identityBuilder.setLanguageRuntime(runtimeName);
@@ -184,17 +184,6 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
           warning.getCode(),
           warning.getMessage());
     }
-  }
-
-  private String determineClientAppVersion() {
-    Package pkg = SnowflakeConnectionImpl.class.getPackage();
-    if (pkg != null) {
-      String version = pkg.getImplementationVersion();
-      if (version != null && !version.trim().isEmpty()) {
-        return version;
-      }
-    }
-    return "4.0.0";
   }
 
   @Override
