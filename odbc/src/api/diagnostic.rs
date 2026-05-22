@@ -377,6 +377,7 @@ pub fn set_diag_info_from_result(
     let add_from_result = |diagnostic_info: &mut DiagnosticInfo| match result {
         Ok(_) => {}
         Err(OdbcError::DaeRequired { .. }) => {}
+        Err(OdbcError::StillExecuting { .. }) => {}
         Err(error) => {
             diagnostic_info.add_record(error.to_diagnostic_record());
         }

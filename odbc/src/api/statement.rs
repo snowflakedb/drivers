@@ -2,12 +2,13 @@ use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, ConcatNullValueSnafu, CursorAlreadyOpenSnafu,
-    DaeRequiredSnafu, DisconnectedSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
-    NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
-    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
+    ArrowArrayStreamReaderCreationSnafu, AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu,
+    CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu, InvalidAttributeValueSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu,
+    InvalidHandleSnafu, InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, OperationCanceledSnafu, ReadOnlyAttributeSnafu, Required,
+    StatementNotExecutedSnafu, StillExecutingSnafu, UnsupportedAttributeSnafu,
     UnsupportedFeatureSnafu,
 };
 use crate::api::query_type::{QueryType, ResultKind};
@@ -69,7 +70,62 @@ pub fn exec_direct<E: OdbcEncoding>(
 }
 
 fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
+    use crate::api::{AsyncExecState, AsyncOperation, AsyncOutcome, ExecDirectOutcome};
+
     let guard = stmt_from_handle(statement_handle)?;
+
+    // === ASYNC POLL PATH ===
+    {
+        let mut async_lock = guard.async_state.lock();
+        if let Some(ref state) = *async_lock {
+            if state.operation != AsyncOperation::ExecDirect {
+                return crate::api::error::AsyncInProgressSnafu.fail();
+            }
+            if !state.join_handle.is_finished() {
+                return StillExecutingSnafu.fail();
+            }
+            let async_state = async_lock.take().unwrap();
+            drop(async_lock);
+            let outcome = global()
+                .context(OdbcRuntimeSnafu)?
+                .block_on(async |_c| async_state.join_handle.await);
+            let outcome = match outcome {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => {
+                    let mut inner = guard.inner.lock();
+                    if let Some(qid) = e.query_id() {
+                        inner.last_query_id = Some(qid.to_owned());
+                    }
+                    return Err(e);
+                }
+                Err(_join_err) => {
+                    return crate::api::error::InternalSnafu {
+                        message: "async task panicked".to_string(),
+                    }
+                    .fail();
+                }
+            };
+            let AsyncOutcome::ExecDirect(ExecDirectOutcome {
+                response,
+                conn_handle,
+            }) = outcome
+            else {
+                return crate::api::error::InternalSnafu {
+                    message: "unexpected async outcome variant".to_string(),
+                }
+                .fail();
+            };
+            let dbc = guard.conn()?;
+            let mut conn = dbc.connection.lock();
+            let mut inner = guard.inner.lock();
+            update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
+            apply_execute_response(&mut inner, conn_handle, response, ExecutionOrigin::Direct)?;
+            inner.rows_returned = 0;
+            inner.sql_text = None;
+            return Ok(());
+        }
+    }
+
     let dbc = guard.conn()?;
     let mut conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
@@ -121,7 +177,74 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let effective_query =
         apply_limit(statement_text, max_rows).unwrap_or_else(|| statement_text.to_string());
     let multi_statement_count = inner.multi_statement_count;
+    let async_enabled = inner.async_enabled;
 
+    // === ASYNC SPAWN PATH ===
+    if async_enabled {
+        drop(inner);
+        drop(conn);
+
+        let token = CancellationToken::new();
+        let g = global().context(OdbcRuntimeSnafu)?;
+        let client = g.client();
+        let token_clone = token.clone();
+
+        let join_handle = g.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = async {
+                    if multi_statement_count >= 0 {
+                        let mut options = std::collections::HashMap::new();
+                        options.insert(
+                            "multi_statement_count".to_string(),
+                            ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(
+                                    multi_statement_count as i64,
+                                )),
+                            },
+                        );
+                        client.statement_set_options(StatementSetOptionsRequest {
+                            stmt_handle: Some(stmt_handle),
+                            options,
+                        })
+                        .await?;
+                    }
+
+                    client.statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        query: effective_query,
+                    })
+                    .await?;
+
+                    let response = client.statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
+                    })
+                    .await?;
+                    Ok::<_, crate::api::OdbcError>(AsyncOutcome::ExecDirect(ExecDirectOutcome {
+                        response,
+                        conn_handle,
+                    }))
+                } => result,
+            }
+        });
+
+        *guard.async_state.lock() = Some(AsyncExecState {
+            operation: AsyncOperation::ExecDirect,
+            join_handle,
+            cancel_token: token,
+        });
+
+        return StillExecutingSnafu.fail();
+    }
+
+    // === SYNC PATH (unchanged) ===
     let token = CancellationToken::new();
     *guard.active_cancel.lock() = Some(token.clone());
 
@@ -393,6 +516,8 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
 }
 
 fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
+    use crate::api::{AsyncExecState, AsyncOperation, AsyncOutcome, PrepareOutcome};
+
     if statement_handle.is_null() {
         return InvalidHandleSnafu.fail();
     }
@@ -401,6 +526,62 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     }
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let guard = stmt_from_handle(statement_handle)?;
+
+    // === ASYNC POLL PATH ===
+    {
+        let mut async_lock = guard.async_state.lock();
+        if let Some(ref state) = *async_lock {
+            if state.operation != AsyncOperation::Prepare {
+                return crate::api::error::AsyncInProgressSnafu.fail();
+            }
+            if !state.join_handle.is_finished() {
+                return StillExecutingSnafu.fail();
+            }
+            let async_state = async_lock.take().unwrap();
+            drop(async_lock);
+            let outcome = global()
+                .context(OdbcRuntimeSnafu)?
+                .block_on(async |_c| async_state.join_handle.await);
+            let outcome = match outcome {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => return Err(e),
+                Err(_join_err) => {
+                    return crate::api::error::InternalSnafu {
+                        message: "async task panicked".to_string(),
+                    }
+                    .fail();
+                }
+            };
+            let AsyncOutcome::Prepare(PrepareOutcome {
+                number_of_binds,
+                schema,
+            }) = outcome
+            else {
+                return crate::api::error::InternalSnafu {
+                    message: "unexpected async outcome variant".to_string(),
+                }
+                .fail();
+            };
+            let dbc = guard.conn()?;
+            let conn = dbc.connection.lock();
+            let mut inner = guard.inner.lock();
+            inner.ird.desc_count = schema.fields().len() as sql::SmallInt;
+            inner.prepared_param_count = Some(number_of_binds);
+            let max_varchar = conn.numeric_settings.max_varchar_size;
+            inner.ipd.records.retain(|&k, _| k <= number_of_binds);
+            for i in 1..=number_of_binds {
+                inner
+                    .ipd
+                    .records
+                    .entry(i)
+                    .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
+            }
+            inner.sql_text = Some(query.to_string());
+            inner.state.set(StatementState::Prepared { schema });
+            return Ok(());
+        }
+    }
+
     let dbc = guard.conn()?;
     let conn = dbc.connection.lock();
     let _conn_handle = match &conn.state {
@@ -424,7 +605,75 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: query = {query}");
 
     let stmt_handle = guard.stmt_handle;
+    let async_enabled = inner.async_enabled;
 
+    // === ASYNC SPAWN PATH ===
+    if async_enabled {
+        drop(inner);
+        drop(conn);
+
+        let token = CancellationToken::new();
+        let g = global().context(OdbcRuntimeSnafu)?;
+        let client = g.client();
+        let token_clone = token.clone();
+        let query_owned = query.to_string();
+
+        let join_handle = g.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = async {
+                    client.statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        query: query_owned,
+                    })
+                    .await?;
+
+                    let prepare_response = client.statement_prepare(StatementPrepareRequest {
+                        stmt_handle: Some(stmt_handle),
+                    })
+                    .await?;
+
+                    let result = prepare_response.result.required("Result is required")?;
+                    let stream_ptr = result.stream.required("Stream is required")?;
+                    let reader = reader_from_protobuf_stream(stream_ptr)?;
+                    let schema = reader.schema();
+
+                    if result.number_of_binds < 0 {
+                        tracing::warn!(
+                            "prepare: server reported negative bind count ({}), treating as 0",
+                            result.number_of_binds
+                        );
+                    }
+                    let raw_bind_count = result.number_of_binds.max(0);
+                    let param_count = u16::try_from(raw_bind_count).map_err(|_| {
+                        crate::api::error::CountFieldIncorrectSnafu {
+                            reason: format!(
+                                "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
+                                u16::MAX
+                            ),
+                        }
+                        .build()
+                    })?;
+
+                    Ok::<_, crate::api::OdbcError>(AsyncOutcome::Prepare(PrepareOutcome {
+                        number_of_binds: param_count,
+                        schema,
+                    }))
+                } => result,
+            }
+        });
+
+        *guard.async_state.lock() = Some(AsyncExecState {
+            operation: AsyncOperation::Prepare,
+            join_handle,
+            cancel_token: token,
+        });
+
+        return StillExecutingSnafu.fail();
+    }
+
+    // === SYNC PATH ===
     let token = CancellationToken::new();
     *guard.active_cancel.lock() = Some(token.clone());
 
@@ -491,8 +740,73 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 
 /// Execute a prepared statement
 pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
+    use crate::api::{AsyncExecState, AsyncOperation, AsyncOutcome, ExecuteOutcome};
+
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let guard = stmt_from_handle(statement_handle)?;
+
+    // === ASYNC POLL PATH ===
+    {
+        let mut async_lock = guard.async_state.lock();
+        if let Some(ref state) = *async_lock {
+            if state.operation != AsyncOperation::Execute {
+                return crate::api::error::AsyncInProgressSnafu.fail();
+            }
+            if !state.join_handle.is_finished() {
+                return StillExecutingSnafu.fail();
+            }
+            let async_state = async_lock.take().unwrap();
+            drop(async_lock);
+            let outcome = global()
+                .context(OdbcRuntimeSnafu)?
+                .block_on(async |_c| async_state.join_handle.await);
+            let outcome = match outcome {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => {
+                    let mut inner = guard.inner.lock();
+                    if let Some(qid) = e.query_id() {
+                        inner.last_query_id = Some(qid.to_owned());
+                    }
+                    return Err(e);
+                }
+                Err(_join_err) => {
+                    return crate::api::error::InternalSnafu {
+                        message: "async task panicked".to_string(),
+                    }
+                    .fail();
+                }
+            };
+            let AsyncOutcome::Execute(ExecuteOutcome {
+                response,
+                conn_handle,
+                max_rows,
+            }) = outcome
+            else {
+                return crate::api::error::InternalSnafu {
+                    message: "unexpected async outcome variant".to_string(),
+                }
+                .fail();
+            };
+            let dbc = guard.conn()?;
+            let mut inner = guard.inner.lock();
+            let origin = match inner.state.as_ref() {
+                StatementState::Prepared { schema } => ExecutionOrigin::Prepared {
+                    schema: schema.clone(),
+                },
+                StatementState::DdlExecuted { origin, .. }
+                | StatementState::DmlExecuted { origin, .. } => origin.clone(),
+                _ => ExecutionOrigin::Direct,
+            };
+            let mut settings = dbc.connection.lock().numeric_settings;
+            update_numeric_settings(&conn_handle, &mut settings)?;
+            dbc.connection.lock().numeric_settings = settings;
+            apply_execute_response(&mut inner, conn_handle, response, origin)?;
+            inner.rows_returned = 0;
+            inner.last_sent_max_rows = Some(max_rows);
+            return Ok(());
+        }
+    }
+
     let mut inner = guard.inner.lock();
 
     if inner.state.as_ref().is_need_data() {
@@ -563,10 +877,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     let last_sent_max_rows = inner.last_sent_max_rows;
     let sql_text = inner.sql_text.clone();
     let multi_statement_count = inner.multi_statement_count;
+    let async_enabled = inner.async_enabled;
 
-    // Determine the query to send. We must resend whenever max_rows changed
-    // since the last execution: to add/change a LIMIT, or to restore the
-    // original query when a previous LIMIT is cleared.
     let query_to_send: Option<String> = sql_text.as_deref().and_then(|sql| {
         let modified = apply_limit(sql, max_rows);
         let max_rows_changed = last_sent_max_rows != Some(max_rows);
@@ -577,6 +889,72 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         }
     });
 
+    // === ASYNC SPAWN PATH ===
+    if async_enabled {
+        drop(inner);
+
+        let token = CancellationToken::new();
+        let g = global().context(OdbcRuntimeSnafu)?;
+        let client = g.client();
+        let token_clone = token.clone();
+
+        let join_handle = g.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = async {
+                    if multi_statement_count >= 0 {
+                        let mut options = std::collections::HashMap::new();
+                        options.insert(
+                            "multi_statement_count".to_string(),
+                            ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(
+                                    multi_statement_count as i64,
+                                )),
+                            },
+                        );
+                        client.statement_set_options(StatementSetOptionsRequest {
+                            stmt_handle: Some(stmt_handle),
+                            options,
+                        })
+                        .await?;
+                    }
+                    if let Some(query) = query_to_send {
+                        client.statement_set_sql_query(StatementSetSqlQueryRequest {
+                            stmt_handle: Some(stmt_handle),
+                            query,
+                        })
+                        .await?;
+                    }
+                    let response = client.statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                        timeout_seconds: if query_timeout > 0 {
+                            Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                        } else {
+                            None
+                        },
+                    })
+                    .await?;
+                    Ok::<_, crate::api::OdbcError>(AsyncOutcome::Execute(ExecuteOutcome {
+                        response,
+                        conn_handle,
+                        max_rows,
+                    }))
+                } => result,
+            }
+        });
+
+        *guard.async_state.lock() = Some(AsyncExecState {
+            operation: AsyncOperation::Execute,
+            join_handle,
+            cancel_token: token,
+        });
+
+        return StillExecutingSnafu.fail();
+    }
+
+    // === SYNC PATH ===
     let token = CancellationToken::new();
     let _cancel_guard = ActiveCancelGuard::arm(&guard.active_cancel, token.clone());
 
@@ -1754,6 +2132,27 @@ pub fn set_stmt_attr(
             inner.multi_statement_count = val as i16;
             Ok(())
         }
+        StmtAttr::AsyncEnable => {
+            let val = value_ptr as sql::ULen;
+            if guard.async_state.lock().is_some() {
+                return AttributeCannotBeSetNowSnafu { attribute }.fail();
+            }
+            match val {
+                0 => {
+                    inner.async_enabled = false;
+                    Ok(())
+                }
+                1 => {
+                    inner.async_enabled = true;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             UnsupportedAttributeSnafu { attribute }.fail()
@@ -2002,6 +2401,16 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
                 unsafe {
                     *string_length_ptr = size_of::<sql::Integer>() as sql::Integer;
                 }
+            }
+            Ok(())
+        }
+        StmtAttr::AsyncEnable => {
+            let val: sql::ULen = if inner.async_enabled { 1 } else { 0 };
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = val };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
             }
             Ok(())
         }
@@ -2481,17 +2890,18 @@ fn execute_dae(
 pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={:?}", statement_handle);
 
-    // TODO(SNOW-3258918): Cancel async execution.
-    // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
-
-    // TODO(SNOW-3258922): Cancel execution on another thread.
-    // Blocked by: no server-side cancel RPC. When implemented,
-    // cancelling the token resolves the cancelled() future observed
-    // by the executing thread's tokio::select!, aborting the in-flight RPC.
-
     let guard = stmt_from_handle(statement_handle)?;
 
-    // Path 1: cancel in-flight RPC without touching inner.
+    // Path 0: cancel async operation in progress.
+    {
+        let async_lock = guard.async_state.lock();
+        if let Some(ref state) = *async_lock {
+            state.cancel_token.cancel();
+            return Ok(());
+        }
+    }
+
+    // Path 1: cancel in-flight synchronous RPC without touching inner.
     {
         let active = guard.active_cancel.lock();
         if let Some(token) = active.as_ref() {

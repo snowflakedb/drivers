@@ -293,6 +293,10 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
             if guard.inner.lock().state.as_ref().is_need_data() {
                 return crate::api::error::InvalidDuringDaeSnafu.fail();
             }
+            if let Some(state) = guard.async_state.lock().take() {
+                state.cancel_token.cancel();
+                state.join_handle.abort();
+            }
             drop(guard);
             free_statement(handle)
         }

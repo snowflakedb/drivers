@@ -43,6 +43,11 @@ pub fn num_result_cols(
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
     let guard = stmt_from_handle(statement_handle)?;
+
+    if guard.async_state.lock().is_some() {
+        return crate::api::error::AsyncInProgressSnafu.fail();
+    }
+
     let inner = guard.inner.lock();
 
     if inner.state.as_ref().is_need_data() {
