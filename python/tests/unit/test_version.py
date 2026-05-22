@@ -29,6 +29,10 @@ PEP440_RE = re.compile(
 class TestVersionString:
     """Tests for the PEP 440 compliant ``__version__`` string."""
 
+    def test_slack_notification_intentional_failure(self):
+        # SLACK_NOTIFICATION_TEST: remove after Slack integration testing
+        assert False, "SLACK_NOTIFICATION_TEST: intentional failure"
+
     def test_version_is_string(self):
         assert isinstance(__version__, str)
         assert __version__

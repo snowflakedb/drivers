@@ -9,6 +9,12 @@ import org.junit.jupiter.api.Test;
 
 public class MaskedExceptionTest {
 
+  // SLACK_NOTIFICATION_TEST: remove after Slack integration testing
+  @Test
+  public void testSlackNotificationIntentionalFailure() {
+    assertTrue(false, "SLACK_NOTIFICATION_TEST: intentional failure");
+  }
+
   @Test
   public void testMasksMessage() {
     Throwable inner = new Exception("password=abcdef");

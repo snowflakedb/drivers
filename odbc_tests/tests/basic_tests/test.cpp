@@ -14,6 +14,9 @@
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
+// SLACK_NOTIFICATION_TEST: remove after Slack integration testing
+TEST_CASE("SLACK_NOTIFICATION_TEST intentional failure", "[odbc]") { REQUIRE(false); }
+
 TEST_CASE("Test SELECT 1", "[odbc]") {
   std::string connection_string = get_connection_string();
   EnvironmentHandleWrapper env;
