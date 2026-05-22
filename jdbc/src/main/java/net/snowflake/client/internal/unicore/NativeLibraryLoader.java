@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import net.snowflake.client.api.driver.SnowflakeDriver;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 
 /**
  * Loads the {@code libjdbc_bridge} native library for {@link JNICoreTransport}.
@@ -20,8 +22,13 @@ import net.snowflake.client.api.driver.SnowflakeDriver;
  *
  * <p>The JAR-resource path is the default for end users: it works in sandboxed JVMs (e.g. UDFs,
  * BucketFS, Lambda) where host env vars and host filesystem layouts aren't predictable.
+ *
+ * <p>The load runs once, in this class's static initializer. {@link JNICoreTransport} triggers
+ * initialization via {@link #init()} so the native lib is in place before any JNI call.
  */
 final class NativeLibraryLoader {
+
+  private static final SFLogger logger = SFLoggerFactory.getLogger(NativeLibraryLoader.class);
 
   /**
    * Resource directory inside the JAR where {@code copyNativeLib} (build.gradle) places the lib.
@@ -29,9 +36,17 @@ final class NativeLibraryLoader {
   private static final String NATIVE_RESOURCE_DIR =
       "/net/snowflake/client/internal/unicore/native/";
 
+  static {
+    load();
+    logger.info("JDBC driver starting v{}", SnowflakeDriver.getDriverVersion());
+  }
+
   private NativeLibraryLoader() {}
 
-  static void load() {
+  /** No-op; calling this forces class initialization, which runs the static block above. */
+  static void init() {}
+
+  private static void load() {
     String corePath = System.getenv("CORE_PATH");
     if (corePath != null && !corePath.isEmpty()) {
       System.load(corePath);
