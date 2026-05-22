@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class LargeResultSetTests extends SnowflakeIntegrationTestBase {

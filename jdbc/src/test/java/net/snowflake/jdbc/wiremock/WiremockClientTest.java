@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import net.snowflake.jdbc.testutil.HttpTestClient;
-import net.snowflake.jdbc.testutil.HttpTestClient.Response;
+import net.snowflake.jdbc.utils.HttpTestClient;
+import net.snowflake.jdbc.utils.HttpTestClient.Response;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;

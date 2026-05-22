@@ -18,7 +18,7 @@ import java.sql.Types;
 import java.util.stream.Stream;
 import lombok.ToString;
 import lombok.Value;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
