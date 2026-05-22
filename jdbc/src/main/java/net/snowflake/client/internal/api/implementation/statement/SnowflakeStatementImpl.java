@@ -42,9 +42,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   protected long currentUpdateCount = NO_UPDATE_COUNT;
   protected String queryId;
   protected final Set<ResultSet> openResultSets = ConcurrentHashMap.newKeySet();
-  private List<String> childQueryIds;
-  private List<Long> childStatementTypeIds;
-  private int childResultIndex;
+  /** Non-null only while navigating a multi-statement result set sequence. */
+  private MultiStatementState multiState;
 
   public SnowflakeStatementImpl(SnowflakeConnectionImpl connection) {
     this.connection = connection;
@@ -183,29 +182,26 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   }
 
   private void applyMultiStatementResult(MultiStatementResult multi) throws SQLException {
-    childQueryIds = multi.getQueryIdsList();
-    childStatementTypeIds = multi.getStatementTypeIdsList();
-    childResultIndex = 0;
-    queryId = multi.getParent().getQueryId();
-    if (childQueryIds.isEmpty()) {
+    multiState = MultiStatementState.from(multi);
+    queryId = multiState.getParentQueryId();
+    if (multiState.isEmpty()) {
       currentResultSet = null;
       currentUpdateCount = NO_UPDATE_COUNT;
       return;
     }
-    applyChildResult(0);
+    advanceToNextChild();
   }
 
-  private void applyChildResult(int index) throws SQLException {
-    String childQueryId = childQueryIds.get(index);
+  private void advanceToNextChild() throws SQLException {
+    String childQueryId = multiState.advance();
+    int index = multiState.currentIndex();
+
     ResultSetResponse rsResponse = fetchResultSetByQueryId(childQueryId);
     ResultSetDescriptor descriptor = rsResponse.getResultDescriptor();
 
-    // Use statement type from the initial multi-statement response if available,
-    // otherwise fall back to the descriptor from the fetched result set.
     boolean producesResultSet;
-    if (index < childStatementTypeIds.size()) {
-      producesResultSet =
-          StatementTypeClassifier.producesResultSet(childStatementTypeIds.get(index));
+    if (multiState.hasStatementTypeFor(index)) {
+      producesResultSet = multiState.producesResultSet(index);
     } else {
       producesResultSet = StatementTypeClassifier.producesResultSet(descriptor);
     }
@@ -225,9 +221,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     currentResultSet = null;
     currentUpdateCount = NO_UPDATE_COUNT;
     queryId = null;
-    childQueryIds = null;
-    childStatementTypeIds = null;
-    childResultIndex = -1;
+    multiState = null;
   }
 
   private void prepareForExecution() throws SQLException {
@@ -457,24 +451,18 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       openResultSets.add(currentResultSet);
     }
 
-    if (childQueryIds == null || childResultIndex + 1 >= childQueryIds.size()) {
+    if (multiState == null || !multiState.hasMore()) {
       currentResultSet = null;
       currentUpdateCount = NO_UPDATE_COUNT;
       return false;
     }
 
-    childResultIndex++;
-    applyChildResult(childResultIndex);
+    advanceToNextChild();
 
-    // Multi-statement queries return true if the current result is a ResultSet.
-    // For update counts (DML/DDL), return true only if there are more results after this one.
-    // This matches the behavior of the legacy Snowflake JDBC driver.
     if (currentResultSet != null) {
       return true;
     }
-
-    // For update counts, return true if there are more children after this one
-    return childResultIndex + 1 < childQueryIds.size();
+    return multiState.hasMore();
   }
 
   @Override
