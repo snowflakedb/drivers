@@ -168,6 +168,17 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   }
 
   @Override
+  public void setAuthenticator(String authenticator) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.AUTHENTICATOR.getPropertyKey(), authenticator);
+  }
+
+  @Override
+  public void setToken(String token) {
+    this.properties.setProperty(SnowflakeSessionProperty.TOKEN.getPropertyKey(), token);
+  }
+
+  @Override
   public String getUrl() {
     return url;
   }

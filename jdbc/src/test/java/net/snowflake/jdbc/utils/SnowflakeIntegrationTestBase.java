@@ -1,5 +1,8 @@
 package net.snowflake.jdbc.utils;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -7,6 +10,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.UUID;
@@ -149,6 +153,14 @@ public abstract class SnowflakeIntegrationTestBase {
       try (ResultSet resultSet = preparedStatement.executeQuery()) {
         consumer.accept(resultSet);
       }
+    }
+  }
+
+  protected void assertSimpleQuerySucceeds(Connection conn) throws SQLException {
+    try (Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT 1")) {
+      assertTrue(rs.next(), "Result set should have at least one row");
+      assertEquals(1, rs.getInt(1), "SELECT 1 should return 1");
     }
   }
 

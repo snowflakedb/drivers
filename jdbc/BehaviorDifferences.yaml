@@ -21,4 +21,14 @@
 #  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
 #  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
 
-behavior_differences: {}
+behavior_differences:
+  1:
+    name: "DataSource rejects PAT authentication without password"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver's DataSource.getConnection() unconditionally requires a password for all
+      authenticators except SNOWFLAKE_JWT and EXTERNALBROWSER. This prevents PAT (Programmatic
+      Access Token) authentication via DataSource even though setToken() and setAuthenticator()
+      exist. The new driver correctly allows token-based authentication without a password.

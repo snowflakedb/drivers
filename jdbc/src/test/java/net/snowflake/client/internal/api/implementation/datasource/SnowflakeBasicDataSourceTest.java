@@ -220,4 +220,20 @@ public class SnowflakeBasicDataSourceTest {
     assertEquals("myaccount", freshProps.getProperty("account"));
     assertNull(freshProps.getProperty("injected"));
   }
+
+  @Test
+  public void testSetAuthenticatorStoresProperty() {
+    dataSource.setAuthenticator("PROGRAMMATIC_ACCESS_TOKEN");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("PROGRAMMATIC_ACCESS_TOKEN", props.getProperty("authenticator"));
+  }
+
+  @Test
+  public void testSetTokenStoresProperty() {
+    dataSource.setToken("my_pat_token_value");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("my_pat_token_value", props.getProperty("token"));
+  }
 }
