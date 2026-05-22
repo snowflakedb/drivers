@@ -13,9 +13,10 @@ Subcommands
 ``assign``
     Pick a random reviewer for a single PR.
 
-    The candidate pool is derived from ``.github/reviewers`` (or
-    another path via ``REVIEWERS_PATH``) keyed by *PR label*: each
-    rule has the form ``<label> @login1 @login2 ...`` and contributes
+    The candidate pool is derived from ``.github/reviewers.yml`` (or
+    another path via ``REVIEWERS_PATH``). The file declares a
+    ``reviewers`` map of GitHub login -> per-user preferences and a
+    ``rules`` map of PR-label -> ``[logins]``; each rule contributes
     its reviewers when the PR carries that label. Reviewers are
     unioned across every matched rule so a PR labeled both ``python``
     and ``odbc`` pools the experts of each domain. When *no* PR label
@@ -28,8 +29,12 @@ Subcommands
     straight from the PR payload — no extra API call is required.
 
     The PR author and any user already requested for review are
-    excluded from the pool. Candidates whose Slack status currently
-    signals out-of-office (see :data:`_OOO_STATUS_EMOJIS` /
+    excluded from the pool. Per-user Slack opt-outs (``notify`` /
+    ``remind``) deliberately do *not* prune the pool — every declared
+    reviewer is always assignable; ``notify: false`` only suppresses
+    the channel announcement after the GitHub assignment has been
+    made (see below). Candidates whose Slack status currently signals
+    out-of-office (see :data:`_OOO_STATUS_EMOJIS` /
     :data:`_OOO_TEXT_REGEX`) are dropped before the random pick —
     unless the OOO filter would empty the pool, in which case the
     unfiltered list is used so the PR is never left without a
@@ -42,9 +47,13 @@ Subcommands
     endpoints ``POST /pulls/:n/requested_reviewers`` and
     ``POST /issues/:n/assignees`` (we avoid ``gh pr edit`` because its
     GraphQL mutation fails on the deprecated ``projectCards`` field).
-    Then writes a Slack payload describing the assignment to
+    Then, if the picked reviewer's ``notify`` pref is true (the
+    default), writes a Slack payload describing the assignment to
     ``$SLACK_PAYLOAD_FILE`` so the next workflow step can post it via
-    ``slackapi/slack-github-action``.
+    ``slackapi/slack-github-action``. ``notify: false`` skips just
+    that channel post — the GitHub-side review request and assignee
+    call have already happened, so the reviewer is still notified by
+    GitHub.
 
     Designed to be run from a ``pull_request_target`` workflow on the
     ``opened`` and ``ready_for_review`` activity types. Drafts are skipped.
@@ -76,6 +85,13 @@ Subcommands
     requests so they don't keep cluttering the queue when they
     return. PRs where every "actionable" person turned out to be
     OOO and no substitute could be found drop out of the digest.
+
+    After OOO substitution, reviewers with ``remind: false`` in the
+    YAML are hidden from each PR's displayed reviewer list (they
+    still receive GitHub's own review-request notification — the
+    flag only suppresses the recurring Slack ping). PRs whose only
+    remaining requested reviewer has opted out of reminder pings
+    drop out of the digest entirely.
 
     Scheduled posts (``GH_EVENT_NAME=schedule``) are suppressed during
     Warsaw quiet hours (``QUIET_HOURS_START``..``QUIET_HOURS_END``,
@@ -131,8 +147,8 @@ Assign-only environment variables
     Pull request number to operate on.
 
 ``REVIEWERS_PATH`` (optional)
-    Path to the reviewer-pool file to parse. Defaults to
-    ``.github/reviewers``.
+    Path to the reviewer-pool YAML file to parse. Defaults to
+    ``.github/reviewers.yml``.
 
 Reviewer display names
 ----------------------
@@ -174,10 +190,27 @@ from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+import yaml
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("pr-review-bot")
 
-DEFAULT_REVIEWERS_PATH = Path(".github/reviewers")
+DEFAULT_REVIEWERS_PATH = Path(".github/reviewers.yml")
+
+# Default per-reviewer preferences. Both opt-out flags default to True
+# so the typical YAML entry is just the login key with a null value.
+# Both flags only control the bot's *Slack* behaviour — every declared
+# reviewer is always part of the random-pick pool, and being picked
+# always triggers the GitHub-side review-request + assignee API call.
+#
+# ``notify``
+#     Post the channel announcement when this user is picked as the
+#     initial reviewer for a new PR. ``False`` suppresses that one
+#     Slack post; the GitHub assignment still happens.
+# ``remind``
+#     Appear in the recurring reminder digest for PRs waiting on this
+#     user. ``False`` hides the user from those digest entries.
+_DEFAULT_PREFS = {"notify": True, "remind": True}
 
 # Review states that mean the reviewer has taken action on the PR.
 # ``COMMENTED`` is included so a plain comment-review counts the same as
@@ -484,73 +517,218 @@ def github_commit_author(repo: str, login: str) -> tuple[str | None, str | None]
 # rule's reviewers would simply also fire — semantically harmless.
 FALLBACK_KEY = "all"
 ReviewerRules = list[tuple[str, list[str]]]
+# Per-reviewer preferences keyed by lowercased GitHub login. Each value
+# is a fully-resolved dict (defaults filled in) mirroring
+# :data:`_DEFAULT_PREFS`. Lookups against this map should always go
+# through :func:`get_pref` so unknown logins (e.g. listed under a rule
+# but not declared under ``reviewers``) gracefully fall back to the
+# defaults.
+ReviewerPrefs = dict[str, dict[str, bool]]
 
 
-def parse_reviewers(path: Path = DEFAULT_REVIEWERS_PATH) -> ReviewerRules:
-    """Parse the bot's reviewer pool, keyed by PR label.
+def _coerce_pref_value(raw: Any, login: str, key: str, source: Path) -> bool:
+    """Return a clean ``bool`` for a single pref field, with logging.
 
-    Each non-empty, non-comment line is::
+    YAML's ``safe_load`` already produces ``True`` / ``False`` for
+    canonical booleans, but we keep this helper so the parser is
+    forgiving of close-but-wrong values (e.g. the string ``"yes"``)
+    while still surfacing a warning when the source file is malformed.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered in {"true", "yes", "on", "1"}:
+            return True
+        if lowered in {"false", "no", "off", "0"}:
+            return False
+    log.warning(
+        "Ignoring non-boolean value %r for %s.%s in %s; using default %r.",
+        raw,
+        login,
+        key,
+        source,
+        _DEFAULT_PREFS[key],
+    )
+    return _DEFAULT_PREFS[key]
 
-        <label>   @login1 @login2 ...
 
-    where ``<label>`` matches a GitHub label name on the PR
-    (case-insensitively) — e.g. ``jdbc``, ``odbc``, ``python``,
-    ``nodejs``. The reserved key ``all`` (see :data:`FALLBACK_KEY`)
-    defines the fallback pool used when *no* PR label matches a rule.
-    Blank lines and ``#`` comments are ignored. Team references
-    (``@org/team-slug``) are rejected — the bot deliberately avoids
-    the ``read:org`` scope.
+def parse_reviewers(
+    path: Path = DEFAULT_REVIEWERS_PATH,
+) -> tuple[ReviewerRules, ReviewerPrefs]:
+    """Parse the bot's YAML reviewer configuration.
 
-    Returns an ordered ``list[tuple[label, [logins]]]``. Order is
-    preserved purely for stable logging / deterministic random pick;
-    label matching itself is set-based.
+    The file has two top-level keys:
+
+    ``reviewers``
+        Map of GitHub login -> per-user preference object. The value
+        may be ``null`` (use defaults) or a mapping with any of:
+
+        * ``notify`` (bool, default ``True``) — post the assignment
+          announcement to the Slack channel when this user is picked
+          as the initial reviewer for a new PR. Setting ``False``
+          suppresses that one channel post; the GitHub-side review
+          request and assignee call still happen, so the user
+          remains fully assignable.
+        * ``remind`` (bool, default ``True``) — appear in the Slack
+          reminder digest for PRs waiting on this user.
+
+    ``rules``
+        Map of PR-label name (case-insensitive) -> list of reviewer
+        logins. The reserved label :data:`FALLBACK_KEY` (``all``)
+        defines the fallback bucket used when no PR label matches any
+        rule. Team references (``org/team-slug``) are rejected — the
+        bot deliberately avoids the ``read:org`` scope.
+
+    Returns ``(rules, prefs)``. ``rules`` is the ordered
+    ``list[tuple[label, [logins]]]`` (file-order preserved for stable
+    logging and reproducible random picks); ``prefs`` is a dict
+    mapping *lowercased* login -> resolved preference dict with all
+    defaults filled in.
+
+    Logins referenced under ``rules`` but missing from ``reviewers``
+    are accepted — the lookup falls back to the defaults so the rules
+    file still functions even if a freshly-added reviewer hasn't been
+    declared yet — but a warning is emitted so the omission gets
+    fixed.
     """
     if not path.exists():
         raise FileNotFoundError(f"Reviewers file not found at {path}")
 
-    rules: ReviewerRules = []
+    raw = yaml.safe_load(path.read_text())
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"{path}: top-level YAML must be a mapping with `reviewers` "
+            f"and `rules` keys."
+        )
 
-    for lineno, raw_line in enumerate(path.read_text().splitlines(), start=1):
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
+    raw_reviewers = raw.get("reviewers") or {}
+    raw_rules = raw.get("rules") or {}
+    if not isinstance(raw_reviewers, dict):
+        raise ValueError(
+            f"{path}: `reviewers` must be a mapping of login -> prefs."
+        )
+    if not isinstance(raw_rules, dict):
+        raise ValueError(
+            f"{path}: `rules` must be a mapping of label -> [logins]."
+        )
+
+    prefs: ReviewerPrefs = {}
+    for login, value in raw_reviewers.items():
+        if not isinstance(login, str) or not login:
+            log.warning("Ignoring non-string reviewer key %r in %s.", login, path)
             continue
-        tokens = line.split()
-        label, owner_tokens = tokens[0], tokens[1:]
-        owners: list[str] = []
-        for tok in owner_tokens:
-            if not tok.startswith("@"):
+        if "/" in login:
+            log.warning(
+                "Ignoring team-style reviewer %r in %s; list individual "
+                "logins only (the bot avoids the read:org scope).",
+                login,
+                path,
+            )
+            continue
+        resolved = dict(_DEFAULT_PREFS)
+        if value is None:
+            pass
+        elif isinstance(value, dict):
+            for key in _DEFAULT_PREFS:
+                if key in value:
+                    resolved[key] = _coerce_pref_value(value[key], login, key, path)
+            unknown = set(value.keys()) - set(_DEFAULT_PREFS)
+            if unknown:
                 log.warning(
-                    "Ignoring malformed owner %r on line %d of %s (expected @login).",
-                    tok,
-                    lineno,
+                    "Ignoring unknown pref key(s) %s for %s in %s.",
+                    sorted(unknown),
+                    login,
                     path,
                 )
-                continue
-            handle = tok[1:]
-            if "/" in handle:
-                log.warning(
-                    "Ignoring team reference %r on line %d of %s; "
-                    "list individual @logins only.",
-                    tok,
-                    lineno,
-                    path,
-                )
-                continue
-            owners.append(handle)
+        else:
+            log.warning(
+                "Ignoring non-mapping prefs value for %s in %s: %r",
+                login,
+                path,
+                value,
+            )
+        prefs[login.lower()] = resolved
 
-        # Dedupe within a single line while preserving order, in case the
-        # file accidentally lists the same person twice on one rule.
+    rules: ReviewerRules = []
+    for label, owners in raw_rules.items():
+        if not isinstance(label, str) or not label:
+            log.warning("Ignoring non-string rule label %r in %s.", label, path)
+            continue
+        if not isinstance(owners, list):
+            log.warning(
+                "Ignoring rule %r in %s: value must be a list of logins, got %r.",
+                label,
+                path,
+                type(owners).__name__,
+            )
+            continue
         deduped: list[str] = []
         seen: set[str] = set()
         for handle in owners:
+            if not isinstance(handle, str) or not handle:
+                log.warning(
+                    "Ignoring non-string login %r under rule %r in %s.",
+                    handle,
+                    label,
+                    path,
+                )
+                continue
+            if "/" in handle:
+                log.warning(
+                    "Ignoring team reference %r under rule %r in %s; "
+                    "list individual logins only.",
+                    handle,
+                    label,
+                    path,
+                )
+                continue
             key = handle.lower()
             if key in seen:
                 continue
             seen.add(key)
+            if key not in prefs:
+                log.warning(
+                    "Login %r under rule %r in %s is not declared under "
+                    "`reviewers`; using default prefs.",
+                    handle,
+                    label,
+                    path,
+                )
             deduped.append(handle)
         rules.append((label, deduped))
 
-    return rules
+    return rules, prefs
+
+
+def get_pref(prefs: ReviewerPrefs, login: str, key: str) -> bool:
+    """Return the *key* preference for *login*, defaulting safely.
+
+    Lookups are case-insensitive on the login. Logins not present in
+    *prefs* (e.g. referenced from a rule but never declared under
+    ``reviewers``) inherit the defaults from :data:`_DEFAULT_PREFS`.
+    """
+    return prefs.get(login.lower(), _DEFAULT_PREFS).get(
+        key, _DEFAULT_PREFS[key]
+    )
+
+
+def filter_by_pref(
+    candidates: Iterable[str], prefs: ReviewerPrefs, key: str
+) -> list[str]:
+    """Drop reviewers whose *key* preference is False.
+
+    Currently used to honour ``remind: false`` when building the
+    reminder digest's displayed reviewer list — opted-out users are
+    excluded from the rendered Block Kit message even though they
+    remain on the PR's GitHub-side requested-reviewers list. The
+    helper is intentionally generic so future per-user Slack opt-outs
+    can reuse it. Order from *candidates* is preserved so callers
+    that care about determinism still get it.
+    """
+    return [c for c in candidates if get_pref(prefs, c, key)]
 
 
 def select_candidates(
@@ -1100,7 +1278,7 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
     log.info("Reading reviewer pool from %s ...", reviewers_path)
     try:
-        rules = parse_reviewers(reviewers_path)
+        rules, prefs = parse_reviewers(reviewers_path)
     except FileNotFoundError as e:
         log.error("%s. Aborting assign.", e)
         return 1
@@ -1156,6 +1334,13 @@ def cmd_assign(args: argparse.Namespace) -> int:
         ", ".join(candidates),
     )
 
+    # Note: per-reviewer opt-outs (`notify`, `remind`) intentionally
+    # do NOT prune the candidate pool here. Every declared reviewer
+    # is always assignable; the opt-outs only suppress the
+    # corresponding Slack pings (see the post-pick `notify` check
+    # below for assign mode, and the digest filter in `cmd_remind`
+    # for the reminder pass).
+
     # Build the display/OOO resolver early so we can pre-filter the
     # candidate pool by Slack status. The resolver caches per-login
     # lookups, so reusing it later for the picked reviewer's mention
@@ -1181,6 +1366,22 @@ def cmd_assign(args: argparse.Namespace) -> int:
         reviewer,
         pr_number,
     )
+
+    # Per-reviewer opt-out: a reviewer can set ``notify: false`` in
+    # .github/reviewers.yml to suppress the channel announcement when
+    # they're picked as the initial reviewer. The GitHub assignment
+    # has already happened above, so they still get GitHub's native
+    # review-request notification — only the Slack channel post is
+    # skipped.
+    if not get_pref(prefs, reviewer, "notify"):
+        log.info(
+            "Reviewer %s opted out of initial Slack notification "
+            "(notify: false); skipping channel post for PR #%d.",
+            reviewer,
+            pr_number,
+        )
+        set_gh_output("skip", "true")
+        return 0
 
     if not (channel and payload_file):
         log.info(
@@ -1426,7 +1627,10 @@ def _swap_ooo_reviewers(
        the assign path) excluding the author and anyone already
        requested. Add them via ``gh_pr_assign`` and retract the OOO
        requests via ``gh_pr_remove_reviewer``. The Slack digest then
-       shows only the substitute.
+       shows only the substitute. Per-reviewer Slack opt-outs
+       (``notify`` / ``remind``) deliberately do not prune this pool
+       — every declared reviewer is assignable and the opt-outs only
+       affect downstream Slack pings.
 
     If no non-OOO substitute exists in case (3) the OOO reviewers are
     left as-is and the digest falls back to displaying them with OOO
@@ -1631,18 +1835,20 @@ def cmd_remind(args: argparse.Namespace) -> int:
     # Load the reviewer rules early so the OOO-swap pass below can
     # consult them. Missing/empty file disables swapping (we still
     # post the reminder; OOO reviewers just stay in the digest with
-    # their markers).
+    # their markers). Per-reviewer prefs are also loaded here so the
+    # ``remind: false`` opt-out can be honoured before display.
     reviewers_path = Path(
         os.environ.get("REVIEWERS_PATH") or DEFAULT_REVIEWERS_PATH
     )
     try:
-        rules = parse_reviewers(reviewers_path)
+        rules, prefs = parse_reviewers(reviewers_path)
     except FileNotFoundError:
         log.warning(
             "Reviewers file not found at %s; OOO substitution disabled.",
             reviewers_path,
         )
         rules = []
+        prefs = {}
 
     log.info("Listing open PRs in %s ...", repo)
     prs = list_open_prs(repo)
@@ -1694,6 +1900,37 @@ def cmd_remind(args: argparse.Namespace) -> int:
             log.info(
                 "All PRs were covered after the OOO-swap pass (nothing actionable "
                 "left for humans); not writing Slack payload."
+            )
+            set_gh_output("skip", "true")
+            return 0
+
+    # Honour per-reviewer ``remind: false`` opt-outs: hide those users
+    # from each entry's displayed reviewer list. PRs whose only
+    # remaining requested reviewer opted out of digest pings drop out
+    # of the digest entirely — the user is expected to track those
+    # PRs through GitHub directly. The OOO swap above already saw the
+    # full list (so a remind-opted-out reviewer can still keep a PR
+    # from being marked "uncovered" and triggering an OOO substitute
+    # pick).
+    if prefs:
+        for entry in awaiting:
+            visible = filter_by_pref(entry.get("requested") or [], prefs, "remind")
+            hidden = [
+                u for u in (entry.get("requested") or []) if u not in visible
+            ]
+            if hidden:
+                log.info(
+                    "PR #%d: hiding %d reviewer(s) opted out of digest pings: %s",
+                    entry["number"],
+                    len(hidden),
+                    ", ".join(hidden),
+                )
+            entry["requested"] = visible
+        awaiting = [e for e in awaiting if e.get("requested")]
+        if not awaiting:
+            log.info(
+                "Every PR's remaining reviewers have opted out of digest "
+                "pings; not writing Slack payload."
             )
             set_gh_output("skip", "true")
             return 0

@@ -1,0 +1,118 @@
+# Reviewer pool for the PR review bot (see .github/workflows/pr-review-bot.yml
+# and scripts/pr_review_bot.py).
+#
+# Two top-level sections:
+#
+#   reviewers:
+#     Map of GitHub login -> per-user preferences. The value may be
+#     null (use all defaults) or a mapping with any of:
+#
+#       notify  Post the assignment notification to #drivers-review
+#               when this user is picked as the initial reviewer for
+#               a new PR. Set to false to suppress the channel ping
+#               for that specific assignment — the user is still
+#               randomly assignable like everyone else and still
+#               receives GitHub's native review-request notification
+#               on the PR itself; only the Slack channel post is
+#               skipped.
+#               Default: true.
+#       remind  Appear in the Slack reminder digest for PRs that are
+#               waiting on a review from this user. Set to false to
+#               keep the user out of recurring channel pings — they
+#               still get GitHub's native review-request notification
+#               when assigned.
+#               Default: true.
+#
+#     Both flags default to true, so the typical entry is just the
+#     login key with a null value. Set either flag explicitly to opt
+#     out of that specific surface independently of the other. Note
+#     that *every* declared reviewer is part of the random-pick pool;
+#     the opt-outs only suppress the corresponding Slack pings, never
+#     the GitHub assignment itself.
+#
+#   rules:
+#     Map of PR-label name (case-insensitive) -> list of eligible
+#     reviewer logins. Every login listed here must also appear under
+#     `reviewers`. Team references (`@org/team-slug`) are NOT
+#     supported — the bot deliberately does not request the
+#     `read:org` scope. The reserved label `all` defines the fallback
+#     bucket and is not expected to ever match a real PR label.
+#
+# Selection algorithm:
+#
+#   1. The bot reads the PR's labels (e.g. `python`, `odbc`).
+#   2. Every rule whose label is on the PR contributes its reviewers
+#      to the candidate pool (union across matched rules — a PR
+#      labeled both `python` and `odbc` pools the experts of each).
+#   3. If no rule matched, the pool is the union of every reviewer
+#      across every rule, including the `all` rule. This spreads
+#      unlabeled PRs across the whole roster instead of concentrating
+#      them on the small `all` bucket. The `all` rule is still useful
+#      as a place to list reviewers (e.g. team leads) who are happy
+#      to review anything but don't otherwise appear under a domain
+#      label.
+#   4. PR author, already-requested reviewers, and anyone whose
+#      Slack status currently signals OOO are removed (the OOO
+#      filter no-ops if it would empty the pool, so a PR is never
+#      left unassigned). The `notify` opt-out does NOT affect the
+#      pool — every declared reviewer remains assignable.
+#   5. One reviewer is picked at random.
+#   6. The picked reviewer is requested + assigned via the GitHub
+#      REST API. Then, if and only if their `notify` pref is true
+#      (the default), the bot writes the Slack channel payload that
+#      announces the assignment. `notify: false` skips that one
+#      channel post; the GitHub-side review request is unchanged.
+#
+# Reminder digest behaviour:
+#
+#   * Reviewers with `remind: false` never appear in the Slack
+#     reminder digest. PRs whose only requested reviewer has opted
+#     out drop out of the digest entirely; the reviewer is expected
+#     to track such PRs through GitHub directly.
+#
+# .github/CODEOWNERS is independent: it stays on the team alias so
+# GitHub's native code-owner request fires once against the whole
+# team. Domain-specific routing for the bot lives here.
+
+reviewers:
+  sfc-gh-daniszewski:
+  sfc-gh-boler:
+  sfc-gh-dheyman:
+  sfc-gh-rkowalski:
+  sfc-gh-rsavenok:
+  sfc-gh-pbulawa:
+  sfc-gh-mcepiga:
+  sfc-gh-mhofman:
+  sfc-gh-jszczerbinski:
+  sfc-gh-ddas:
+  sfc-gh-makowalski:
+  sfc-gh-asolarski:
+  sfc-gh-fpawlowski:
+  sfc-gh-pczajka:
+  sfc-gh-turbaszek:
+
+rules:
+  all:
+    - sfc-gh-daniszewski
+    - sfc-gh-boler
+  jdbc:
+    - sfc-gh-asolarski
+    - sfc-gh-dheyman
+    - sfc-gh-rkowalski
+  nodejs:
+    - sfc-gh-rsavenok
+    - sfc-gh-rkowalski
+    - sfc-gh-pbulawa
+  odbc:
+    - sfc-gh-mcepiga
+    - sfc-gh-mhofman
+    - sfc-gh-jszczerbinski
+    - sfc-gh-ddas
+    - sfc-gh-makowalski
+    - sfc-gh-rkowalski
+    - sfc-gh-pbulawa
+  python:
+    - sfc-gh-asolarski
+    - sfc-gh-fpawlowski
+    - sfc-gh-pczajka
+    - sfc-gh-turbaszek
