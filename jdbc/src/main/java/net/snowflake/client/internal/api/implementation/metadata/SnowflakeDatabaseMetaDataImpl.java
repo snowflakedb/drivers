@@ -85,7 +85,7 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public String getDatabaseProductVersion() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return connection.getDatabaseVersion();
   }
 
   @Override

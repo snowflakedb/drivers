@@ -110,7 +110,7 @@ public class SnowflakeDriver implements Driver {
    * Returns the {@code index}-th dot-separated component as a non-negative int, or {@code 0} when
    * absent or non-numeric (e.g. {@code "0-SNAPSHOT"} yields {@code 0}).
    */
-  static int parseVersionComponent(String version, int index) {
+  public static int parseVersionComponent(String version, int index) {
     if (version == null || index < 0) {
       return 0;
     }

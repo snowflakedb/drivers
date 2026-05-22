@@ -73,6 +73,31 @@ public class SnowflakeConnectionImplTest {
     assertNull(SnowflakeConnectionImpl.toConfigSetting(new Object()));
   }
 
+  @Test
+  public void stripVersionSuffixReturnsInputWhenNoSpace() {
+    assertEquals("8.46.1", SnowflakeConnectionImpl.stripVersionSuffix("8.46.1"));
+  }
+
+  @Test
+  public void stripVersionSuffixDropsBuildSuffix() {
+    assertEquals("8.46.1", SnowflakeConnectionImpl.stripVersionSuffix("8.46.1 abcdef"));
+    assertEquals("8.46.1", SnowflakeConnectionImpl.stripVersionSuffix("8.46.1 a b c"));
+  }
+
+  @Test
+  public void stripVersionSuffixHandlesEmptyAndNull() {
+    assertNull(SnowflakeConnectionImpl.stripVersionSuffix(null));
+    assertEquals("", SnowflakeConnectionImpl.stripVersionSuffix(""));
+    assertEquals("", SnowflakeConnectionImpl.stripVersionSuffix("   "));
+  }
+
+  @Test
+  public void stripVersionSuffixTrimsLeadingAndTrailingWhitespace() {
+    assertEquals("8.46.1", SnowflakeConnectionImpl.stripVersionSuffix(" 8.46.1"));
+    assertEquals("8.46.1", SnowflakeConnectionImpl.stripVersionSuffix("8.46.1 "));
+    assertEquals("8.46.1", SnowflakeConnectionImpl.stripVersionSuffix("  8.46.1 abc  "));
+  }
+
   @Nested
   class Close {
 
