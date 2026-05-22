@@ -1,10 +1,8 @@
 # ⚠️ PRIVATE PREVIEW DISCLAIMER ⚠️
 
-**IMPORTANT:** This release contains a **Private Preview** version of the Snowflake DB driver. By downloading or using this software, you acknowledge and agree to the following conditions:
+**This is a beta version of our Universal Driver intended for Snowflake customers who are subject to Snowflake's Preview Terms.**
 
-- **Restricted Access:** Usage of this driver is strictly limited to participants who are actively enrolled in the official Private Preview program for this specific driver. If you have not been explicitly invited and authorized to participate in this preview, do not download, install, or use this software.
-- **Testing Environments Only:** For authorized Private Preview partners, this driver is provided solely for evaluation, feedback, and testing purposes. It must be deployed exclusively in isolated, non-production environments.
-- **"As-Is" Software:** As a preview release, this driver is still under active development. It may contain bugs, lack features, or undergo significant breaking changes before general availability. It is provided "as-is" without any warranties, service level agreements (SLAs), or official support commitments.
+This driver is not ready for use with production data and may be unstable. Please only use it if you are actively participating in the Universal Driver Private Preview.
 
 ## Development
 
