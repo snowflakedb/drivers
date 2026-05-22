@@ -19,12 +19,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** Basic tests for the Snowflake JDBC Driver */
+/** Basic tests for the Snowflake JDBC Driver. */
 public class SnowflakeDriverTest {
 
   @Test
   public void testDriverRegistration() throws SQLException {
-    // Test that the driver is properly registered
     Driver driver = DriverManager.getDriver("jdbc:snowflake://test.snowflakecomputing.com");
     assertNotNull(driver, "Driver should be registered");
     assertInstanceOf(SnowflakeDriver.class, driver, "Driver should be instance of SnowflakeDriver");

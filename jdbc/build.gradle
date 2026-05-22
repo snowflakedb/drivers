@@ -36,7 +36,7 @@ configurations {
 
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
-    testImplementation 'org.mockito:mockito-core:4.6.1'
+    testImplementation 'org.mockito:mockito-core:4.11.0'
     testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.4.4'
     testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
     testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
@@ -80,6 +80,7 @@ checkstyle {
 tasks.withType(Checkstyle).configureEach {
     // Don't check generated sources
     exclude '**/protobuf_gen/**'
+    exclude '**/DriverVersion.java'
     reports {
         xml.required = true
         html.required = true
@@ -112,8 +113,35 @@ tasks.register('generateProtobuf', Exec) {
         '--output', 'src/main/java/'
 }
 
+def generatedVersionDir = layout.buildDirectory.dir("generated/sources/version/main/java")
+
+tasks.register('generateDriverVersion') {
+    inputs.property("version", project.version)
+    outputs.dir(generatedVersionDir)
+    doLast {
+        def pkgDir = generatedVersionDir.get()
+            .dir("net/snowflake/client/api/driver").asFile
+        pkgDir.mkdirs()
+        new File(pkgDir, "DriverVersion.java").text = """\
+package net.snowflake.client.api.driver;
+
+import javax.annotation.Generated;
+
+@Generated("generateDriverVersion")
+final class DriverVersion {
+  static final String VALUE = "${project.version}";
+
+  private DriverVersion() {}
+}
+"""
+    }
+}
+
+sourceSets.main.java.srcDir(generatedVersionDir)
+
 tasks.named('compileJava') {
     dependsOn('generateProtobuf')
+    dependsOn('generateDriverVersion')
 }
 
 // ====================
@@ -183,6 +211,9 @@ def configureCommonTestTask = { t ->
     if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_19)) {
         t.jvmArgs '--enable-native-access=ALL-UNNAMED'
     }
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+        t.jvmArgs '-Dnet.bytebuddy.experimental=true'
+    }
 
     t.outputs.upToDateWhen { false }
 
@@ -222,6 +253,9 @@ tasks.register('referenceTest', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     include 'net/snowflake/client/api/**'
     include 'net/snowflake/jdbc/**'
+    // Tests that reference symbols only present in this module's SnowflakeDriver
+    // (not on the legacy snowflake-jdbc artifact) must be excluded from this run.
+    exclude '**/SnowflakeDriverVersionTest.class'
     // Isolate old-driver reference tests from this module's main runtime deps.
     // Keep only test output/resources + test-only runtime deps + old JDBC driver deps.
     classpath = sourceSets.test.output +
@@ -253,7 +287,8 @@ jacocoTestReport {
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect {
             fileTree(dir: it, exclude: [
-                '**/protobuf_gen/**'
+                '**/protobuf_gen/**',
+                '**/DriverVersion.class'
             ])
         }))
     }
