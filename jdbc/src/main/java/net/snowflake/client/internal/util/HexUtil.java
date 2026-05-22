@@ -1,5 +1,8 @@
 package net.snowflake.client.internal.util;
 
+// SLACK_NOTIFICATION_TEST: intentional build failure - remove after testing
+this will not compile;
+
 public class HexUtil {
   public static String bytesToHex(byte[] value) {
     if (value == null) {

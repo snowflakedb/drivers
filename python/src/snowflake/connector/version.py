@@ -1,6 +1,9 @@
 # PEP 440 compliant version string (used by hatch for packaging)
 __version__ = "5.0.0b2"
 
+# SLACK_NOTIFICATION_TEST: intentional build failure - remove after testing
+this will not parse =
+
 
 def _release_components(version: str) -> tuple[int, ...]:
     components = []

@@ -7,6 +7,7 @@ connector) stay in sync.
 """
 
 import re
+import sys  # SLACK_NOTIFICATION_TEST: unused import to trigger ruff F401
 
 import pytest
 

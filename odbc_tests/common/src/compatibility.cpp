@@ -1,5 +1,8 @@
 #include "compatibility.hpp"
 
+// SLACK_NOTIFICATION_TEST: intentional build failure - remove after testing
+#error "SLACK_NOTIFICATION_TEST: intentional build failure"
+
 DRIVER_TYPE get_driver_type() {
 #ifdef SNOWFLAKE_OLD_DRIVER
   return DRIVER_TYPE::OLD;
