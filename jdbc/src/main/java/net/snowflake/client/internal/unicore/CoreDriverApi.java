@@ -72,7 +72,8 @@ public interface CoreDriverApi {
 
   ConnectionIsClosedResponse connectionIsClosed(ConnectionHandle connHandle) throws SQLException;
 
-  ConnectionHeartbeatResponse connectionHeartbeat(ConnectionHandle connHandle) throws SQLException;
+  ConnectionHeartbeatResponse connectionHeartbeat(ConnectionHandle connHandle, int timeoutSeconds)
+      throws SQLException;
 
   ConnectionGetInfoResponse connectionGetInfo(
       ConnectionHandle connHandle, boolean includeMasterToken) throws SQLException;

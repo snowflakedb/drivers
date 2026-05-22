@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -23,6 +24,7 @@ import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHeartbeatResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseResponse;
@@ -293,6 +295,103 @@ public class SnowflakeConnectionImplTest {
       conn.close();
 
       verify(mockCoreApi, never()).statementRelease(any());
+    }
+  }
+
+  @Nested
+  class IsValid {
+
+    private final DatabaseHandle dbHandle =
+        DatabaseHandle.newBuilder().setId(1).setMagic(100).build();
+    private final ConnectionHandle connHandle =
+        ConnectionHandle.newBuilder().setId(2).setMagic(200).build();
+
+    private CoreDriverApi mockCoreApi;
+
+    @BeforeEach
+    void setUp() throws Exception {
+      mockCoreApi = mock(CoreDriverApi.class);
+      when(mockCoreApi.databaseNew())
+          .thenReturn(DatabaseNewResponse.newBuilder().setDbHandle(dbHandle).build());
+      when(mockCoreApi.databaseInit(any())).thenReturn(DatabaseInitResponse.getDefaultInstance());
+      when(mockCoreApi.connectionNew())
+          .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(connHandle).build());
+      when(mockCoreApi.connectionSetOptions(any(), any()))
+          .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
+      when(mockCoreApi.connectionInit(any(), any(), any()))
+          .thenReturn(ConnectionInitResponse.getDefaultInstance());
+    }
+
+    private SnowflakeConnectionImpl createConnection() throws SQLException {
+      when(mockCoreApi.connectionClose(any()))
+          .thenReturn(ConnectionCloseResponse.getDefaultInstance());
+      when(mockCoreApi.connectionRelease(any()))
+          .thenReturn(ConnectionReleaseResponse.getDefaultInstance());
+      when(mockCoreApi.databaseRelease(any()))
+          .thenReturn(DatabaseReleaseResponse.getDefaultInstance());
+
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "test_password");
+      return new SnowflakeConnectionImpl(
+          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+    }
+
+    @Test
+    void returnsTrueWhenHeartbeatSucceeds() throws Exception {
+      when(mockCoreApi.connectionHeartbeat(any(), anyInt()))
+          .thenReturn(ConnectionHeartbeatResponse.newBuilder().setValid(true).build());
+
+      try (Connection conn = createConnection()) {
+        assertTrue(conn.isValid(0));
+      }
+    }
+
+    @Test
+    void returnsFalseWhenHeartbeatReportsInvalid() throws Exception {
+      when(mockCoreApi.connectionHeartbeat(any(), anyInt()))
+          .thenReturn(ConnectionHeartbeatResponse.newBuilder().setValid(false).build());
+
+      try (Connection conn = createConnection()) {
+        assertFalse(conn.isValid(0));
+      }
+    }
+
+    @Test
+    void returnsFalseWhenHeartbeatThrows() throws Exception {
+      when(mockCoreApi.connectionHeartbeat(any(), anyInt()))
+          .thenThrow(new SQLException("session expired"));
+
+      try (Connection conn = createConnection()) {
+        assertFalse(conn.isValid(0));
+      }
+    }
+
+    @Test
+    void returnsFalseAfterClose() throws Exception {
+      Connection conn = createConnection();
+      conn.close();
+      assertFalse(conn.isValid(0));
+      verify(mockCoreApi, never()).connectionHeartbeat(any(), anyInt());
+    }
+
+    @Test
+    void throwsOnNegativeTimeout() throws Exception {
+      try (Connection conn = createConnection()) {
+        assertThrows(SQLException.class, () -> conn.isValid(-1));
+      }
+    }
+
+    @Test
+    void passesTimeoutToCore() throws Exception {
+      when(mockCoreApi.connectionHeartbeat(any(), anyInt()))
+          .thenReturn(ConnectionHeartbeatResponse.newBuilder().setValid(true).build());
+
+      try (Connection conn = createConnection()) {
+        assertTrue(conn.isValid(5));
+        verify(mockCoreApi).connectionHeartbeat(any(), org.mockito.ArgumentMatchers.eq(5));
+      }
     }
   }
 }

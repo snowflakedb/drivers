@@ -450,7 +450,19 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
 
   @Override
   public boolean isValid(int timeout) throws SQLException {
-    throw new NotImplementedException();
+    if (timeout < 0) {
+      throw new SQLException("timeout is less than 0");
+    }
+    if (closed.get()) {
+      return false;
+    }
+
+    try {
+      return coreDriverApi.connectionHeartbeat(connectionHandle, timeout).getValid();
+    } catch (Exception e) {
+      logger.debug("isValid check failed", e);
+      return false;
+    }
   }
 
   @Override
