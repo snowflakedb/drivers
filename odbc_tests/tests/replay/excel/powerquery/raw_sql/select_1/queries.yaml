@@ -1,0 +1,4 @@
+queries:
+- index: 0
+  original: SELECT 1;
+  mapped: SELECT 1;

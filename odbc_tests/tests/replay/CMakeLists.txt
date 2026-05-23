@@ -13,3 +13,4 @@ cmake_minimum_required(VERSION 4.0)
 add_odbc_test(replay_iodbctest_select_1 iodbctest/select_1.cpp)
 
 add_subdirectory(datometry)
+add_subdirectory(excel)
