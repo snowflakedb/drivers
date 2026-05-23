@@ -44,7 +44,7 @@ impl ReturnCode {
             "SQL_SUCCESS_WITH_INFO" => Some(Self::SuccessWithInfo),
             "SQL_ERROR" => Some(Self::Error),
             "SQL_INVALID_HANDLE" => Some(Self::InvalidHandle),
-            "SQL_NO_DATA" => Some(Self::NoData),
+            "SQL_NO_DATA" | "SQL_NO_DATA_FOUND" => Some(Self::NoData),
             "SQL_NEED_DATA" => Some(Self::NeedData),
             "SQL_STILL_EXECUTING" => Some(Self::StillExecuting),
             _ => None,
@@ -176,6 +176,29 @@ pub struct SetConnectAttr {
     pub attribute: Option<String>,
     pub value: Option<i64>,
     pub str_len: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetStmtAttr {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub attribute: Option<String>,
+    pub value: Option<i64>,
+    pub str_len: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColAttribute {
+    pub return_code: ReturnCode,
+    pub handle: Option<String>,
+    pub column_number: Option<i64>,
+    pub field_identifier: Option<String>,
+    pub field_identifier_value: Option<i64>,
+    pub buffer_length: Option<i64>,
+    pub string_length: Option<i64>,
+    pub numeric_attribute: Option<i64>,
+    pub numeric_attribute_name: Option<String>,
+    pub character_value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,6 +347,10 @@ pub enum OdbcCall {
     SetEnvAttr(SetEnvAttr),
     #[serde(rename = "SQLSetConnectAttr")]
     SetConnectAttr(SetConnectAttr),
+    #[serde(rename = "SQLSetStmtAttr")]
+    SetStmtAttr(SetStmtAttr),
+    #[serde(rename = "SQLColAttribute")]
+    ColAttribute(ColAttribute),
     #[serde(rename = "SQLDriverConnect")]
     DriverConnect(DriverConnect),
     #[serde(rename = "SQLDisconnect")]
@@ -367,6 +394,8 @@ impl OdbcCall {
             Self::FreeHandle(c) => c.return_code,
             Self::SetEnvAttr(c) => c.return_code,
             Self::SetConnectAttr(c) => c.return_code,
+            Self::SetStmtAttr(c) => c.return_code,
+            Self::ColAttribute(c) => c.return_code,
             Self::DriverConnect(c) => c.return_code,
             Self::Disconnect(c) => c.return_code,
             Self::Prepare(c) => c.return_code,
@@ -393,6 +422,8 @@ impl OdbcCall {
             Self::FreeHandle(_) => "SQLFreeHandle",
             Self::SetEnvAttr(_) => "SQLSetEnvAttr",
             Self::SetConnectAttr(_) => "SQLSetConnectAttr",
+            Self::SetStmtAttr(_) => "SQLSetStmtAttr",
+            Self::ColAttribute(_) => "SQLColAttribute",
             Self::DriverConnect(_) => "SQLDriverConnect",
             Self::Disconnect(_) => "SQLDisconnect",
             Self::Prepare(_) => "SQLPrepare",
@@ -428,6 +459,8 @@ impl OdbcCall {
             Self::FreeHandle(c) => c.handle.as_deref(),
             Self::SetEnvAttr(c) => c.handle.as_deref(),
             Self::SetConnectAttr(c) => c.handle.as_deref(),
+            Self::SetStmtAttr(c) => c.handle.as_deref(),
+            Self::ColAttribute(c) => c.handle.as_deref(),
             Self::DriverConnect(c) => c.handle.as_deref(),
             Self::Disconnect(c) => c.handle.as_deref(),
             Self::Prepare(c) => c.handle.as_deref(),
@@ -465,6 +498,8 @@ impl OdbcCall {
             Self::FreeHandle(c) => resolve(&mut c.handle, map),
             Self::SetEnvAttr(c) => resolve(&mut c.handle, map),
             Self::SetConnectAttr(c) => resolve(&mut c.handle, map),
+            Self::SetStmtAttr(c) => resolve(&mut c.handle, map),
+            Self::ColAttribute(c) => resolve(&mut c.handle, map),
             Self::DriverConnect(c) => resolve(&mut c.handle, map),
             Self::Disconnect(c) => resolve(&mut c.handle, map),
             Self::Prepare(c) => resolve(&mut c.handle, map),
@@ -491,13 +526,16 @@ impl OdbcCall {
         output_params: Vec<Parameter>,
         return_code: ReturnCode,
     ) -> Self {
-        match function_name {
+        let normalized = function_name.strip_suffix('W').unwrap_or(function_name);
+        match normalized {
             "SQLAllocHandle" => raw::build_alloc_handle(input_params, output_params, return_code),
             "SQLFreeHandle" => raw::build_free_handle(input_params, output_params, return_code),
             "SQLSetEnvAttr" => raw::build_set_env_attr(input_params, output_params, return_code),
             "SQLSetConnectAttr" => {
                 raw::build_set_connect_attr(input_params, output_params, return_code)
             }
+            "SQLSetStmtAttr" => raw::build_set_stmt_attr(input_params, output_params, return_code),
+            "SQLColAttribute" => raw::build_col_attribute(input_params, output_params, return_code),
             "SQLDriverConnect" => {
                 raw::build_simple_handle_call(input_params, output_params, return_code, |h, rc| {
                     Self::DriverConnect(DriverConnect {
@@ -587,7 +625,7 @@ impl OdbcCall {
                     raw::first_addr(&input_params).or_else(|| raw::first_addr(&output_params));
                 Self::Unsupported(Unsupported {
                     return_code,
-                    function_name: function_name.to_string(),
+                    function_name: normalized.to_string(),
                     handle,
                 })
             }
@@ -689,6 +727,64 @@ mod raw {
             attribute,
             value,
             str_len,
+        })
+    }
+
+    pub fn build_set_stmt_attr(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&input))
+            .or_else(|| first_addr(&output));
+        let attribute = attr_name(&input).or_else(|| attr_name(&output));
+        let value = pointer_as_int(&input).or_else(|| pointer_as_int(&output));
+        let str_len = int_by_name(&input, "StrLen").or_else(|| int_by_name(&output, "StrLen"));
+        OdbcCall::SetStmtAttr(SetStmtAttr {
+            return_code: rc,
+            handle,
+            attribute,
+            value,
+            str_len,
+        })
+    }
+
+    pub fn build_col_attribute(
+        input: Vec<Parameter>,
+        output: Vec<Parameter>,
+        rc: ReturnCode,
+    ) -> OdbcCall {
+        let handle = addr_by_name(&input, "Statement")
+            .or_else(|| first_addr(&input))
+            .or_else(|| first_addr(&output));
+        let column_number =
+            int_or_named(&input, 1).or_else(|| int_by_name(&input, "Column Number"));
+        let field_identifier = named_const_at(&input, 2)
+            .or_else(|| named_const_by_name(&input, "Field Identifier"))
+            .or_else(|| named_const_at(&output, 2));
+        let field_identifier_value =
+            int_or_named(&input, 2).or_else(|| int_by_name(&input, "Field Identifier"));
+        let buffer_length =
+            int_or_named(&input, 4).or_else(|| int_by_name(&input, "Buffer Length"));
+        let string_length =
+            output_int_at(&output, 5).or_else(|| output_int_by_name(&output, "String Length"));
+        let numeric_attribute =
+            output_int_at(&output, 6).or_else(|| output_int_by_name(&output, "Numeric Attribute"));
+        let numeric_attribute_name =
+            output_named_at(&output, 6).or_else(|| named_const_at(&output, 6));
+        let character_value = first_string(&output);
+        OdbcCall::ColAttribute(ColAttribute {
+            return_code: rc,
+            handle,
+            column_number,
+            field_identifier,
+            field_identifier_value,
+            buffer_length,
+            string_length,
+            numeric_attribute,
+            numeric_attribute_name,
+            character_value,
         })
     }
 
@@ -1163,12 +1259,15 @@ pub struct TraceHeader {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[allow(clippy::enum_variant_names)]
 pub enum TraceFormat {
     #[default]
     #[serde(rename = "iodbc")]
     IOdbc,
     #[serde(rename = "unixodbc")]
     UnixOdbc,
+    #[serde(rename = "winodbc")]
+    WinOdbc,
 }
 
 #[derive(Debug)]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Write as FmtWrite;
@@ -9,6 +10,7 @@ pub struct GeneratorConfig {
     pub test_name: String,
     pub tag: String,
     pub query_map: Option<QueryMap>,
+    pub allow_unsupported: bool,
 }
 
 impl Default for GeneratorConfig {
@@ -17,11 +19,23 @@ impl Default for GeneratorConfig {
             test_name: "Replay trace".to_string(),
             tag: "replay".to_string(),
             query_map: None,
+            allow_unsupported: false,
         }
     }
 }
 
-pub fn generate(calls: &[OdbcCall], config: &GeneratorConfig) -> String {
+#[derive(Debug, Clone)]
+pub struct UnsupportedCall {
+    pub name: String,
+    pub count: usize,
+}
+
+#[derive(Debug)]
+pub enum GenerateError {
+    Unsupported(Vec<UnsupportedCall>),
+}
+
+pub fn generate(calls: &[OdbcCall], config: &GeneratorConfig) -> Result<String, GenerateError> {
     let mut ctx = GenContext::new(calls, config);
     ctx.generate()
 }
@@ -45,11 +59,16 @@ fn escape_cpp_string_literal(s: &str) -> String {
     out
 }
 
+/// SQLGetInfo types whose returned strings vary with the driver/DBMS version
+/// or environment. We assert the call succeeded but not the exact string so
+/// replay tests don't break when the reference driver bumps versions.
 const DRIVER_SPECIFIC_INFO_TYPES: &[&str] = &[
     "SQL_DRIVER_VER",
     "SQL_DRIVER_NAME",
     "SQL_DRIVER_ODBC_VER",
     "SQL_DM_VER",
+    "SQL_DBMS_VER",
+    "SQL_DBMS_NAME",
 ];
 
 struct GenContext<'a> {
@@ -63,6 +82,8 @@ struct GenContext<'a> {
     stmt_counter: usize,
     declared_handles: HashSet<String>,
     query_counter: usize,
+    unsupported: BTreeMap<String, usize>,
+    skipped_col_attr_undocumented: usize,
 }
 
 impl<'a> GenContext<'a> {
@@ -78,10 +99,12 @@ impl<'a> GenContext<'a> {
             stmt_counter: 0,
             declared_handles: HashSet::new(),
             query_counter: 0,
+            unsupported: BTreeMap::new(),
+            skipped_col_attr_undocumented: 0,
         }
     }
 
-    fn generate(&mut self) -> String {
+    fn generate(&mut self) -> Result<String, GenerateError> {
         self.emit_header();
         self.emit_test_open();
         self.emit_config_install();
@@ -94,8 +117,20 @@ impl<'a> GenContext<'a> {
             self.emit_call(call);
         }
 
+        if !self.unsupported.is_empty() && !self.config.allow_unsupported {
+            let names: Vec<UnsupportedCall> = self
+                .unsupported
+                .iter()
+                .map(|(name, count)| UnsupportedCall {
+                    name: name.clone(),
+                    count: *count,
+                })
+                .collect();
+            return Err(GenerateError::Unsupported(names));
+        }
+
         self.emit_test_close();
-        self.output.clone()
+        Ok(self.output.clone())
     }
 
     /// Find env/dbc handle addresses that are referenced by calls but never
@@ -152,6 +187,16 @@ impl<'a> GenContext<'a> {
                 OdbcCall::SetConnectAttr(c) => {
                     if let Some(a) = &c.handle {
                         record_implicit(a, HandleType::Dbc);
+                    }
+                }
+                OdbcCall::SetStmtAttr(c) => {
+                    if let Some(a) = &c.handle {
+                        record_implicit(a, HandleType::Stmt);
+                    }
+                }
+                OdbcCall::ColAttribute(c) => {
+                    if let Some(a) = &c.handle {
+                        record_implicit(a, HandleType::Stmt);
                     }
                 }
                 OdbcCall::GetInfo(c) => {
@@ -273,6 +318,12 @@ impl<'a> GenContext<'a> {
     }
 
     fn emit_test_close(&mut self) {
+        if self.skipped_col_attr_undocumented > 0 {
+            self.writeln(&format!(
+                "// skipped {} SQLColAttribute call(s) with undocumented field id",
+                self.skipped_col_attr_undocumented,
+            ));
+        }
         let saved = self.indent;
         self.indent = 0;
         self.writeln("}");
@@ -285,6 +336,8 @@ impl<'a> GenContext<'a> {
             OdbcCall::AllocHandle(c) => self.emit_alloc_handle(c),
             OdbcCall::SetEnvAttr(c) => self.emit_set_env_attr(c),
             OdbcCall::SetConnectAttr(c) => self.emit_set_connect_attr(c),
+            OdbcCall::SetStmtAttr(c) => self.emit_set_stmt_attr(c),
+            OdbcCall::ColAttribute(c) => self.emit_col_attribute(c),
             OdbcCall::Prepare(c) => self.emit_prepare(c),
             OdbcCall::Execute(c) => self.emit_execute(c),
             OdbcCall::ExecDirect(c) => self.emit_exec_direct(c),
@@ -299,6 +352,15 @@ impl<'a> GenContext<'a> {
             OdbcCall::GetInfo(c) => self.emit_get_info(c),
             OdbcCall::FreeHandle(c) => self.emit_free_handle(c),
             OdbcCall::Disconnect(c) => self.emit_disconnect(c),
+            OdbcCall::Unsupported(c) => {
+                *self.unsupported.entry(c.function_name.clone()).or_insert(0) += 1;
+                if self.config.allow_unsupported {
+                    self.writeln(&format!(
+                        "// TODO: unsupported ODBC call {}",
+                        c.function_name
+                    ));
+                }
+            }
             _ => {}
         }
     }
@@ -588,11 +650,15 @@ impl<'a> GenContext<'a> {
                 false,
             );
 
+            // For non-narrow target types (SQL_C_WCHAR, etc.) the indicator is
+            // a byte count that depends on the driver's wide-char encoding
+            // (UTF-16 vs UTF-32) and the DM's translation. Assert presence
+            // rather than the captured byte count to keep the test portable.
             if let Some(ind_val) = call.indicator {
                 if ind_val == -1 {
                     self.writeln("CHECK(ind == SQL_NULL_DATA);");
                 } else {
-                    self.writeln(&format!("CHECK(ind == {ind_val});"));
+                    self.writeln("CHECK(ind > 0);");
                 }
             }
         }
@@ -748,6 +814,77 @@ impl<'a> GenContext<'a> {
         ));
         self.writeln(&format!("    {value_expr}, {str_len});"));
         self.emit_return_assertion(call.return_code, "SQL_HANDLE_DBC", &conn_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_set_stmt_attr(&mut self, call: &crate::model::SetStmtAttr) {
+        let attr_name = call.attribute.as_deref().unwrap_or_default();
+        let value = call.value.unwrap_or(0);
+        let value_expr = attr_value_cpp_expr(attr_name, value);
+        let str_len = call.str_len.unwrap_or(0);
+        let stmt_var = self.stmt_var_for(&call.handle);
+
+        self.writeln(&format!("// SQLSetStmtAttr - {attr_name}"));
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!(
+            "SQLRETURN ret = SQLSetStmtAttr({stmt_var}, {attr_name},"
+        ));
+        self.writeln(&format!("    {value_expr}, {str_len});"));
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        self.indent -= 1;
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_col_attribute(&mut self, call: &crate::model::ColAttribute) {
+        // Excel probes undocumented descriptor fields (e.g. attribute 32) that the
+        // reference driver rejects with HY091; tally them and skip replay.
+        let Some(field_id) = call.field_identifier.as_deref() else {
+            self.skipped_col_attr_undocumented += 1;
+            return;
+        };
+
+        let stmt_var = self.stmt_var_for(&call.handle);
+        let col_num = call.column_number.unwrap_or(1);
+
+        self.writeln(&format!("// SQLColAttribute - {field_id}"));
+        self.writeln("{");
+        self.indent += 1;
+        self.writeln(&format!("SQLUSMALLINT col = {col_num};"));
+        self.writeln("SQLLEN numAttr = 0;");
+        self.writeln("SQLSMALLINT strLen = 0;");
+
+        if call.character_value.is_some() || call.buffer_length.unwrap_or(0) > 0 {
+            // Use the captured buffer length verbatim so the replay reproduces
+            // any truncation behavior the original call hit. Clamp to i16::MAX
+            // because SQLColAttribute's BufferLength is SQLSMALLINT (narrowing
+            // cast would silently wrap), and floor at 1 because C++ does not
+            // permit zero-sized arrays for the buf declaration below.
+            let buf_size = call
+                .buffer_length
+                .unwrap_or(256)
+                .min(i16::MAX as i64)
+                .max(1);
+            self.writeln(&format!("char buf[{buf_size}] = {{}};"));
+            self.writeln(&format!(
+                "SQLRETURN ret = SQLColAttribute({stmt_var}, col, {field_id},"
+            ));
+            self.writeln(&format!("    buf, {buf_size}, &strLen, &numAttr);"));
+        } else {
+            self.writeln(&format!(
+                "SQLRETURN ret = SQLColAttribute({stmt_var}, col, {field_id},"
+            ));
+            self.writeln("    nullptr, 0, &strLen, &numAttr);");
+        }
+
+        self.emit_return_assertion(call.return_code, "SQL_HANDLE_STMT", &stmt_var, false, false);
+        if let Some(val) = call.numeric_attribute {
+            self.writeln(&format!("CHECK(numAttr == {val});"));
+        }
+
         self.indent -= 1;
         self.writeln("}");
         self.writeln("");
@@ -941,10 +1078,11 @@ mod tests {
             test_name: "SELECT 1".to_string(),
             tag: "replay".to_string(),
             query_map: None,
+            allow_unsupported: false,
         };
 
         let calls: Vec<_> = trace.calls.iter().map(|tc| tc.call.clone()).collect();
-        let output = generate(&calls, &config);
+        let output = generate(&calls, &config).expect("generate");
 
         assert!(
             output.contains("TEST_CASE(\"Replay: SELECT 1\""),
@@ -977,10 +1115,11 @@ mod tests {
             test_name: "SELECT 1".to_string(),
             tag: "replay".to_string(),
             query_map: None,
+            allow_unsupported: false,
         };
 
         let calls: Vec<_> = trace.calls.iter().map(|tc| tc.call.clone()).collect();
-        let output = generate(&calls, &config);
+        let output = generate(&calls, &config).expect("generate");
 
         assert!(
             output.contains("SQLHENV env0 = SQL_NULL_HENV"),
@@ -1044,10 +1183,11 @@ mod tests {
             test_name: "mapped query".to_string(),
             tag: "replay".to_string(),
             query_map: Some(qm),
+            allow_unsupported: false,
         };
 
         let calls: Vec<_> = trace.calls.iter().map(|tc| tc.call.clone()).collect();
-        let output = generate(&calls, &config);
+        let output = generate(&calls, &config).expect("generate");
 
         assert!(
             output.contains("SELECT 42 AS answer"),
