@@ -422,6 +422,19 @@ message ConnectionGetAllParametersResponse {
   map<string, string> parameters = 1;
 }
 
+// Reads the Snowflake server version cached from the login response.
+// Distinct from ConnectionGetInfo (which aggregates ~12 fields and takes
+// several locks) so SQLGetInfo(SQL_DBMS_VER) / JDBC getDatabaseProductVersion
+// stay cheap even when callers poll them per-statement.
+message ConnectionGetServerVersionRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionGetServerVersionResponse {
+  // Empty when called before login completes.
+  optional string server_version = 1;
+}
+
 message ConnectionValidateOptionsRequest {
   ConnectionHandle conn_handle = 1;
 }
@@ -813,6 +826,10 @@ service DatabaseDriver {
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
   // gets all resolved session parameters at once
   rpc ConnectionGetAllParameters(ConnectionGetAllParametersRequest) returns (ConnectionGetAllParametersResponse);
+  // returns the Snowflake server version cached from the login response
+  // (`serverVersion` in `/session/v1/login-request`); backs
+  // `SQLGetInfo(SQL_DBMS_VER)` and `getDatabaseProductVersion`
+  rpc ConnectionGetServerVersion(ConnectionGetServerVersionRequest) returns (ConnectionGetServerVersionResponse);
   // pre-flight validation of connection options - reports all issues at once
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
   // Fetch the result of a previously executed query by Snowflake Query ID

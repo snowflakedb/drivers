@@ -169,8 +169,14 @@ impl ConnectionAttribute {
 #[repr(u16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfoType {
+    /// `SQL_DRIVER_NAME` (6) — name of the driver shared library (string).
+    DriverName = 6,
+    /// `SQL_DRIVER_VER` (7) — driver release version (string).
+    DriverVer = 7,
     /// `SQL_DBMS_NAME` (17) — name of the DBMS product (string).
     DbmsName = 17,
+    /// `SQL_DBMS_VER` (18) — version of the DBMS the connection is talking to (string).
+    DbmsVer = 18,
     /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
     CursorCommitBehavior = 23,
     /// `SQL_CURSOR_ROLLBACK_BEHAVIOR` (24) — cursor behavior on rollback.
@@ -186,7 +192,10 @@ impl TryFrom<u16> for InfoType {
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
+            6 => Ok(InfoType::DriverName),
+            7 => Ok(InfoType::DriverVer),
             17 => Ok(InfoType::DbmsName),
+            18 => Ok(InfoType::DbmsVer),
             23 => Ok(InfoType::CursorCommitBehavior),
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
@@ -416,6 +425,10 @@ pub enum DescField {
     Count = 1001,
     /// `SQL_DESC_TYPE` (1002) — verbose data type of the column.
     Type = 1002,
+    /// `SQL_DESC_LENGTH` (1003) — column length in characters (or scale-derived
+    /// precision for temporal types, byte length for binary types). Distinct
+    /// from `SQL_DESC_OCTET_LENGTH` (1013), which is always in bytes.
+    Length = 1003,
     /// `SQL_DESC_OCTET_LENGTH_PTR` (1004) — pointer to the octet-length buffer.
     OctetLengthPtr = 1004,
     /// `SQL_DESC_PRECISION` (1005) — numeric precision.
@@ -426,6 +439,8 @@ pub enum DescField {
     IndicatorPtr = 1009,
     /// `SQL_DESC_DATA_PTR` (1010) — pointer to the data buffer.
     DataPtr = 1010,
+    /// `SQL_DESC_NAME` (1011) — column name (string, IRD only).
+    Name = 1011,
     /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
     /// `SQL_DESC_PARAMETER_TYPE` (33) — parameter direction (IPD only).
@@ -450,6 +465,7 @@ impl TryFrom<i16> for DescField {
             34 => Ok(DescField::RowsProcessedPtr),
             1001 => Ok(DescField::Count),
             1002 => Ok(DescField::Type),
+            1003 => Ok(DescField::Length),
             14 => Ok(DescField::TypeName),
             1004 => Ok(DescField::OctetLengthPtr),
             1005 => Ok(DescField::Precision),
@@ -457,6 +473,7 @@ impl TryFrom<i16> for DescField {
             1008 => Ok(DescField::Nullable),
             1009 => Ok(DescField::IndicatorPtr),
             1010 => Ok(DescField::DataPtr),
+            1011 => Ok(DescField::Name),
             1013 => Ok(DescField::OctetLength),
             33 => Ok(DescField::ParameterType),
             _ => {
@@ -1610,5 +1627,51 @@ mod tests {
             TimestampSubtype::from_parameter_type(sql::SqlDataType(95)),
             None
         );
+    }
+
+    /// Pin the on-the-wire mapping for `SQLGetInfo` codes the new ODBC driver
+    /// claims to support. Excel/PowerQuery probes 6/7/17/18/77/81 during
+    /// `SQLDriverConnect`; bumping these values breaks the AS-bound trace
+    /// replay tests and breaks application discovery.
+    #[test]
+    fn info_type_try_from_round_trip() {
+        assert_eq!(InfoType::try_from(6_u16).unwrap(), InfoType::DriverName);
+        assert_eq!(InfoType::try_from(7_u16).unwrap(), InfoType::DriverVer);
+        assert_eq!(InfoType::try_from(17_u16).unwrap(), InfoType::DbmsName);
+        assert_eq!(InfoType::try_from(18_u16).unwrap(), InfoType::DbmsVer);
+        assert_eq!(
+            InfoType::try_from(23_u16).unwrap(),
+            InfoType::CursorCommitBehavior
+        );
+        assert_eq!(
+            InfoType::try_from(24_u16).unwrap(),
+            InfoType::CursorRollbackBehavior
+        );
+        assert_eq!(InfoType::try_from(77_u16).unwrap(), InfoType::DriverOdbcVer);
+        assert_eq!(
+            InfoType::try_from(81_u16).unwrap(),
+            InfoType::GetDataExtensions
+        );
+
+        match InfoType::try_from(9999_u16) {
+            Err(OdbcError::UnknownInfoType { info_type, .. }) => assert_eq!(info_type, 9999),
+            other => panic!("expected UnknownInfoType, got {other:?}"),
+        }
+    }
+
+    /// Excel uses `SQLColAttribute(SQL_DESC_NAME)` and `SQL_DESC_LENGTH` while
+    /// rendering result-set previews. Pin the discriminants so descriptor
+    /// dispatch keeps routing to the column-name / column-size code paths.
+    #[test]
+    fn desc_field_try_from_round_trip() {
+        assert_eq!(DescField::try_from(1003_i16).unwrap(), DescField::Length);
+        assert_eq!(DescField::try_from(1011_i16).unwrap(), DescField::Name);
+        assert_eq!(DescField::try_from(2_i16).unwrap(), DescField::ConciseType);
+        assert_eq!(DescField::try_from(1002_i16).unwrap(), DescField::Type);
+
+        match DescField::try_from(-1_i16) {
+            Err(OdbcError::UnknownAttribute { attribute, .. }) => assert_eq!(attribute, -1),
+            other => panic!("expected UnknownAttribute, got {other:?}"),
+        }
     }
 }

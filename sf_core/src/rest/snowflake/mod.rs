@@ -130,6 +130,8 @@ pub struct LoginResult {
     pub warehouse_name: Option<String>,
     /// Server-echoed role name from sessionInfo
     pub role_name: Option<String>,
+    /// Snowflake server version reported
+    pub server_version: Option<String>,
 }
 
 impl SessionTokens {
@@ -1043,11 +1045,14 @@ pub async fn snowflake_login_with_client(
             None => (None, None, None, None),
         };
 
+    let server_version = auth_response.data.server_version.clone();
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
         master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
         session_params_count = session_params.as_ref().map(|p| p.len()),
+        server_version = server_version.as_deref(),
         "Snowflake login completed successfully"
     );
     Ok(LoginResult {
@@ -1064,6 +1069,7 @@ pub async fn snowflake_login_with_client(
         schema_name,
         warehouse_name,
         role_name,
+        server_version,
     })
 }
 

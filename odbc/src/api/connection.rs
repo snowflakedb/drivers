@@ -1189,7 +1189,7 @@ pub fn get_info<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
-    let _conn = conn_from_handle(connection_handle)?;
+    let dbc = conn_from_handle(connection_handle)?;
 
     let info_type = InfoType::try_from(info_type)?;
     tracing::debug!("get_info: info_type={info_type:?}");
@@ -1209,9 +1209,68 @@ pub fn get_info<E: OdbcEncoding>(
             }
             Ok(())
         }
+        InfoType::DriverName => {
+            write_string_bytes::<E>(
+                ODBC_DRIVER_NAME,
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
+        InfoType::DriverVer => {
+            write_string_bytes::<E>(
+                ODBC_DRIVER_VERSION,
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
         InfoType::DbmsName => {
             write_string_bytes::<E>(
                 "Snowflake",
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
+        InfoType::DbmsVer => {
+            // Sourced from `serverVersion` in the login response (parsed in
+            // [`sf_core::rest::snowflake::auth::AuthResponseMain`]). Matches
+            // the legacy driver and avoids the extra `SELECT CURRENT_VERSION()`
+            // round trip that JDBC currently performs.
+            //
+            // Uses the dedicated `connection_get_server_version` getter
+            // rather than `connection_get_info` — Excel polls this attribute
+            // during `SQLDriverConnect` and the full info aggregation is
+            // wasteful when only the version is needed.
+            //
+            // Before the connection is established, sf_core has no
+            // `server_version` yet — return an empty string instead of
+            // surfacing an error so callers that probe this attribute during
+            // `SQLDriverConnect` (Excel does) still succeed.
+            let conn_handle = match dbc.connection.lock().state {
+                ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            let version = match conn_handle {
+                Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                    let resp = c
+                        .connection_get_server_version(ConnectionGetServerVersionRequest {
+                            conn_handle: Some(handle),
+                        })
+                        .await?;
+                    Ok::<Option<String>, crate::api::OdbcError>(resp.server_version)
+                })?,
+                None => None,
+            };
+            write_string_bytes::<E>(
+                version.as_deref().unwrap_or(""),
                 info_value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,

@@ -159,6 +159,38 @@ pub fn col_attribute<E: OdbcEncoding>(
             }
             Ok(())
         }
+        DescField::Name => {
+            // Per ODBC spec, SQL_DESC_NAME returns the column name when one
+            // exists. Snowflake's result-set schema always carries a name,
+            // even for `SELECT 1` (`"1"`), so no SQL_DESC_UNNAMED handling is
+            // needed here.
+            write_string_bytes::<E>(
+                field.name(),
+                character_attribute_ptr,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
+            Ok(())
+        }
+        DescField::Length => {
+            // SQL_DESC_LENGTH is the column's logical length (characters for
+            // strings, scale-derived precision for temporal types, byte
+            // length for binary). Distinct from SQL_DESC_OCTET_LENGTH (1013),
+            // which is always in bytes. `column_size_from_field` dispatches
+            // through `SnowflakeFieldType::column_size` to the per-type
+            // `WriteODBCType::column_size` impls under `odbc/src/conversion/`,
+            // which is where the actual formulas live.
+            let dbc = guard.conn()?;
+            let settings = dbc.connection.lock().numeric_settings;
+            let col_size = column_size_from_field(field, &settings).context(ConversionSnafu)?;
+            if !numeric_attribute_ptr.is_null() {
+                unsafe {
+                    std::ptr::write(numeric_attribute_ptr, col_size as sql::Len);
+                }
+            }
+            Ok(())
+        }
         DescField::TypeName => {
             let logical_type = field
                 .metadata()
