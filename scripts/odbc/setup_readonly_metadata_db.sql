@@ -101,3 +101,168 @@ CREATE TABLE DESCDIGITSVARCHARTABLE (val VARCHAR(50));
 CREATE TABLE DESCNULLABLETABLE (val VARCHAR(50));
 CREATE TABLE DESCNOTNULLTABLE (val VARCHAR(50) NOT NULL);
 CREATE TABLE DESCMULTITABLE (strcol VARCHAR(50), numcol NUMBER(8,2), boolcol BOOLEAN);
+
+-- =============================================================================
+-- DATATYPETESTS schema -- data-bearing fixtures for Excel/PQ trace replay tests.
+-- Distinct from CATALOGTESTS because these tables carry rows (not just DDL)
+-- and are exercised for type conversion, W-API encoding, and LOB streaming.
+-- =============================================================================
+
+DROP SCHEMA IF EXISTS DATATYPETESTS CASCADE;
+CREATE SCHEMA DATATYPETESTS;
+USE SCHEMA DATATYPETESTS;
+
+CREATE TABLE ALLDATATYPES (
+  ROWKIND       VARCHAR(16),     -- 'NORMAL' | 'BOUNDARY' | 'UNICODE' | 'NULLROW'
+  INTVAL        INTEGER,
+  BIGINTVAL     BIGINT,
+  SMALLINTVAL   SMALLINT,
+  TINYINTVAL    TINYINT,
+  NUM38         NUMBER(38, 0),
+  NUM18S6       NUMBER(18, 6),
+  FLOATVAL      FLOAT,
+  DOUBLEVAL     DOUBLE,
+  REALVAL       REAL,
+  VARCHARVAL    VARCHAR(256),
+  TEXTVAL       TEXT,
+  CHARVAL       CHAR(10),
+  BINARYVAL     BINARY(16),
+  VARBINARYVAL  VARBINARY,
+  BOOLVAL       BOOLEAN,
+  DATEVAL       DATE,
+  TIMEVAL       TIME,
+  TSNTZ         TIMESTAMP_NTZ,
+  TSLTZ         TIMESTAMP_LTZ,
+  TSTZ          TIMESTAMP_TZ,
+  VARIANTVAL    VARIANT,
+  OBJECTVAL     OBJECT,
+  ARRAYVAL      ARRAY,
+  GEOVAL        GEOGRAPHY
+);
+
+CREATE TABLE LARGELOBS (
+  ROWKIND       VARCHAR(16),     -- 'FULL' | 'NULLROW'
+  LARGEVARCHAR  VARCHAR,         -- ~128 KB payload in the FULL row
+  LARGEBINARY   VARBINARY        -- ~256 KB payload in the FULL row
+);
+
+-- -----------------------------------------------------------------------------
+-- ALLDATATYPES rows. One row per ROWKIND so trace-replay tests can target a
+-- specific shape (representative / boundary / unicode / all-null) without
+-- relying on row order.
+-- -----------------------------------------------------------------------------
+
+INSERT INTO ALLDATATYPES
+SELECT
+  'NORMAL',
+  42,
+  100000000000,
+  1000,
+  100,
+  123456789012345678901234567890,
+  12345.678901,
+  3.14,
+  2.718281828459045,
+  1.4142135,
+  'hello world',
+  'representative text payload',
+  'fixedchar',
+  TO_BINARY('DEADBEEFDEADBEEFDEADBEEFDEADBEEF', 'HEX'),
+  TO_BINARY('CAFEBABE', 'HEX'),
+  TRUE,
+  '2024-01-15'::DATE,
+  '13:45:30'::TIME,
+  '2024-01-15 13:45:30'::TIMESTAMP_NTZ,
+  '2024-01-15 13:45:30'::TIMESTAMP_LTZ,
+  '2024-01-15 13:45:30 -08:00'::TIMESTAMP_TZ,
+  PARSE_JSON('{"a":1}'),
+  OBJECT_CONSTRUCT('k', 'v'),
+  ARRAY_CONSTRUCT(1, 2, 3),
+  ST_GEOGRAPHYFROMTEXT('POINT(-122 37)');
+
+INSERT INTO ALLDATATYPES
+SELECT
+  'BOUNDARY',
+  2147483647,
+  9223372036854775807,
+  32767,
+  127,
+  99999999999999999999999999999999999999,
+  999999999999.999999,
+  'Infinity'::FLOAT,
+  'NaN'::DOUBLE,
+  '-Infinity'::REAL,
+  RPAD('X', 256, 'X'),
+  'boundary text payload',
+  RPAD('Y', 10, 'Y'),
+  TO_BINARY('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF', 'HEX'),
+  TO_BINARY('FFFF', 'HEX'),
+  FALSE,
+  '9999-12-31'::DATE,
+  '23:59:59.999'::TIME,
+  '9999-12-31 23:59:59.999999999'::TIMESTAMP_NTZ,
+  '9999-12-31 23:59:59.999999999'::TIMESTAMP_LTZ,
+  '9999-12-31 23:59:59.999999999 +00:00'::TIMESTAMP_TZ,
+  PARSE_JSON('null'),
+  OBJECT_CONSTRUCT(),
+  ARRAY_CONSTRUCT(),
+  ST_GEOGRAPHYFROMTEXT('POINT(180 90)');
+
+INSERT INTO ALLDATATYPES
+SELECT
+  'UNICODE',
+  7,
+  8,
+  9,
+  1,
+  42,
+  3.141593,
+  1.0,
+  2.0,
+  3.0,
+  'CJK 日本語 emoji 😀 RTL עברית quote"X backslash\X',
+  '中文 العربية 한국어 🚀 mixed scripts',
+  '汉字abc',
+  TO_BINARY('00112233445566778899AABBCCDDEEFF', 'HEX'),
+  TO_BINARY('CAFE', 'HEX'),
+  TRUE,
+  '2024-02-29'::DATE,
+  '12:00:00'::TIME,
+  '2024-02-29 12:00:00'::TIMESTAMP_NTZ,
+  '2024-02-29 12:00:00'::TIMESTAMP_LTZ,
+  '2024-02-29 12:00:00 +09:00'::TIMESTAMP_TZ,
+  PARSE_JSON('{"emoji":"😀","cjk":"日本"}'),
+  OBJECT_CONSTRUCT('lang', '中文'),
+  ARRAY_CONSTRUCT('日', '本', '語'),
+  ST_GEOGRAPHYFROMTEXT('POINT(139.6917 35.6895)');
+
+INSERT INTO ALLDATATYPES
+SELECT
+  'NULLROW',
+  NULL, NULL, NULL, NULL,
+  NULL, NULL,
+  NULL, NULL, NULL,
+  NULL, NULL, NULL,
+  NULL, NULL,
+  NULL,
+  NULL, NULL,
+  NULL, NULL, NULL,
+  NULL, NULL, NULL,
+  NULL;
+
+-- -----------------------------------------------------------------------------
+-- LARGELOBS rows. FULL exercises chunked LOB streaming through SQLGetData;
+-- NULLROW lets tests assert SQL_NULL_DATA on both LOB columns.
+-- -----------------------------------------------------------------------------
+
+INSERT INTO LARGELOBS
+SELECT
+  'FULL',
+  RPAD('X', 131072, 'X'),
+  TO_BINARY(REPEAT('DEADBEEF', 65536), 'HEX');
+
+INSERT INTO LARGELOBS
+SELECT
+  'NULLROW',
+  NULL,
+  NULL;
