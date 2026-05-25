@@ -135,6 +135,8 @@ pub enum SourceCompressionParam {
     Zstd,
     Deflate,
     RawDeflate,
+    Parquet,
+    Orc,
     None,
     AutoDetect,
 }

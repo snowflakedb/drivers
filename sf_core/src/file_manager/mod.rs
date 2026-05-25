@@ -264,6 +264,8 @@ fn get_source_compression(
         SourceCompressionParam::Zstd => Ok(CompressionType::Zstd),
         SourceCompressionParam::Deflate => Ok(CompressionType::Deflate),
         SourceCompressionParam::RawDeflate => Ok(CompressionType::RawDeflate),
+        SourceCompressionParam::Parquet => Ok(CompressionType::Parquet),
+        SourceCompressionParam::Orc => Ok(CompressionType::Orc),
     }
 }
 
@@ -864,6 +866,42 @@ mod tests {
                 get_source_compression("ignored.xz", b"", &SourceCompressionParam::None, legacy)
                     .unwrap(),
                 CompressionType::None,
+            );
+        }
+    }
+
+    // Explicit SOURCE_COMPRESSION=PARQUET / =ORC short-circuits auto-detect:
+    // user-specified compression is trusted, regardless of filename or
+    // magic bytes. Mirrors Python `file_transfer_agent.py:1207`
+    // (`current_file_compression_type = user_specified_source_compression`).
+    #[test]
+    fn get_source_compression_explicit_parquet_skips_autodetect() {
+        for legacy in [false, true] {
+            assert_eq!(
+                get_source_compression(
+                    "actually-not-parquet.csv",
+                    b"some-csv,content",
+                    &SourceCompressionParam::Parquet,
+                    legacy,
+                )
+                .unwrap(),
+                CompressionType::Parquet,
+            );
+        }
+    }
+
+    #[test]
+    fn get_source_compression_explicit_orc_skips_autodetect() {
+        for legacy in [false, true] {
+            assert_eq!(
+                get_source_compression(
+                    "actually-not-orc.csv",
+                    b"some-csv,content",
+                    &SourceCompressionParam::Orc,
+                    legacy,
+                )
+                .unwrap(),
+                CompressionType::Orc,
             );
         }
     }
