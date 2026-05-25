@@ -18,7 +18,6 @@ use super::validation::{
 use crate::config::ParamStore;
 use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
-use crate::config::put_get::PutGetConfig;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
@@ -34,6 +33,20 @@ use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
 use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
+
+/// Reads the user's `put_get_max_attempts` override from the connection seed.
+///
+/// `None` means "use the per-cloud default" — either because the user did not
+/// set the option, or because the value is out of the supported `[1, u32::MAX]`
+/// range. Falling back silently on a bad value (rather than failing the
+/// statement) keeps the dispatch site robust against post-init
+/// `connection_set_option_int` writes that bypass param-registry validation.
+fn read_put_get_max_attempts(conn: &Connection) -> Option<u32> {
+    conn.connection_seed
+        .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
+        .filter(|v| *v > 0 && *v <= u32::MAX as i64)
+        .map(|v| v as u32)
+}
 
 /// Pointer to raw bytes in memory - used by query bindings
 #[derive(Debug)]
@@ -353,28 +366,23 @@ impl DatabaseDriverV1 {
                     query_parameters: query_parameters.clone(),
                     conn: conn_arc.clone(),
                 };
-                // Snapshot per-PUT/GET state from the connection. PutGetConfig is
-                // re-derived from the connection seed so post-init
-                // `connection_set_option_int` overrides take effect at PUT/GET
-                // time (mirroring LogoutConfig's late-binding pattern in
-                // `connection_close`). On parse error, fall back to the
-                // init-time snapshot.
-                let (put_get_config, use_s3_regional_url_session_param) = {
+                // Re-read `put_get_max_attempts` from the connection seed at
+                // PUT/GET dispatch time so post-init
+                // `connection_set_option_int` overrides take effect (mirrors
+                // `LogoutConfig`'s late-binding in `connection_close`).
+                // Out-of-range values fall back to the per-cloud default.
+                let (put_get_max_attempts, use_s3_regional_url_session_param) = {
                     let conn = conn_arc.lock().await;
-                    let put_get_config =
-                        PutGetConfig::from_settings(&conn.connection_seed).unwrap_or_else(|e| {
-                            tracing::warn!(error = %e, "Failed to re-derive PutGetConfig at PUT/GET-time; using init-time config");
-                            conn.put_get_config
-                        });
+                    let put_get_max_attempts = read_put_get_max_attempts(&conn);
                     let use_s3_regional_url_session_param =
                         conn.use_s3_regional_url_session_param().await;
-                    (put_get_config, use_s3_regional_url_session_param)
+                    (put_get_max_attempts, use_s3_regional_url_session_param)
                 };
                 perform_put_get_transfer(
                     command,
                     &data,
                     &self.wrapper_presets,
-                    put_get_config,
+                    put_get_max_attempts,
                     Some(stage_creds_refresh_context),
                     use_s3_regional_url_session_param,
                 )
@@ -476,28 +484,21 @@ impl DatabaseDriverV1 {
 
             let rowset_data = match data.command.as_deref() {
                 Some(command) => {
-                    // Snapshot per-PUT/GET state from the connection. PutGetConfig is
-                    // re-derived from the connection seed so post-init
-                    // `connection_set_option_int` overrides take effect at PUT/GET
-                    // time (mirroring LogoutConfig's late-binding pattern in
-                    // `connection_close`). On parse error, fall back to the
-                    // init-time snapshot.
-                    let (put_get_config, use_s3_regional_url_session_param) = {
+                    // See the late-binding rationale in `statement_execute`: the
+                    // value is re-read from the connection seed so post-init
+                    // `set_option` calls are honored.
+                    let (put_get_max_attempts, use_s3_regional_url_session_param) = {
                         let conn = conn_ptr.lock().await;
-                        let put_get_config =
-                            PutGetConfig::from_settings(&conn.connection_seed).unwrap_or_else(|e| {
-                                tracing::warn!(error = %e, "Failed to re-derive PutGetConfig at PUT/GET-time; using init-time config");
-                                conn.put_get_config
-                            });
+                        let put_get_max_attempts = read_put_get_max_attempts(&conn);
                         let use_s3_regional_url_session_param =
                             conn.use_s3_regional_url_session_param().await;
-                        (put_get_config, use_s3_regional_url_session_param)
+                        (put_get_max_attempts, use_s3_regional_url_session_param)
                     };
                     perform_put_get_transfer(
                         command,
                         &data,
                         &self.wrapper_presets,
-                        put_get_config,
+                        put_get_max_attempts,
                         None,
                         use_s3_regional_url_session_param,
                     )
@@ -830,6 +831,45 @@ mod tests {
     fn parse_bool_setting_accepts_native_bool_values() {
         assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
         assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    /// `read_put_get_max_attempts` is the dispatch-site read for the
+    /// `put_get_max_attempts` knob. `None` means "use the per-cloud
+    /// default"; a parsed `u32` overrides the AWS retry config.
+    /// Out-of-range values must fall back to `None` rather than panic
+    /// or surface as a statement error — see the helper's doc comment.
+    #[test]
+    fn read_put_get_max_attempts_unset_yields_none() {
+        let conn = Connection::new();
+        assert_eq!(read_put_get_max_attempts(&conn), None);
+    }
+
+    #[test]
+    fn read_put_get_max_attempts_returns_user_value() {
+        let mut conn = Connection::new();
+        conn.set_option(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+            Setting::Int(25),
+        );
+        assert_eq!(read_put_get_max_attempts(&conn), Some(25));
+
+        conn.set_option(
+            param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+            Setting::Int(1),
+        );
+        assert_eq!(read_put_get_max_attempts(&conn), Some(1));
+    }
+
+    #[test]
+    fn read_put_get_max_attempts_rejects_out_of_range() {
+        let mut conn = Connection::new();
+        for bad in [0i64, -1, (u32::MAX as i64) + 1] {
+            conn.set_option(
+                param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
+                Setting::Int(bad),
+            );
+            assert_eq!(read_put_get_max_attempts(&conn), None, "bad value: {bad}");
+        }
     }
 
     #[test]

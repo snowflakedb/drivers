@@ -24,7 +24,6 @@ use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
 use crate::config::logout::LogoutConfig;
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
-use crate::config::put_get::PutGetConfig;
 use crate::config::resolver;
 use crate::config::rest_parameters::{
     ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
@@ -331,8 +330,6 @@ impl DatabaseDriverV1 {
                 {
                     let logout_config = LogoutConfig::from_settings(&resolved_snapshot)
                         .context(ConfigurationSnafu)?;
-                    let put_get_config = PutGetConfig::from_settings(&resolved_snapshot)
-                        .context(ConfigurationSnafu)?;
                     let session_id = login_result.tokens.session_id;
                     let mut conn = conn_ptr.lock().await;
 
@@ -347,7 +344,6 @@ impl DatabaseDriverV1 {
                         login_final_names,
                         resolved_snapshot,
                         logout_config,
-                        put_get_config,
                     )
                     .await;
 
@@ -795,14 +791,6 @@ pub struct Connection {
 
     /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
     pub logout_config: LogoutConfig,
-    /// PUT/GET file-transfer configuration snapshot taken at connection_init.
-    ///
-    /// This field is the init-time fallback only; the canonical value used
-    /// during a PUT/GET is re-derived from [`Self::connection_seed`] at the
-    /// dispatch site (see `statement.rs`) so post-init `set_option` calls
-    /// (e.g. raising `put_get_max_attempts` for a single statement) take
-    /// effect. Mirrors how `LogoutConfig` is re-derived at close time.
-    pub put_get_config: PutGetConfig,
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
@@ -841,7 +829,6 @@ impl Connection {
             async_query_registry: AsyncQueryRegistry::new(),
             is_closed: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
-            put_get_config: PutGetConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
             session_id: None,
@@ -905,7 +892,6 @@ impl Connection {
         final_names: FinalSessionNames,
         resolved_connect: ParamStore,
         logout_config: LogoutConfig,
-        put_get_config: PutGetConfig,
     ) {
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
@@ -916,7 +902,6 @@ impl Connection {
         self.resolved_connect = Some(resolved_connect);
         self.session_overrides = ParamStore::new();
         self.logout_config = logout_config;
-        self.put_get_config = put_get_config;
 
         let mut cache = self.session_parameters.write().await;
         *cache = session_params;
@@ -2105,36 +2090,6 @@ mod tests {
         assert_eq!(get_connection_seed_string(&conn, param_names::PORT), None);
     }
 
-    /// Late-binding contract for `put_get_max_attempts`: a value written
-    /// into `connection_seed` (the path `connection_set_option` writes to)
-    /// must be observable via `PutGetConfig::from_settings` so the PUT/GET
-    /// dispatch site picks up post-init overrides. If this test
-    /// regresses, callers will silently see the init-time snapshot
-    /// instead of the user's most recent setting.
-    #[test]
-    fn put_get_max_attempts_set_via_seed_is_observable_through_from_settings() {
-        let conn = make_connection_with_settings(vec![(
-            param_names::PUT_GET_MAX_ATTEMPTS.as_str(),
-            Setting::Int(25),
-        )]);
-        let cfg = crate::config::put_get::PutGetConfig::from_settings(&conn.connection_seed)
-            .expect("from_settings should accept a valid post-init override");
-        assert_eq!(cfg.max_attempts, Some(25));
-        assert_eq!(cfg.resolved_max_attempts(), 25);
-    }
-
-    #[test]
-    fn put_get_max_attempts_unset_resolves_to_default() {
-        let conn = Connection::new();
-        let cfg = crate::config::put_get::PutGetConfig::from_settings(&conn.connection_seed)
-            .expect("from_settings should accept an empty seed");
-        assert_eq!(cfg.max_attempts, None);
-        assert_eq!(
-            cfg.resolved_max_attempts(),
-            crate::config::put_get::DEFAULT_PUT_GET_MAX_ATTEMPTS
-        );
-    }
-
     #[test]
     fn get_session_or_setting_prefers_session_parameter() {
         let conn =
@@ -2313,8 +2268,8 @@ mod tests {
 
     /// End-to-end wiring for `put_get_max_attempts`: calling the public
     /// `connection_set_option` API with the canonical key must land the
-    /// value on `connection_seed` such that `PutGetConfig::from_settings`
-    /// observes it. Catches regressions where the param's canonical-name
+    /// value on `connection_seed` so the PUT/GET dispatch site can read
+    /// it. Catches regressions where the param's canonical-name
     /// canonicalization, scope guard, or `mutable_after_connect` flag
     /// would silently swallow the override before it reaches the seed.
     #[tokio::test]
@@ -2331,9 +2286,11 @@ mod tests {
 
         let conn_ptr = ds.connections.get_obj(handle).unwrap();
         let conn = conn_ptr.lock().await;
-        let cfg = crate::config::put_get::PutGetConfig::from_settings(&conn.connection_seed)
-            .expect("from_settings should accept the option just set");
-        assert_eq!(cfg.resolved_max_attempts(), 10);
+        assert_eq!(
+            conn.connection_seed
+                .get_int(param_names::PUT_GET_MAX_ATTEMPTS),
+            Some(10),
+        );
         drop(conn);
         ds.connection_release(handle).unwrap();
     }
