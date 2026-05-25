@@ -264,6 +264,17 @@ fn is_expired_token_error(err: &aws_sdk_s3::Error) -> bool {
 
 /// Issues the S3 `PutObject` call and folds `ExpiredToken` into the
 /// `S3AttemptError::StsExpired` arm so the generic refresh helper can catch it.
+///
+/// `disable_payload_signing()` makes the SDK send
+/// `x-amz-content-sha256: UNSIGNED-PAYLOAD` instead of pre-hashing the entire
+/// request body for SigV4. TLS already provides in-transit integrity, and the
+/// per-file SHA-256 in `prepared.digest` (sent as the `sfc-digest` metadata
+/// header) is what Snowflake itself uses to verify the upload — so the SigV4
+/// payload hash is a redundant full pass over the file. Matches the Python
+/// connector (`s3_storage_client.py:494`, `unsigned_payload=True`) and
+/// libsnowflakeclient (`SnowflakeS3Client.cpp:164`,
+/// `PayloadSigningPolicy::Never`). Applied per-operation rather than on the
+/// shared client so unrelated S3 calls keep default signing.
 async fn put_object(
     prepared: PreparedUpload,
     s3_client: &S3Client,
@@ -290,7 +301,12 @@ async fn put_object(
 
     tracing::trace!("PUT object request: {:?}", put_object_request);
 
-    match put_object_request.send().await {
+    match put_object_request
+        .customize()
+        .disable_payload_signing()
+        .send()
+        .await
+    {
         Ok(res) => {
             tracing::debug!("S3 upload result: {:?}", res);
             Ok(())
@@ -1033,5 +1049,63 @@ mod tests {
         // it as-is. S3StsRefresher must see "no rotation" against AKIA2
         // (not AKIA1).
         assert!(!sts_refresher.refresh().await.unwrap());
+    }
+
+    // --- UNSIGNED-PAYLOAD on PutObject (Gap 15) ---
+    //
+    // Locks in that uploads send `x-amz-content-sha256: UNSIGNED-PAYLOAD`
+    // rather than a precomputed body hash. Matches the Python connector
+    // (s3_storage_client.py:494) and libsnowflakeclient (PayloadSigningPolicy
+    // ::Never). A regression here — e.g. accidentally dropping
+    // `disable_payload_signing()` from `put_object` — would silently fall
+    // back to a full SHA-256 pass over every uploaded file body.
+    //
+    // Using wiremock for this rather than a stubbed S3 client because the
+    // header is set deep inside aws-sigv4 and only appears on the wire after
+    // the SDK's signing pipeline runs. Wiremock at the HTTP layer is the
+    // only place it's observable without reaching into SDK internals.
+
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn put_object_sends_unsigned_payload_content_sha256_header() {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage_info = StageInfo {
+            location_type: crate::file_manager::types::LocationType::S3,
+            bucket: "test-bucket".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "us-east-1".to_string(),
+            creds: s3_creds("AKIA-TEST"),
+            endpoint: Some(mock.uri()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
+        };
+        let prepared = PreparedUpload {
+            data: b"hello world".to_vec(),
+            digest: "0".repeat(64),
+            encryption_metadata: None,
+        };
+
+        // overwrite=true skips the HEAD probe so the only request hitting
+        // wiremock is the PUT we care about.
+        upload_to_s3_or_skip(prepared, &stage_info, "f.dat", true, &mut None)
+            .await
+            .expect("upload should succeed against the mock");
+
+        // Mock's `.expect(1)` verifies on drop — if the SDK had sent the
+        // default precomputed body hash instead of UNSIGNED-PAYLOAD,
+        // wiremock would fail the test on shutdown.
     }
 }
