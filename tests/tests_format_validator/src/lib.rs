@@ -1,5 +1,6 @@
 pub mod behavior_differences_processor;
 pub mod behavior_differences_utils;
+pub mod alignment_targets;
 pub mod driver_handlers;
 pub mod feature_parser;
 pub mod step_finder;

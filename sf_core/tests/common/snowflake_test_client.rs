@@ -209,6 +209,7 @@ impl SnowflakeTestClient {
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(*stmt),
                 bindings,
+                timeout_seconds: None,
             })
             .unwrap()
             .result
@@ -242,14 +243,11 @@ impl SnowflakeTestClient {
         serde_json::to_string(&bindings).unwrap()
     }
 
-    pub fn result_chunks(&self, stmt: &StatementHandle, query_id: &str) -> ResultChunksResult {
+    pub fn result_set_get_chunks(&self, rs_handle: &ResultSetHandle) -> ResultSetGetChunksResponse {
         self.client
-            .statement_result_chunks_blocking(StatementResultChunksRequest {
-                stmt_handle: Some(*stmt),
-                query_id: query_id.to_string(),
+            .result_set_get_chunks_blocking(ResultSetGetChunksRequest {
+                result_set_handle: Some(*rs_handle),
             })
-            .unwrap()
-            .result
             .unwrap()
     }
 
@@ -287,6 +285,7 @@ impl SnowflakeTestClient {
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
             .unwrap();
 
@@ -316,6 +315,7 @@ impl SnowflakeTestClient {
                 .statement_execute_query_blocking(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings: None,
+                    timeout_seconds: None,
                 }) {
                 Ok(response) => Ok(response.result.unwrap()),
                 Err(e) => match *e {
@@ -327,28 +327,33 @@ impl SnowflakeTestClient {
         result
     }
 
-    /// Execute a single query and get the result set (Arrow stream) directly.
-    pub fn execute_query(&self, sql: &str) -> ResultSetResponse {
+    /// Execute a single query and get the Arrow stream directly.
+    pub fn execute_query(&self, sql: &str) -> ResultSetGetStreamResponse {
         let stmt_handle = self.new_statement();
         self.set_sql_query(&stmt_handle, sql);
         let result = self.execute_statement_query(&stmt_handle);
-        let query_id = unwrap_single_query_id(&result);
-        let rs = self.get_result_set(&stmt_handle, &query_id);
+        let rs_handle = unwrap_single_rs_handle(&result);
+        let stream = self.result_set_get_stream(&rs_handle);
+        self.result_set_release(&rs_handle);
         self.release_statement(&stmt_handle);
-        rs
+        stream
     }
 
-    /// Get a result set by query_id using the statement handle.
-    pub fn get_result_set(&self, stmt: &StatementHandle, query_id: &str) -> ResultSetResponse {
-        self.client
-            .statement_get_result_set_blocking(StatementGetResultSetRequest {
-                stmt_handle: Some(*stmt),
-                query_id: query_id.to_string(),
-            })
-            .unwrap()
+    /// Get an Arrow stream for a query_id by looking it up via the connection,
+    /// fetching the stream, and releasing the handle.
+    pub fn get_result_set(
+        &self,
+        _stmt: &StatementHandle,
+        query_id: &str,
+    ) -> ResultSetGetStreamResponse {
+        let rs = self.connection_get_result_set(query_id);
+        let rs_handle = rs.result_set_handle.unwrap();
+        let stream = self.result_set_get_stream(&rs_handle);
+        self.result_set_release(&rs_handle);
+        stream
     }
 
-    /// Get a result set by query_id using the connection handle.
+    /// Get a ResultSetResponse (handle + descriptor) by query_id via the connection.
     pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
         self.client
             .connection_get_result_set_blocking(ConnectionGetResultSetRequest {
@@ -356,6 +361,22 @@ impl SnowflakeTestClient {
                 query_id: query_id.to_string(),
             })
             .unwrap()
+    }
+
+    pub fn result_set_get_stream(&self, rs_handle: &ResultSetHandle) -> ResultSetGetStreamResponse {
+        self.client
+            .result_set_get_stream_blocking(ResultSetGetStreamRequest {
+                result_set_handle: Some(*rs_handle),
+            })
+            .unwrap()
+    }
+
+    pub fn result_set_release(&self, rs_handle: &ResultSetHandle) {
+        self.client
+            .result_set_release_blocking(ResultSetReleaseRequest {
+                result_set_handle: Some(*rs_handle),
+            })
+            .unwrap();
     }
 
     /// Execute a multistatement query.
@@ -403,6 +424,7 @@ impl SnowflakeTestClient {
                 .statement_execute_query_blocking(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings: None,
+                    timeout_seconds: None,
                 }) {
                 Ok(response) => Ok(response.result.unwrap()),
                 Err(e) => match *e {
@@ -645,7 +667,20 @@ impl Drop for SnowflakeTestClient {
 /// Panics if the result is a multi-statement result.
 pub fn unwrap_single_query_id(result: &execute_query_response::Result) -> String {
     match result {
-        execute_query_response::Result::Single(d) => d.query_id.clone(),
+        execute_query_response::Result::Single(rs) => {
+            rs.result_descriptor.as_ref().unwrap().query_id.clone()
+        }
+        execute_query_response::Result::Multi(_) => {
+            panic!("Expected single-statement result, got multi-statement")
+        }
+    }
+}
+
+/// Extract the ResultSetHandle from a single-statement execute result.
+/// Panics if the result is a multi-statement result.
+pub fn unwrap_single_rs_handle(result: &execute_query_response::Result) -> ResultSetHandle {
+    match result {
+        execute_query_response::Result::Single(rs) => rs.result_set_handle.unwrap(),
         execute_query_response::Result::Multi(_) => {
             panic!("Expected single-statement result, got multi-statement")
         }

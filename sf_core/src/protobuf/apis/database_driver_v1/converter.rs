@@ -1,12 +1,16 @@
+use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::ExecuteQueryResult as NativeExecuteQueryResult;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
-use crate::apis::database_driver_v1::ResolvedResultSet as NativeResolvedResultSet;
+use crate::apis::database_driver_v1::InlineData;
 use crate::apis::database_driver_v1::ResultSetDescriptor as NativeResultSetDescriptor;
+use crate::apis::database_driver_v1::ResultSetInfo as NativeResultSetInfo;
 use crate::apis::database_driver_v1::Setting;
-use crate::apis::database_driver_v1::error::{ConfigError, InvalidColumnMetadataSnafu, RestError};
+use crate::apis::database_driver_v1::error::{
+    ConfigError, InlineJsonEncodingSnafu, InvalidColumnMetadataSnafu, RestError,
+};
 use crate::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
@@ -57,25 +61,31 @@ impl From<*mut FFI_ArrowArrayStream> for ArrowArrayStreamPtr {
 
 // Convert protobuf BinaryDataPtr to internal DataPtr.
 // Both represent a raw pointer + length; this avoids leaking protobuf types into core.
-impl<'a> From<BinaryDataPtr> for DataPtr<'a> {
-    fn from(proto_ptr: BinaryDataPtr) -> Self {
+impl<'a> TryFrom<BinaryDataPtr> for DataPtr<'a> {
+    type Error = String;
+
+    fn try_from(proto_ptr: BinaryDataPtr) -> Result<Self, Self::Error> {
         let ptr_bytes: [u8; 8] = proto_ptr
             .value
             .as_slice()
             .try_into()
-            .expect("Pointer must be 8 bytes");
-        let ptr_value = usize::from_le_bytes(ptr_bytes);
-        let ptr = ptr_value as *const u8;
-        DataPtr::new(ptr, proto_ptr.length)
+            .map_err(|_| format!("Pointer must be 8 bytes, got {}", proto_ptr.value.len()))?;
+        let ptr_value = u64::from_le_bytes(ptr_bytes);
+        let ptr = usize::try_from(ptr_value)
+            .map_err(|_| format!("Serialized pointer 0x{ptr_value:X} does not fit in usize"))?
+            as *const u8;
+        Ok(DataPtr::new(ptr, proto_ptr.length))
     }
 }
 
 // Convert protobuf QueryBindings variant to internal BindingType.
-impl<'a> From<query_bindings::BindingType> for BindingType<'a> {
-    fn from(proto: query_bindings::BindingType) -> Self {
+impl<'a> TryFrom<query_bindings::BindingType> for BindingType<'a> {
+    type Error = String;
+
+    fn try_from(proto: query_bindings::BindingType) -> Result<Self, Self::Error> {
         match proto {
-            query_bindings::BindingType::Json(ptr) => BindingType::Json(ptr.into()),
-            query_bindings::BindingType::Csv(ptr) => BindingType::Csv(ptr.into()),
+            query_bindings::BindingType::Json(ptr) => Ok(BindingType::Json(ptr.try_into()?)),
+            query_bindings::BindingType::Csv(ptr) => Ok(BindingType::Csv(ptr.try_into()?)),
         }
     }
 }
@@ -132,6 +142,24 @@ impl From<StatementHandle> for Handle {
 impl From<Handle> for StatementHandle {
     fn from(handle: Handle) -> Self {
         StatementHandle {
+            id: handle.id as i64,
+            magic: handle.magic as i64,
+        }
+    }
+}
+
+impl From<ResultSetHandle> for Handle {
+    fn from(handle: ResultSetHandle) -> Self {
+        Handle {
+            id: handle.id as u64,
+            magic: handle.magic as u64,
+        }
+    }
+}
+
+impl From<Handle> for ResultSetHandle {
+    fn from(handle: Handle) -> Self {
+        ResultSetHandle {
             id: handle.id as i64,
             magic: handle.magic as i64,
         }
@@ -246,7 +274,8 @@ pub(super) fn column_metadata_to_row_type(
         length: column_metadata.length.map(|v| v as u64),
         precision: column_metadata.precision.map(|v| v as u64),
         ext_type_name: None,
-        _fields: None,
+        vector_dimension: None,
+        fields: None,
     };
     (&temp_row_type)
         .try_into()
@@ -282,8 +311,8 @@ impl From<NativeResultSetDescriptor> for ResultSetDescriptor {
 impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     fn from(result: NativeExecuteQueryResult) -> Self {
         match result {
-            NativeExecuteQueryResult::Single(descriptor) => ExecuteQueryResponse {
-                result: Some(execute_query_response::Result::Single(descriptor.into())),
+            NativeExecuteQueryResult::Single(info) => ExecuteQueryResponse {
+                result: Some(execute_query_response::Result::Single(info.into())),
             },
             NativeExecuteQueryResult::Multi {
                 parent,
@@ -302,13 +331,86 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
     }
 }
 
-impl From<NativeResolvedResultSet> for ResultSetResponse {
-    fn from(result: NativeResolvedResultSet) -> Self {
-        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
-        ResultSetResponse {
-            result_descriptor: Some(result.descriptor.into()),
+impl From<Box<FFI_ArrowArrayStream>> for ResultSetGetStreamResponse {
+    fn from(stream: Box<FFI_ArrowArrayStream>) -> Self {
+        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(stream).into();
+        ResultSetGetStreamResponse {
             stream: Some(stream_ptr),
         }
+    }
+}
+
+impl From<NativeResultSetInfo> for ResultSetResponse {
+    fn from(info: NativeResultSetInfo) -> Self {
+        ResultSetResponse {
+            result_set_handle: Some(info.handle.into()),
+            result_descriptor: Some(info.descriptor.into()),
+        }
+    }
+}
+
+impl TryFrom<ChunkDataWithDescriptor> for ResultSetGetChunksResponse {
+    type Error = DriverException;
+
+    fn try_from(value: ChunkDataWithDescriptor) -> Result<Self, Self::Error> {
+        let chunk_data = value.chunk_data;
+        let descriptor = value.descriptor;
+
+        let columns: Vec<ColumnMetadata> = descriptor
+            .columns
+            .iter()
+            .cloned()
+            .map(|c| c.into())
+            .collect();
+
+        let mut chunks = Vec::new();
+
+        let inline_base64 = match &chunk_data.inline {
+            InlineData::Json(rowset) => {
+                let row_types: Vec<RowType> = descriptor
+                    .columns
+                    .iter()
+                    .map(column_metadata_to_row_type)
+                    .collect::<Result<Vec<_>, _>>()
+                    .to_protobuf()?;
+                Some(
+                    json_rowset_to_arrow_ipc_base64(rowset, &row_types)
+                        .context(InlineJsonEncodingSnafu)
+                        .to_protobuf()?,
+                )
+            }
+            InlineData::ArrowIpc(b64) => Some(b64.clone()),
+            InlineData::None => None,
+        };
+
+        if let Some(base64_data) = inline_base64 {
+            let remote_rows: i32 = chunk_data.remote_chunks.iter().map(|c| c.row_count).sum();
+            let inline_row_count = descriptor
+                .rows_affected
+                .map(|total| (total as i32).saturating_sub(remote_rows))
+                .unwrap_or(0);
+
+            chunks.push(ResultChunk {
+                format: ChunkFormat::ArrowIpc as i32,
+                data: Some(result_chunk::Data::Inline(base64_data)),
+                row_count: inline_row_count,
+            });
+        }
+
+        for c in &chunk_data.remote_chunks {
+            chunks.push(ResultChunk {
+                format: ChunkFormat::from(chunk_data.format) as i32,
+                data: Some(result_chunk::Data::Remote(RemoteChunk {
+                    url: c.url.clone(),
+                    headers: c.headers.clone(),
+                    compressed_size: c.compressed_size,
+                    uncompressed_size: c.uncompressed_size,
+                })),
+                row_count: c.row_count,
+            });
+        }
+
+        Ok(ResultSetGetChunksResponse { chunks, columns })
     }
 }
 
@@ -549,19 +651,18 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidArgument { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
-        ApiError::Login {
-            source: RestError::LoginError { message, code, .. },
-            ..
-        } => DriverError {
-            error_type: Some(driver_error::ErrorType::LoginError(LoginError {
-                message: message.clone(),
-                code: *code,
-            })),
-        },
-        ApiError::Login { source, .. } => DriverError {
-            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
-                detail: source.to_string(),
-            })),
+        ApiError::Login { source, .. } => match source.as_ref() {
+            RestError::LoginError { message, code, .. } => DriverError {
+                error_type: Some(driver_error::ErrorType::LoginError(LoginError {
+                    message: message.clone(),
+                    code: *code,
+                })),
+            },
+            _ => DriverError {
+                error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                    detail: source.to_string(),
+                })),
+            },
         },
         ApiError::ConnectionLocking { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
@@ -704,20 +805,16 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     let (code, sql_state) = match error {
-        ApiError::Query {
-            source: RestError::QueryFailed {
+        ApiError::Query { source, .. } => match source.as_ref() {
+            RestError::QueryFailed {
                 code, sql_state, ..
-            },
-            ..
-        } => (*code, sql_state.clone()),
-        ApiError::Query {
-            source:
-                RestError::AsyncQuery {
-                    source: SfError::SnowflakeBody { code, .. },
-                    ..
-                },
-            ..
-        } => (Some(*code), None),
+            } => (*code, sql_state.clone()),
+            RestError::AsyncQuery {
+                source: SfError::SnowflakeBody { code, .. },
+                ..
+            } => (Some(*code), None),
+            _ => (None, None),
+        },
         _ => (None, None),
     };
 
@@ -728,10 +825,10 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
 
 fn extract_query_id(error: &ApiError) -> Option<String> {
     match error {
-        ApiError::Query {
-            source: RestError::QueryFailed { query_id, .. },
-            ..
-        } => query_id.clone(),
+        ApiError::Query { source, .. } => match source.as_ref() {
+            RestError::QueryFailed { query_id, .. } => query_id.clone(),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -786,11 +883,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             ..
         } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
-        ApiError::Login {
-            source: RestError::LoginError { .. },
-            ..
-        } => StatusCode::LoginError,
-        ApiError::Login { .. } => StatusCode::AuthenticationError,
+        ApiError::Login { source, .. } => match source.as_ref() {
+            RestError::LoginError { .. } => StatusCode::LoginError,
+            _ => StatusCode::AuthenticationError,
+        },
         ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
@@ -909,27 +1005,29 @@ mod tests {
     fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
         ApiError::Query {
             location: loc(),
-            source: RestError::QueryFailed {
+            source: Box::new(RestError::QueryFailed {
                 message: "test".to_owned(),
                 code,
                 sql_state: sql_state.map(|s| s.to_owned()),
                 query_id: None,
                 location: loc(),
-            },
+            }),
         }
     }
 
     fn async_query(code: i32) -> ApiError {
         ApiError::Query {
             location: loc(),
-            source: RestError::AsyncQuery {
+            source: Box::new(RestError::AsyncQuery {
                 location: loc(),
+                request_id: Some(uuid::Uuid::new_v4()), // test only code
+                query_id: None,
                 source: SfError::SnowflakeBody {
                     code,
                     message: "test".to_owned(),
                     location: loc(),
                 },
-            },
+            }),
         }
     }
 
@@ -1007,5 +1105,43 @@ mod tests {
     fn async_query_unknown_code_keeps_sql_state_none() {
         let err = async_query(424_242);
         assert_eq!(extract_vendor_info(&err), (Some(424_242), None));
+    }
+
+    #[test]
+    fn query_error_to_string_has_no_wrapper_prefixes() {
+        // Server errors should surface verbatim: no "Query execution failed:"
+        // and no "Query failed:" prefix — matching the legacy Python driver.
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::QueryFailed {
+                message: "SQL compilation error: Object 'FOO' does not exist.".to_owned(),
+                code: Some(2003),
+                sql_state: Some("42S02".to_owned()),
+                query_id: None,
+                location: loc(),
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "SQL compilation error: Object 'FOO' does not exist."
+        );
+    }
+
+    #[test]
+    fn query_error_driver_exception_message_has_no_wrapper_prefixes() {
+        // End-to-end: the DriverException.message field (what Python reads)
+        // should contain only the server error, no wrapper prefixes.
+        let err = ApiError::Query {
+            location: loc(),
+            source: Box::new(RestError::QueryFailed {
+                message: "SQL compilation error: syntax error line 1".to_owned(),
+                code: Some(1003),
+                sql_state: Some("42000".to_owned()),
+                query_id: None,
+                location: loc(),
+            }),
+        };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.message, "SQL compilation error: syntax error line 1");
     }
 }

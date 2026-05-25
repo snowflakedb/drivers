@@ -5,6 +5,7 @@ Enforces:
   - Each entry has a non-empty 'name'
   - 'status' is present and one of the allowed values
   - 'type' is present and one of the allowed values
+  - 'reviewed', when present, is a boolean; when reviewed is True, non-empty status_rationale is required
   - IDs are positive integers with no duplicates
   - Only known fields are used
   - No existing entries are removed (only additions/modifications allowed)
@@ -17,11 +18,12 @@ from pathlib import Path
 import yaml
 
 ALLOWED_STATUSES = {"unknown", "todo", "fixed", "allowed"}
-ALLOWED_TYPES = {"api_incompatibility", "bug", "enhancement", "unknown"}
+ALLOWED_TYPES = {"api_incompatibility", "bug", "bugfix", "enhancement", "unknown"}
 ALLOWED_REVIEWED = {True, False}
 KNOWN_FIELDS = {
     "name",
     "status",
+    "status_rationale",
     "type",
     "reviewed",
     "description",
@@ -108,8 +110,15 @@ def validate() -> list[str]:
             errors.append(f"BD-{bd_id}: invalid type '{bd_type}' (allowed: {', '.join(sorted(ALLOWED_TYPES))})")
 
         reviewed = entry.get("reviewed")
-        if reviewed is not None and not isinstance(reviewed, bool):
-            errors.append(f"BD-{bd_id}: 'reviewed' must be a boolean (true/false)")
+        if reviewed is not None:
+            if reviewed not in ALLOWED_REVIEWED:
+                errors.append(f"BD-{bd_id}: 'reviewed' must be a boolean (true/false)")
+        if reviewed is True:
+            rationale = entry.get("status_rationale")
+            if not rationale or not isinstance(rationale, str) or not rationale.strip():
+                errors.append(
+                    f"BD-{bd_id}: non-empty 'status_rationale' is required when reviewed is true"
+                )
 
     old_ids = _committed_ids()
     removed = old_ids - seen_ids

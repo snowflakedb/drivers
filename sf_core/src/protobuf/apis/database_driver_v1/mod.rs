@@ -3,16 +3,14 @@ mod converter;
 use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
-use crate::apis::database_driver_v1::InlineData;
-use crate::apis::database_driver_v1::error::{ConfigurationSnafu, InlineJsonEncodingSnafu};
+use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
     ToProtobuf, column_metadata_to_row_type, core_validation_issue_to_proto,
-    flat_sections_to_nested_json, json_rowset_to_arrow_ipc_base64, proto_chunk_format_to_kind,
-    proto_options_to_hashmap,
+    flat_sections_to_nested_json, proto_chunk_format_to_kind, proto_options_to_hashmap,
 };
 use error_trace::ErrorTrace;
 use snafu::ResultExt;
@@ -35,70 +33,6 @@ fn not_implemented(message: &str) -> DriverException {
         status_code: StatusCode::NotImplemented as i32,
         ..Default::default()
     }
-}
-
-#[allow(clippy::result_large_err)]
-fn chunk_info_to_result_chunks_result(
-    chunk_info: crate::apis::database_driver_v1::StoredChunkInfo,
-) -> Result<ResultChunksResult, DriverException> {
-    let columns: Vec<ColumnMetadata> = chunk_info
-        .descriptor
-        .columns
-        .iter()
-        .cloned()
-        .map(|c| c.into())
-        .collect();
-
-    let mut chunks = Vec::new();
-
-    let inline_base64 = match &chunk_info.inline {
-        InlineData::Json(rowset) => {
-            let row_types: Vec<crate::query_types::RowType> = chunk_info
-                .descriptor
-                .columns
-                .iter()
-                .map(column_metadata_to_row_type)
-                .collect::<Result<Vec<_>, _>>()
-                .to_protobuf()?;
-            Some(
-                json_rowset_to_arrow_ipc_base64(rowset, &row_types)
-                    .context(InlineJsonEncodingSnafu)
-                    .to_protobuf()?,
-            )
-        }
-        InlineData::ArrowIpc(b64) => Some(b64.clone()),
-        InlineData::None => None,
-    };
-
-    if let Some(base64_data) = inline_base64 {
-        let remote_rows: i32 = chunk_info.chunks.iter().map(|c| c.row_count).sum();
-        let inline_row_count = chunk_info
-            .descriptor
-            .rows_affected
-            .map(|total| (total as i32).saturating_sub(remote_rows))
-            .unwrap_or(0);
-
-        chunks.push(ResultChunk {
-            format: ChunkFormat::ArrowIpc as i32,
-            data: Some(result_chunk::Data::Inline(base64_data)),
-            row_count: inline_row_count,
-        });
-    }
-
-    for c in &chunk_info.chunks {
-        chunks.push(ResultChunk {
-            format: ChunkFormat::from(chunk_info.format) as i32,
-            data: Some(result_chunk::Data::Remote(RemoteChunk {
-                url: c.url.clone(),
-                headers: c.headers.clone(),
-                compressed_size: c.compressed_size,
-                uncompressed_size: c.uncompressed_size,
-            })),
-            row_count: c.row_count,
-        });
-    }
-
-    Ok(ResultChunksResult { chunks, columns })
 }
 
 pub struct DatabaseDriverImpl {
@@ -483,6 +417,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_get_all_parameters",
+        skip(self, input)
+    )]
+    async fn connection_get_all_parameters(
+        &self,
+        input: ConnectionGetAllParametersRequest,
+    ) -> Result<ConnectionGetAllParametersResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let parameters = self
+            .driver
+            .connection_get_all_parameters(conn_handle.into())
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionGetAllParametersResponse { parameters })
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_validate_options",
         skip(self, input)
     )]
@@ -537,7 +490,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .connection_get_result_set(conn_handle.into(), input.query_id)
+            .create_result_set_from_sfqid(conn_handle.into(), input.query_id)
             .await
             .to_protobuf()?;
 
@@ -779,27 +732,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let bindings_opt = input
             .bindings
             .and_then(|b| b.binding_type)
-            .map(BindingType::from);
+            .map(BindingType::try_from)
+            .transpose()
+            .map_err(|e| DriverException {
+                message: e,
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            })?;
+
+        let timeout_seconds = input.timeout_seconds;
 
         let result = self
             .driver
-            .statement_execute_query(stmt_handle.into(), bindings_opt)
-            .await
-            .to_protobuf()?;
-
-        Ok(result.into())
-    }
-
-    #[instrument(name = "DatabaseDriverV1::statement_get_result_set", skip(self, input))]
-    async fn statement_get_result_set(
-        &self,
-        input: StatementGetResultSetRequest,
-    ) -> Result<ResultSetResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        let result = self
-            .driver
-            .statement_get_result_set(stmt_handle.into(), input.query_id)
+            .statement_execute_query(stmt_handle.into(), bindings_opt, timeout_seconds)
             .await
             .to_protobuf()?;
 
@@ -816,7 +761,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let bindings_opt = input
             .bindings
             .and_then(|b| b.binding_type)
-            .map(BindingType::from);
+            .map(BindingType::try_from)
+            .transpose()
+            .map_err(|e| DriverException {
+                message: e,
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            })?;
 
         let result = self
             .driver
@@ -855,42 +806,48 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_result_chunks", skip(self, input))]
-    async fn statement_result_chunks(
+    #[instrument(name = "DatabaseDriverV1::result_set_get_stream", skip(self, input))]
+    async fn result_set_get_stream(
         &self,
-        input: StatementResultChunksRequest,
-    ) -> Result<StatementResultChunksResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+        input: ResultSetGetStreamRequest,
+    ) -> Result<ResultSetGetStreamResponse, DriverException> {
+        let handle = required(input.result_set_handle, "ResultSet handle is required")?;
 
-        let chunk_info = self
+        let result = self
             .driver
-            .statement_result_chunks(stmt_handle.into(), &input.query_id)
+            .result_set_get_stream(handle.into())
             .await
             .to_protobuf()?;
 
-        let result = chunk_info_to_result_chunks_result(chunk_info)?;
-        Ok(StatementResultChunksResponse {
-            result: Some(result),
-        })
+        Ok(result.into())
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_result_chunks", skip(self, input))]
-    async fn connection_result_chunks(
+    #[instrument(name = "DatabaseDriverV1::result_set_get_chunks", skip(self, input))]
+    async fn result_set_get_chunks(
         &self,
-        input: ConnectionResultChunksRequest,
-    ) -> Result<ConnectionResultChunksResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        input: ResultSetGetChunksRequest,
+    ) -> Result<ResultSetGetChunksResponse, DriverException> {
+        let result_set_handle = required(input.result_set_handle, "ResultSet handle is required")?;
 
-        let chunk_info = self
-            .driver
-            .connection_result_chunks(conn_handle.into(), input.query_id)
+        self.driver
+            .result_set_get_chunks(result_set_handle.into())
             .await
+            .to_protobuf()?
+            .try_into()
+    }
+
+    #[instrument(name = "DatabaseDriverV1::result_set_release", skip(self, input))]
+    async fn result_set_release(
+        &self,
+        input: ResultSetReleaseRequest,
+    ) -> Result<ResultSetReleaseResponse, DriverException> {
+        let handle = required(input.result_set_handle, "ResultSet handle is required")?;
+
+        self.driver
+            .result_set_release(handle.into())
             .to_protobuf()?;
 
-        let result = chunk_info_to_result_chunks_result(chunk_info)?;
-        Ok(ConnectionResultChunksResponse {
-            result: Some(result),
-        })
+        Ok(ResultSetReleaseResponse {})
     }
 
     #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(self, input))]
@@ -957,10 +914,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            let _guard = conn_span.enter();
-            crate::telemetry::record_api_call(&input.api_method);
-        }
+        let session_id = self.driver.session_id_for_conn(handle).await;
+        let span = crate::snowflake_op_span!("wrapper_api_usage", session_id);
+        let _guard = span.enter();
+        crate::telemetry::record_api_call(&input.api_method);
 
         Ok(TelemetrySendResponse {})
     }
@@ -976,10 +933,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        if let Some(conn_span) = self.driver.telemetry_span(handle).await {
-            let _guard = conn_span.enter();
-            crate::telemetry::record_exception(&input.exception_type, &input.error_source);
-        }
+        let session_id = self.driver.session_id_for_conn(handle).await;
+        let span = crate::snowflake_op_span!("wrapper_error", session_id);
+        let _guard = span.enter();
+        crate::telemetry::record_exception(&input.exception_type, &input.error_source);
 
         Ok(TelemetrySendResponse {})
     }
@@ -1004,7 +961,7 @@ pub type DatabaseDriverClient =
         crate::protobuf::apis::RustTransport,
     >;
 
-pub use crate::apis::database_driver_v1::DriverProviders;
+pub use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use crate::chunks::ChunkFormatKind;
 use crate::query_types::RowType;
 
@@ -1081,14 +1038,6 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementReleaseRequest,
     ) -> BlockingProtoResult<StatementReleaseResponse>;
-    fn statement_result_chunks_blocking(
-        &self,
-        input: StatementResultChunksRequest,
-    ) -> BlockingProtoResult<StatementResultChunksResponse>;
-    fn connection_result_chunks_blocking(
-        &self,
-        input: ConnectionResultChunksRequest,
-    ) -> BlockingProtoResult<ConnectionResultChunksResponse>;
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
@@ -1113,14 +1062,22 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetInfoRequest,
     ) -> BlockingProtoResult<ConnectionGetInfoResponse>;
-    fn statement_get_result_set_blocking(
-        &self,
-        input: StatementGetResultSetRequest,
-    ) -> Result<ResultSetResponse, proto_utils::ProtoError<DriverException>>;
     fn connection_get_result_set_blocking(
         &self,
         input: ConnectionGetResultSetRequest,
     ) -> Result<ResultSetResponse, proto_utils::ProtoError<DriverException>>;
+    fn result_set_get_stream_blocking(
+        &self,
+        input: ResultSetGetStreamRequest,
+    ) -> BlockingProtoResult<ResultSetGetStreamResponse>;
+    fn result_set_get_chunks_blocking(
+        &self,
+        input: ResultSetGetChunksRequest,
+    ) -> BlockingProtoResult<ResultSetGetChunksResponse>;
+    fn result_set_release_blocking(
+        &self,
+        input: ResultSetReleaseRequest,
+    ) -> BlockingProtoResult<ResultSetReleaseResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1195,20 +1152,6 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         block_on_client_call(self.statement_release(input))
     }
 
-    fn statement_result_chunks_blocking(
-        &self,
-        input: StatementResultChunksRequest,
-    ) -> BlockingProtoResult<StatementResultChunksResponse> {
-        block_on_client_call(self.statement_result_chunks(input))
-    }
-
-    fn connection_result_chunks_blocking(
-        &self,
-        input: ConnectionResultChunksRequest,
-    ) -> BlockingProtoResult<ConnectionResultChunksResponse> {
-        block_on_client_call(self.connection_result_chunks(input))
-    }
-
     fn database_fetch_chunk_blocking(
         &self,
         input: DatabaseFetchChunkRequest,
@@ -1251,17 +1194,31 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         block_on_client_call(self.connection_get_info(input))
     }
 
-    fn statement_get_result_set_blocking(
-        &self,
-        input: StatementGetResultSetRequest,
-    ) -> Result<ResultSetResponse, proto_utils::ProtoError<DriverException>> {
-        BLOCKING_CLIENT_RUNTIME.block_on(self.statement_get_result_set(input))
-    }
-
     fn connection_get_result_set_blocking(
         &self,
         input: ConnectionGetResultSetRequest,
     ) -> Result<ResultSetResponse, proto_utils::ProtoError<DriverException>> {
         BLOCKING_CLIENT_RUNTIME.block_on(self.connection_get_result_set(input))
+    }
+
+    fn result_set_get_stream_blocking(
+        &self,
+        input: ResultSetGetStreamRequest,
+    ) -> BlockingProtoResult<ResultSetGetStreamResponse> {
+        block_on_client_call(self.result_set_get_stream(input))
+    }
+
+    fn result_set_get_chunks_blocking(
+        &self,
+        input: ResultSetGetChunksRequest,
+    ) -> BlockingProtoResult<ResultSetGetChunksResponse> {
+        block_on_client_call(self.result_set_get_chunks(input))
+    }
+
+    fn result_set_release_blocking(
+        &self,
+        input: ResultSetReleaseRequest,
+    ) -> BlockingProtoResult<ResultSetReleaseResponse> {
+        block_on_client_call(self.result_set_release(input))
     }
 }

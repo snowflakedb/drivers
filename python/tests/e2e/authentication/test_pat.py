@@ -26,7 +26,7 @@ def _ci_build_tag() -> str:
     return "LOCAL_0"
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="session")
 def pat_token(connection_factory):
     pat_token = PAT(connection_factory)
     try:

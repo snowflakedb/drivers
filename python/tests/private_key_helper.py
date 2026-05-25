@@ -1,7 +1,6 @@
 import tempfile
 
 from pathlib import Path
-from typing import Optional
 
 from .config import get_test_parameters
 from .utils import repo_root
@@ -76,7 +75,7 @@ def get_private_key_from_parameters() -> str:
     return temp_file.path()
 
 
-def get_private_key_password() -> Optional[str]:
+def get_private_key_password() -> str | None:
     test_params = get_test_parameters()
     return test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")
 

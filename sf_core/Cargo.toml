@@ -8,11 +8,13 @@ name = "sf_core"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["protobuf"]
+default = ["protobuf", "sonic-json"]
+sonic-json = ["sonic-rs"]
 fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
 vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
+auth_oauth_e2e = []
 perf_timing = []
 test-utils = []
 cli = ["clap"]
@@ -31,7 +33,7 @@ reqwest = { version = "0.12.23", features = ["json", "rustls-tls", "gzip"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
-tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
 tokio-util = { version = "0.7", features = ["time"] }
 tokio-stream = "0.1"
 toml = "0.8"
@@ -42,6 +44,10 @@ arrow-ipc = "56.0.0"
 flate2 = "1.1.2"
 openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
+oauth2 = { version = "5", features = ["timing-resistant-secret-traits"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+webbrowser = "1"
+http = "1"
 infer = "0.19.0"
 
 # Proto
@@ -82,7 +88,7 @@ urlencoding = "2.1"
 zeroize = "1.8"
 hex = "0.4"
 memchr = "2"
-sonic-rs = "0.5"
+sonic-rs = { version = "0.5", optional = true }
 sha2 = "0.10"
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
@@ -98,7 +104,7 @@ proto_generator = { path = "../proto_generator" }
 libc = "0.2"
 
 [dev-dependencies]
-sf_core = { path = ".", features = ["test-utils"] }
+sf_core = { path = ".", default-features = false, features = ["test-utils"] }
 tokio = { version = "1.47.1", features = ["fs", "test-util"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 tempfile = "3.21.0"
@@ -151,6 +157,10 @@ name = "logging_custom_file_tests"
 path = "tests/logging_custom_file_tests.rs"
 
 [[test]]
+name = "logging_query_tests"
+path = "tests/logging_query_tests.rs"
+
+[[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 
@@ -163,6 +173,10 @@ required-features = ["cli"]
 name = "collect_chunk_data"
 path = "src/bin/collect_chunk_data.rs"
 required-features = ["cli"]
+
+[[bin]]
+name = "param_defs_export"
+path = "src/bin/param_defs_export.rs"
 
 [[bench]]
 name = "prefetch_bench"

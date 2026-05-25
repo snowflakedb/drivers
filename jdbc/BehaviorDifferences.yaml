@@ -1,0 +1,34 @@
+# Behavioral Differences between the new (universal) JDBC driver and the old (legacy) JDBC driver.
+#
+# Allowed statuses:
+#  - unknown (default): status is not yet determined
+#  - todo: BD has to be fixed
+#  - fixed: BD has been addressed, removing the difference between the old and new driver
+#  - allowed: the change is expected and is accepted
+#
+# Allowed types:
+#  - unknown (default): type is not yet determined
+#  - api_incompatibility: the new driver removes support for a functionality
+#  - bug: the new driver has a bug/incompatibility relative to the old driver
+#  - bugfix: the new driver fixes incorrect old-driver behavior (e.g. non-compliance with the JDBC specification)
+#  - enhancement: the new driver extends or improves existing functionality
+#
+# Reviewed:
+#  - true: the BD has been reviewed and its status is accepted
+#  - false (default): the BD has not yet been reviewed
+#
+# status_rationale (required when reviewed is true):
+#  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
+#  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
+
+behavior_differences:
+  1:
+    name: "DataSource rejects PAT authentication without password"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver's DataSource.getConnection() unconditionally requires a password for all
+      authenticators except SNOWFLAKE_JWT and EXTERNALBROWSER. This prevents PAT (Programmatic
+      Access Token) authentication via DataSource even though setToken() and setAuthenticator()
+      exist. The new driver correctly allows token-based authentication without a password.

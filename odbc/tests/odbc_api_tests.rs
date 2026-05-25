@@ -109,3 +109,102 @@ fn smoke_connection_set_tls_config() {
         })
         .expect("set options");
 }
+
+#[test]
+fn c_api_lifecycle_with_telemetry_shim_is_non_fatal() {
+    use odbc_sys as sql;
+    use sfodbc::c_api::*;
+
+    let mut env: sql::Handle = std::ptr::null_mut();
+    let rc = unsafe {
+        SQLAllocHandle(
+            sql::HandleType::Env,
+            std::ptr::null_mut(),
+            &mut env as *mut sql::Handle,
+        )
+    };
+    assert_eq!(rc, sql::SqlReturn::SUCCESS.0, "SQLAllocHandle(Env) failed");
+    assert!(!env.is_null());
+
+    let mut dbc: sql::Handle = std::ptr::null_mut();
+    let rc = unsafe { SQLAllocHandle(sql::HandleType::Dbc, env, &mut dbc as *mut sql::Handle) };
+    assert_eq!(rc, sql::SqlReturn::SUCCESS.0, "SQLAllocHandle(Dbc) failed");
+    assert!(!dbc.is_null());
+
+    // Statement allocation on a still-Disconnected Dbc exercises the
+    // resolver against both the Dbc registry (state == Disconnected) and
+    // the Stmt-via-Dbc lookup if allocation happens to succeed. Either way
+    // the telemetry shim must not panic, regardless of the SQL return code.
+    let mut stmt: sql::Handle = std::ptr::null_mut();
+    let alloc_rc =
+        unsafe { SQLAllocHandle(sql::HandleType::Stmt, dbc, &mut stmt as *mut sql::Handle) };
+    if alloc_rc == sql::SqlReturn::SUCCESS.0 {
+        assert!(!stmt.is_null(), "SUCCESS must populate output handle");
+        let rc = unsafe { SQLFreeHandle(sql::HandleType::Stmt, stmt) };
+        assert_eq!(rc, sql::SqlReturn::SUCCESS.0, "SQLFreeHandle(Stmt) failed");
+    } else {
+        assert_eq!(
+            alloc_rc,
+            sql::SqlReturn::ERROR.0,
+            "Stmt-on-Disconnected-Dbc must either succeed or return ERROR (not panic / not INVALID_HANDLE)"
+        );
+    }
+
+    // Tear down in reverse order. Each `SQLFreeHandle` is itself
+    // instrumented — once a handle leaves its registry the resolver
+    // no-ops on the next call.
+    let rc = unsafe { SQLFreeHandle(sql::HandleType::Dbc, dbc) };
+    assert_eq!(rc, sql::SqlReturn::SUCCESS.0, "SQLFreeHandle(Dbc) failed");
+    let rc = unsafe { SQLFreeHandle(sql::HandleType::Env, env) };
+    assert_eq!(rc, sql::SqlReturn::SUCCESS.0, "SQLFreeHandle(Env) failed");
+
+    // After the last env is freed the runtime is torn down (`env_freed`
+    // sets globals back to None). Subsequent SQL* calls must still be
+    // non-fatal — the telemetry shim's `global()?` short-circuits cleanly.
+    let rc = unsafe { SQLFreeStmt(std::ptr::null_mut(), 0) };
+    assert_eq!(
+        rc,
+        sql::SqlReturn::INVALID_HANDLE.0,
+        "SQLFreeStmt on null handle should return INVALID_HANDLE"
+    );
+}
+
+#[test]
+fn telemetry_rpcs_accept_unknown_handles_silently() {
+    use sf_core::protobuf::generated::database_driver_v1::{
+        ConnectionHandle, TelemetrySendApiUsageRequest, TelemetrySendWrapperErrorRequest,
+    };
+    let client = database_driver_client();
+    let conn = ConnectionHandle {
+        id: 0xDEAD,
+        magic: 0,
+    };
+
+    // api_usage with an unregistered conn handle: must succeed with no
+    // surfaced error so the spawned ODBC task stays fire-and-forget.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(async {
+        client
+            .telemetry_send_api_usage(TelemetrySendApiUsageRequest {
+                conn_handle: Some(conn),
+                api_method: "SQLExecDirect".to_string(),
+            })
+            .await
+            .expect("telemetry_send_api_usage on unknown handle must not error");
+        client
+            .telemetry_send_wrapper_error(TelemetrySendWrapperErrorRequest {
+                conn_handle: Some(conn),
+                exception_type: "ConversionError".to_string(),
+                // Wire format must match what `ErrorSource::DataConversion`
+                // serialises to via `Display` (snake_case). Hardcoded here
+                // because the `api` module isn't publicly re-exported;
+                // the round-trip is enforced by the
+                // `error_source_wire_format_round_trips` unit test.
+                error_source: "data_conversion".to_string(),
+            })
+            .await
+            .expect("telemetry_send_wrapper_error on unknown handle must not error");
+    });
+}

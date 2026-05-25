@@ -15,6 +15,7 @@ use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     RustParsingSnafu, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::interval::format_interval;
 use crate::conversion::param_binding::{
     buffer_data_len, format_numeric_value, read_char_str, read_numeric_struct, read_unaligned,
     read_wchar_str,
@@ -382,6 +383,30 @@ impl WriteODBCType for SnowflakeVarchar {
             CDataType::Binary => {
                 Ok(binding.write_binary(snowflake_value.as_bytes(), get_data_offset))
             }
+            // SQL_C_INTERVAL_* fetch (per ODBC Appendix D, "Character to
+            // Interval"). Snowflake VARCHAR holds the interval literal
+            // text; the parser is target-aware so the input shape must
+            // match the qualifier (truncation of trailing fields is
+            // surfaced as 01S07 in the helper).
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => {
+                crate::conversion::interval_str::varchar_to_interval(
+                    snowflake_value,
+                    binding.target_type,
+                    binding,
+                )
+            }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }
@@ -461,6 +486,36 @@ impl ReadODBC for SnowflakeVarchar {
                     std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
                 };
                 hex_encode_lowercase(bytes)
+            }
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => format_interval(binding),
+            CDataType::Guid => {
+                let g = read_unaligned::<sql::Guid>(binding);
+                format!(
+                    "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                    g.d1,
+                    g.d2,
+                    g.d3,
+                    g.d4[0],
+                    g.d4[1],
+                    g.d4[2],
+                    g.d4[3],
+                    g.d4[4],
+                    g.d4[5],
+                    g.d4[6],
+                    g.d4[7],
+                )
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

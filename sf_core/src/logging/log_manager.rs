@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use opentelemetry::trace::TracerProvider;
+use tracing::Level;
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -10,6 +11,7 @@ use tracing_subscriber::{Layer, Registry};
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::telemetry::os_details::detect_os_details;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
+use crate::telemetry::snowflake_processor::SessionFlushHandle;
 
 use super::error::{InitSnafu, LogError};
 use super::{EmptyLayer, LoggingConfig};
@@ -28,8 +30,16 @@ pub struct LogManager {
     #[allow(dead_code)]
     telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider,
     telemetry_sessions: SessionRegistry,
+    session_flusher: Option<SessionFlushHandle>,
     os_details: once_cell::sync::OnceCell<Option<HashMap<String, String>>>,
     fs: Arc<dyn FsAdapter>,
+    /// Process-wide default for `log_query_text` parsed from `sf.odbc.ini` /
+    /// `[log]` TOML. `None` means "unset; let the registry default win".
+    log_query_text: Option<bool>,
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`].
+    log_query_parameters: Option<bool>,
+    error_trace_enabled: bool,
 }
 
 impl LogManager {
@@ -38,10 +48,41 @@ impl LogManager {
         &self.telemetry_sessions
     }
 
+    /// Flush buffered telemetry spans for a specific session.
+    /// Called during connection release before the connection span is dropped.
+    /// Awaits the export so it completes while session tokens are still alive
+    /// (see [`crate::telemetry::snowflake_processor::SessionFlushHandle::flush_session`]).
+    pub async fn flush_session(&self, session_id: i64) {
+        if let Some(ref flusher) = self.session_flusher {
+            flusher.flush_session(session_id).await;
+        }
+    }
+
     /// Lazily detects and caches OS details (e.g. `/etc/os-release` on Linux).
     pub fn os_details(&self) -> &Option<HashMap<String, String>> {
         self.os_details
             .get_or_init(|| detect_os_details(self.fs.as_ref()))
+    }
+
+    /// Process-wide default for `log_query_text`, parsed from `sf.odbc.ini`
+    /// (or the `[log]` TOML section). Acts as a fallback when no
+    /// per-connection setting is supplied; explicit DSN / connection-string
+    /// values still win.
+    pub fn log_query_text(&self) -> Option<bool> {
+        self.log_query_text
+    }
+
+    /// Process-wide default for `log_query_parameters`. See
+    /// [`Self::log_query_text`] for precedence semantics.
+    pub fn log_query_parameters(&self) -> Option<bool> {
+        self.log_query_parameters
+    }
+
+    /// Whether user-facing error messages should include the full error trace,
+    /// as parsed from the INI/TOML logging config. Consumer crates read this
+    /// during init to seed their own rendering-policy state.
+    pub fn error_trace_enabled(&self) -> bool {
+        self.error_trace_enabled
     }
 
     /// Create a `LogManager` without installing a global tracing subscriber.
@@ -55,9 +96,28 @@ impl LogManager {
         Self {
             telemetry_provider: opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
             telemetry_sessions: SessionRegistry::default(),
+            session_flusher: None,
             os_details: once_cell::sync::OnceCell::new(),
             fs,
+            log_query_text: None,
+            log_query_parameters: None,
+            error_trace_enabled: LoggingConfig::default().error_trace_enabled,
         }
+    }
+
+    /// Override the cached `log_query_text` / `log_query_parameters` defaults
+    /// without re-installing a tracing subscriber. Test-only ergonomics: lets
+    /// integration tests build a `LogManager` via [`Self::with_none_subscriber`]
+    /// and still simulate values parsed from `sf.odbc.ini`.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_query_log_defaults(
+        mut self,
+        log_query_text: Option<bool>,
+        log_query_parameters: Option<bool>,
+    ) -> Self {
+        self.log_query_text = log_query_text;
+        self.log_query_parameters = log_query_parameters;
+        self
     }
 
     /// Initialise logging with the given config, creating a fresh
@@ -65,18 +125,26 @@ impl LogManager {
     /// installed.
     pub fn init(config: LoggingConfig) -> Result<Self, LogError> {
         let sessions = SessionRegistry::default();
-        let provider = Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?
-            .ok_or_else(|| {
-                InitSnafu {
-                    message: "provider is always Some when sessions are provided",
-                }
-                .build()
-            })?;
+        let log_query_text = config.log_query_text;
+        let log_query_parameters = config.log_query_parameters;
+        let error_trace_enabled = config.error_trace_enabled;
+        let (provider, flusher) =
+            Self::try_init(config, None::<EmptyLayer>, Some(sessions.clone()))?;
+        let provider = provider.ok_or_else(|| {
+            InitSnafu {
+                message: "provider is always Some when sessions are provided",
+            }
+            .build()
+        })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: sessions,
+            session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
+            log_query_text,
+            log_query_parameters,
+            error_trace_enabled,
         })
     }
 
@@ -91,18 +159,25 @@ impl LogManager {
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
-        let provider =
-            Self::try_init(config, Some(app_sink), Some(registry.clone()))?.ok_or_else(|| {
-                InitSnafu {
-                    message: "provider is always Some when registry is Some",
-                }
-                .build()
-            })?;
+        let log_query_text = config.log_query_text;
+        let log_query_parameters = config.log_query_parameters;
+        let error_trace_enabled = config.error_trace_enabled;
+        let (provider, flusher) = Self::try_init(config, Some(app_sink), Some(registry.clone()))?;
+        let provider = provider.ok_or_else(|| {
+            InitSnafu {
+                message: "provider is always Some when registry is Some",
+            }
+            .build()
+        })?;
         Ok(Self {
             telemetry_provider: provider,
             telemetry_sessions: registry,
+            session_flusher: flusher,
             os_details: once_cell::sync::OnceCell::new(),
             fs: Arc::new(RealFs),
+            log_query_text,
+            log_query_parameters,
+            error_trace_enabled,
         })
     }
 
@@ -147,7 +222,13 @@ impl LogManager {
         config: LoggingConfig,
         app_sink: Option<L>,
         registry: Option<SessionRegistry>,
-    ) -> Result<Option<opentelemetry_sdk::trace::SdkTracerProvider>, LogError>
+    ) -> Result<
+        (
+            Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+            Option<SessionFlushHandle>,
+        ),
+        LogError,
+    >
     where
         L: Layer<Registry> + Send + Sync + 'static,
     {
@@ -163,20 +244,26 @@ impl LogManager {
             layers.push(OpenTelemetryLayer::new(super::opentelemetry::init_tracer()?).boxed());
         }
 
-        let (snowflake_layer, provider) = if let Some(sessions) = registry {
+        let (snowflake_layer, provider, flush_handle) = if let Some(sessions) = registry {
             let exporter =
                 crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
+            let (processor, flush_handle) =
+                crate::telemetry::snowflake_processor::SnowflakeSpanProcessor::new(exporter);
             let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-                .with_simple_exporter(exporter)
+                .with_span_processor(processor)
                 .build();
             let tracer = provider.tracer("snowflake.telemetry");
-            let layer =
-                OpenTelemetryLayer::new(tracer).with_filter(tracing_subscriber::filter::filter_fn(
-                    |metadata| metadata.name() == "connection" || metadata.is_event(),
-                ));
-            (Some(layer), Some(provider))
+            // Restrict the OpenTelemetryLayer to spans emitted by sf_core itself.
+            // Without this filter every span from tokio, hyper, tower, tonic, …
+            // would flow through `SnowflakeSpanProcessor::on_end`, take the
+            // per-session buffers mutex, scan attributes for `snowflake.session.id`
+            // (always absent), and be dropped — pure overhead on the hot path.
+            let layer = OpenTelemetryLayer::new(tracer).with_filter(
+                tracing_subscriber::filter::Targets::new().with_target("sf_core", Level::TRACE),
+            );
+            (Some(layer), Some(provider), Some(flush_handle))
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         if let Some(layer) = snowflake_layer {
@@ -205,7 +292,7 @@ impl LogManager {
             .build()
         })?;
 
-        Ok(provider)
+        Ok((provider, flush_handle))
     }
 
     fn build_core_layer(config: &LoggingConfig) -> Result<BoxedLayer, LogError> {
@@ -336,6 +423,29 @@ mod tests {
     }
 
     #[test]
+    fn with_none_subscriber_log_query_defaults_are_none() {
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs));
+        assert_eq!(lm.log_query_text(), None);
+        assert_eq!(lm.log_query_parameters(), None);
+    }
+
+    #[test]
+    fn with_query_log_defaults_overrides_values() {
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs))
+            .with_query_log_defaults(Some(true), Some(false));
+        assert_eq!(lm.log_query_text(), Some(true));
+        assert_eq!(lm.log_query_parameters(), Some(false));
+    }
+
+    #[test]
+    fn with_query_log_defaults_supports_partial_set() {
+        let lm = LogManager::with_none_subscriber(Arc::new(RealFs))
+            .with_query_log_defaults(Some(true), None);
+        assert_eq!(lm.log_query_text(), Some(true));
+        assert_eq!(lm.log_query_parameters(), None);
+    }
+
+    #[test]
     fn default_config_is_enabled_info_no_path() {
         use tracing::level_filters::LevelFilter;
 
@@ -355,5 +465,19 @@ mod tests {
             !config.open_telemetry,
             "default opentelemetry should be false"
         );
+    }
+
+    #[test]
+    fn with_none_subscriber_exposes_session_registry() {
+        let lm = LogManager::with_none_subscriber(Arc::new(crate::fs_adapter::RealFs));
+        let guard = lm.telemetry_sessions().read().unwrap();
+        assert!(guard.is_empty(), "session registry should start empty");
+    }
+
+    #[tokio::test]
+    async fn flush_session_is_noop_without_flusher() {
+        let lm = LogManager::with_none_subscriber(Arc::new(crate::fs_adapter::RealFs));
+        // session_flusher is None for with_none_subscriber — should not panic
+        lm.flush_session(42).await;
     }
 }

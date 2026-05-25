@@ -1,69 +1,162 @@
+# Allowed statuses:
+#  - unknown (default): status is not yet determined
+#  - todo: BD has to be fixed
+#  - fixed: BD has been addressed, removing the difference between the old and new driver
+#  - allowed: the change is expected and is accepted
+#
+# Allowed types:
+#  - unknown (default): type is not yet determined
+#  - api_incompatibility: the new driver removes support for a functionality
+#  - bug: the new driver has a bug/incompatibility relative to the old driver
+#  - bugfix: the new driver fixes incorrect old-driver behavior (e.g. non-compliance with the ODBC specification)
+#  - enhancement: the new driver extends or improves existing functionality
+#
+# Reviewed:
+#  - true: the BD has been reviewed and its status is accepted
+#  - false (default): the BD has not yet been reviewed
+#
+# status_rationale (required when reviewed is true):
+#  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
+#  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
+
 behavior_differences:
   1:
-    name: "Native error code should be 0 when error originates from client side"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "Returns misconfiguration SQL state instead of allowing the connection and failing on the server side"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      Returning a client-local misconfiguration diagnostic (SQLSTATE 01S00, native error 0) is intentional - we reject invalid client configuration before a server round-trip. The discrepancy with the legacy driver using SQLSTATE 28000 is accepted as deliberate  cleanup.
+    old_driver_behavior: |
+      Returns SQLSTATE 28000 and 20032 native error.
+    new_driver_behavior: |
+      Returns SQLSTATE 01S00 and 0 native error.
+    description: |
+      The native error should come from the server, and in this case we catch the issue early, in the driver.
 
   2:
     name: "Compression type is now returned in uppercase"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
+    status_rationale: |
+      Changing the returned compression token casing may break tooling that depended on lowercase.
+    old_driver_behavior: |
+      The old driver returns the compression type in lowercase.
+    new_driver_behavior: |
+      The driver returns the compression type in uppercase.
 
   3:
     name: "Encryption field is no longer included in the result"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: fixed
+    type: bug
+    reviewed: true
+    status_rationale: |
+      To be aligned with the old driver, as this is a regression.
+    old_driver_behavior: |
+      The PUT result set message column (column 8) contains "ENCRYPTED" and the GET result set message column (column 4) contains "DECRYPTED" after a successful file transfer.
+    new_driver_behavior: |
+      Both the PUT and GET result set message columns return an empty string on success. The message column is only populated on failure (currently always empty because errors are surfaced earlier).
+    impact: |
+      Applications that inspect the PUT/GET message column to confirm client-side encryption or decryption happened no longer see those values.
 
   4:
     name: "GET rowset metadata contains file size after decryption instead of file size before decryption"
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Switching the GET size metric to decrypted-on-disk payload size changes comparisons against on-stage ciphertext length.
+    old_driver_behavior: |
+      The GET result set size column (column 2) reports the raw downloaded byte count (e.g. 32 bytes for a small test file), which includes the client-side encryption padding/overhead before decryption.
+    new_driver_behavior: |
+      Reports the size of the decrypted payload written to disk (e.g. 26 bytes for the same test file), matching the size of the file the user actually ends up with locally.
+    impact: |
+      Applications that compare the reported GET size against the on-stage encrypted object length will see a smaller value. Applications that compare against the file written to disk will see a matching value.
 
   5:
     name: "Header of a gzip-compressed file does not contain filename"
-    status: unknown
+    status: todo
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Omitting gzip FNAME and zeroing mtime improves determinism (good for byte-identical reproducibility tests) but breaks consumers that scraped the embedded filename back out of the gzip header.
+    old_driver_behavior: |
+      When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip file contains the original filename in the FNAME field of the gzip header, making the byte stream non-deterministic for identical content.
+    new_driver_behavior: |
+      The uploaded gzip file is produced via `GzBuilder::new().mtime(0)` without a filename, so the header omits FNAME and the mtime is zeroed. The resulting bytes are deterministic and match a locally-compressed reference file.
+    impact: |
+      Applications that compare gzip byte streams (e.g. for deduplication or caching) will see identical bytes across uploads of the same content. Applications that relied on reading the filename back out of the gzip header will no longer find it.
 
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      This is a bug introduced in the UD ODBC implementation and has to be aligned with the old driver behavior.
+    old_driver_behavior: |
+      PUT with SOURCE_COMPRESSION=AUTO_DETECT on a file with an unsupported compression format (e.g. LZMA/xz) returns SQL_SUCCESS and uploads the file anyway.
+    new_driver_behavior: |
+      Returns SQL_ERROR for files whose compression format is not in the supported set (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE).
+    impact: |
+      Applications that previously uploaded LZMA or other unsupported formats under AUTO_DETECT will now receive an error at PUT time instead of silently uploading.
 
   7:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: enhancement
+    reviewed: true
+    status_rationale: |
+      This is an enhancement of the API. Widening access is deliberate.
+    old_driver_behavior: |
+      Calling SQLFetch on the statement returned by `ALTER USER <user> ADD PROGRAMMATIC ACCESS TOKEN ...` returns SQL_ERROR with SQLSTATE 24000, native error 10510, and message "Invalid cursor state". The token name and secret cannot be read through ODBC.
+    new_driver_behavior: |
+      SQLFetch returns SQL_SUCCESS and the token name (column 1) and token secret (column 2) can be retrieved via SQLGetData, allowing the PAT to be used immediately for authentication.
+    impact: |
+      Applications can now create a PAT and obtain its secret in a single round-trip via ODBC. On the old driver, the token secret must be acquired through a different channel.
 
   8:
     name: "Float max/min boundary values are returned successfully instead of numeric out of range error"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      The legacy driver falsely rejected FLT_MAX literals that IEEE 754 guarantees are representable. Accepting correctly rounded conversions while still rejecting genuinely out-of-range literals is ODBC-aligned.
+    old_driver_behavior: |
+      Converting the exact IEEE 754 single-precision boundary strings '3.4028235e38' (FLT_MAX) and '-3.4028235e38' (-FLT_MAX) to SQL_C_FLOAT returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range), even though both values are representable as a float.
+    new_driver_behavior: |
+      Returns SQL_SUCCESS with the correctly converted f32 values. Only values strictly greater than FLT_MAX (e.g. '3.4028236e38') are rejected with 22003.
+    impact: |
+      Applications that pass the exact float boundary values will now succeed on the new driver where the old driver spuriously reported out-of-range.
 
   9:
     name: "SQLBindCol doesn't set indicator when TargetValuePtr is null."
-    status: unknown
+    status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      This is fixing a bug that surfaced during the development.
+    old_driver_behavior: |
+      When SQLBindCol is called with a null TargetValuePtr but a valid StrLen_or_IndPtr (intended to unbind the data buffer while keeping the indicator bound), the driver fully unbinds the column and leaves the caller's indicator unchanged after a subsequent SQLFetch.
+    new_driver_behavior: |
+      Initially wrote the data length into StrLen_or_IndPtr even though TargetValuePtr was null (treating the indicator as still bound).
+    description: |
+      Per the ODBC spec for SQLBindCol, passing a null TargetValuePtr unbinds the data buffer for the column. The reference test in `sql_bind_col.cpp` ("SQLBindCol can unbind data buffer while keeping indicator bound.") now asserts that the indicator remains unchanged for both drivers.
 
   10:
     name: "SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported"
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Raw OpenSSL structs cannot safely cross our Rust ODBC boundary today. Supporting string-based PEM material is the sanctioned replacement surface; breakage for EVP_PKEY callers is deliberate and callers must migrate to PRIV_KEY_CONTENT / PRIV_KEY_BASE64 workflows.
     old_driver_behavior: |
       Accepts raw EVP_PKEY* pointers via SQLSetConnectAttr.
     new_driver_behavior: |
       Does not support the raw EVP_PKEY* pointers.
     impact: |
-      Applications that used the raw EVP_PKEY* pointers will fail to connect.
+      Applications that used the raw EVP_PKEY* pointers will fail to connect. The user would need to parse the EVP_PKEY in the PRIV_KEY_CONTENT or PRIV_KEY_BASE64 format on their own.
     description: |
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
 
@@ -143,7 +236,7 @@ behavior_differences:
 
   17:
     name: "On Windows, PUT source column returns filename only instead of full absolute path"
-    status: unknown
+    status: fixed
     type: bug
     reviewed: false
     old_driver_behavior: |
@@ -505,6 +598,8 @@ behavior_differences:
     reviewed: false
     old_driver_behavior: |
       When SQLCancel or SQLCancelHandle is called from a different thread to cancel an in-progress SQLExecDirect, the cancel function intermittently returns SQL_ERROR with SQLSTATE HY008 (NativeError 604, "SQL execution canceled") instead of SQL_SUCCESS. This happens because the driver's internal CancelExecute() calls Statement::cancel() without a try-catch. When the server's abort-request endpoint responds with a non-success status (e.g. the query was already canceled before the REST abort completed), cancel() throws and the exception propagates to the caller.
+
+      The diagnostic record posted alongside that SQL_ERROR is also unreliable. The exception path may unwind without populating the diag list, and the in-flight SQLExecDirect on the executor thread concurrently clears the per-statement diag list at entry and posts its own HY008 at exit. A snapshot of the diag list taken on the canceling thread immediately after the cancel returns may therefore be empty, contain a single HY008 from the executor's completed SQLExecDirect, or contain a single HY008 posted by the cancel itself, depending on thread scheduling.
     new_driver_behavior: |
       Cross-thread SQLCancel and SQLCancelHandle always return SQL_SUCCESS per the ODBC specification. The cancel function posts no diagnostics of its own; only the canceled function (SQLExecDirect) returns SQL_ERROR with HY008.
     impact: |
@@ -523,3 +618,136 @@ behavior_differences:
       Rejects the bind at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification). The MS ODBC specification (Appendix C, "numeric-literal" grammar) restricts character inputs bound to numeric SQL types to the ANSI SQL numeric literal syntax, which does not include the tokens "Infinity", "-Infinity", or "NaN".
     impact: |
       Applications that need to insert non-finite IEEE-754 values should bind SQL_C_FLOAT or SQL_C_DOUBLE (both spec-permitted and supported) rather than passing a string representation.
+
+  49:
+    name: "SQL_C_CHAR/WCHAR to SQL_BINARY hex-decodes the ASCII literal instead of forwarding raw string bytes"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and a hex literal (e.g. "DEADBEEF") bound against a SQL_BINARY/SQL_VARBINARY/SQL_LONGVARBINARY parameter, the driver hex-encodes the raw string bytes and forwards them to the server. The 8-character literal "DEADBEEF" therefore lands as 8 bytes (0x44 0x45 0x41 0x44 0x42 0x45 0x45 0x46 — the ASCII representation) rather than the intended 4 bytes (0xDE 0xAD 0xBE 0xEF). Round-tripping the column back as SQL_C_BINARY returns the ASCII bytes, not the bytes the application intended.
+    new_driver_behavior: |
+      Per the MS ODBC specification ("C to SQL: Binary" appendix), character inputs bound against SQL_BINARY are interpreted as ASCII hex literals: each pair of characters decodes into one byte before being forwarded to Snowflake. "DEADBEEF" lands as the intended 4 bytes. SQL_C_WCHAR follows the same rule after UTF-16 → ASCII transcoding. Odd-length or non-hex inputs surface at SQLExecute time with SQL_ERROR and SQLSTATE 22018 (Invalid character value for cast specification).
+    impact: |
+      Applications that bind hex literals as SQL_C_CHAR/SQL_C_WCHAR to BINARY columns now store the intended bytes rather than the ASCII representation of those bytes. Applications that previously relied on the old broken behavior must re-encode their inputs (e.g. bind "44454144" instead of "DEAD" to land 0x44 0x45 0x41 0x44 in the column).
+    description: |
+      Spec reference: ODBC "C to SQL: Binary" conversion table lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_BINARY targets and prescribes hex-literal semantics. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
+
+  50:
+    name: "SQLDescribeParam normalises Snowflake vendor TIMESTAMP codes (2000/2001/2002) to SQL_TYPE_TIMESTAMP (93)"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with ParameterType set to one of the Snowflake vendor TIMESTAMP codes (SQL_SF_TIMESTAMP_LTZ=2000, SQL_SF_TIMESTAMP_TZ=2001, SQL_SF_TIMESTAMP_NTZ=2002), the old driver stores the raw vendor code on the IPD and returns it verbatim from SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE).
+    new_driver_behavior: |
+      The vendor code is normalised to the standard SQL_TYPE_TIMESTAMP (93) on the IPD. SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE) return 93 for all three vendor codes; the chosen subtype (NTZ/LTZ/TZ) is remembered internally and used to dispatch the correct Snowflake logical type at SQLExecute time. Applications distinguish the three subtypes via SQLColAttribute(SQL_DESC_TYPE_NAME) on the IRD after execution.
+    impact: |
+      Applications that switch on SQLDescribeParam's data type code with cases for 1..=12 / 91..=95 / 101..=113 (the standard ODBC type codes) will no longer fall through to an unknown-type branch when the upstream code happens to bind via the vendor opt-in. Applications that explicitly test for the 2000/2001/2002 vendor codes after SQLBindParameter must update to test SQLColAttribute(SQL_DESC_TYPE_NAME) instead.
+    description: |
+      The MS ODBC specification for SQLDescribeParam describes returning standard SQL type codes (1..=12, 91..=95, 101..=113). The vendor codes 2000/2001/2002 are an *input-only* aliasing on SQLBindParameter; leaking them through SQLDescribeParam violates the spec contract.
+
+  51:
+    name: "SQL_SF_TIMESTAMP_TZ accepts SQL_C_TYPE_TIMESTAMP and SQL_C_CHAR-with-offset bindings"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      SQLBindParameter with ParameterType=SQL_SF_TIMESTAMP_TZ (vendor code 2001) rejects both SQL_C_TYPE_TIMESTAMP (naive datetime) and SQL_C_CHAR strings carrying a `+/-HH:MM` offset suffix. Both cases fail at SQLExecute with SQLSTATE HY000 / NativeError 40620 ("Logic error during conversion"). Applications wanting to bind a TIMESTAMP_TZ value have no first-class path through the legacy driver and must fall back to SQL_TYPE_TIMESTAMP (which routes to TIMESTAMP_NTZ) or rely on session TIMEZONE to convert via TIMESTAMP_LTZ.
+    new_driver_behavior: |
+      Both bindings succeed with spec-aligned semantics. SQL_C_TYPE_TIMESTAMP -> SQL_SF_TIMESTAMP_TZ stores the wall-clock at UTC (offset = 0 on the wire), matching the Python connector's behavior for naive `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR (and SQL_C_WCHAR) with a trailing `+/-HH:MM` offset is parsed and emitted in the legacy `<epoch_ns> <offset_minutes_plus_1440>` two-token wire format, so the server stores the exact instant alongside the original offset. The vendor code 2001 sits in the ODBC vendor-specific range, where the driver is free to define behavior; the new semantics are spec-permitted and additive over the legacy 40620 error path.
+    impact: |
+      Migration is forward-compatible: any application that previously caught the legacy 40620 will now find these bindings succeed with predictable, spec-conformant results. Applications that intentionally relied on the failure (e.g. as a feature gate) should switch to validating their bind path explicitly. Round-tripping a non-UTC TIMESTAMP_TZ via SQLBindParameter is now possible without falling through TIMESTAMP_LTZ + session TIMEZONE.
+
+  52:
+    name: "TIMESTAMP_TZ -> SQL_C_CHAR/SQL_C_WCHAR fetch honors session TIMESTAMP_TZ_OUTPUT_FORMAT"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      SQLGetData / SQLBindCol of a TIMESTAMP_TZ column to SQL_C_CHAR or SQL_C_WCHAR always renders the bare UTC wall-clock string (e.g. `2024-01-15 09:00:45`) regardless of the session's TIMESTAMP_TZ_OUTPUT_FORMAT setting. The token's `TZH:TZM` / `TZHTZM` / `TZH` placeholders are silently dropped, so the original observer's offset is lost on the wire-to-application boundary even though the server stored it.
+    new_driver_behavior: |
+      The driver reads TIMESTAMP_TZ_OUTPUT_FORMAT once per execute (matching the rest of the per-execute sequential RPC) and formats the rendered string accordingly. With `TZH:TZM` the offset suffix is appended as `+HH:MM`; with `TZHTZM` as `+HHMM`; with `TZH` as `+HH`. The format is re-read on every execute, so `ALTER SESSION SET / UNSET TIMESTAMP_TZ_OUTPUT_FORMAT` mid-connection takes effect on the next statement. Unrecognised TZ-shaped tokens (`TZHM`, `TZM`, etc.) are tolerated -- the driver emits a `tracing::warn!` and falls back to the bare-UTC default rather than rejecting the format string.
+    impact: |
+      Migration is forward-compatible. Applications relying on the legacy bare-UTC rendering must either (a) leave TIMESTAMP_TZ_OUTPUT_FORMAT unset, (b) set it to a value containing none of `TZH:TZM`, `TZHTZM`, `TZH`, in which case the driver still emits bare UTC, or (c) parse the new offset-suffixed strings on the application side. The new behaviour matches what Snowsight, snowsql, and the Python connector already render for the same column with the same session format, removing a long-standing surprise where ODBC was the only client silently dropping the offset.
+
+  53:
+    name: "SQLGetStmtAttr/SQLGetConnectAttr with negative buffer length returns HY090 instead of HY000"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      Returns SQL_ERROR with SQLSTATE HY000 (General error) on Windows when BufferLength is negative for a string attribute.
+    new_driver_behavior: |
+      Returns SQL_ERROR with SQLSTATE HY090 (Invalid string or buffer length) per the ODBC specification.
+    impact: |
+      Applications checking for SQLSTATE HY090 specifically on Windows will now receive it consistently.
+
+  54:
+    name: "Concurrent SQLDisconnect causes segfault without thread-safety guard"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      Calling SQLDisconnect concurrently from multiple threads on the same connection handle causes a segfault in the old driver due to lack of synchronisation in the disconnect path.
+    new_driver_behavior: |
+      Concurrent SQLDisconnect calls are serialized; exactly one returns SQL_SUCCESS and the rest return SQL_ERROR with SQLSTATE 08003 (Connection not open).
+    impact: |
+      Multi-threaded applications that disconnect from multiple threads no longer risk a crash.
+
+  55:
+    name: "SQL_VARCHAR fetched as SQL_C_INTERVAL_*: stricter Appendix D semantics in the universal driver"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      The reference driver already implements most of ODBC Appendix D ("Character to Interval") for VARCHAR -> SQL_C_INTERVAL_* fetches: well-formed literals succeed, trailing-field truncation surfaces 01S07, and leading-field overflow against the default precision surfaces 22015. It diverges from the spec in five places:
+        1. A non-zero fraction targeted at an integer-only qualifier (e.g. '5.5' -> SQL_C_INTERVAL_YEAR) is rejected as 22018 instead of warned 01S07.
+        2. A zero-magnitude fraction (e.g. '5.0' -> SQL_C_INTERVAL_YEAR) is also rejected as 22018 even though no information is lost.
+        3. `SQL_DESC_DATETIME_INTERVAL_PRECISION` set on the ARD is ignored - the parser always uses the built-in default precision = 2.
+        4. A bare integer fetched as a composite target (e.g. '5' -> SQL_C_INTERVAL_YEAR_TO_MONTH) is accepted as the leading field; subsequent SQLGetData calls on the same column return SQL_NO_DATA because the column data is exhausted.
+        5. Trailing day-time fields (HOUR/MINUTE/SECOND) outside their canonical ANSI ranges are accepted as-is (e.g. '25:61' -> SQL_C_INTERVAL_HOUR_TO_MINUTE succeeds). Only YEAR_TO_MONTH still enforces the MONTH 0..=11 range, and the rejection there surfaces 22018 ("invalid literal") rather than 22015 ("interval field overflow").
+        6. The literal minus is preserved on zero-magnitude values: '-0' -> SQL_C_INTERVAL_YEAR and '-0-0' -> SQL_C_INTERVAL_YEAR_TO_MONTH report `interval_sign = SQL_TRUE`.
+    new_driver_behavior: |
+      Implements the ODBC Appendix D "Character to Interval" conversion table strictly for all 13 SQL_C_INTERVAL_* targets (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND and every YEAR_TO_MONTH / DAY_TO_* / HOUR_TO_* / MINUTE_TO_SECOND composite). The four spec outcomes map to the standard SQLSTATEs:
+        1. Valid value, no truncation                 -> SQL_SUCCESS
+        2. Valid value, trailing-field truncation     -> SQL_SUCCESS_WITH_INFO, 01S07
+        3. Valid value, leading-field precision lost  -> SQL_ERROR, 22015
+        4. Not a valid interval value                 -> SQL_ERROR, 22018
+      Differences from the reference driver:
+        1. Fractional digits dropped against an integer-only qualifier surface 01S07 with the truncated value rather than 22018.
+        2. Zero-magnitude fractions ('5.0' -> SQL_C_INTERVAL_YEAR) return SQL_SUCCESS with no warning.
+        3. `SQL_DESC_DATETIME_INTERVAL_PRECISION` set on the ARD is honoured by the parser (default 2, configurable up or down).
+        4. Bare integers for composite targets are rejected with 22018.
+        5. Trailing composite fields are range-checked against canonical ANSI ranges (MONTH 0..=11, HOUR 0..=23, MINUTE/SECOND 0..=59) and a violation surfaces 22015 ("Interval field overflow") — per the `SQLGetData` diagnostics table that SQLSTATE fires when "there was no representation of the value of the SQL type in the interval C type", which an out-of-Gregorian-range trailing field is (per the "Constraints of the Gregorian Calendar" appendix). Leading fields keep the precision-driven 22015 check and are intentionally NOT range-checked because per ANSI a leading field can be arbitrarily large within its declared `SQL_DESC_DATETIME_INTERVAL_PRECISION`.
+        6. Zero-magnitude values clear the sign bit regardless of the literal's leading minus ('-0' -> SQL_C_INTERVAL_YEAR reports `interval_sign = SQL_FALSE`), consistent with `numeric_helpers::write_single_field_interval`.
+    impact: |
+      Applications that rely on the reference driver's lenient parsing (accepting bare integers as YEAR_TO_MONTH leading fields, out-of-range trailing day-time fields, or silently truncating zero-magnitude fractions) will see new 22015 or 22018 errors or 01S07 warnings. Applications that set `SQL_DESC_DATETIME_INTERVAL_PRECISION` on the ARD now actually get the precision they asked for instead of the silent default. Callers that previously caught 22018 on '5.5' -> SQL_C_INTERVAL_YEAR must now also handle the 01S07 success-with-info case. Callers that previously caught 22018 on out-of-range YEAR_TO_MONTH months (e.g. '3-12') must also handle 22015 from the universal driver.
+    description: |
+      Spec reference: ODBC Appendix D, "Converting Data from SQL to C Data Types" - "Character to Interval" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-sql-to-c-data-types). Trailing-field range enforcement surfaces SQLSTATE 22015 ("Interval field overflow") because the `SQLGetData` diagnostics table defines 22015 as fired when "there was no representation of the value of the SQL type in the interval C type"; an interval C structure has no representation for trailing fields outside their Gregorian range, per the "Constraints of the Gregorian Calendar" appendix (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/constraints-of-the-gregorian-calendar). The same 22015 mapping is consistent with the driver-internal `field_overflow` helper, which fires 22015 for the larger `u32::MAX`-overflow form of the same issue. The canonical ANSI ranges (HOUR 0..23, MINUTE/SECOND 0..59, MONTH 0..11 in YEAR_TO_MONTH composites) are taken from ANSI SQL/Foundation interval literal grammar.
+
+  56:
+    name: "SQL_SF_STMT_ATTR_LAST_QUERY_ID (SQLPrepare+SQLExecute path) and SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT are only fully supported by the new driver"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      SQL_SF_STMT_ATTR_LAST_QUERY_ID: The old driver returns SQL_SUCCESS with an empty string before any execution and returns a valid query UUID after SQLExecDirect. However it does not populate the query ID after SQLPrepare+SQLExecute and does not return SQL_ERROR when the attribute is set (read-only violation is silently ignored).
+      SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT: The old driver does not implement this attribute. SQLGetStmtAttr returns an error or garbage. SQLSetStmtAttr silently accepts any value including invalid ones (e.g. -2) without error. The count is not forwarded to the server.
+    new_driver_behavior: |
+      SQL_SF_STMT_ATTR_LAST_QUERY_ID (read-only): returns empty string before any execution, a valid UUID after SQLExecDirect or SQLPrepare+SQLExecute, and SQL_ERROR with HY092 on any set attempt.
+      SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT: default -1 (auto-detect), supports set/get roundtrip for values -1 to 32767, returns SQL_ERROR with HY024 for values < -1, and forwards the count to the server enabling multi-statement result sets via SQLMoreResults.
+    impact: |
+      Applications relying on SQL_SF_STMT_ATTR_LAST_QUERY_ID after SQLPrepare+SQLExecute or on SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT must target the new driver. Basic last-query-id retrieval after SQLExecDirect works on both drivers.
+
+  57:
+    name: "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY is sent as a server session parameter"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      The old driver uses CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY only client-side to configure the background heartbeat thread interval. It is not forwarded to the server as a session parameter, so SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY' returns the server default (3600).
+    new_driver_behavior: |
+      The new driver sends CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY to the server as a session parameter during login, making it queryable via SHOW PARAMETERS. The value is also used client-side to configure the heartbeat interval.
+    impact: |
+      Applications that query SHOW PARAMETERS to verify the heartbeat frequency will now see the value they configured in the connection string.

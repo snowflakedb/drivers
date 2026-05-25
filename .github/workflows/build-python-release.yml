@@ -2,12 +2,11 @@ name: Python Release Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/python-**']
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
 
 jobs:
   # ── Build wheels (shared reusable workflow) ────────────────────────
@@ -110,6 +109,8 @@ jobs:
           version: "0.9.28"
 
       - name: Restore uv cache
+        # Cache failures never fail the job — fall back to clean install.
+        continue-on-error: true
         uses: actions/cache@v5
         with:
           path: ${{ env.UV_CACHE_DIR }}
@@ -153,6 +154,8 @@ jobs:
       - name: Restore Rust cache (sdist)
         if: matrix.py == '3.10'
         id: rust-cache
+        # Cache restore failures never fail the job — fall back to clean build.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
@@ -247,7 +250,7 @@ jobs:
             --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
@@ -258,13 +261,15 @@ jobs:
             --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
 
       - name: Save Rust cache (sdist)
         if: always() && matrix.py == '3.10'
         # timeout-minutes is enforced here because it isn't supported on
         # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
+        # Cache failures (incl. timeout-induced cancellation) never fail the job.
+        continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save

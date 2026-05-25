@@ -10,8 +10,6 @@
 #include "sf_odbc.h"
 
 TEST_CASE("SQLGetStmtAttr with negative buffer length returns HY090.") {
-  SKIP_OLD_DRIVER("SNOW-3235549", "Negative buffer length validation is new driver only");
-
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -21,14 +19,12 @@ TEST_CASE("SQLGetStmtAttr with negative buffer length returns HY090.") {
   SQLINTEGER len = 0;
   SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, buf, -1, &len);
 
-  // Then it should return SQL_ERROR with SQLSTATE HY090
+  // Then it should return SQL_ERROR; new driver returns HY090, old driver may return HY000 (BD#53)
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY090");
+  NEW_DRIVER_ONLY("BD#53") { CHECK(get_sqlstate(stmt) == "HY090"); }
 }
 
 TEST_CASE("SQLGetStmtAttr string attribute truncation returns SQL_SUCCESS_WITH_INFO.") {
-  SKIP_OLD_DRIVER("SNOW-3235549", "String truncation warning is new driver only");
-
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -53,8 +49,6 @@ TEST_CASE("SQLGetStmtAttr string attribute truncation returns SQL_SUCCESS_WITH_I
 }
 
 TEST_CASE("SQLGetStmtAttr with invalid attribute identifier returns HY092.") {
-  SKIP_OLD_DRIVER("SNOW-3235549", "HY092 for unknown attributes is new driver only");
-
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -70,8 +64,6 @@ TEST_CASE("SQLGetStmtAttr with invalid attribute identifier returns HY092.") {
 }
 
 TEST_CASE("SQLGetConnectAttr with negative buffer length returns HY090.") {
-  SKIP_OLD_DRIVER("SNOW-3235549", "Negative buffer length validation is new driver only");
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -80,7 +72,7 @@ TEST_CASE("SQLGetConnectAttr with negative buffer length returns HY090.") {
   SQLINTEGER len = 0;
   SQLRETURN ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG, buf, -1, &len);
 
-  // Then it should return SQL_ERROR with SQLSTATE HY090
+  // Then it should return SQL_ERROR; new driver returns HY090, old driver may return HY000 (BD#53)
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(conn.handleWrapper()) == "HY090");
+  NEW_DRIVER_ONLY("BD#53") { CHECK(get_sqlstate(conn.handleWrapper()) == "HY090"); }
 }

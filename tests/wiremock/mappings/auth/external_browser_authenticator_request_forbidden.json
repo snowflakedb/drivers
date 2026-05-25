@@ -1,0 +1,19 @@
+{
+  "name": "Snowflake authenticator-request forbidden for external browser",
+  "request": {
+    "urlPathPattern": "/session/authenticator-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 403,
+    "jsonBody": {
+      "success": false,
+      "message": "Forbidden"
+    }
+  }
+}

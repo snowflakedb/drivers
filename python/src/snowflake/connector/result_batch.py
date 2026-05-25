@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from enum import Enum, unique
 from typing import TYPE_CHECKING, Any, cast
 
+from ._internal.api_client.client_api import core_driver
 from ._internal.arrow_stream_utils import (
     collect_arrow_table,
     create_row_iterator,
@@ -26,7 +27,6 @@ from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ColumnMetadata,
-    DatabaseFetchChunkRequest,
     ResultChunk,
 )
 from ._internal.statement_utils import get_stream_ptr
@@ -160,12 +160,11 @@ class ResultBatch(ErrorHandlerMixin):
         return conn
 
     def _fetch_arrow_stream_ptr(self, connection: Connection) -> int:
-        request = DatabaseFetchChunkRequest(
-            db_handle=connection.db_handle,
+        response = core_driver.database_fetch_chunk(
+            db_handle=connection.db_handle,  # type: ignore[arg-type]
             chunk=self._chunk,
             columns=self._columns,
         )
-        response = connection.db_api.database_fetch_chunk(request)
         return get_stream_ptr(response)
 
     def _take_arrow_stream_ptr(self, connection: Connection) -> int:
@@ -251,7 +250,7 @@ class ResultBatch(ErrorHandlerMixin):
             )
 
         stream_ptr = self._take_arrow_stream_ptr(conn)
-        return create_row_iterator(stream_ptr, use_dict_result=use_dict_result)
+        return create_row_iterator(stream_ptr, connection=conn, use_dict_result=use_dict_result)
 
     @requires_dependency(pyarrow)
     def to_arrow(
@@ -265,6 +264,7 @@ class ResultBatch(ErrorHandlerMixin):
         return collect_arrow_table(
             create_table_iterator(
                 stream_ptr,
+                connection=conn,
                 number_to_decimal=number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
             ),

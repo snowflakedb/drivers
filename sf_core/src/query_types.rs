@@ -82,15 +82,49 @@ pub enum RowType {
     Geography {
         name: String,
         nullable: bool,
+        /// Underlying representation chosen by the server based on
+        /// `GEOGRAPHY_OUTPUT_FORMAT` (text for GeoJSON/WKT/EWKT, binary for WKB/EWKB).
+        representation: GeoRepresentation,
     },
     Geometry {
         name: String,
         nullable: bool,
+        /// Underlying representation chosen by the server based on
+        /// `GEOMETRY_OUTPUT_FORMAT` (text for GeoJSON/WKT/EWKT, binary for WKB/EWKB).
+        representation: GeoRepresentation,
     },
     Vector {
         name: String,
         nullable: bool,
+        /// Element count of the VECTOR column. Snowflake guarantees a non-negative
+        /// dimension (SQL reference caps this at 4096), so `usize` mirrors the
+        /// value space directly and keeps capacity math cast-free.
+        dimension: usize,
+        element_type: VectorElementType,
     },
+}
+
+/// Underlying storage representation for GEOGRAPHY / GEOMETRY columns.
+/// Values in JSON result format arrive as UTF-8 strings when the output format
+/// produces text (GeoJSON/WKT/EWKT), and as hex-encoded strings when the format
+/// produces binary (WKB/EWKB).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeoRepresentation {
+    /// Textual output: GeoJSON object (returned by Snowflake as `type=object`),
+    /// or WKT/EWKT strings (returned as `type=text`).
+    Text,
+    /// Binary output: WKB/EWKB, returned as hex-encoded strings with
+    /// `type=binary` — decoded into Arrow `Binary` by the JSON parser.
+    Binary,
+}
+
+/// VECTOR(INT) uses 32-bit ints; VECTOR(FLOAT) uses 32-bit IEEE 754 floats.
+/// Stored as an enum (rather than `arrow::DataType`) to keep this module independent
+/// of the Arrow crate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VectorElementType {
+    Int32,
+    Float32,
 }
 
 impl RowType {
@@ -230,24 +264,33 @@ impl RowType {
         }
     }
 
-    pub fn geography(name: &str, nullable: bool) -> Self {
+    pub fn geography(name: &str, nullable: bool, representation: GeoRepresentation) -> Self {
         RowType::Geography {
             name: name.to_string(),
             nullable,
+            representation,
         }
     }
 
-    pub fn geometry(name: &str, nullable: bool) -> Self {
+    pub fn geometry(name: &str, nullable: bool, representation: GeoRepresentation) -> Self {
         RowType::Geometry {
             name: name.to_string(),
             nullable,
+            representation,
         }
     }
 
-    pub fn vector(name: &str, nullable: bool) -> Self {
+    pub fn vector(
+        name: &str,
+        nullable: bool,
+        dimension: usize,
+        element_type: VectorElementType,
+    ) -> Self {
         RowType::Vector {
             name: name.to_string(),
             nullable,
+            dimension,
+            element_type,
         }
     }
 }

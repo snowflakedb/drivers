@@ -1,5 +1,6 @@
 mod behavior_differences_processor;
 mod behavior_differences_utils;
+mod alignment_targets;
 mod driver_handlers;
 mod feature_parser;
 mod step_finder;
@@ -35,7 +36,8 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let validator = GherkinValidator::new(args.workspace, args.features)?;
+    let workspace_root = args.workspace;
+    let validator = GherkinValidator::new(workspace_root.clone(), args.features)?;
 
     if args.json {
         // JSON output mode - includes Behavior Differences processing
@@ -343,7 +345,75 @@ fn main() -> anyhow::Result<()> {
         println!("  Untagged features (TODO): {}", untagged_features.len());
     }
 
-    if has_failures || has_orphans || has_gherkin_violations {
+    // Alignment target validation (tag-agnostic alignment for extra test directories)
+    let mut has_alignment_failures = false;
+    if let Some(alignment_config) = alignment_targets::load_config(&workspace_root)? {
+        let alignment_results =
+            alignment_targets::validate_alignment_targets(&workspace_root, &alignment_config)?;
+
+        for result in &alignment_results {
+            if !result.has_issues() {
+                if args.verbose {
+                    println!("\n📦 Target '{}': ✅ all aligned", result.target_name);
+                }
+                continue;
+            }
+
+            has_alignment_failures = true;
+            println!("\n📦 Target '{}':", result.target_name);
+
+            for orphan in &result.orphan_test_files {
+                println!("  ❌ Test file has no matching feature: {}", orphan.display());
+            }
+
+            for pr in &result.pair_results {
+                let has_pair_issues = !pr.missing_methods.is_empty()
+                    || !pr.orphan_methods.is_empty()
+                    || !pr.missing_steps_by_method.is_empty()
+                    || !pr.empty_steps_by_method.is_empty();
+
+                if !has_pair_issues {
+                    if args.verbose {
+                        println!("  ✅ {}", pr.test_file.display());
+                    }
+                    continue;
+                }
+
+                println!(
+                    "  ❌ {} ↔ {}",
+                    pr.feature_file.display(),
+                    pr.test_file.display()
+                );
+
+                for m in &pr.missing_methods {
+                    println!("    ⚠️  Missing test method for scenario: {m}");
+                }
+                for m in &pr.orphan_methods {
+                    println!("    ⚠️  Orphan test method (no matching scenario): {m}");
+                }
+                for ms in &pr.missing_steps_by_method {
+                    println!(
+                        "    ⚠️  Missing steps in '{}' (scenario: {}):",
+                        ms.method_name, ms.scenario_name
+                    );
+                    for s in &ms.issues {
+                        println!("      - {s}");
+                    }
+                }
+                for es in &pr.empty_steps_by_method {
+                    println!(
+                        "    ⚠️  Empty steps in '{}' (scenario: {}):",
+                        es.method_name, es.scenario_name
+                    );
+                    for s in &es.issues {
+                        println!("      - {s}");
+                    }
+                }
+            }
+        }
+    }
+
+    if has_failures || has_orphans || has_gherkin_violations || has_alignment_failures {
         println!("❌ VALIDATION FAILED");
         std::process::exit(1);
     } else {

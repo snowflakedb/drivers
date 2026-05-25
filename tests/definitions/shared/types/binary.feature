@@ -140,7 +140,7 @@ Feature: BINARY type support
   #                    VARBINARY synonym equivalence                            #
   # =========================================================================== #
 
-  @odbc_e2e
+  @odbc_e2e @python_e2e
   Scenario: should handle VARBINARY as synonym for BINARY
     Given Snowflake client is logged in
     And A temporary table with VARBINARY column is created

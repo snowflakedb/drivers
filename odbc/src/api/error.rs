@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
+    api::{InfoType, SqlState, diagnostic::DiagnosticRecord, oauth},
     conversion::error::JsonBindingError,
     conversion::{ConversionError, error::WriteOdbcError},
 };
@@ -18,12 +18,49 @@ use sf_core::protobuf::generated::database_driver_v1::{
     MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
 };
 
-use error_trace::{ErrorTrace, format_error_trace};
+use error_trace::ErrorTrace;
 use sf_core::protobuf::generated::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
+use strum_macros::{Display as StrumDisplay, EnumDiscriminants, EnumIter, IntoStaticStr};
 
-#[derive(Snafu, Debug, ErrorTrace)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IntoStaticStr, StrumDisplay, EnumIter)]
+#[strum(serialize_all = "snake_case")]
+pub enum ErrorSource {
+    /// Couldn't establish or lost the link to the server (e.g. failed
+    /// connection init, transport-level RPC failure).
+    Connectivity,
+    /// The server returned an error over the wire (auth, query-execution
+    /// failure, generic protobuf application error, ...).
+    ServerError,
+    /// Value-shape / encoding errors detected by the wrapper (binding
+    /// conversions, arrow / text decoding, fetch).
+    DataConversion,
+    /// Cursor or statement-state sequencing violations (no result set,
+    /// cursor already open, no more data, statement not executed, ...).
+    CursorState,
+    /// Caller violated the ODBC contract (invalid handle, null pointer,
+    /// bad parameter, sequence error on env/dbc freeing, ...).
+    ApiMisuse,
+    /// Connection-string / DSN / port parsing.
+    ConfigParsing,
+    /// Wrapper bugs / state corruption (lock poisoning, runtime not
+    /// initialised, missing protobuf fields, internal arrow infrastructure
+    /// failures).
+    InternalError,
+    /// A feature, attribute, or info type the wrapper does not (yet)
+    /// implement.
+    Unsupported,
+    /// Errors that do not map to a more specific bucket (see
+    /// [`OdbcError::error_source`]).
+    Unknown,
+}
+
+#[derive(Snafu, Debug, ErrorTrace, IntoStaticStr, EnumDiscriminants)]
 #[snafu(visibility(pub))]
+#[strum_discriminants(
+    name(OdbcErrorKind),
+    derive(strum_macros::EnumIter, strum_macros::EnumCount)
+)]
 pub enum OdbcError {
     #[snafu(display("Freeing environment failed: environment has connections"))]
     EnvironmentHasConnections {
@@ -379,6 +416,9 @@ pub enum OdbcError {
         location: Location,
     },
 
+    // `error_source()` returns [`ErrorSource::Unknown`]; the wire payload
+    // uses `telemetry_classification` to map the inner
+    // `CoreProtobufError` (Transport → connectivity, Application → server_error).
     #[snafu(display("Received core protobuf error"))]
     CoreError {
         source: Box<CoreProtobufError>,
@@ -414,6 +454,7 @@ pub enum OdbcError {
         location: Location,
     },
 
+    // Caller-initiated cancel; no dedicated bucket — maps to [`ErrorSource::Unknown`].
     #[snafu(display("Operation canceled"))]
     OperationCanceled {
         #[snafu(implicit)]
@@ -469,6 +510,12 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set.insert("AUTHENTICATOR".to_string());
     set.insert("USER".to_string());
     set.insert("PASSWORD".to_string());
+    // Pull every recognised OAuth DSN key from the OAuth helper so a
+    // future addition to `oauth::ALL_OAUTH_KEYS` automatically updates
+    // the set used for SQLSTATE classification of auth-time errors.
+    for &k in oauth::ALL_OAUTH_KEYS {
+        set.insert(k.to_string());
+    }
     set
 });
 
@@ -485,16 +532,116 @@ fn is_well_formed_sql_state(state: &str) -> bool {
 }
 
 impl OdbcError {
+    /// High-level telemetry bucket for this wrapper error.
+    ///
+    /// [`OdbcError::CoreError`] returns [`ErrorSource::Unknown`] here; use
+    /// [`telemetry_classification`] for the in-band wire payload, which
+    /// inspects the inner protobuf error.
+    pub fn error_source(&self) -> ErrorSource {
+        match self {
+            OdbcError::EnvironmentHasConnections { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ConnectionStillConnected { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ConnectionHasNoEnvironment { .. } => ErrorSource::InternalError,
+            OdbcError::EnvironmentLockPoisoned { .. } => ErrorSource::InternalError,
+            OdbcError::Disconnected { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidHandle { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidHandleType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDescriptorKind { .. } => ErrorSource::ApiMisuse,
+            OdbcError::NullPointer { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidBufferLength { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidApplicationBufferType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidParameterType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidSqlDataType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidRecordNumber { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDescriptorIndex { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidPrecisionOrScale { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDiagnosticIdentifier { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnknownAttribute { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ReadOnlyAttribute { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnsupportedAttribute { .. } => ErrorSource::Unsupported,
+            OdbcError::InvalidAttributeValue { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnsupportedInfoType { .. } => ErrorSource::Unsupported,
+            OdbcError::UnknownInfoType { .. } => ErrorSource::Unsupported,
+            OdbcError::AttributeCannotBeSetNow { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidParameterNumber { .. } => ErrorSource::ApiMisuse,
+            OdbcError::StatementNotExecuted { .. } => ErrorSource::CursorState,
+            OdbcError::CountFieldIncorrect { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidCatalogName { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidCursorState { .. } => ErrorSource::CursorState,
+            OdbcError::CursorAlreadyOpen { .. } => ErrorSource::CursorState,
+            OdbcError::StatementErrorState { .. } => ErrorSource::CursorState,
+            OdbcError::DataNotFetched { .. } => ErrorSource::CursorState,
+            OdbcError::NoMoreData { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidCursorPosition { .. } => ErrorSource::CursorState,
+            OdbcError::MixedCursorFunctions { .. } => ErrorSource::CursorState,
+            OdbcError::InternalError { .. } => ErrorSource::InternalError,
+            OdbcError::UnsupportedFeature { .. } => ErrorSource::Unsupported,
+            OdbcError::FetchTypeOutOfRange { .. } => ErrorSource::CursorState,
+            OdbcError::ExtendedFetchUsed { .. } => ErrorSource::CursorState,
+            OdbcError::InvalidPort { .. } => ErrorSource::ConfigParsing,
+            OdbcError::SetSqlQuery { .. } => ErrorSource::ServerError,
+            OdbcError::PrepareStatement { .. } => ErrorSource::ServerError,
+            OdbcError::ExecuteStatement { .. } => ErrorSource::ServerError,
+            OdbcError::BindParameters { .. } => ErrorSource::DataConversion,
+            OdbcError::ConnectionInit { .. } => ErrorSource::Connectivity,
+            OdbcError::ConversionError { .. } => ErrorSource::DataConversion,
+            OdbcError::JsonBinding { .. } => ErrorSource::DataConversion,
+            OdbcError::ParameterBinding { .. } => ErrorSource::DataConversion,
+            OdbcError::FetchData { .. } => ErrorSource::DataConversion,
+            OdbcError::TextConversionFromUtf8 { .. } => ErrorSource::DataConversion,
+            OdbcError::TextConversionFromUtf16 { .. } => ErrorSource::DataConversion,
+            OdbcError::TextConversionUtf8 { .. } => ErrorSource::DataConversion,
+            OdbcError::ArrowArrayStreamReaderCreation { .. } => ErrorSource::InternalError,
+            OdbcError::CoreError { .. } => ErrorSource::Unknown,
+            OdbcError::ProtoRequiredFieldMissing { .. } => ErrorSource::InternalError,
+            OdbcError::InvalidFreeStmtOption { .. } => ErrorSource::ApiMisuse,
+            OdbcError::OdbcRuntime { .. } => ErrorSource::InternalError,
+            OdbcError::DataSourceNotFound { .. } => ErrorSource::ConfigParsing,
+            OdbcError::OperationCanceled { .. } => ErrorSource::Unknown,
+            OdbcError::InvalidConnectionString { .. } => ErrorSource::ConfigParsing,
+            OdbcError::DaeRequired { .. } => ErrorSource::ApiMisuse,
+            OdbcError::InvalidDuringDae { .. } => ErrorSource::ApiMisuse,
+        }
+    }
+
+    /// Map this error to the in-band telemetry spec's
+    /// `(exception_type, error_source)` pair sent in
+    /// `TelemetrySendWrapperErrorRequest`.
+    ///
+    /// - `exception_type` is the snafu variant name (no PII, no message
+    ///   content), produced by `IntoStaticStr`. Renaming a variant
+    ///   automatically updates this label, so there is no chance of drift.
+    /// - `error_source` is the high-level [`ErrorSource`] bucket from
+    ///   [`OdbcError::error_source`], except [`OdbcError::CoreError`] is
+    ///   split by inner transport vs application failure.
+    pub fn telemetry_classification(&self) -> (&'static str, ErrorSource) {
+        let exception_type: &'static str = self.into();
+        let error_source = match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Transport { .. } => ErrorSource::Connectivity,
+                CoreProtobufError::Application { .. } => ErrorSource::ServerError,
+            },
+            _ => self.error_source(),
+        };
+        (exception_type, error_source)
+    }
+
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        let error_message = self.structured_message().unwrap_or_else(|| {
+        let base = self.structured_message().unwrap_or_else(|| {
             trace
                 .last()
                 .map(|entry| entry.message.clone())
                 .unwrap_or_default()
         });
-        let trace_text = format_error_trace(&trace);
-        format!("{}\nTrace:\n{}", error_message, trace_text)
+        if crate::api::error_trace_flag::error_trace_enabled() && !trace.is_empty() {
+            format!(
+                "{base}\nerror trace:\n{}",
+                error_trace::format_error_trace(&trace)
+            )
+        } else {
+            base
+        }
     }
 
     /// Extract a user-facing message from structured protobuf error fields
@@ -597,6 +744,7 @@ impl OdbcError {
                         SqlState::RestrictedDataTypeAttributeViolation
                     }
                 },
+                ConversionError::DatetimeOutOfSqlRange { .. } => SqlState::InvalidDatetimeFormat,
                 ConversionError::ReadArrowValue { .. } => SqlState::GeneralError,
                 _ => SqlState::GeneralError,
             },
@@ -610,11 +758,16 @@ impl OdbcError {
                 | JsonBindingError::BindingNumericOutOfRange { .. } => {
                     SqlState::NumericValueOutOfRange
                 }
-                JsonBindingError::UnsupportedCDataType { .. } => {
+                JsonBindingError::InvalidDatetimeValue { .. } => SqlState::InvalidDatetimeFormat,
+                JsonBindingError::DatetimeFieldOverflow { .. } => SqlState::DatetimeFieldOverflow,
+                JsonBindingError::UnsupportedCDataType { .. }
+                | JsonBindingError::UnsupportedParameterType { .. } => {
                     SqlState::RestrictedDataTypeAttributeViolation
                 }
                 JsonBindingError::InvalidBooleanValue { .. }
-                | JsonBindingError::InvalidNumericLiteral { .. } => {
+                | JsonBindingError::InvalidNumericLiteral { .. }
+                | JsonBindingError::InvalidHexLiteral { .. }
+                | JsonBindingError::InvalidCharacterValueForCast { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
                 _ => SqlState::GeneralError,
@@ -728,6 +881,16 @@ impl OdbcError {
         }
     }
 
+    pub fn query_id(&self) -> Option<&str> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { query_id, .. } => query_id.as_deref(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     #[track_caller]
     pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
         let loc = std::panic::Location::caller();
@@ -744,6 +907,7 @@ impl OdbcError {
                 status_code: driver_exception.status_code,
                 error_trace: driver_exception.error_trace,
                 sql_state: driver_exception.sql_state,
+                query_id: driver_exception.query_id,
                 location,
             },
             ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
@@ -772,6 +936,8 @@ pub enum CoreProtobufError {
         error_trace: Vec<ErrorTraceEntry>,
         /// ANSI SQL state forwarded from the server response, if present.
         sql_state: Option<String>,
+        /// Snowflake Query ID from the failed query, if available.
+        query_id: Option<String>,
         location: Location,
     },
     #[snafu(display("Transport error: {message}"))]
@@ -820,9 +986,158 @@ impl ErrorTrace for CoreProtobufError {
 mod tests {
     use super::*;
     use crate::conversion::error::{
-        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, InvalidNumericLiteralSnafu,
-        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+        BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidBooleanValueSnafu,
+        InvalidCharacterValueForCastSnafu, InvalidNumericLiteralSnafu,
+        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
     };
+
+    fn loc() -> Location {
+        Location::new("test", 0, 0)
+    }
+
+    #[test]
+    fn telemetry_classification_covers_each_error_source() {
+        // data_conversion
+        assert_eq!(
+            OdbcError::ConversionError {
+                source: Box::new(ConversionError::ArrowArrayDowncast {
+                    expected_type: "Int32Array".into(),
+                    location: loc(),
+                }),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("ConversionError", ErrorSource::DataConversion)
+        );
+
+        // api_misuse — Disconnected is caller invoking on a not-connected
+        // session, NOT a connection pool / connectivity issue.
+        assert_eq!(
+            OdbcError::Disconnected { location: loc() }.telemetry_classification(),
+            ("Disconnected", ErrorSource::ApiMisuse)
+        );
+
+        // api_misuse — bad handle
+        assert_eq!(
+            OdbcError::InvalidHandle { location: loc() }.telemetry_classification(),
+            ("InvalidHandle", ErrorSource::ApiMisuse)
+        );
+
+        // config_parsing
+        assert_eq!(
+            OdbcError::InvalidConnectionString {
+                reason: "bad".into(),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("InvalidConnectionString", ErrorSource::ConfigParsing)
+        );
+
+        // internal_error — wrapper-side bug, not a result_processing event.
+        assert_eq!(
+            OdbcError::ProtoRequiredFieldMissing {
+                message: "x".into(),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("ProtoRequiredFieldMissing", ErrorSource::InternalError)
+        );
+
+        // connectivity — the only true "couldn't reach the server" variant.
+        assert_eq!(
+            OdbcError::ConnectionInit {
+                connection: "x".into(),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("ConnectionInit", ErrorSource::Connectivity)
+        );
+
+        // server_error — wrapper-level surface for server-rejected query.
+        assert_eq!(
+            OdbcError::PrepareStatement {
+                statement: "select 1".into(),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("PrepareStatement", ErrorSource::ServerError)
+        );
+
+        // cursor_state
+        assert_eq!(
+            OdbcError::InvalidCursorState { location: loc() }.telemetry_classification(),
+            ("InvalidCursorState", ErrorSource::CursorState)
+        );
+
+        // unsupported
+        assert_eq!(
+            OdbcError::UnsupportedFeature { location: loc() }.telemetry_classification(),
+            ("UnsupportedFeature", ErrorSource::Unsupported)
+        );
+
+        // CoreError special-case: Transport variant routes to connectivity.
+        assert_eq!(
+            OdbcError::CoreError {
+                source: Box::new(CoreProtobufError::Transport {
+                    message: "rpc dropped".into(),
+                    location: loc(),
+                }),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("CoreError", ErrorSource::Connectivity)
+        );
+
+        // CoreError special-case: Application variant routes to server_error.
+        assert_eq!(
+            OdbcError::CoreError {
+                source: Box::new(CoreProtobufError::Application {
+                    error: Box::new(ErrorType::GenericError(
+                        sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                    )),
+                    message: "boom".into(),
+                    status_code: 0,
+                    error_trace: vec![],
+                    sql_state: None,
+                    query_id: None,
+                    location: loc(),
+                }),
+                location: loc(),
+            }
+            .telemetry_classification(),
+            ("CoreError", ErrorSource::ServerError)
+        );
+
+        // unknown — the lone fallback, used by OperationCanceled.
+        assert_eq!(
+            OdbcError::OperationCanceled { location: loc() }.telemetry_classification(),
+            ("OperationCanceled", ErrorSource::Unknown)
+        );
+    }
+
+    /// `Display` (used to write the wire-format string in
+    /// `telemetry::record_wrapper_error`) and `IntoStaticStr` (the
+    /// canonical `&'static str` form) MUST agree for every
+    /// [`ErrorSource`] variant. This test catches accidental drift such
+    /// as forgetting the `#[strum(serialize_all = "snake_case")]`
+    /// umbrella, since both derives read it.
+    #[test]
+    fn error_source_wire_format_is_consistent() {
+        use strum::IntoEnumIterator;
+        for source in ErrorSource::iter() {
+            let s: &'static str = source.into();
+            assert_eq!(
+                s,
+                source.to_string(),
+                "Display and IntoStaticStr disagree for {source:?}"
+            );
+            assert!(
+                s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+                "wire form for {source:?} ({s:?}) is not snake_case"
+            );
+        }
+    }
 
     #[test]
     fn numeric_magnitude_overflow_maps_to_22003() {
@@ -848,6 +1163,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: None,
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -879,6 +1195,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: None,
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -907,6 +1224,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22000".to_string()),
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -943,6 +1261,7 @@ mod tests {
                     status_code: 0,
                     error_trace: vec![],
                     sql_state: Some(state.to_string()),
+                    query_id: None,
                     location: snafu::Location::new("test", 0, 0),
                 }),
                 location: snafu::Location::new("test", 0, 0),
@@ -1001,6 +1320,7 @@ mod tests {
                 status_code: 0,
                 error_trace: vec![],
                 sql_state: Some("22001".to_string()),
+                query_id: None,
                 location: snafu::Location::new("test", 0, 0),
             }),
             location: snafu::Location::new("test", 0, 0),
@@ -1036,5 +1356,73 @@ mod tests {
             odbc_err.to_sql_state(),
             SqlState::RestrictedDataTypeAttributeViolation
         );
+    }
+
+    #[test]
+    fn unsupported_parameter_type_maps_to_07006() {
+        // Per the MS ODBC spec, "Restricted data type attribute violation"
+        // (07006) is the right code when `ParameterType` is a valid driver
+        // SQL type for which no conversion from the supplied `ValueType` is
+        // available -- for example binding any C type to
+        // `SQL_SF_TIMESTAMP_TZ` (2001), which the new driver does not yet
+        // support.
+        let json_err = UnsupportedParameterTypeSnafu {
+            sql_type: odbc_sys::SqlDataType(2001),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
+    }
+
+    /// Pins the SQLSTATE for the "string didn't match the expected format
+    /// for the SQL target" path -- 22018, the same class as
+    /// `InvalidNumericLiteral` / `InvalidBooleanValue`. Used by
+    /// `parse_tz_string_with_fallback` for SQL_C_CHAR / SQL_C_WCHAR bound
+    /// to SQL_SF_TIMESTAMP_TZ when the input lacks both an offset suffix
+    /// and a parseable offset-less shape. See PR #1005 review on
+    /// `timestamp.rs:643`.
+    #[test]
+    fn invalid_character_value_for_cast_maps_to_22018() {
+        let json_err = InvalidCharacterValueForCastSnafu {
+            c_type: crate::api::CDataType::Char,
+            value: "not-a-timestamp".to_string(),
+            expected_format: "YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM",
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidCharacterValueForCast
+        );
+    }
+
+    /// Pins the SQLSTATE for "the parsed datetime overflowed the wire
+    /// format's representable range" -- 22008, distinct from 22018 (parse
+    /// failure on the input string) and 07006 (the binding shape itself
+    /// was wrong). Triggered by `write_timestamp_tz_json` when
+    /// `timestamp_nanos_opt()` returns `None`. See PR #1005 review on
+    /// `timestamp.rs:643`.
+    #[test]
+    fn datetime_field_overflow_maps_to_22008() {
+        let json_err = DatetimeFieldOverflowSnafu {
+            reason: "TIMESTAMP_TZ UTC instant 9999-12-31 23:59:59 exceeds the i64 \
+                     nanosecond epoch range supported by the wire format"
+                .to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::DatetimeFieldOverflow);
     }
 }

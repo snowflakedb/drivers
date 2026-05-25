@@ -60,6 +60,7 @@ TEST_CASE("should create log file when sf.odbc.ini configures file logging", "[l
   // Then the log directory should contain a log file with connection-related output
   auto log_contents = read_all_files_in(log_dir);
   CHECK(!log_contents.empty());
+  CHECK(log_contents.find("ODBC driver starting v") != std::string::npos);
   CHECK(log_contents.find("connect_with_params") != std::string::npos);
 
   // Cleanup

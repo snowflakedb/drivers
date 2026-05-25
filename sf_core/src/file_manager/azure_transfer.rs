@@ -1,6 +1,6 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, EncryptionData, MaterialDescription, PreparedUpload,
-    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
+    PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -38,10 +38,16 @@ pub async fn upload_to_azure_or_skip(
 
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
+///
+/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
+/// the blob — taken from the collected body length, which equals the
+/// Azure `Content-Length` (i.e. the stored blob size) for non-streamed
+/// responses. This is the wire byte count, not the decrypted/decoded
+/// size of the original file.
 pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), AzureDownloadError> {
+) -> Result<DownloadResponse, AzureDownloadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
@@ -82,8 +88,14 @@ pub async fn download_from_azure(
             detail: sanitize_sas(e.to_string()),
         })?
         .to_vec();
+    let cloud_byte_count = data.len() as i64;
 
-    Ok((data, digest, file_metadata))
+    Ok(DownloadResponse {
+        data,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
 }
 
 /// Check if a blob exists in Azure via HEAD request.
@@ -269,7 +281,7 @@ fn resolve_url_and_token<'a>(
 
 /// Builds the Azure Blob Storage URL for a given object key.
 ///
-/// When `end_point` contains a URL scheme (`http://` or `https://`), it is used directly
+/// When `endpoint` contains a URL scheme (`http://` or `https://`), it is used directly
 /// as the base URL. This supports Azure-compatible local emulators (e.g. Azurite) and
 /// testing with mock servers. Otherwise, the standard Azure URL pattern
 /// `https://{storageAccount}.blob.{endpoint}/{container}/{key}` is used.
@@ -277,7 +289,7 @@ fn build_azure_url(stage_info: &StageInfo, key: &str) -> Result<String, AzureReq
     let encoded_key = percent_encode_path(key);
 
     // If endpoint contains a scheme, use it directly (e.g. Azurite or test servers).
-    if let Some(ref ep) = stage_info.end_point
+    if let Some(ref ep) = stage_info.endpoint
         && (ep.starts_with("http://") || ep.starts_with("https://"))
     {
         return Ok(format!("{ep}/{}/{encoded_key}", stage_info.bucket));
@@ -293,7 +305,7 @@ fn build_azure_url(stage_info: &StageInfo, key: &str) -> Result<String, AzureReq
         })?;
 
     let raw_endpoint = stage_info
-        .end_point
+        .endpoint
         .as_deref()
         .unwrap_or("blob.core.windows.net");
 
@@ -558,10 +570,11 @@ mod tests {
             creds: overrides.creds.unwrap_or(CloudCredentials::Azure {
                 sas_token: SensitiveString::from("fake-sas-token"),
             }),
-            end_point: overrides.end_point,
+            endpoint: overrides.endpoint,
             presigned_url: None,
             use_virtual_url: false,
             use_regional_url: false,
+            use_s3_regional_url: false,
             storage_account: overrides
                 .storage_account
                 .or(Some("mystorageaccount".to_string())),
@@ -574,7 +587,7 @@ mod tests {
         key_prefix: Option<String>,
         region: Option<String>,
         creds: Option<CloudCredentials>,
-        end_point: Option<String>,
+        endpoint: Option<String>,
         storage_account: Option<String>,
     }
 
@@ -595,7 +608,7 @@ mod tests {
     #[test]
     fn url_custom_endpoint_with_blob_prefix() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("blob.core.usgovcloudapi.net".to_string()),
+            endpoint: Some("blob.core.usgovcloudapi.net".to_string()),
             ..Default::default()
         });
         let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();
@@ -608,7 +621,7 @@ mod tests {
     #[test]
     fn url_custom_endpoint_without_blob_prefix() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("core.chinacloudapi.cn".to_string()),
+            endpoint: Some("core.chinacloudapi.cn".to_string()),
             ..Default::default()
         });
         let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();
@@ -621,7 +634,7 @@ mod tests {
     #[test]
     fn url_endpoint_without_trailing_slash() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("core.windows.net".to_string()),
+            endpoint: Some("core.windows.net".to_string()),
             ..Default::default()
         });
         let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();
@@ -776,7 +789,7 @@ mod tests {
     #[test]
     fn url_endpoint_with_scheme_is_used_directly() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("http://127.0.0.1:10000".to_string()),
+            endpoint: Some("http://127.0.0.1:10000".to_string()),
             ..Default::default()
         });
         let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();
@@ -789,7 +802,7 @@ mod tests {
     #[test]
     fn url_endpoint_with_https_scheme_is_used_directly() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("https://azurite.local:10000".to_string()),
+            endpoint: Some("https://azurite.local:10000".to_string()),
             ..Default::default()
         });
         let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();

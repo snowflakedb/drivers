@@ -1,6 +1,6 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
+    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -38,10 +38,16 @@ pub async fn upload_to_gcs_or_skip(
 
 /// Downloads a file from GCS and returns data with optional encryption metadata.
 /// For SSE stages the metadata headers will be absent and `None` is returned.
+///
+/// `cloud_byte_count` reflects the on-cloud (pre-decryption) byte count of
+/// the object — taken from the collected body length, which equals the
+/// GCS `Content-Length` (i.e. the stored object size) for non-streamed
+/// responses. This is the wire byte count, not the decrypted/decoded
+/// size of the original file.
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), GcsDownloadError> {
+) -> Result<DownloadResponse, GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
@@ -104,8 +110,14 @@ pub async fn download_from_gcs(
         .await
         .map_err(|source| GcsRequestError::Http { source })?
         .to_vec();
+    let cloud_byte_count = data.len() as i64;
 
-    Ok((data, digest, file_metadata))
+    Ok(DownloadResponse {
+        data,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
 }
 
 /// Check if a file exists in GCS via HEAD request.
@@ -280,7 +292,7 @@ fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
 ///
 /// URL strategy priority (matching JDBC/ODBC/Python):
 /// 1. Presigned URL — use directly, no token
-/// 2. Custom endpoint — `https://{end_point}/{bucket}/{key}`
+/// 2. Custom endpoint — `https://{endpoint}/{bucket}/{key}`
 /// 3. Virtual host — `https://{bucket}.storage.googleapis.com/{key}`
 /// 4. Regional — `https://storage.{region}.rep.googleapis.com/{bucket}/{key}`
 /// 5. Default — `https://storage.googleapis.com/{bucket}/{key}`
@@ -314,7 +326,7 @@ fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
     let encoded_key = percent_encode_path(key);
 
     // Strategy 2: custom endpoint
-    if let Some(ref ep) = stage_info.end_point
+    if let Some(ref ep) = stage_info.endpoint
         && !ep.is_empty()
     {
         let base = if ep.starts_with("https://") || ep.starts_with("http://") {
@@ -552,10 +564,11 @@ mod tests {
             creds: overrides.creds.unwrap_or(CloudCredentials::Gcs {
                 gcs_access_token: Some(SensitiveString::from("fake-token")),
             }),
-            end_point: overrides.end_point,
+            endpoint: overrides.endpoint,
             presigned_url: overrides.presigned_url,
             use_virtual_url: overrides.use_virtual_url,
             use_regional_url: overrides.use_regional_url,
+            use_s3_regional_url: false,
             storage_account: None,
         }
     }
@@ -566,7 +579,7 @@ mod tests {
         key_prefix: Option<String>,
         region: Option<String>,
         creds: Option<CloudCredentials>,
-        end_point: Option<String>,
+        endpoint: Option<String>,
         presigned_url: Option<String>,
         use_virtual_url: bool,
         use_regional_url: bool,
@@ -587,7 +600,7 @@ mod tests {
     fn url_custom_endpoint() {
         // Matches ODBC test_gcs_override_endpoint
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("testendpoint.googleapis.com".to_string()),
+            endpoint: Some("testendpoint.googleapis.com".to_string()),
             ..Default::default()
         });
         let url = build_gcs_url(&stage, "file.csv.gz");
@@ -600,7 +613,7 @@ mod tests {
     #[test]
     fn url_custom_endpoint_with_scheme() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("https://custom.example.com".to_string()),
+            endpoint: Some("https://custom.example.com".to_string()),
             ..Default::default()
         });
         let url = build_gcs_url(&stage, "file.csv.gz");
@@ -654,7 +667,7 @@ mod tests {
     fn url_custom_endpoint_takes_precedence() {
         // Matches ODBC test_gcs_all_endpoint_fields_enabled
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("testendpoint.googleapis.com".to_string()),
+            endpoint: Some("testendpoint.googleapis.com".to_string()),
             region: Some("testregion".to_string()),
             use_virtual_url: true,
             use_regional_url: true,
@@ -670,7 +683,7 @@ mod tests {
     #[test]
     fn url_empty_endpoint_falls_through() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("".to_string()),
+            endpoint: Some("".to_string()),
             ..Default::default()
         });
         let url = build_gcs_url(&stage, "file.csv.gz");
@@ -905,7 +918,7 @@ mod tests {
     #[test]
     fn url_custom_endpoint_encodes_key() {
         let stage = make_stage_info(StageInfoOverrides {
-            end_point: Some("custom.example.com".to_string()),
+            endpoint: Some("custom.example.com".to_string()),
             ..Default::default()
         });
         let url = build_gcs_url(&stage, "dir/file name.csv");

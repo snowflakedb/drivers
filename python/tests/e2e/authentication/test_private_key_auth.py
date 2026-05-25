@@ -1,4 +1,5 @@
 import base64
+import os
 import tempfile
 
 import pytest
@@ -49,16 +50,19 @@ class TestPrivateKeyAuthentication:
             encryption_algorithm=serialization.NoEncryption(),
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".p8") as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".p8", delete=False) as tmp:
             tmp.write(unencrypted_pem)
-            tmp.flush()
+            tmp_path = tmp.name
 
+        try:
             # When Trying to Connect
-            connection = create_jwt_connection(connection_factory, tmp.name)
+            connection = create_jwt_connection(connection_factory, tmp_path)
 
             # Then Login is successful and simple query can be executed
             with connection:
                 verify_simple_query_execution(connection)
+        finally:
+            os.unlink(tmp_path)
 
     def test_should_fail_jwt_authentication_when_invalid_private_key_provided(self, connection_factory):
         # Given Authentication is set to JWT and invalid private key file is provided

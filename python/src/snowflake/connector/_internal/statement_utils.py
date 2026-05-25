@@ -2,45 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
 
+from .api_client.client_api import core_driver
 from .protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionHandle,
     DatabaseFetchChunkResponse,
     PrepareResult,
     ResultSetDescriptor,
-    ResultSetResponse,
+    ResultSetGetStreamResponse,
     StatementHandle,
-    StatementNewRequest,
-    StatementReleaseRequest,
-    StatementSetSqlQueryRequest,
 )
 from .sqlstate import SQLSTATE_SUCCESS
 
 
-if TYPE_CHECKING:
-    from ..connection import Connection
-
-
-def new_stmt(connection: Connection) -> StatementHandle:
-    statement_request = StatementNewRequest(conn_handle=connection.conn_handle)
-    stmt = connection.db_api.statement_new(request=statement_request)
-    return stmt.stmt_handle
-
-
-def set_query(connection: Connection, stmt_handle: StatementHandle, query: str) -> None:
-    sql_query_request = StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
-    connection.db_api.statement_set_sql_query(sql_query_request)
-
-
-def release_stmt(connection: Connection, stmt_handle: StatementHandle | None) -> StatementHandle | None:
-    if stmt_handle:
-        release_request = StatementReleaseRequest(stmt_handle=stmt_handle)
-        connection.db_api.statement_release(release_request)
-    return None
-
-
 @contextmanager
-def statement(connection: Connection, query: str) -> Generator[StatementHandle]:
+def statement(conn_handle: ConnectionHandle, query: str) -> Generator[StatementHandle]:
     """Context manager that owns the full lifecycle of a statement handle.
 
     Allocates a new statement on the server, binds the given SQL query to it,
@@ -49,22 +25,22 @@ def statement(connection: Connection, query: str) -> Generator[StatementHandle]:
     is raised.
 
     Args:
-        connection: Active Snowflake connection used to issue gRPC calls.
+        conn_handle: Active Snowflake conn_handle.
         query: SQL text to bind to the newly created statement.
 
     Yields:
         StatementHandle: A handle that can be passed to ``statement_execute``
         or other statement-level APIs.
     """
-    stmt_handle = new_stmt(connection)
+    stmt_handle = core_driver.statement_new(conn_handle=conn_handle).stmt_handle
     try:
-        set_query(connection, stmt_handle, query)
+        core_driver.statement_set_query(stmt_handle=stmt_handle, query=query)
         yield stmt_handle
     finally:
-        release_stmt(connection, stmt_handle)
+        core_driver.statement_release(stmt_handle=stmt_handle)
 
 
-def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetResponse | None) -> int:
+def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetGetStreamResponse | None) -> int:
     """Extract a C ArrowArrayStream pointer from an execute result.
 
     The pointer is stored as an 8-byte little-endian value inside

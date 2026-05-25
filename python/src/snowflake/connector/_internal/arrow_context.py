@@ -21,6 +21,8 @@ from .extras import tzlocal, MissingOptionalDependency
 if TYPE_CHECKING:
     from numpy import datetime64, float64, int64, timedelta64
 
+    from ..connection import Connection
+
 
 ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 PARAMETER_TIMEZONE = "TIMEZONE"
@@ -67,20 +69,22 @@ class ArrowConverterContext:
 
     def __init__(
         self,
-        session_parameters: dict[str, str | int | bool] | None = None,
+        timezone: str | None = None,
     ) -> None:
-        if session_parameters is None:
-            session_parameters = {}
-        self._timezone = (
-            None if PARAMETER_TIMEZONE not in session_parameters else session_parameters[PARAMETER_TIMEZONE]
-        )
+        self._timezone = timezone
+
+    @classmethod
+    def create(cls, connection: Connection) -> ArrowConverterContext:
+        """Create a context by fetching the session timezone."""
+        tz = connection._get_session_parameter(PARAMETER_TIMEZONE)
+        return cls(timezone=tz)
 
     @property
-    def timezone(self) -> str | int | None:
+    def timezone(self) -> str | None:
         return self._timezone
 
     @timezone.setter
-    def timezone(self, tz: str | int | None) -> None:
+    def timezone(self, tz: str | None) -> None:
         self._timezone = tz
 
     def _get_session_tz(self) -> tzinfo:

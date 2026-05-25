@@ -986,7 +986,10 @@ mod tests {
         /// Run with:
         ///   cargo test -p sf_core -- stress_concurrent_lock --ignored --nocapture
         #[test]
-        #[ignore] // slow — run manually to validate locking reliability
+        // Slow — run manually to validate locking reliability. Deliberately NOT
+        // prefixed with `vpn_` so the Jenkins VPN-tests pipeline (which filters
+        // `--ignored vpn_`) does not pick it up. See sf_core/README.md.
+        #[ignore]
         fn stress_concurrent_lock() {
             const ITERATIONS: usize = 20;
             const STRESS_THREADS: usize = 100;

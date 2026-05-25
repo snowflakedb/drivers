@@ -173,21 +173,33 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 }
 
-TEST_CASE("should return error for unsupported compression type", "[put_get]") {
-  // Given Snowflake client is logged in
+TEST_CASE("should silently upload file with unsupported compression type as uncompressed", "[put_get]") {
   Connection conn;
+  // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_UNSUPPORTED"));
 
   // And File compressed with unsupported format
   auto [filename, file] = test_file("LZMA");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT";
+  auto put_stmt =
+      conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT");
 
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)put_sql.c_str(), SQL_NTS);
+  // Then Upload succeeds and the file is treated as uncompressed source
+  CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_IDX) == expected_put_source(file));
+  CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
+  compare_compression_type(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
+  compare_compression_type(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
+  CHECK(get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
 
-  // Then Unsupported compression error is thrown
-  OLD_DRIVER_ONLY("BD#6") { REQUIRE(ret == SQL_SUCCESS); }
-  NEW_DRIVER_ONLY("BD#6") { REQUIRE(ret == SQL_ERROR); }
+  // And Downloaded payload decompresses to the original file bytes
+  TempTestDir download_dir("odbc_put_get_unsupported_");
+  conn.execute("GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir.path()) + "/'");
+  const fs::path downloaded_gz = download_dir.path() / (filename + ".gz");
+  REQUIRE(fs::exists(downloaded_gz));
+
+  const std::string decompressed = decompress_gzip_file(downloaded_gz);
+  std::ifstream original_ifs(file, std::ios::binary);
+  const std::string original_bytes((std::istreambuf_iterator(original_ifs)), std::istreambuf_iterator<char>());
+  CHECK(decompressed == original_bytes);
 }

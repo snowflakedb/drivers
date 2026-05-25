@@ -117,6 +117,7 @@ fn load_parameters(path: &PathBuf) -> Result<Parameters, Box<dyn std::error::Err
 
 fn default_client_info() -> ClientInfo {
     ClientInfo {
+        client_app_id: env!("CARGO_PKG_NAME").to_string(),
         application: env!("CARGO_PKG_NAME").to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
@@ -317,6 +318,8 @@ fn build_login_params(
         LoginMethod::Password {
             username: user,
             password: SensitiveString::from(password.clone()),
+            passcode_in_password: false,
+            passcode: None,
         }
     } else {
         return Err("No authentication method available: set private_key_file, private_key_contents, or password in parameters".into());
@@ -361,6 +364,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_url,
         client_info,
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
+        log_query_text: false,
+        log_query_parameters: false,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 
@@ -414,22 +419,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Format: {format_label}");
 
-    let rowset_data = response.data.to_rowset_data();
-    match rowset_data {
-        sf_core::rest::snowflake::query_response::RowsetData::ArrowMultiChunk { .. }
-        | sf_core::rest::snowflake::query_response::RowsetData::ArrowSingleChunk { .. } => {
-            save_arrow_data(&response.data, &cli.output_dir, &tls_client).await?;
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::JsonMultiChunk { .. }
-        | sf_core::rest::snowflake::query_response::RowsetData::JsonRowset { .. } => {
-            save_json_data(&response.data, &cli.output_dir, &tls_client).await?;
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::SchemaOnly { .. } => {
-            return Err("Query returned schema-only (no data)".into());
-        }
-        sf_core::rest::snowflake::query_response::RowsetData::NoData => {
-            return Err("Query returned no data".into());
-        }
+    match format_label {
+        "arrow" => save_arrow_data(&response.data, &cli.output_dir, &tls_client).await?,
+        "json" => save_json_data(&response.data, &cli.output_dir, &tls_client).await?,
+        other => return Err(format!("Unsupported query result format: {other}").into()),
     }
 
     println!("Done! Chunk data saved to {:?}", cli.output_dir);

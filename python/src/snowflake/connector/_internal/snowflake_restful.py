@@ -5,12 +5,11 @@ import json
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from snowflake.connector._internal.api_client.client_api import core_driver
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     TOKEN_REQUEST_TYPE_ISSUE,
     TOKEN_REQUEST_TYPE_RENEW,
     ConnectionGetInfoResponse,
-    ConnectionSendHttpRequest,
-    ConnectionTokenRequest,
 )
 from snowflake.connector.errors import OperationalError
 
@@ -127,16 +126,13 @@ class SnowflakeRestful:
         else:
             encoded_body = None
 
-        request = ConnectionSendHttpRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_send_http(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             method=method,
             url=url,
             headers=headers or {},
+            body=encoded_body,
         )
-        if encoded_body is not None:
-            request.body = encoded_body
-
-        response = self._connection.db_api.connection_send_http(request)
         return response.status_code, dict(response.headers), response.body
 
     _SUPPORTED_REQUEST_METHODS = {"get", "post"}
@@ -208,11 +204,10 @@ class SnowflakeRestful:
         if proto_type is None:
             raise ValueError(f"Unknown token request type: {request_type!r}. Must be 'ISSUE' or 'RENEW'.")
 
-        request = ConnectionTokenRequest(
-            conn_handle=self._connection.conn_handle,
+        response = core_driver.connection_request_token(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             request_type=proto_type,
         )
-        response = self._connection.db_api.connection_request_token(request)
         data: dict = {"sessionToken": response.session_token}
         if response.HasField("validity_in_seconds"):
             data["validityInSecondsST"] = response.validity_in_seconds

@@ -1,0 +1,23 @@
+{
+  "name": "Failed external browser authentication login",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      },
+      {
+        "matchesJsonPath": "$.data[?(@.TOKEN == 'browser_sso_token_rejected')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": false,
+      "code": "390100",
+      "message": "Invalid credentials"
+    }
+  }
+}

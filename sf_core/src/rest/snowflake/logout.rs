@@ -96,7 +96,10 @@ pub async fn logout_session(
     })
     .await
     .map_err(map_http_error)
-    .context(AsyncQuerySnafu)?;
+    .context(AsyncQuerySnafu {
+        request_id: Some(request_id),
+        query_id: None,
+    })?;
 
     // Read response body as text first (avoids crash on non-JSON responses)
     let status = response.status();

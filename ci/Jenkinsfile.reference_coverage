@@ -175,7 +175,7 @@ pipeline {
                                         -v "$(pwd)":/workspace \
                                         -w /workspace \
                                         rocky-old-odbc-build \
-                                        bash -c 'python3.9 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple'
+                                        bash -c 'python3 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple'
                                 '''
                             }
                         }
@@ -196,7 +196,7 @@ pipeline {
                                             -e BRANCH_NAME="$BRANCH_NAME" \
                                             -w /workspace \
                                             rocky-old-odbc-build \
-                                            python3.9 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc
+                                            python3 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc
                                     '''
                                 }
                             }

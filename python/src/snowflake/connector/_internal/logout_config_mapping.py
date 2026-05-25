@@ -8,7 +8,7 @@ import warnings
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any
 
 
 class LogoutOptionKeys(str, Enum):
@@ -52,12 +52,12 @@ class LogoutConfig:
         logout_request_timeout_seconds: Per-request socket timeout (None = no per-request limit)
     """
 
-    server_session_keep_alive: Optional[bool]
-    enable_server_session_keep_alive_auto_detection: Optional[bool]
+    server_session_keep_alive: bool | None
+    enable_server_session_keep_alive_auto_detection: bool | None
     error_strategy: ErrorStrategy = ErrorStrategy.BEST_EFFORT
-    logout_total_timeout_seconds: Optional[int] = None  # Core default: 15s
-    max_attempts: Optional[int] = None  # Core default: 3
-    logout_request_timeout_seconds: Optional[int] = None  # Core default: None (total budget only)
+    logout_total_timeout_seconds: int | None = None  # Core default: 15s
+    max_attempts: int | None = None  # Core default: 3
+    logout_request_timeout_seconds: int | None = None  # Core default: None (total budget only)
 
     @classmethod
     def from_kwargs(cls, kwargs: dict) -> "LogoutConfig":
@@ -101,7 +101,7 @@ class LogoutConfig:
         return options
 
 
-def _extract_auto_detection_param(kwargs: dict) -> Optional[bool]:
+def _extract_auto_detection_param(kwargs: dict) -> bool | None:
     """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
 
     If not provided, defaults to True and emits a FutureWarning:
@@ -131,9 +131,9 @@ def _extract_auto_detection_param(kwargs: dict) -> Optional[bool]:
 
 
 def remap_keep_alive_for_backward_compat(
-    server_session_keep_alive: Optional[bool],
-    enable_auto_detection: Optional[bool],
-) -> Optional[bool]:
+    server_session_keep_alive: bool | None,
+    enable_auto_detection: bool | None,
+) -> bool | None:
     """Phase 2 backward-compat remap for server_session_keep_alive (SNOW-2314152).
 
     Old Python driver: server_session_keep_alive=False (default) always checked
@@ -157,3 +157,31 @@ def remap_keep_alive_for_backward_compat(
         )
         return None
     return server_session_keep_alive
+
+
+def logout_config_options_modifier(options: dict[str, Any]) -> dict[str, Any]:
+    """``ConnectionConfig.to_options`` modifier that re-applies legacy LogoutConfig logic.
+
+    The generated :class:`ConnectionConfig` exposes the logout-related fields as
+    plain optional values, so a user-supplied ``server_session_keep_alive=False``
+    would be forwarded verbatim to the Rust core and the Python-only
+    ``best_effort`` / auto-detection defaults would be lost.
+
+    This modifier reconstructs the previous ``Connection._parse_kwargs`` behaviour:
+
+    * Pops ``server_session_keep_alive`` and
+      ``enable_server_session_keep_alive_auto_detection`` from *options*.
+    * Builds a :class:`LogoutConfig`, which:
+        - Defaults ``enable_server_session_keep_alive_auto_detection`` to ``True``
+          (with a ``FutureWarning``) when the user did not provide a value.
+        - Applies the Phase 2 ``False + True → None`` remap for
+          ``server_session_keep_alive`` (with a ``FutureWarning``).
+        - Defaults ``error_strategy`` to ``ErrorStrategy.BEST_EFFORT``.
+    * Merges the resolved values back into *options*.
+
+    Designed to be passed as one of ``options_modifiers`` to
+    :meth:`ConnectionConfig.to_options` / :meth:`ConnectionConfig.to_proto_options`.
+    """
+    config = LogoutConfig.from_kwargs(options)
+    options.update(config.to_option_dict())
+    return options

@@ -17,7 +17,11 @@ fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultH
         execute_query_response::Result::Single(d) => d,
         _ => panic!("expected single"),
     };
-    assert_eq!(desc.rows_affected, Some(1), "Cannot force JSON result set");
+    assert_eq!(
+        desc.result_descriptor.as_ref().unwrap().rows_affected,
+        Some(1),
+        "Cannot force JSON result set"
+    );
 
     client.set_sql_query(&stmt, query);
     let result = client.execute_statement_query(&stmt);

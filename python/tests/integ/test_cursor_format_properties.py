@@ -8,6 +8,13 @@ as read-only metadata on the cursor.
 import pytest
 
 
+# ALTER SESSION statements in these tests mutate connection state — use a
+# fresh connection per test instead of the module-scoped default.
+@pytest.fixture
+def connection(function_connection):
+    yield function_connection
+
+
 SIMPLE_PROPERTIES = [
     ("timestamp_output_format", "YYYY-MM-DD", "MM/DD/YYYY HH24:MI"),
     ("date_output_format", "YYYY-MM-DD", "DD/MM/YYYY"),

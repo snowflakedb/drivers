@@ -135,8 +135,8 @@ From the `python/` directory, verify you can run both test modes:
 # Universal driver (dev mode — editable install, reflects source changes)
 hatch run dev:e2e -k timestamp_ltz
 
-# Reference driver (official snowflake-connector-python)
-PYTHON_REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:test -k timestamp_ltz
+# Reference driver (official snowflake-connector-python, latest v4.x)
+hatch run reference:test -k timestamp_ltz
 ```
 
 Both should find and pass the existing LTZ tests. If either command fails due to environment issues (missing libraries, build errors, GLIBCXX conflicts, hatch not found, etc.), use the dev-env-fixes agent (`/home/fpawlowski/.claude/agents/temp/dev-env-fixes.md`) to diagnose and fix before proceeding.
@@ -326,7 +326,7 @@ Fix the 3 issues, then repeat until the agent finds no critical or high-priority
 
 ```bash
 cd python
-PYTHON_REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:test -k timestamp_ntz
+hatch run reference:test -k timestamp_ntz
 ```
 
 **All new tests must pass on the reference driver before anything else.** The reference driver defines correct behaviour. If a test fails here, the test is wrong — fix the test, not the driver. Do not proceed to step 5 until this is green.

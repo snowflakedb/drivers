@@ -5,6 +5,11 @@ sf_core:
           - sf_mini_core/**
           - sf_mini_core_static/**
 
+nodejs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - nodejs/**
+
 python:
   - changed-files:
       - any-glob-to-any-file:
@@ -16,6 +21,7 @@ odbc:
       - any-glob-to-any-file:
           - odbc/**
           - odbc_tests/**
+          - odbc_trace_tool/**
 
 jdbc:
   - changed-files:

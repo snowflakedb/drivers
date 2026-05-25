@@ -17,6 +17,12 @@ mod date;
 mod decfloat;
 #[cfg(test)]
 mod decfloat_tests;
+mod interval;
+mod interval_str;
+#[cfg(test)]
+mod interval_str_tests;
+#[cfg(test)]
+mod interval_tests;
 mod nullable;
 mod number;
 #[cfg(test)]
@@ -32,7 +38,7 @@ mod test_utils;
 mod time;
 #[cfg(test)]
 mod time_tests;
-mod timestamp;
+pub(crate) mod timestamp;
 #[cfg(test)]
 mod timestamp_tests;
 mod varchar;
@@ -173,6 +179,7 @@ impl<
             .snowflake_type
             .read_arrow_type(arrow_array, row_idx)
             .context(ReadArrowValueSnafu)?;
+        self.snowflake_type.validate_value(&value)?;
         self.snowflake_type
             .write_odbc_type(value, binding, get_data_offset)
             .context(WriteOdbcValueSnafu)
@@ -221,6 +228,7 @@ impl<
                 .read_arrow_type(arrow_array, batch_idx)
                 .context(ReadArrowValueSnafu)
                 .and_then(|value| {
+                    self.snowflake_type.validate_value(&value)?;
                     self.snowflake_type
                         .write_odbc_type(value, &binding, &mut None)
                         .context(WriteOdbcValueSnafu)
@@ -381,6 +389,7 @@ impl SnowflakeFieldType {
             })),
             "TIMESTAMP_TZ" => Ok(Self::TimestampTz(timestamp::SnowflakeTimestampTz {
                 scale: timestamp_scale(field)?,
+                tz_offset_format: numeric_settings.tz_offset_format,
             })),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => {
@@ -512,9 +521,18 @@ pub fn make_converter(
         SnowflakeFieldType::Date(snowflake_type) => {
             make_primitive_data_converter!(Date32Type, snowflake_type, nullable)
         }
-        SnowflakeFieldType::Time(snowflake_type) => {
-            make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
-        }
+        SnowflakeFieldType::Time(snowflake_type) => match field.data_type() {
+            DataType::Int32 => {
+                make_primitive_data_converter!(Int32Type, snowflake_type, nullable)
+            }
+            DataType::Int64 => {
+                make_primitive_data_converter!(Int64Type, snowflake_type, nullable)
+            }
+            dt => UnsupportedArrowDataTypeSnafu {
+                data_type: dt.clone(),
+            }
+            .fail(),
+        },
         SnowflakeFieldType::TimestampNtz(snowflake_type) => {
             make_timestamp_converter!(snowflake_type, field, nullable)
         }

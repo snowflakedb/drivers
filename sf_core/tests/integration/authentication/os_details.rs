@@ -33,6 +33,7 @@ fn should_include_os_details_on_linux() {
         DriverProviders {
             fs: Some(fs),
             log_manager: Some(log_manager),
+            ..Default::default()
         },
     );
     client.set_connection_option("password", "test_password"); // pragma: allowlist secret

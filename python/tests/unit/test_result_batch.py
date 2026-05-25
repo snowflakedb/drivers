@@ -259,7 +259,8 @@ class TestCreateIterValidation:
 
 class TestCreateIterDispatch:
     def test_row_unit_calls_create_row_iterator(self):
-        batch = _make_batch(connection=MagicMock())
+        mock_connection = MagicMock()
+        batch = _make_batch(connection=mock_connection)
         with (
             patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
             patch("snowflake.connector.result_batch.create_row_iterator") as mock_iter,
@@ -267,17 +268,18 @@ class TestCreateIterDispatch:
             mock_iter.return_value = iter([(1,), (2,)])
             rows = list(batch.create_iter(iter_unit=IterUnit.ROW_UNIT))
         assert rows == [(1,), (2,)]
-        mock_iter.assert_called_once_with(0, use_dict_result=False)
+        mock_iter.assert_called_once_with(0, connection=mock_connection, use_dict_result=False)
 
     def test_row_unit_with_dict_result(self):
-        batch = _make_batch(connection=MagicMock())
+        mock_connection = MagicMock()
+        batch = _make_batch(connection=mock_connection)
         with (
             patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
             patch("snowflake.connector.result_batch.create_row_iterator") as mock_iter,
         ):
             mock_iter.return_value = iter([{"id": 1}])
             batch.create_iter(iter_unit=IterUnit.ROW_UNIT, use_dict_result=True)
-        mock_iter.assert_called_once_with(0, use_dict_result=True)
+        mock_iter.assert_called_once_with(0, connection=mock_connection, use_dict_result=True)
 
     def test_table_unit_pandas_calls_to_pandas(self):
         batch = _make_batch(connection=MagicMock())
@@ -338,14 +340,17 @@ class TestToArrowConnection:
             batch.to_arrow()
 
     def test_to_arrow_forwards_conversion_params(self):
-        batch = _make_batch(connection=MagicMock())
+        mock_connection = MagicMock()
+        batch = _make_batch(connection=mock_connection)
         with (
             patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
             patch("snowflake.connector.result_batch.create_table_iterator") as mock_table_iter,
             patch("snowflake.connector.result_batch.collect_arrow_table"),
         ):
             batch.to_arrow(number_to_decimal=True, force_microsecond_precision=True)
-        mock_table_iter.assert_called_once_with(0, number_to_decimal=True, force_microsecond_precision=True)
+        mock_table_iter.assert_called_once_with(
+            0, connection=mock_connection, number_to_decimal=True, force_microsecond_precision=True
+        )
 
 
 class TestToPandasConnection:

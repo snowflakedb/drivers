@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-    Builds a Snowflake ODBC Driver MSI installer using the WiX Toolset v3.
+    Builds a Snowflake ODBC Driver MSI installer using WiX Toolset v7.
 
 .DESCRIPTION
-    Invokes candle.exe (compiler) and light.exe (linker) from the WiX Toolset
-    to produce an MSI installer for the Snowflake ODBC Driver.
+    Invokes `wix build` from the WiX Toolset v7 CLI to produce an MSI installer
+    for the Snowflake ODBC Driver.
 
 .PARAMETER DriverBinDir
     Directory containing the built sfodbc.dll (e.g. target\release).
 
 .PARAMETER Arch
-    Target architecture: x64 or x86. Selects the matching WiX source file.
+    Target architecture: x64, x86, or arm64. Selects the matching WiX source file.
     Defaults to x64.
 
 .PARAMETER BuildConfig
@@ -18,12 +18,13 @@
     Defaults to release.
 
 .PARAMETER VCRedistDir
-    Directory containing the VC++ redistributable (vc_redist.x64.exe / vc_redist.x86.exe).
+    Directory containing the VC++ redistributable (vc_redist.x64.exe / vc_redist.x86.exe / vc_redist.arm64.exe).
     Auto-detected from the Visual Studio installation if not specified.
 
 .PARAMETER Version
     Version string for the product (e.g. 0.0.1-abc1234).
-    Defaults to BASE_VERSION from odbc/version.sh with the git short hash appended.
+    Defaults to [package.metadata.odbc] odbc_preview_version from odbc/Cargo.toml
+    with the git short hash appended.
 
 .PARAMETER OutputDir
     Directory where the resulting MSI will be placed. Created if it doesn't exist.
@@ -34,6 +35,9 @@
 
 .EXAMPLE
     .\odbc\installer\win\package.ps1 -DriverBinDir target\i686-pc-windows-msvc\debug -Arch x86 -BuildConfig debug
+
+.EXAMPLE
+    .\odbc\installer\win\package.ps1 -DriverBinDir target\aarch64-pc-windows-msvc\release -Arch arm64
 #>
 
 [CmdletBinding()]
@@ -41,7 +45,7 @@ param(
     [Parameter(Mandatory)]
     [string]$DriverBinDir,
 
-    [ValidateSet("x64", "x86")]
+    [ValidateSet("x64", "x86", "arm64")]
     [string]$Arch = "x64",
 
     [ValidateSet("release", "debug")]
@@ -65,20 +69,23 @@ if (-not (Test-Path $WxsFile)) {
 }
 
 # --- WiX Toolset preflight ---
-foreach ($tool in @("candle.exe", "light.exe")) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "$tool not found on PATH. Install WiX Toolset v3 or add its bin directory to PATH."
-    }
+if (-not (Get-Command "wix" -ErrorAction SilentlyContinue)) {
+    throw "wix CLI not found on PATH. Install WiX Toolset v7: dotnet tool install --global wix"
 }
 
 # --- Version ---
-if (-not $Version) {
-    $versionLine = Get-Content (Join-Path $SourceDir "odbc\version.sh") -Raw
-    if ($versionLine -match 'BASE_VERSION=(\S+)') {
-        $baseVersion = $Matches[1]
-    } else {
-        throw "Could not parse BASE_VERSION from odbc/version.sh"
+$cargoTomlContent = Get-Content (Join-Path $SourceDir "odbc\Cargo.toml") -Raw
+
+function Read-OdbcMetadata([string]$Key) {
+    $pattern = '(?m)^\[package\.metadata\.odbc\][^\[]*?' + [regex]::Escape($Key) + '\s*=\s*"([^"]+)"'
+    if ($cargoTomlContent -match $pattern) {
+        return $Matches[1]
     }
+    throw "Could not parse [package.metadata.odbc] $Key from odbc/Cargo.toml"
+}
+
+if (-not $Version) {
+    $baseVersion = Read-OdbcMetadata 'odbc_preview_version'
     $commitHash = "unknown"
     if (Get-Command git -ErrorAction SilentlyContinue) {
         $commitHash = (git -C $SourceDir rev-parse --short HEAD 2>$null)
@@ -90,32 +97,53 @@ $versionParts = ($Version -replace '-.*', '').Split('.')
 while ($versionParts.Count -lt 3) { $versionParts += "0" }
 $WixVersion = ($versionParts[0..2]) -join '.'
 
+$OdbcApiVer = Read-OdbcMetadata 'odbc_api_version'
+
 # --- Driver DLL ---
 $DriverBinDir = (Resolve-Path $DriverBinDir).Path
-if (-not (Test-Path (Join-Path $DriverBinDir "sfodbc.dll"))) {
-    throw "sfodbc.dll not found in $DriverBinDir. Build the driver first."
+$driverDll = if ($Arch -eq "x86") { "sfodbc32.dll" } else { "sfodbc.dll" }
+if (-not (Test-Path (Join-Path $DriverBinDir $driverDll))) {
+    throw "$driverDll not found in $DriverBinDir. Build the driver first."
 }
 
 # --- VC++ Redistributable ---
+function Find-LatestVCRedist([string]$RedistRoot) {
+    if (-not (Test-Path $RedistRoot)) { return $null }
+    $latest = Get-ChildItem -Directory $RedistRoot | Sort-Object Name -Descending | Select-Object -First 1
+    if ($latest) { return $latest.FullName }
+    return $null
+}
+
 if (-not $VCRedistDir) {
-    # Try VCINSTALLDIR env var first (set by vcvarsall.bat)
+    Write-Host "No -VCRedistDir found. Detecting available versions"
     if ($env:VCINSTALLDIR) {
-        $VCRedistDir = Join-Path $env:VCINSTALLDIR "Redist\MSVC\v143"
-    } else {
-        # Auto-detect via vswhere
+        $redistRoot = Join-Path $env:VCINSTALLDIR "Redist\MSVC"
+        $VCRedistDir = Find-LatestVCRedist $redistRoot
+        if ($VCRedistDir) { Write-Host "VCINSTALLDIR found. Using $VCRedistDir" }
+    }
+    if (-not $VCRedistDir) {
+        Write-Host "Autodetecting the VC++ Redistributable with vswhere.exe"
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         if (Test-Path $vswhere) {
             $vsPath = & $vswhere -latest -property installationPath
             if ($vsPath) {
-                $VCRedistDir = Join-Path $vsPath "VC\Redist\MSVC\v143"
+                $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+                $VCRedistDir = Find-LatestVCRedist $redistRoot
+                if ($VCRedistDir) { Write-Host "Detected VC++ Redistributable at $VCRedistDir" }
             }
+        } else {
+            Write-Host "vswhere not found in path $vswhere"
         }
     }
     if (-not $VCRedistDir -or -not (Test-Path $VCRedistDir)) {
         throw "VC++ Redistributable directory not found. Install Visual Studio or pass -VCRedistDir."
     }
 }
-$vcRedistExe = if ($Arch -eq "x64") { "vc_redist.x64.exe" } else { "vc_redist.x86.exe" }
+$vcRedistExe = switch ($Arch) {
+    "x64"   { "vc_redist.x64.exe" }
+    "x86"   { "vc_redist.x86.exe" }
+    "arm64" { "vc_redist.arm64.exe" }
+}
 if (-not (Test-Path (Join-Path $VCRedistDir $vcRedistExe))) {
     throw "$vcRedistExe not found in $VCRedistDir"
 }
@@ -126,43 +154,31 @@ $OutputDir = (Resolve-Path $OutputDir).Path
 $configSuffix = if ($BuildConfig -eq "debug") { "-debug" } else { "" }
 
 Write-Host "=== Building Snowflake ODBC Driver MSI ==="
-Write-Host "  Architecture : $Arch"
-Write-Host "  Config       : $BuildConfig"
-Write-Host "  Version      : $Version (MSI ProductVersion: $WixVersion)"
-Write-Host "  Driver dir   : $DriverBinDir"
-Write-Host "  VCRedist dir : $VCRedistDir"
-Write-Host "  Source dir   : $SourceDir"
-Write-Host "  Output dir   : $OutputDir"
+Write-Host "  Architecture     : $Arch"
+Write-Host "  Config           : $BuildConfig"
+Write-Host "  Version          : $Version (MSI ProductVersion: $WixVersion)"
+Write-Host "  ODBC API version : $OdbcApiVer"
+Write-Host "  Driver dir       : $DriverBinDir"
+Write-Host "  VCRedist dir     : $VCRedistDir"
+Write-Host "  Source dir       : $SourceDir"
+Write-Host "  Output dir       : $OutputDir"
 
-$ObjDir = Join-Path $OutputDir "wixobj"
-New-Item -ItemType Directory -Force -Path $ObjDir | Out-Null
-
-$WixObj = Join-Path $ObjDir "snowflake_odbc_${Arch}${configSuffix}.wixobj"
 $MsiFile = Join-Path $OutputDir "snowflake-odbc-ud-${Version}${configSuffix}-${Arch}.msi"
 
-$candleArch = if ($Arch -eq "x64") { "x64" } else { "x86" }
-
-Write-Host "`n--- Compiling WiX source ---"
-& candle.exe `
-    -nologo `
-    -arch $candleArch `
-    -dProductVersion="$WixVersion" `
-    -dFullVersion="$Version" `
-    -dDriverBinDir="$DriverBinDir" `
-    -dVCRedistDir="$VCRedistDir" `
-    -dSourceDir="$SourceDir" `
-    -out "$WixObj" `
-    "$WxsFile"
-if ($LASTEXITCODE -ne 0) { throw "candle.exe failed with exit code $LASTEXITCODE" }
-
-Write-Host "`n--- Linking MSI ---"
-& light.exe `
-    -nologo `
-    -ext WixUIExtension `
-    -ext WixUtilExtension `
+Write-Host "`n--- Building MSI ---"
+& wix build `
+    "$WxsFile" `
+    -arch $Arch `
+    -ext WixToolset.UI.wixext `
+    -ext WixToolset.Util.wixext `
+    -d ProductVersion="$WixVersion" `
+    -d FullVersion="$Version" `
+    -d OdbcApiVer="$OdbcApiVer" `
+    -d DriverBinDir="$DriverBinDir" `
+    -d VCRedistDir="$VCRedistDir" `
+    -d SourceDir="$SourceDir" `
     -b "$PSScriptRoot" `
-    -out "$MsiFile" `
-    "$WixObj"
-if ($LASTEXITCODE -ne 0) { throw "light.exe failed with exit code $LASTEXITCODE" }
+    -o "$MsiFile"
+if ($LASTEXITCODE -ne 0) { throw "wix build failed with exit code $LASTEXITCODE" }
 
 Write-Host "`n=== Successfully created MSI: $MsiFile ==="

@@ -13,7 +13,6 @@ import numpy as np
 import pytest
 
 from snowflake.connector._internal.arrow_context import (
-    PARAMETER_TIMEZONE,
     ZERO_EPOCH,
     ArrowConverterContext,
     _generate_tzinfo_from_tzoffset,
@@ -87,20 +86,18 @@ class TestArrowConverterContextInit:
     """Test ArrowConverterContext initialization."""
 
     @pytest.mark.parametrize(
-        "session_params,expected_tz",
+        "tz,expected_tz",
         [
             (None, None),
-            ({}, None),
-            ({PARAMETER_TIMEZONE: "America/New_York"}, "America/New_York"),
-            ({PARAMETER_TIMEZONE: "UTC"}, "UTC"),
-            ({PARAMETER_TIMEZONE: "Europe/London"}, "Europe/London"),
-            ({"OTHER_PARAM": "value"}, None),
+            ("America/New_York", "America/New_York"),
+            ("UTC", "UTC"),
+            ("Europe/London", "Europe/London"),
         ],
-        ids=["none", "empty", "new_york", "utc", "london", "other_param"],
+        ids=["none", "new_york", "utc", "london"],
     )
-    def test_init_with_parameters(self, session_params, expected_tz):
-        """Test initialization with various session parameters."""
-        context = ArrowConverterContext(session_parameters=session_params)
+    def test_init_with_timezone(self, tz, expected_tz):
+        """Test initialization with various timezone values."""
+        context = ArrowConverterContext(timezone=tz)
         assert context.timezone == expected_tz
 
     def test_timezone_setter(self):
@@ -236,7 +233,7 @@ class TestTimestampLtzToPython:
     )
     def test_timestamp_ltz_to_python_timezones(self, timezone_str):
         """Test TIMESTAMP_LTZ conversion with various session timezones."""
-        context = ArrowConverterContext(session_parameters={PARAMETER_TIMEZONE: timezone_str})
+        context = ArrowConverterContext(timezone=timezone_str)
         result = context.TIMESTAMP_LTZ_to_python(1609459200, 0)
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
@@ -257,7 +254,7 @@ class TestTimestampLtzToPython:
     )
     def test_timestamp_ltz_to_python_microseconds(self, microseconds):
         """Test TIMESTAMP_LTZ conversion preserves microseconds."""
-        context = ArrowConverterContext(session_parameters={PARAMETER_TIMEZONE: "UTC"})
+        context = ArrowConverterContext(timezone="UTC")
         result = context.TIMESTAMP_LTZ_to_python(0, microseconds)
         assert result.microsecond == microseconds
 
@@ -282,7 +279,7 @@ class TestTimestampLtzToPython:
     )
     def test_timestamp_ltz_to_python_windows(self, epoch, microseconds, timezone_str):
         """Test Windows-specific TIMESTAMP_LTZ for negative epochs (before 1970)."""
-        context = ArrowConverterContext(session_parameters={PARAMETER_TIMEZONE: timezone_str})
+        context = ArrowConverterContext(timezone=timezone_str)
         result = context.TIMESTAMP_LTZ_to_python_windows(epoch, microseconds)
         assert isinstance(result, datetime)
         assert result.tzinfo is not None

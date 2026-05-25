@@ -1,6 +1,6 @@
 package net.snowflake.client.internal.util;
 
-import static net.snowflake.client.utils.RandomStringUtils.randomAlphaNumeric;
+import static net.snowflake.jdbc.utils.RandomStringUtils.randomAlphaNumeric;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.HashMap;

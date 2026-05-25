@@ -6,22 +6,61 @@ pub mod types;
 pub mod serialization;
 #[doc(hidden)]
 pub mod snowflake_exporter;
+#[doc(hidden)]
+pub mod snowflake_processor;
 
 pub mod os_details;
 pub mod platform_detection;
 
-use opentelemetry::trace::TraceContextExt;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+/// Span attribute key for the Snowflake session id. Read by the exporter to
+/// route spans to the right session. The [`snowflake_op_span!`] macro stamps
+/// the same string as a literal field name (it has to — `tracing::info_span!`
+/// requires field names at macro-expansion time, not runtime values), so any
+/// rename here must be mirrored in the macro.
+pub const SESSION_ID_FIELD: &str = "snowflake.session.id";
+
+/// Build a bounded span for a single FFI / driver operation tagged with the
+/// owning session id. Each entry-point method opens one of these and lets it
+/// end with the operation — there is no long-lived parent span.
+///
+/// `$session_id` must be `Option<i64>`. When `None` (handle unknown, login
+/// not yet completed, mid-teardown) the macro returns `Span::none()` so the
+/// span is silently disabled rather than stamped with a sentinel that could
+/// collide with a real session id and route telemetry to the wrong tenant.
+///
+/// `event_kind = "span"` is stamped so downstream consumers can distinguish
+/// per-operation span records from event records (`session_init`, `api_call`,
+/// `exception`) that share the same `/telemetry/send` payload shape.
+///
+/// The `"snowflake.session.id"` literal must match [`SESSION_ID_FIELD`].
+#[macro_export]
+macro_rules! snowflake_op_span {
+    ($name:expr, $session_id:expr) => {
+        match $session_id {
+            ::std::option::Option::Some(id) => ::tracing::info_span!(
+                $name,
+                "db.system" = "snowflake",
+                "snowflake.session.id" = id,
+                "event_kind" = "span",
+            ),
+            ::std::option::Option::None => ::tracing::Span::none(),
+        }
+    };
+}
 
 /// Record a session_init event on the **current** tracing span.
 ///
-/// The caller must have entered the connection span before calling this.
-/// Uses the OTel API directly because `tracing::event!` does not support
-/// dotted field names (e.g. `service.name`).
+/// The caller must have entered a span tagged with `snowflake.session.id`
+/// (e.g. one built by [`snowflake_op_span!`]) before calling this. Uses
+/// `OpenTelemetrySpanExt::add_event` (rather than `tracing::event!`) because
+/// events with dotted field names (e.g. `service.name`) are not supported by
+/// the `event!` macro, and because
+/// `Span::current().context().span().add_event(...)` operates on a detached
+/// `SpanRef` and does not mutate the underlying tracing span.
 pub fn record_session_init(env: &environment::EnvironmentInfo) {
     let span = tracing::Span::current();
-    let otel_ctx = span.context();
-    let otel_span = otel_ctx.span();
     let mut attrs = vec![
         opentelemetry::KeyValue::new("service.name", env.driver_name.clone()),
         opentelemetry::KeyValue::new("service.version", env.driver_version.clone()),
@@ -37,15 +76,12 @@ pub fn record_session_init(env: &environment::EnvironmentInfo) {
             compiler.clone(),
         ));
     }
-    otel_span.add_event("session_init", attrs);
+    span.add_event("session_init", attrs);
 }
 
 /// Record an api_call event on the **current** tracing span.
 pub fn record_api_call(api_method: &str) {
-    let span = tracing::Span::current();
-    let otel_ctx = span.context();
-    let otel_span = otel_ctx.span();
-    otel_span.add_event(
+    tracing::Span::current().add_event(
         "api_call",
         vec![opentelemetry::KeyValue::new(
             "api_method",
@@ -56,10 +92,7 @@ pub fn record_api_call(api_method: &str) {
 
 /// Record an exception event on the **current** tracing span.
 pub fn record_exception(exception_type: &str, error_source: &str) {
-    let span = tracing::Span::current();
-    let otel_ctx = span.context();
-    let otel_span = otel_ctx.span();
-    otel_span.add_event(
+    tracing::Span::current().add_event(
         "exception",
         vec![
             opentelemetry::KeyValue::new("exception.type", exception_type.to_string()),

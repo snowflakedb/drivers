@@ -14,10 +14,9 @@ from tests.helpers.core_introspection import CoreIntrospector
 
 
 @pytest.fixture
-def core_mock(monkeypatch: pytest.MonkeyPatch, mock_db_api: MagicMock) -> CoreIntrospector:
-    """Pure mock — no real Core. Auto-patches database_driver_client.
+def core_mock(mock_db_api: MagicMock) -> CoreIntrospector:
+    """Pure mock — no real Core. mock_db_api fixture patches core_driver.client.
 
     Use for tests that only need to verify what Python passes to Core.
     """
-    monkeypatch.setattr("snowflake.connector.connection.database_driver_client", lambda: mock_db_api)
     return CoreIntrospector(mock_db_api)

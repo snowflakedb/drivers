@@ -482,6 +482,12 @@ pub trait WriteODBCType: SnowflakeType {
 
 pub trait SnowflakeType {
     type Representation<'a>: Sized;
+
+    /// Apply post-decode SQL-level constraints on the materialised value.
+    /// Default: no constraints.
+    fn validate_value(&self, _value: &Self::Representation<'_>) -> Result<(), ConversionError> {
+        Ok(())
+    }
 }
 
 pub trait ReadArrowType<ArrowArrayType>: SnowflakeType {
@@ -505,8 +511,24 @@ pub(crate) enum SnowflakeLogicalType {
     Date,
     Time,
     TimestampNtz,
+    /// Result-side only: GS emits `TIMESTAMP_LTZ` as the logical type of
+    /// LTZ columns in the IRD/result-set metadata. On the bind side,
+    /// LTZ binds are tagged as `Text` (matching legacy 3.16.0 behaviour),
+    /// so this variant is only constructed by `SnowflakeFieldType::FromStr`
+    /// when reading the column metadata from the server.
+    #[allow(dead_code)]
     TimestampLtz,
     TimestampTz,
+    /// Year-month interval logical type. Mirrors the result-side
+    /// `INTERVAL_YEAR_MONTH` logical type that GS emits for native
+    /// INTERVAL columns (see `sf_core::SnowflakeLogicalType`); used on
+    /// the bind-parameter side to identify SQL_INTERVAL_YEAR/MONTH/
+    /// YEAR_TO_MONTH inputs to the server.
+    IntervalYearMonth,
+    /// Day-time interval logical type, covering DAY/HOUR/MINUTE/SECOND
+    /// and their compound subtypes (DAY_TO_HOUR..MINUTE_TO_SECOND).
+    /// Mirrors `INTERVAL_DAY_TIME` on the result side.
+    IntervalDayTime,
 }
 
 impl SnowflakeLogicalType {
@@ -523,6 +545,8 @@ impl SnowflakeLogicalType {
             Self::TimestampNtz => "TIMESTAMP_NTZ",
             Self::TimestampLtz => "TIMESTAMP_LTZ",
             Self::TimestampTz => "TIMESTAMP_TZ",
+            Self::IntervalYearMonth => "INTERVAL_YEAR_MONTH",
+            Self::IntervalDayTime => "INTERVAL_DAY_TIME",
         }
     }
 }

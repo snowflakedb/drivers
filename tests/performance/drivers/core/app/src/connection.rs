@@ -164,21 +164,26 @@ pub fn get_server_version(rt: &DriverRuntime, conn_handle: ConnectionHandle) -> 
         .statement_execute_query_blocking(StatementExecuteQueryRequest {
             stmt_handle: Some(version_stmt),
             bindings: None,
+            timeout_seconds: None,
         })
         .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
-    let query_id = match response.result {
-        Some(execute_query_response::Result::Single(descriptor)) => descriptor.query_id,
+    let rs_handle = match response.result {
+        Some(execute_query_response::Result::Single(rs)) => rs
+            .result_set_handle
+            .ok_or_else(|| "Missing ResultSet handle".to_string())?,
         _ => return Err("Unexpected result type from server version query".to_string()),
     };
-    let result_set = rt
+    let stream_response = rt
         .client
-        .statement_get_result_set_blocking(StatementGetResultSetRequest {
-            stmt_handle: Some(version_stmt),
-            query_id,
+        .result_set_get_stream_blocking(ResultSetGetStreamRequest {
+            result_set_handle: Some(rs_handle.clone()),
         })
-        .map_err(|e| format!("Failed to get result set: {:?}", e))?;
-    let mut reader = create_arrow_reader(result_set)?;
+        .map_err(|e| format!("Failed to get result set stream: {:?}", e))?;
+    let _ = rt.client.result_set_release_blocking(ResultSetReleaseRequest {
+        result_set_handle: Some(rs_handle),
+    });
+    let mut reader = create_arrow_reader(stream_response)?;
 
     if let Some(batch_result) = reader.next() {
         let batch = batch_result.map_err(|e| format!("Failed to read batch: {:?}", e))?;
@@ -231,6 +236,7 @@ pub fn execute_setup_queries(
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
             .map_err(|e| format!("Setup query execution failed: {:?}", e))?;
 

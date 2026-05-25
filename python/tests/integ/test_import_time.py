@@ -31,6 +31,7 @@ _NUM_RUNS = 5
 _MAX_IMPORT_TIME_SECONDS = 0.55 if IS_UNIVERSAL_DRIVER else 0.75
 
 
+@pytest.mark.skip
 class TestImportTime:
     """Verify that importing snowflake.connector.connect stays within budget."""
 

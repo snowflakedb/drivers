@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use snafu::ResultExt;
 
 use crate::api::CDataType;
+use crate::api::TimestampSubtype;
 use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding};
 use odbc_sys as sql;
 
@@ -20,10 +21,14 @@ use super::error::{
     NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
     UnsupportedParameterTypeSnafu, WCharConversionSnafu,
 };
+use super::interval::{
+    SnowflakeIntervalDayTime, SnowflakeIntervalYearMonth, day_time_subtype_from_sql,
+    read_single_field_interval_i128, year_month_subtype_from_sql,
+};
 use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
 use super::time::SnowflakeTime;
-use super::timestamp::SnowflakeTimestampNtz;
+use super::timestamp::{SnowflakeTimestampLtz, SnowflakeTimestampNtz, SnowflakeTimestampTz};
 use super::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use super::varchar::SnowflakeVarchar;
 
@@ -100,6 +105,24 @@ impl ParamConverter for DecimalParamConverter {
                     .build());
                 }
             }
+            // Single-field SQL_C_INTERVAL_* sources resolve to the integer
+            // count of the leading interval field per ODBC Appendix D
+            // ("C to SQL Data Types: Interval"). For SQL_C_INTERVAL_SECOND
+            // any sub-second `fraction` is truncated toward zero —
+            // SQL_DECIMAL / SQL_NUMERIC targets carry their own scale on
+            // the server, but the wire representation here is the integer
+            // leading-field text, matching how `SnowflakeNumber::read_odbc`
+            // handles the same source for the integer SQL targets. Compound
+            // interval C types (YEAR_TO_MONTH, DAY_TO_*, HOUR_TO_*,
+            // MINUTE_TO_SECOND) carry more than one field and have no
+            // single-integer mapping; they fall through to the unsupported
+            // arm below.
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond => read_single_field_interval_i128(binding).to_string(),
             _ => {
                 return Err(UnsupportedParameterTypeSnafu {
                     sql_type: sql::SqlDataType::DECIMAL,
@@ -115,12 +138,27 @@ impl ParamConverter for DecimalParamConverter {
 // Factory
 // =============================================================================
 
-/// Select the appropriate `ParamConverter` for the given SQL data type.
+// Concise SQL_INTERVAL_* type codes (101..=113) live in
+// `odbc/src/conversion/interval.rs` as the `YearMonthSubtype` /
+// `DayTimeSubtype` enums; the `*_subtype_from_sql` helpers map the FFI
+// integer back to the typed family used by the dedicated converters.
+// `odbc_sys::SqlDataType` does not expose named constants for these
+// codes, so the `make_converter` arms below match on the helpers
+// (returning `Option<…Subtype>`) rather than on raw `sql::SqlDataType`
+// values.
+
+/// Select the appropriate `ParamConverter` for the given parameter binding.
 /// The SQL type determines the Snowflake logical type, which in turn knows
 /// how to read various C data types from the ODBC buffer.
-fn make_converter(
-    sql_type: &sql::SqlDataType,
-) -> Result<Box<dyn ParamConverter>, JsonBindingError> {
+///
+/// For `SQL_TYPE_TIMESTAMP` the dispatch additionally consults
+/// `binding.sf_subtype`: `None` (and `Some(Ntz)`) routes to TIMESTAMP_NTZ
+/// for backward compatibility with Tableau/Excel/Power BI; `Some(Ltz)` and
+/// `Some(Tz)` route to the matching Snowflake logical type. Vendor-code
+/// normalisation happens at `bind_parameter` time, so by the time we get
+/// here `sql_data_type` is always a standard ODBC code.
+fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>, JsonBindingError> {
+    let sql_type = &binding.sql_data_type;
     match *sql_type {
         sql::SqlDataType::INTEGER
         | sql::SqlDataType::SMALLINT
@@ -165,17 +203,83 @@ fn make_converter(
             snowflake_type: SnowflakeBinary { len: 0 },
         })),
 
-        sql::SqlDataType::DATE => Ok(Box::new(JsonParamConverter {
+        // ODBC 3.x SQL_TYPE_DATE (=91) and its ODBC 2.x predecessor SQL_DATE
+        // (=9, exposed in `odbc-sys` as `SqlDataType::DATETIME` because the
+        // header value is shared with the datetime-header code) route to the
+        // same converter. Per ODBC Appendix G, ODBC 3.x drivers must accept
+        // either spelling and treat them as identical at the API boundary.
+        sql::SqlDataType::DATE | sql::SqlDataType::DATETIME => Ok(Box::new(JsonParamConverter {
             snowflake_type: SnowflakeDate,
         })),
 
-        sql::SqlDataType::TIME => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeTime { scale: 9 },
-        })),
-
-        sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => {
+        // ODBC 3.x SQL_TYPE_TIME (=92) and its ODBC 2.x predecessor SQL_TIME
+        // (=10, exposed in `odbc-sys` as `EXT_TIME_OR_INTERVAL` because the
+        // header value is shared with the interval-header code) route to the
+        // same converter. Bare value 10 is unambiguously SQL_TIME at the
+        // SQLBindParameter boundary: the interval subtypes use codes
+        // 101-113 and are matched by their own guarded arms below.
+        sql::SqlDataType::TIME | sql::SqlDataType::EXT_TIME_OR_INTERVAL => {
             Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeTime { scale: 9 },
+            }))
+        }
+
+        // ODBC 3.x SQL_TYPE_TIMESTAMP (=93) and its ODBC 2.x predecessor
+        // SQL_TIMESTAMP (=11, exposed as `EXT_TIMESTAMP`) route to the same
+        // converter (already covered before this PR; documented here for
+        // symmetry with the new DATE / TIME alias arms above).
+        //
+        // SQL_TYPE_TIMESTAMP (93) routing depends on the optional Snowflake
+        // vendor opt-in. Default (no opt-in) maps to TIMESTAMP_NTZ for
+        // backward compatibility with Tableau/Excel/Power BI; explicit LTZ
+        // and TZ opt-ins map to the corresponding Snowflake logical types.
+        sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => match binding.sf_subtype {
+            None | Some(TimestampSubtype::Ntz) => Ok(Box::new(JsonParamConverter {
                 snowflake_type: SnowflakeTimestampNtz { scale: 9 },
+            })),
+            Some(TimestampSubtype::Ltz) => Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeTimestampLtz { scale: 9 },
+            })),
+            // TZ binding emits the legacy two-token wire format
+            // `"<epoch_nanoseconds> <offset_minutes_plus_1440>"` so the
+            // server stores the original instant *and* its timezone
+            // offset. SQL_C_TYPE_TIMESTAMP / SQL_C_BINARY binds (no
+            // offset field) are serialised as UTC + offset 0, matching
+            // the legacy Python connector's handling of naive
+            // `datetime` values bound to TIMESTAMP_TZ. SQL_C_CHAR /
+            // SQL_C_WCHAR binds parse a `+/-HH:MM` suffix from the
+            // string and preserve that offset on the wire.
+            //
+            // `tz_offset_format` is a fetch-side concern only -- the
+            // bind path's `WriteJson` always emits the offset
+            // unconditionally -- so `None` is correct here.
+            Some(TimestampSubtype::Tz) => Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeTimestampTz {
+                    scale: 9,
+                    tz_offset_format: None,
+                },
+            })),
+        },
+
+        // SQL_INTERVAL_* parameter types route through dedicated
+        // year-month / day-time converters that enforce the C-source
+        // restrictions in ODBC Appendix D ("C to SQL" for INTERVAL targets):
+        // single-field targets accept character + every exact-numeric C
+        // type + same-family C interval types; compound targets accept
+        // only character types and same-family C interval types. The
+        // emitted JSON `type` is `INTERVAL_YEAR_MONTH` / `INTERVAL_DAY_TIME`
+        // to mirror the result-side logical type GS already uses for
+        // native INTERVAL columns (see `sf_core::SnowflakeLogicalType`).
+        sql_type if year_month_subtype_from_sql(sql_type.0).is_some() => {
+            let subtype = year_month_subtype_from_sql(sql_type.0).expect("guarded by match arm");
+            Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeIntervalYearMonth { subtype },
+            }))
+        }
+        sql_type if day_time_subtype_from_sql(sql_type.0).is_some() => {
+            let subtype = day_time_subtype_from_sql(sql_type.0).expect("guarded by match arm");
+            Ok(Box::new(JsonParamConverter {
+                snowflake_type: SnowflakeIntervalDayTime { subtype },
             }))
         }
 
@@ -239,7 +343,7 @@ pub fn odbc_bindings_to_json(
             if binding.parameter_value_ptr.is_null() {
                 return NullPointerSnafu.fail();
             }
-            let converter = make_converter(&binding.sql_data_type)?;
+            let converter = make_converter(&binding)?;
             converter.convert(&binding)?
         };
 
@@ -525,6 +629,19 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
     String::from_utf16(units).map_err(|_| WCharConversionSnafu.build())
 }
 
+/// Test-only entry point that mirrors what `odbc_bindings_to_json` does
+/// for a single `ParameterBinding`: pick the right converter via
+/// `make_converter` and run `.convert(...)`. Exposed to sibling unit
+/// test modules (e.g. `interval_tests`) so they don't have to reach into
+/// the private factory.
+#[cfg(test)]
+pub(crate) fn convert_for_test(
+    binding: &ParameterBinding,
+) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+    let converter = make_converter(binding)?;
+    converter.convert(binding)
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -533,6 +650,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 mod tests {
     use super::*;
     use crate::api::CDataType;
+    use crate::api::types::{SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ};
     use crate::api::{ApdRecord, IpdRecord};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -544,12 +662,22 @@ mod tests {
         buffer_length: sql::Len,
         ind_ptr: *mut sql::Len,
     ) -> ParameterBinding {
+        // Mirror what `bind_parameter` does: normalise vendor codes to the
+        // standard SQL_TYPE_TIMESTAMP and stash the subtype on `sf_subtype`
+        // so converter dispatch sees the same shape it would in production.
+        let sf_subtype = TimestampSubtype::from_parameter_type(parameter_type);
+        let sql_data_type = if sf_subtype.is_some() {
+            sql::SqlDataType::TIMESTAMP
+        } else {
+            parameter_type
+        };
         ParameterBinding {
-            sql_data_type: parameter_type,
+            sql_data_type,
             value_type,
             parameter_value_ptr: ptr,
             buffer_length,
             str_len_or_ind_ptr: ind_ptr,
+            sf_subtype,
         }
     }
 
@@ -589,7 +717,7 @@ mod tests {
     fn convert_binding(
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-        let converter = make_converter(&binding.sql_data_type)?;
+        let converter = make_converter(binding)?;
         converter.convert(binding)
     }
 
@@ -1709,7 +1837,157 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(make_converter(&binding.sql_data_type).is_err());
+        assert!(make_converter(&binding).is_err());
+    }
+
+    // -- vendor TIMESTAMP code routing ---------------------------------------
+    //
+    // The Snowflake-specific vendor codes `SQL_SF_TIMESTAMP_LTZ` (2000),
+    // `SQL_SF_TIMESTAMP_TZ` (2001), and `SQL_SF_TIMESTAMP_NTZ` (2002) -- mirror
+    // the legacy 3.16.0 driver -- are routed through `make_converter` so
+    // applications can opt into the matching wire `SnowflakeLogicalType`
+    // rather than always landing on NTZ via the standard `SQL_TYPE_TIMESTAMP`.
+
+    #[test]
+    fn ntz_vendor_code_routes_to_timestamp_ntz_logical_type() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            SQL_SF_TIMESTAMP_NTZ,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, _) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        Ok(())
+    }
+
+    #[test]
+    fn ltz_vendor_code_routes_to_text_logical_type() -> TestResult {
+        // The legacy 3.16.0 driver
+        // (`Snowflake-odbc/Source/DataEngine/SFQueryExecutor.cpp:613-618`) tags
+        // every `SQL_SF_TIMESTAMP_{NTZ,LTZ,TZ}` bind as `TEXT` and lets the
+        // server's column-type coercion parse the wall-clock string into the
+        // destination logical type. Sending `type=TIMESTAMP_LTZ` with a string
+        // value is rejected by the server with SQLSTATE 22000 ("Invalid bind
+        // value (...) for type (TIMESTAMP_LTZ)"). This test pins the wire
+        // contract.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            SQL_SF_TIMESTAMP_LTZ,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, _) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        Ok(())
+    }
+
+    #[test]
+    fn standard_sql_timestamp_still_routes_to_ntz_for_backward_compat() -> TestResult {
+        // Tableau / Excel / Power BI bind via the standard `SQL_TYPE_TIMESTAMP`
+        // (93) today and expect an NTZ logical type. Adding the vendor codes
+        // must not change that legacy route.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, _) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        Ok(())
+    }
+
+    #[test]
+    fn tz_vendor_code_routes_to_timestamp_tz_logical_type() -> TestResult {
+        // SQL_C_TYPE_TIMESTAMP has no offset field; the converter treats the
+        // wall-clock as UTC (offset = 0) and emits the legacy two-token wire
+        // format. The logical type must be TimestampTz so the server stores
+        // the value with the offset side-channel rather than as plain NTZ.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 1,
+            hour: 12,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            SQL_SF_TIMESTAMP_TZ,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Restack note: HEAD originally asserted that TZ binding errored
+        // out (because pre-#1005 the driver explicitly rejected the
+        // subtype). Now that #1005 wires `Some(TimestampSubtype::Tz)`
+        // to a real `SnowflakeTimestampTz` converter, the test verifies
+        // the wire-format the converter actually emits.
+        let (ty, value) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampTz);
+        let s = value.as_str().expect("TZ JSON value should be a string");
+        // Wire token shape: "<epoch_nanos> <offset_minutes_plus_1440>".
+        let parts: Vec<&str> = s.split(' ').collect();
+        assert_eq!(parts.len(), 2, "expected `<epoch_ns> <offset>`, got {s}");
+        // Naive struct -> offset 0 -> wire token = bias = 1440.
+        assert_eq!(parts[1], "1440");
+        Ok(())
+    }
+
+    #[test]
+    fn tz_vendor_code_with_char_input_parses_offset_suffix() -> TestResult {
+        // SQL_C_CHAR with a `+/-HH:MM` suffix: the offset must round-trip into
+        // the second wire token (signed offset + 1440 bias).
+        let s = b"2024-01-15 14:30:45 +05:30";
+        let mut ind: sql::Len = s.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Char,
+            SQL_SF_TIMESTAMP_TZ,
+            s.as_ptr() as sql::Pointer,
+            s.len() as sql::Len,
+            &mut ind as *mut sql::Len,
+        );
+        let (ty, value) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampTz);
+        let wire = value.as_str().unwrap();
+        let parts: Vec<&str> = wire.split(' ').collect();
+        // 2024-01-15 14:30:45 +05:30 -> 09:00:45 UTC -> 1705309245000000000 ns
+        // offset 330 + 1440 = 1770
+        assert_eq!(parts[0], "1705309245000000000");
+        assert_eq!(parts[1], "1770");
+        Ok(())
     }
 
     // -- end-to-end pipeline tests -------------------------------------------
@@ -2397,6 +2675,890 @@ mod tests {
         assert_eq!(ty, SnowflakeLogicalType::Text);
         assert_eq!(v, Value::String("14:30:59".to_string()));
         Ok(())
+    }
+
+    // -- Cross-temporal binds (DATE↔TIMESTAMP, TIME↔TIMESTAMP) ----------------
+    //
+    // These mirror the legacy 3.16.0 behavior, which itself implements the
+    // ODBC spec (Appendix D, "Converting Data from C to SQL Data Types"):
+    //   - SQL_C_TYPE_TIMESTAMP → SQL_DATE: extract the date portion. SQLSTATE
+    //     22008 ("Datetime field overflow") if the time portion is nonzero.
+    //   - SQL_C_TYPE_TIMESTAMP → SQL_TIME: extract the whole-second time
+    //     portion. SQLSTATE 22008 if the fractional-seconds portion is
+    //     nonzero. The date portion is silently discarded.
+    //   - SQL_C_TYPE_DATE → SQL_TIMESTAMP*: combine the date with 00:00:00.
+    //   - SQL_C_TYPE_TIME → SQL_TIMESTAMP*: pair the time with the current
+    //     local date and zero fractional seconds.
+    //
+    // Two distinct error classes apply to the structs themselves:
+    //   - 22007 ("Invalid datetime format") — struct field outside its legal
+    //     range (e.g. month=13, hour=25), via JsonBindingError::InvalidDatetimeValue.
+    //   - 22008 ("Datetime field overflow") — discarded portion is non-zero
+    //     when narrowing TIMESTAMP → DATE/TIME, via
+    //     JsonBindingError::DatetimeFieldOverflow.
+    // Both are distinct from 07006 ("Restricted data type attribute
+    // violation"), which would incorrectly signal that the conversion itself
+    // is unsupported.
+
+    #[test]
+    fn convert_timestamp_as_date_extracts_date_part() -> TestResult {
+        // ODBC Appendix D: TIMESTAMP → DATE only succeeds when the discarded
+        // time portion is exactly zero. Use midnight so we exercise the
+        // happy-path date extraction; the 22008-on-nonzero-time behavior is
+        // covered by `convert_timestamp_as_date_rejects_nonzero_hour` and
+        // `convert_timestamp_as_date_rejects_nonzero_fraction`.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 12,
+            day: 25,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Date);
+        let expected_millis = (chrono::NaiveDate::from_ymd_opt(2024, 12, 25).unwrap()
+            - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days()
+            * 86_400_000;
+        assert_eq!(v, Value::String(expected_millis.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_extracts_time_part() -> TestResult {
+        // ODBC Appendix D: TIMESTAMP → TIME only succeeds when the discarded
+        // fractional-seconds portion is exactly zero. The whole-second h/m/s
+        // are preserved and the date portion is silently dropped.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 15,
+            hour: 12,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Time);
+        // 12:30:45 -> 45045s -> 45_045_000_000_000ns since midnight.
+        assert_eq!(v, Value::String("45045000000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_timestamp_combines_with_midnight() -> TestResult {
+        let d = sql::Date {
+            year: 2024,
+            month: 6,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::TIMESTAMP,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2024, 6, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
+        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_timestamp_rejects_invalid_date() {
+        let d = sql::Date {
+            year: 2024,
+            month: 13,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::TIMESTAMP,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Date"), an invalid date in a
+        // SQL_C_TYPE_DATE bound to a SQL_TYPE_TIMESTAMP target must surface
+        // as SQLSTATE 22007 (Invalid datetime format), not 07006 (restricted
+        // data type attribute violation).
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    // -- SQL_INTERVAL_* parameter targets -------------------------------------
+    //
+    // SQL_INTERVAL_* parameter types are routed through dedicated
+    // `SnowflakeIntervalYearMonth` / `SnowflakeIntervalDayTime` converters
+    // (see `conversion/interval.rs`). These tests verify both ends of the
+    // pipeline:
+    //   - the factory (make_converter) accepts every SQL_INTERVAL_* concise
+    //     code (101..=113) and dispatches to the correct family converter
+    //     with the right SnowflakeLogicalType (INTERVAL_YEAR_MONTH or
+    //     INTERVAL_DAY_TIME),
+    //   - `format_interval` renders SQL_C_INTERVAL_* structs into the ANSI
+    //     literal text the spec defines for each subtype, including sign and
+    //     fractional seconds.
+    //
+    // C-source restrictions enforced by the new converters (rejection of
+    // FLOAT/DOUBLE/BINARY/GUID/numeric-into-compound, etc.) are exercised
+    // separately by the unit tests in `conversion/interval_tests.rs`.
+
+    fn ym_interval(sign: sql::SmallInt, year: u32, month: u32) -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0, // ignored: we trust the C value type, not the struct field
+            interval_sign: sign,
+            interval_value: sql::IntervalUnion {
+                year_month: sql::YearMonth { year, month },
+            },
+        }
+    }
+
+    fn ds_interval(
+        sign: sql::SmallInt,
+        day: u32,
+        hour: u32,
+        minute: u32,
+        second: u32,
+        fraction: u32,
+    ) -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: sign,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond {
+                    day,
+                    hour,
+                    minute,
+                    second,
+                    fraction,
+                },
+            },
+        }
+    }
+
+    /// Bind an interval struct to a SQL_INTERVAL_* parameter (raw concise
+    /// type code 101..=113, since odbc-sys lacks named constants for these).
+    fn convert_interval(
+        c_type: CDataType,
+        sql_code: i16,
+        iv: &sql::IntervalStruct,
+    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+        let binding = make_binding(
+            c_type,
+            sql::SqlDataType(sql_code),
+            iv as *const sql::IntervalStruct as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        convert_binding(&binding)
+    }
+
+    #[test]
+    fn convert_interval_year_basic() -> TestResult {
+        let iv = ym_interval(0, 5, 0);
+        let (ty, v) = convert_interval(CDataType::IntervalYear, 101, &iv)?;
+        assert_eq!(ty, SnowflakeLogicalType::IntervalYearMonth);
+        assert_eq!(v, Value::String("5".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_month_negative() -> TestResult {
+        let iv = ym_interval(1, 0, 11);
+        let (ty, v) = convert_interval(CDataType::IntervalMonth, 102, &iv)?;
+        assert_eq!(ty, SnowflakeLogicalType::IntervalYearMonth);
+        assert_eq!(v, Value::String("-11".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_day_basic() -> TestResult {
+        // Single-field SQL_C_INTERVAL_DAY: only `day_second.day` is
+        // populated. The formatter must not look at `hour`/`minute`/etc.
+        let iv = ds_interval(0, 42, 0, 0, 0, 0);
+        let (ty, v) = convert_interval(CDataType::IntervalDay, 103, &iv)?;
+        assert_eq!(ty, SnowflakeLogicalType::IntervalDayTime);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_hour_basic() -> TestResult {
+        // Single-field SQL_C_INTERVAL_HOUR: only `day_second.hour` is read.
+        let iv = ds_interval(0, 0, 23, 0, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalHour, 104, &iv)?;
+        assert_eq!(v, Value::String("23".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_minute_negative() -> TestResult {
+        // Single-field SQL_C_INTERVAL_MINUTE with sign — confirms only
+        // `day_second.minute` is consulted alongside `interval_sign`.
+        let iv = ds_interval(1, 0, 0, 90, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalMinute, 105, &iv)?;
+        assert_eq!(v, Value::String("-90".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_year_to_month() -> TestResult {
+        let iv = ym_interval(0, 5, 11);
+        let (_, v) = convert_interval(CDataType::IntervalYearToMonth, 107, &iv)?;
+        assert_eq!(v, Value::String("5-11".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_day_to_second_with_fraction() -> TestResult {
+        // 10 days, 12 hours, 30 minutes, 59.500000 seconds. `fraction` is
+        // in microseconds (matches the unit produced by
+        // `numeric_helpers::compute_interval_fraction`) and is rendered at
+        // the full 6-digit width per the ODBC "Interval Data Type Length"
+        // spec (default seconds precision = 6).
+        let iv = ds_interval(0, 10, 12, 30, 59, 500_000);
+        let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
+        assert_eq!(v, Value::String("10 12:30:59.500000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_second_full_precision() -> TestResult {
+        // 1.000001s — verify microsecond precision is preserved (the unit
+        // chosen by the rest of the conversion path; see
+        // `numeric_helpers::compute_interval_fraction`).
+        let iv = ds_interval(0, 0, 0, 0, 1, 1);
+        let (_, v) = convert_interval(CDataType::IntervalSecond, 106, &iv)?;
+        assert_eq!(v, Value::String("1.000001".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_negative_day_to_second() -> TestResult {
+        // Hour is a non-leading field (after a space), so it's zero-padded
+        // to 2 chars per the ODBC "Interval Data Type Length" spec; the
+        // seconds component is always rendered with a 6-digit fraction.
+        let iv = ds_interval(1, 1, 2, 3, 4, 0);
+        let (_, v) = convert_interval(CDataType::IntervalDayToSecond, 110, &iv)?;
+        assert_eq!(v, Value::String("-1 02:03:04.000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_hour_to_minute() -> TestResult {
+        let iv = ds_interval(0, 0, 14, 7, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalHourToMinute, 111, &iv)?;
+        assert_eq!(v, Value::String("14:07".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_day_to_hour() -> TestResult {
+        // Hour is non-leading (after the space separator) and zero-padded
+        // to 2 chars per ODBC "Interval Data Type Length".
+        let iv = ds_interval(0, 3, 7, 0, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalDayToHour, 108, &iv)?;
+        assert_eq!(v, Value::String("3 07".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_day_to_minute() -> TestResult {
+        // Both hour and minute sub-fields are zero-padded; the leading
+        // day field is rendered as-is.
+        let iv = ds_interval(0, 3, 7, 5, 0, 0);
+        let (_, v) = convert_interval(CDataType::IntervalDayToMinute, 109, &iv)?;
+        assert_eq!(v, Value::String("3 07:05".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_hour_to_second_with_fraction() -> TestResult {
+        // Minute and second are zero-padded; the seconds fraction is
+        // emitted at the canonical 6-digit microsecond width per the
+        // ODBC spec (no trimming).
+        let iv = ds_interval(0, 0, 12, 30, 59, 250_000);
+        let (_, v) = convert_interval(CDataType::IntervalHourToSecond, 112, &iv)?;
+        assert_eq!(v, Value::String("12:30:59.250000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_minute_to_second_no_fraction() -> TestResult {
+        // Sub-field seconds are zero-padded to 2 digits per ODBC spec
+        // (matches the formatting of HH:MM in HOUR_TO_MINUTE) and the
+        // seconds fraction is always emitted at the canonical 6-digit
+        // width — even when zero — so applications round-trip the literal
+        // through legacy ODBC and other spec-conforming consumers.
+        let iv = ds_interval(0, 0, 0, 30, 7, 0);
+        let (_, v) = convert_interval(CDataType::IntervalMinuteToSecond, 113, &iv)?;
+        assert_eq!(v, Value::String("30:07.000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_text_value_to_interval_target_passes_through() -> TestResult {
+        // Applications routinely send the interval as a text literal even
+        // when the SQL parameter type is SQL_INTERVAL_* — verify SQL_C_CHAR
+        // is accepted and the JSON `type` is the spec-aligned
+        // INTERVAL_YEAR_MONTH (not the legacy TEXT).
+        let s = b"5-11\0";
+        let mut len: sql::Len = 4;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType(107), // SQL_INTERVAL_YEAR_TO_MONTH
+            s.as_ptr() as sql::Pointer,
+            5,
+            &mut len,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::IntervalYearMonth);
+        assert_eq!(v, Value::String("5-11".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_guid_to_text() -> TestResult {
+        // SQLGUID is d1:u32, d2:u16, d3:u16, d4:[u8;8]; canonical text form
+        // is `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` with uppercase hex,
+        // matching the Windows COM/ODBC convention.
+        let g = sql::Guid {
+            d1: 0x1234_5678,
+            d2: 0x1234,
+            d3: 0x1234,
+            d4: [0xAB, 0xCD, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+        };
+        let binding = make_binding(
+            CDataType::Guid,
+            sql::SqlDataType::VARCHAR,
+            &g as *const sql::Guid as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(
+            v,
+            Value::String("12345678-1234-1234-ABCD-010203040506".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_guid_zero_pads_components() -> TestResult {
+        // Each component must be zero-padded to its full hex width even when
+        // the numeric value is small (e.g. d1=1 must render as "00000001").
+        let g = sql::Guid {
+            d1: 1,
+            d2: 2,
+            d3: 3,
+            d4: [0, 0, 0, 0, 0, 0, 0, 0],
+        };
+        let binding = make_binding(
+            CDataType::Guid,
+            sql::SqlDataType::VARCHAR,
+            &g as *const sql::Guid as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (_, v) = convert_binding(&binding)?;
+        assert_eq!(
+            v,
+            Value::String("00000001-0002-0003-0000-000000000000".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_interval_factory_rejects_unknown_codes() {
+        // Code 100 sits just below SQL_INTERVAL_YEAR (101); make sure we
+        // didn't accidentally widen the range.
+        let iv = ym_interval(0, 1, 0);
+        let err = convert_interval(CDataType::IntervalYear, 100, &iv);
+        assert!(
+            err.is_err(),
+            "code 100 should not be a valid INTERVAL target"
+        );
+    }
+
+    #[test]
+    fn convert_time_as_timestamp_uses_current_date_and_zero_fraction() -> TestResult {
+        let t = sql::Time {
+            hour: 14,
+            minute: 30,
+            second: 45,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIMESTAMP,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+
+        let today_before = chrono::Local::now().date_naive();
+        let (ty, v) = convert_binding(&binding)?;
+        let today_after = chrono::Local::now().date_naive();
+
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+
+        let nanos_str = match v {
+            Value::String(s) => s,
+            other => panic!("expected Value::String, got {other:?}"),
+        };
+        let nanos: i64 = nanos_str.parse().expect("nanos must parse as i64");
+        let dt = chrono::DateTime::from_timestamp_nanos(nanos).naive_utc();
+
+        // The time component is preserved exactly with a zero fractional part.
+        assert_eq!(
+            dt.time(),
+            chrono::NaiveTime::from_hms_opt(14, 30, 45).unwrap()
+        );
+        // The date component is "current date" — anywhere in the window the
+        // call took to execute (handles midnight rollover gracefully).
+        assert!(
+            dt.date() >= today_before && dt.date() <= today_after,
+            "date {} not within [{}, {}]",
+            dt.date(),
+            today_before,
+            today_after
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_time_as_timestamp_rejects_invalid_time() {
+        let t = sql::Time {
+            hour: 25,
+            minute: 0,
+            second: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIMESTAMP,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Time"), an invalid time in a
+        // SQL_C_TYPE_TIME bound to a SQL_TYPE_TIMESTAMP target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_invalid_date() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Timestamp"), an invalid date in a
+        // SQL_C_TYPE_TIMESTAMP bound to a SQL_TYPE_DATE target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_rejects_invalid_time() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        // Per ODBC Appendix D ("C to SQL: Timestamp"), an invalid time in a
+        // SQL_C_TYPE_TIMESTAMP bound to a SQL_TYPE_TIME target must surface
+        // as SQLSTATE 22007.
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    // -- TIMESTAMP → DATE / TIME truncation overflow (SQLSTATE 22008) --------
+    //
+    // Per ODBC Appendix D ("Converting Data from C to SQL Data Types"):
+    //   - TIMESTAMP → DATE: 22008 if the time portion of the timestamp is
+    //     nonzero (any of hour / minute / second / fraction).
+    //   - TIMESTAMP → TIME: 22008 if the fractional seconds portion is
+    //     nonzero.
+    // This matches the legacy 3.16.0 driver, which surfaces SQL_ERROR with
+    // SQLSTATE=22008 and NativeError=40520 in these cases.
+    //
+    // Error precedence: an out-of-range struct field always wins over the
+    // narrowing rule. If a SQL_TIMESTAMP_STRUCT has both an invalid field
+    // (e.g. hour=25, fraction>999_999_999) AND a non-zero discarded portion,
+    // the result must be 22007 (InvalidDatetimeValue), not 22008. The
+    // *_22007_takes_precedence_over_22008 tests below pin this down.
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_nonzero_hour() {
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("nonzero time must overflow");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_rejects_nonzero_fraction() {
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("nonzero fraction must overflow");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_rejects_nonzero_fraction() {
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 500_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("nonzero fraction must overflow");
+        assert!(
+            matches!(err, JsonBindingError::DatetimeFieldOverflow { .. }),
+            "expected DatetimeFieldOverflow, got {err:?}"
+        );
+    }
+
+    // -- 22007 takes precedence over 22008 (regression for SQLSTATE mapping) -
+
+    #[test]
+    fn convert_timestamp_as_date_invalid_hour_takes_precedence_over_22008() {
+        // hour=25 makes the struct itself malformed (22007), AND the time
+        // portion is non-zero which would also trigger the narrowing rule
+        // (22008). The struct-validity error must win.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid struct must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_date_invalid_fraction_takes_precedence_over_22008() {
+        // fraction = 3_000_000_000 ns is out of the legal [0, 999_999_999]
+        // range and is also non-zero (would trigger the 22008 narrowing
+        // rule). The struct-validity error must win.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 3_000_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::DATE,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid fraction must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_hour_takes_precedence_over_22008() {
+        // hour=25 + non-zero fraction: 22007 must win over 22008.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 500_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid struct must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_fraction_takes_precedence_over_22008() {
+        // fraction out of [0, 999_999_999] AND non-zero: 22007 wins.
+        let ts = sql::Timestamp {
+            year: 2026,
+            month: 4,
+            day: 13,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 3_000_000_000,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid fraction must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_time_invalid_date_returns_22007() {
+        // The date portion is going to be silently discarded, but it must
+        // still be a syntactically valid Y/M/D — otherwise the *struct*
+        // itself is malformed and we must surface 22007. month=13 with an
+        // otherwise valid time would have silently succeeded before the
+        // date-validation step was added to this arm.
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIME,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date in TS → TIME must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue (22007), got {err:?}"
+        );
+    }
+
+    // The same-type pass-through arms (DATE→DATE, TIME→TIME, TIMESTAMP→
+    // TIMESTAMP) must also report invalid struct fields as 22007 — not as
+    // 07006 — so the SQLSTATE is consistent with the cross-temporal arms.
+
+    #[test]
+    fn convert_date_as_date_rejects_invalid_date() {
+        let d = sql::Date {
+            year: 2024,
+            month: 13,
+            day: 1,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::DATE,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_time_as_time_rejects_invalid_time() {
+        let t = sql::Time {
+            hour: 25,
+            minute: 0,
+            second: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::TIME,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_timestamp_rejects_invalid_date() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 13,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid date must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_as_timestamp_rejects_invalid_time() {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 1,
+            hour: 25,
+            minute: 0,
+            second: 0,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::TIMESTAMP,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("invalid time must error");
+        assert!(
+            matches!(err, JsonBindingError::InvalidDatetimeValue { .. }),
+            "expected InvalidDatetimeValue, got {err:?}"
+        );
     }
 
     #[test]

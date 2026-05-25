@@ -1,34 +1,26 @@
 # WireMock standalone container for performance testing
-# 
-# Build: cd tests/performance/wiremock && docker build -t wiremock-perf:latest .
+#
+# Build: cd <repo-root> && tests/performance/wiremock/build.sh
 # Run: docker run -p 8080:8080 -v /tmp/wiremock_mappings:/wiremock wiremock-perf:latest
 
 FROM eclipse-temurin:17-jdk
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create directory for WireMock
 RUN mkdir -p /opt/wiremock
 
 WORKDIR /wiremock
 
-# Download WireMock standalone
-ARG WIREMOCK_VERSION=3.13.2
-RUN curl -L "https://repo1.maven.org/maven2/org/wiremock/wiremock-standalone/${WIREMOCK_VERSION}/wiremock-standalone-${WIREMOCK_VERSION}.jar" \
-    -o /opt/wiremock/wiremock-standalone.jar
+COPY tests/wiremock/wiremock_standalone/wiremock-standalone-3.13.2.jar \
+    /opt/wiremock/wiremock-standalone.jar
 
 # Copy and compile custom launcher and extension
-COPY WireMockLauncher.java /opt/wiremock/
-COPY extensions/ResponseTimeExtension.java /opt/wiremock/extensions/
+COPY tests/performance/wiremock/WireMockLauncher.java /opt/wiremock/
+COPY tests/performance/wiremock/extensions/ResponseTimeExtension.java /opt/wiremock/extensions/
 RUN javac -cp /opt/wiremock/wiremock-standalone.jar \
     /opt/wiremock/WireMockLauncher.java \
     /opt/wiremock/extensions/ResponseTimeExtension.java
 
 # Generate static CA certificate for HTTPS MITM proxy
-COPY generate_certs.sh /opt/wiremock/
+COPY tests/performance/wiremock/generate_certs.sh /opt/wiremock/
 RUN /opt/wiremock/generate_certs.sh
 
 # Expose WireMock port

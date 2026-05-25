@@ -12,7 +12,8 @@ use url::Url;
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
-    ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters, NativeOktaConfig,
+    ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
+    NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
 };
 use crate::config::settings::Setting;
 use crate::config::{
@@ -47,6 +48,8 @@ pub enum AuthConfig {
     Password {
         user: String,
         password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
     },
     Mfa {
         user: String,
@@ -65,6 +68,22 @@ pub enum AuthConfig {
         token: SensitiveString,
     },
     NativeOkta(NativeOktaConfig),
+    ExternalBrowser {
+        user: String,
+        authentication_timeout_secs: u64,
+        client_store_temporary_credential: bool,
+    },
+    /// Legacy pre-acquired OAuth access token (`AUTHENTICATOR=OAUTH` +
+    /// raw `token=`). Forwarded unchanged to Snowflake
+    /// (`AUTHENTICATOR=OAUTH`, `TOKEN=<access_token>`, no `OAUTH_TYPE`).
+    OAuthAccessToken {
+        user: String,
+        token: SensitiveString,
+    },
+    /// OAuth 2.0 Authorization Code (with PKCE) flow.
+    OAuthAuthorizationCode(OAuthAuthorizationCodeConfig),
+    /// OAuth 2.0 Client Credentials flow, external IdP only.
+    OAuthClientCredentials(OAuthClientCredentialsConfig),
 }
 
 #[derive(Debug)]
@@ -223,14 +242,26 @@ fn non_empty_string(settings: &ParamStore, key: crate::config::ParamKey) -> Opti
 // Server URL derivation (mirrored from rest_parameters::get_server_url)
 // ---------------------------------------------------------------------------
 
+/// Resolve the effective protocol from settings.
+///
+/// `ssl` takes precedence when present because it has no registry default
+/// and therefore is always an explicit user choice.  `protocol` serves as
+/// the fallback (the fallback `"https"` is hardcoded here).
+fn resolve_protocol(settings: &ParamStore) -> String {
+    if let Some(ssl_on) = settings.get_bool(SSL) {
+        return if ssl_on { "https" } else { "http" }.to_string();
+    }
+    settings
+        .get_string(PROTOCOL)
+        .unwrap_or_else(|| "https".to_string())
+}
+
 fn derive_server_url(settings: &ParamStore) -> Result<String, ConfigError> {
     if let Some(url) = settings.get_string(SERVER_URL) {
         return Ok(url);
     }
 
-    let protocol = settings
-        .get_string(PROTOCOL)
-        .unwrap_or_else(|| "https".to_string());
+    let protocol = resolve_protocol(settings);
     let host = settings.get_string(HOST).context(MissingParameterSnafu {
         parameter: String::from(HOST),
     })?;
@@ -313,6 +344,13 @@ fn build_tls_config(settings: &ParamStore) -> TlsConfig {
 // Auth config building (mirrored from rest_parameters::LoginMethod)
 // ---------------------------------------------------------------------------
 
+fn parse_authentication_timeout(settings: &ParamStore) -> u64 {
+    settings
+        .get_int(AUTHENTICATION_TIMEOUT)
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS)
+}
+
 fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
     let auth_upper = authenticator.to_ascii_uppercase();
@@ -335,23 +373,25 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            password: settings.get_sensitive_string(PASSWORD)
+            password: settings
+                .get_sensitive_string(PASSWORD)
                 .filter(|s| !s.reveal().is_empty())
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
-                },
-            )?,
+                })?,
+            passcode_in_password: settings.get_bool(PASSCODE_IN_PASSWORD).unwrap_or(false),
+            passcode: settings.get_sensitive_string(PASSCODE),
         }),
         "USERNAME_PASSWORD_MFA" => Ok(AuthConfig::Mfa {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            password: settings.get_sensitive_string(PASSWORD)
+            password: settings
+                .get_sensitive_string(PASSWORD)
                 .filter(|s| !s.reveal().is_empty())
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
-                },
-            )?,
+                })?,
             passcode_in_password: settings.get_bool(PASSCODE_IN_PASSWORD).unwrap_or(false),
             passcode: settings.get_sensitive_string(PASSCODE),
             client_store_temporary_credential: settings
@@ -362,11 +402,39 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            token: settings.get_sensitive_string(TOKEN)
+            token: settings
+                .get_sensitive_string(TOKEN)
                 .context(MissingParameterSnafu {
                     parameter: String::from(TOKEN),
                 })?,
         }),
+        // ─── OAuth: legacy pre-acquired access token ─────────────────────
+        // `AUTHENTICATOR=OAUTH` + raw `token=`. Forwarded unchanged to
+        // Snowflake; LOGIN_NAME is always set (cross-driver consensus:
+        // JDBC/Go/Python set username; .NET's empty-string quirk is not ported).
+        "OAUTH" => Ok(AuthConfig::OAuthAccessToken {
+            user: non_empty_string(settings, USER).context(MissingParameterSnafu {
+                parameter: String::from(USER),
+            })?,
+            token: settings
+                .get_sensitive_string(TOKEN)
+                .context(MissingParameterSnafu {
+                    parameter: String::from(TOKEN),
+                })?,
+        }),
+        // ─── OAuth: Authorization Code (with PKCE) ───────────────────────
+        // Snowflake-as-IdP defaults (LOCAL_APPLICATION substitution +
+        // default endpoints) are applied at flow time.
+        "OAUTH_AUTHORIZATION_CODE" => Ok(AuthConfig::OAuthAuthorizationCode(
+            OAuthAuthorizationCodeConfig::from_settings(settings)?,
+        )),
+        // ─── OAuth: Client Credentials (external IdP only) ───────────────
+        // client_id/client_secret/token_url are mandatory because
+        // Snowflake's GS does not issue tokens for
+        // grant_type=client_credentials.
+        "OAUTH_CLIENT_CREDENTIALS" => Ok(AuthConfig::OAuthClientCredentials(
+            OAuthClientCredentialsConfig::from_settings(settings)?,
+        )),
         _ if auth_upper.starts_with("HTTPS://") => {
             let okta_url = Url::parse(&authenticator).map_err(|_| {
                 InvalidParameterValueSnafu {
@@ -376,11 +444,6 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 }
                 .build()
             })?;
-
-            let authentication_timeout_secs = settings
-                .get_int(AUTHENTICATION_TIMEOUT)
-                .and_then(|v| u64::try_from(v).ok())
-                .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
 
             Ok(AuthConfig::NativeOkta(NativeOktaConfig {
                 username: non_empty_string(settings, USER).context(MissingParameterSnafu {
@@ -393,16 +456,23 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                     },
                 )?,
                 okta_url,
-                disable_saml_url_check: settings
-                    .get_bool(DISABLE_SAML_URL_CHECK)
-                    .unwrap_or(false),
-                authentication_timeout_secs,
+                disable_saml_url_check: settings.get_bool(DISABLE_SAML_URL_CHECK).unwrap_or(false),
+                authentication_timeout_secs: parse_authentication_timeout(settings),
             }))
         }
+        "EXTERNALBROWSER" => Ok(AuthConfig::ExternalBrowser {
+            user: non_empty_string(settings, USER).context(MissingParameterSnafu {
+                parameter: String::from(USER),
+            })?,
+            authentication_timeout_secs: parse_authentication_timeout(settings),
+            client_store_temporary_credential: settings
+                .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
+                .unwrap_or(false),
+        }),
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
             value: authenticator,
-            explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)".to_string(),
+            explanation: crate::config::AUTHENTICATOR_ALLOWED_VALUES.to_string(),
         }
         .fail(),
     }
@@ -460,9 +530,16 @@ impl ConnectionConfig {
 
 fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
     match auth {
-        AuthConfig::Password { user, password } => LoginMethod::Password {
+        AuthConfig::Password {
+            user,
+            password,
+            passcode_in_password,
+            passcode,
+        } => LoginMethod::Password {
             username: user.clone(),
             password: password.clone(),
+            passcode_in_password: *passcode_in_password,
+            passcode: passcode.clone(),
         },
         AuthConfig::Mfa {
             user,
@@ -498,6 +575,54 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             disable_saml_url_check: okta.disable_saml_url_check,
             authentication_timeout_secs: okta.authentication_timeout_secs,
         }),
+        AuthConfig::ExternalBrowser {
+            user,
+            authentication_timeout_secs,
+            client_store_temporary_credential,
+        } => LoginMethod::ExternalBrowser {
+            username: user.clone(),
+            authentication_timeout_secs: *authentication_timeout_secs,
+            client_store_temporary_credential: *client_store_temporary_credential,
+        },
+        AuthConfig::OAuthAccessToken { user, token } => LoginMethod::OAuthAccessToken {
+            username: user.clone(),
+            token: token.clone(),
+        },
+        AuthConfig::OAuthAuthorizationCode(cfg) => {
+            LoginMethod::OAuthAuthorizationCode(OAuthAuthorizationCodeConfig {
+                username: cfg.username.clone(),
+                client_id: cfg.client_id.clone(),
+                client_secret: cfg.client_secret.clone(),
+                authorization_url: cfg.authorization_url.clone(),
+                token_url: cfg.token_url.clone(),
+                redirect_uri: cfg.redirect_uri.clone(),
+                scope: cfg.scope.clone(),
+                enable_single_use_refresh_tokens: cfg.enable_single_use_refresh_tokens,
+                disable_pkce: cfg.disable_pkce,
+                client_store_temporary_credential: cfg.client_store_temporary_credential,
+                flow_options: OAuthFlowOptions {
+                    enable_dpop: cfg.flow_options.enable_dpop,
+                    authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
+                },
+                // Cheap Arc clone — the launcher factory rides with the
+                // config through the LoginMethod projection (test builds
+                // carry a no-op factory; production carries `None`).
+                browser_launcher: cfg.browser_launcher.clone(),
+            })
+        }
+        AuthConfig::OAuthClientCredentials(cfg) => {
+            LoginMethod::OAuthClientCredentials(OAuthClientCredentialsConfig {
+                username: cfg.username.clone(),
+                client_id: cfg.client_id.clone(),
+                client_secret: cfg.client_secret.clone(),
+                token_url: cfg.token_url.clone(),
+                scope: cfg.scope.clone(),
+                flow_options: OAuthFlowOptions {
+                    enable_dpop: cfg.flow_options.enable_dpop,
+                    authentication_timeout_secs: cfg.flow_options.authentication_timeout_secs,
+                },
+            })
+        }
     }
 }
 
@@ -530,6 +655,29 @@ impl LoginParameters {
 // ---------------------------------------------------------------------------
 // validate_settings – pre-flight check that collects all issues
 // ---------------------------------------------------------------------------
+
+/// Push an `InvalidValue` issue when `key` is present and non-empty but
+/// cannot be parsed as a URL. Absent or empty values are intentionally
+/// ignored — presence checks (when required) are handled separately by
+/// the caller so that a missing-and-malformed value never produces both
+/// `MissingRequired` *and* `InvalidValue` for the same parameter.
+fn push_invalid_url_issue(
+    settings: &ParamStore,
+    key: crate::config::ParamKey,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let Some(raw) = non_empty_string(settings, key) else {
+        return;
+    };
+    if let Err(e) = Url::parse(&raw) {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: key.into(),
+            message: format!("Invalid URL for '{key}': could not parse '{raw}': {e}"),
+            code: ValidationCode::InvalidValue,
+        });
+    }
+}
 
 /// Validate settings without building the full config.
 /// Returns a list of all issues found (errors and warnings).
@@ -622,6 +770,96 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 });
             }
         }
+        "OAUTH" => {
+            // Legacy OAuth forwards a pre-acquired access token
+            // verbatim; the only required payload-side parameter is
+            // `token`. user/account are already validated above.
+            if settings.get_string(TOKEN).is_none_or(|s| s.is_empty()) {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: TOKEN.into(),
+                    message: "Missing required parameter 'token' for OAuth authentication".into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+        }
+        // TODO(SNOW-3552175): The OAuth arms below duplicate URL-shape
+        // checks already implemented (fail-fast) in
+        // `rest_parameters::OAuth*Config::from_settings`. We re-do them
+        // here so that pre-flight validation can report every issue in
+        // a single pass instead of surfacing them one-at-a-time at
+        // build time. The structural fix is to have
+        // `*Config::from_settings` (and the other auth `from_settings`
+        // impls) return `Vec<ValidationIssue>` instead of
+        // `Result<_, ConfigError>` and let `build_auth_config`
+        // aggregate — at that point this duplication can be removed
+        // across all auth methods, not just OAuth. This also dovetails
+        // with the typed `AuthenticationError` enum work in
+        // SNOW-3549115.
+        "OAUTH_AUTHORIZATION_CODE" => {
+            // AC flow defaults to Snowflake-as-IdP when
+            // client_id/secret are absent, so we only require `user`
+            // here (already validated above). All three OAuth URL
+            // parameters are optional, but when supplied they must be
+            // parseable URLs — validate shape so a connection string
+            // with multiple malformed URLs reports all of them at once.
+            push_invalid_url_issue(settings, OAUTH_AUTHORIZATION_URL, &mut issues);
+            push_invalid_url_issue(settings, OAUTH_TOKEN_REQUEST_URL, &mut issues);
+            push_invalid_url_issue(settings, OAUTH_REDIRECT_URI, &mut issues);
+        }
+        "OAUTH_CLIENT_CREDENTIALS" => {
+            // CC flow is external-IdP only: client_id, client_secret,
+            // and oauth_token_request_url must be provided up-front
+            // (Snowflake's GS does not mint CC tokens).
+            if settings
+                .get_string(OAUTH_CLIENT_ID)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: OAUTH_CLIENT_ID.into(),
+                    message: "Missing required parameter 'oauth_client_id' for OAuth client \
+                              credentials authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+            if settings
+                .get_string(OAUTH_CLIENT_SECRET)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: OAUTH_CLIENT_SECRET.into(),
+                    message: "Missing required parameter 'oauth_client_secret' for OAuth client \
+                              credentials authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+            if settings
+                .get_string(OAUTH_TOKEN_REQUEST_URL)
+                .is_none_or(|s| s.is_empty())
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: OAUTH_TOKEN_REQUEST_URL.into(),
+                    message: "Missing required parameter 'oauth_token_request_url' for OAuth \
+                              client credentials authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+            // Shape-validate `oauth_token_request_url` in addition to
+            // the presence check above. Absent/empty values were
+            // already reported as `MissingRequired`, so this only adds
+            // an `InvalidValue` issue when a non-empty value is
+            // malformed.
+            push_invalid_url_issue(settings, OAUTH_TOKEN_REQUEST_URL, &mut issues);
+        }
+        "EXTERNALBROWSER" => {
+            // no validation required; user is already validated above.
+        }
         _ if auth_upper.starts_with("HTTPS://") => {
             if Url::parse(&authenticator).is_err() {
                 issues.push(ValidationIssue {
@@ -649,7 +887,8 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 severity: ValidationSeverity::Error,
                 parameter: AUTHENTICATOR.into(),
                 message: format!(
-                    "Invalid authenticator '{}'. Allowed: snowflake, snowflake_password, snowflake_jwt, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)", authenticator
+                    "Invalid authenticator '{authenticator}'. {}",
+                    crate::config::AUTHENTICATOR_ALLOWED_VALUES
                 ),
                 code: ValidationCode::InvalidValue,
             });
@@ -663,6 +902,16 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             parameter: HOST.into(),
             message: "Missing required parameter 'host' (or 'server_url')".into(),
             code: ValidationCode::MissingRequired,
+        });
+    }
+
+    // --- ConflictingParameters: ssl + protocol ---
+    if settings.get_bool(SSL).is_some() && settings.get_string(PROTOCOL).is_some() {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: SSL.into(),
+            message: "Both 'ssl' and 'protocol' are set. Please provide only one.".into(),
+            code: ValidationCode::ConflictingParameters,
         });
     }
 
@@ -776,7 +1025,7 @@ mod tests {
                 .contains("myaccount.snowflakecomputing.com")
         );
         match &config.auth {
-            AuthConfig::Password { user, password } => {
+            AuthConfig::Password { user, password, .. } => {
                 assert_eq!(user, "myuser");
                 assert_eq!(password.reveal(), "mypassword");
             }
@@ -832,6 +1081,57 @@ mod tests {
         ]);
         let config = ConnectionConfig::build(&settings).unwrap();
         assert_eq!(config.server.server_url, "https://custom.url");
+    }
+
+    #[test]
+    fn build_server_url_from_ssl_true() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("ssl", Setting::Bool(true)),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.server.server_url, "https://myhost.com");
+    }
+
+    #[test]
+    fn build_server_url_from_ssl_false() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("ssl", Setting::Bool(false)),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert_eq!(config.server.server_url, "http://myhost.com");
+    }
+
+    #[test]
+    fn build_server_url_ssl_and_protocol_conflict() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("host", Setting::String("myhost.com".into())),
+            ("protocol", Setting::String("http".into())),
+            ("ssl", Setting::Bool(true)),
+        ]);
+        let err = ConnectionConfig::build(&settings).unwrap_err();
+        match err {
+            ConfigError::ValidationFailed { ref issues, .. } => {
+                assert!(
+                    issues
+                        .iter()
+                        .any(|i| i.code == ValidationCode::ConflictingParameters
+                            && i.parameter == "ssl"),
+                    "Expected ConflictingParameters for ssl + protocol, got: {issues:?}"
+                );
+            }
+            other => panic!("Expected ValidationFailed, got: {other}"),
+        }
     }
 
     #[test]
@@ -904,7 +1204,7 @@ mod tests {
         ]);
         let config = ConnectionConfig::build(&settings).unwrap();
         match &config.auth {
-            AuthConfig::Password { user, password } => {
+            AuthConfig::Password { user, password, .. } => {
                 assert_eq!(user, "u");
                 assert_eq!(password.reveal(), "p");
             }
@@ -1337,7 +1637,10 @@ mod tests {
         let settings = settings_from(&[
             ("account", Setting::String("acct".into())),
             ("user", Setting::String("u".into())),
-            ("authenticator", Setting::String("OAUTH".into())),
+            (
+                "authenticator",
+                Setting::String("BOGUS_AUTHENTICATOR".into()),
+            ),
         ]);
         let issues = validate_settings(&settings);
         let auth_issues: Vec<_> = issues
@@ -1375,7 +1678,10 @@ mod tests {
         let settings = settings_from(&[
             ("account", Setting::String("acct".into())),
             ("user", Setting::String("u".into())),
-            ("authenticator", Setting::String("OAUTH".into())),
+            (
+                "authenticator",
+                Setting::String("BOGUS_AUTHENTICATOR".into()),
+            ),
             ("host", Setting::String("h.com".into())),
         ]);
 
@@ -1487,6 +1793,230 @@ mod tests {
         assert!(host_issues.is_empty());
     }
 
+    // -- validate_settings: OAuth URL-shape tests --
+
+    fn oauth_ac_base_settings() -> Vec<(&'static str, Setting)> {
+        vec![
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("host", Setting::String("h.com".into())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_AUTHORIZATION_CODE".into()),
+            ),
+        ]
+    }
+
+    fn oauth_cc_base_settings() -> Vec<(&'static str, Setting)> {
+        vec![
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("host", Setting::String("h.com".into())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".into()),
+            ),
+            ("oauth_client_id", Setting::String("id".into())),
+            ("oauth_client_secret", Setting::String("secret".into())),
+        ]
+    }
+
+    #[test]
+    fn validate_oauth_ac_missing_urls_are_allowed() {
+        // AC falls back to Snowflake-as-IdP when URLs are absent,
+        // so missing oauth_*_url parameters must not produce errors.
+        let settings = settings_from(&oauth_ac_base_settings());
+        let issues = validate_settings(&settings);
+        let url_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.severity == ValidationSeverity::Error
+                    && matches!(
+                        i.parameter.as_str(),
+                        "oauth_authorization_url"
+                            | "oauth_token_request_url"
+                            | "oauth_redirect_uri"
+                    )
+            })
+            .collect();
+        assert!(
+            url_errors.is_empty(),
+            "Expected no OAuth URL errors when URLs are absent, got: {url_errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_ac_valid_urls_no_url_errors() {
+        let mut pairs = oauth_ac_base_settings();
+        pairs.extend([
+            (
+                "oauth_authorization_url",
+                Setting::String("https://idp.example.com/authorize".into()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("https://idp.example.com/token".into()),
+            ),
+            (
+                "oauth_redirect_uri",
+                Setting::String("http://localhost:8080/callback".into()),
+            ),
+        ]);
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        let url_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.code == ValidationCode::InvalidValue
+                    && matches!(
+                        i.parameter.as_str(),
+                        "oauth_authorization_url"
+                            | "oauth_token_request_url"
+                            | "oauth_redirect_uri"
+                    )
+            })
+            .collect();
+        assert!(
+            url_errors.is_empty(),
+            "Expected no URL InvalidValue errors for well-formed URLs, got: {url_errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_ac_invalid_authorization_url_reports_invalid_value() {
+        let mut pairs = oauth_ac_base_settings();
+        pairs.push((
+            "oauth_authorization_url",
+            Setting::String("not a url".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.parameter == "oauth_authorization_url"
+                    && i.code == ValidationCode::InvalidValue),
+            "Expected InvalidValue for malformed oauth_authorization_url, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_ac_collects_all_three_url_shape_errors() {
+        // Regression test for the Option A fix: a connection string
+        // with three malformed AC URLs must report three issues in a
+        // single pre-flight pass, not just the first.
+        let mut pairs = oauth_ac_base_settings();
+        pairs.extend([
+            (
+                "oauth_authorization_url",
+                Setting::String("bad-auth-url".into()),
+            ),
+            (
+                "oauth_token_request_url",
+                Setting::String("bad-token-url".into()),
+            ),
+            ("oauth_redirect_uri", Setting::String("bad-redirect".into())),
+        ]);
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+
+        let url_errors: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.code == ValidationCode::InvalidValue
+                    && matches!(
+                        i.parameter.as_str(),
+                        "oauth_authorization_url"
+                            | "oauth_token_request_url"
+                            | "oauth_redirect_uri"
+                    )
+            })
+            .collect();
+        assert_eq!(
+            url_errors.len(),
+            3,
+            "Expected one InvalidValue issue per malformed URL, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_cc_missing_required_params_reports_three_issues() {
+        // Pre-existing presence-check behaviour: CC mandates
+        // client_id, client_secret, oauth_token_request_url. All
+        // three must be reported together.
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("host", Setting::String("h.com".into())),
+            (
+                "authenticator",
+                Setting::String("OAUTH_CLIENT_CREDENTIALS".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+
+        for missing in [
+            "oauth_client_id",
+            "oauth_client_secret",
+            "oauth_token_request_url",
+        ] {
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.parameter == missing && i.code == ValidationCode::MissingRequired),
+                "Expected MissingRequired for '{missing}', got: {issues:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_oauth_cc_missing_token_url_does_not_report_invalid_value() {
+        // When oauth_token_request_url is absent we must surface
+        // MissingRequired only — never both MissingRequired *and*
+        // InvalidValue for the same parameter.
+        let settings = settings_from(&oauth_cc_base_settings());
+        let issues = validate_settings(&settings);
+
+        let invalid_value_issues: Vec<_> = issues
+            .iter()
+            .filter(|i| {
+                i.parameter == "oauth_token_request_url" && i.code == ValidationCode::InvalidValue
+            })
+            .collect();
+        assert!(
+            invalid_value_issues.is_empty(),
+            "Absent oauth_token_request_url must not produce InvalidValue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_oauth_cc_invalid_token_url_reports_invalid_value() {
+        let mut pairs = oauth_cc_base_settings();
+        pairs.push((
+            "oauth_token_request_url",
+            Setting::String("not a url".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let issues = validate_settings(&settings);
+
+        // Presence check is satisfied (value is non-empty), so
+        // MissingRequired must not fire for this parameter.
+        assert!(
+            !issues
+                .iter()
+                .any(|i| i.parameter == "oauth_token_request_url"
+                    && i.code == ValidationCode::MissingRequired),
+            "MissingRequired must not fire when value is present, got: {issues:?}"
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.parameter == "oauth_token_request_url"
+                    && i.code == ValidationCode::InvalidValue),
+            "Expected InvalidValue for malformed oauth_token_request_url, got: {issues:?}"
+        );
+    }
+
     #[test]
     fn get_bool_rejects_unrecognized_string() {
         let settings = settings_from(&[
@@ -1519,5 +2049,29 @@ mod tests {
                 "crl_check_mode '{input}' should produce {expected:?}"
             );
         }
+    }
+
+    #[test]
+    fn build_succeeds_with_account_only_no_host() {
+        use crate::config::path_resolver::ConfigPaths;
+        use crate::config::resolver;
+
+        let mut explicit = ParamStore::new();
+        explicit.insert("account".into(), Setting::String("myaccount".into()));
+        explicit.insert("user".into(), Setting::String("myuser".into()));
+        explicit.insert("password".into(), Setting::String("mypassword".into()));
+
+        let paths = ConfigPaths {
+            config_file: None,
+            connections_file: None,
+        };
+        let resolved = resolver::resolve_with_paths(&explicit, &paths).unwrap();
+        let config = ConnectionConfig::build(&resolved).unwrap();
+
+        assert_eq!(config.server.account, "myaccount");
+        assert_eq!(
+            config.server.server_url,
+            "https://myaccount.snowflakecomputing.com"
+        );
     }
 }

@@ -10,18 +10,24 @@ pub fn to_pascal_case(s: &str) -> String {
     s.to_case(Case::Pascal)
 }
 
-/// Strip common test-method prefixes (`test_`, `vpn_`) so the bare name
+/// Strip common test-method prefixes (`test_`, `vpn_`, `flaky_`) so the bare name
 /// can be compared against the Gherkin scenario name.
 pub fn clean_method_name(name: &str) -> &str {
-    name.trim_start_matches("test_").trim_start_matches("vpn_")
+    name.trim_start_matches("test_")
+        .trim_start_matches("vpn_")
+        .trim_start_matches("flaky_")
 }
 
 /// Normalize a string for matching: lowercase, strip whitespace, underscores,
-/// hyphens, angle brackets, and parentheses.
+/// hyphens, angle brackets, parentheses, and equals signs.
 ///
 /// Angle-bracket stripping lets Scenario Outline names like
 /// `"should throw <error_code> in strict"` match a test method named
 /// `should_throw_error_code_in_strict` (single parametrized method).
+///
+/// Equals-sign stripping lets scenario names that quote literal connect-string
+/// fragments (e.g. `"should forward AUTHENTICATOR=OAUTH with TOKEN to core"`)
+/// match Python/Rust/C++ method identifiers, which cannot contain ``=``.
 fn normalize_for_matching(s: &str) -> String {
     s.to_lowercase()
         .replace(' ', "")
@@ -31,6 +37,7 @@ fn normalize_for_matching(s: &str) -> String {
         .replace('>', "")
         .replace('(', "")
         .replace(')', "")
+        .replace('=', "")
 }
 
 /// Check if two strings match when normalized (ignoring case, spaces,
@@ -65,6 +72,17 @@ mod tests {
 
         let result = normalize_for_matching("should throw <max_attempts> retries");
         assert_eq!(result, "shouldthrowmaxattemptsretries");
+    }
+
+    #[test]
+    fn test_normalize_for_matching_removes_equals_sign() {
+        let result =
+            normalize_for_matching("should forward AUTHENTICATOR=OAUTH with TOKEN to core");
+        assert_eq!(result, "shouldforwardauthenticatoroauthwithtokentocore");
+
+        let result =
+            normalize_for_matching("should fail AUTHENTICATOR=OAUTH when TOKEN is missing");
+        assert_eq!(result, "shouldfailauthenticatoroauthwhentokenismissing");
     }
 
     #[test]

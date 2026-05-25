@@ -7,14 +7,13 @@ import java.sql.RowIdLifetime;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import net.snowflake.client.api.connection.SnowflakeDatabaseMetaData;
+import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, SnowflakeDatabaseMetaData {
   private static final String DatabaseProductName = "Snowflake";
-  private static final String DriverName = "Snowflake";
   private static final char SEARCH_STRING_ESCAPE = '\\';
-  private static final String JDBCVersion = "4.2";
 
   private final SnowflakeConnectionImpl connection;
 
@@ -86,29 +85,29 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public String getDatabaseProductVersion() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return connection.getDatabaseVersion();
   }
 
   @Override
   public String getDriverName() throws SQLException {
     connection.checkClosed();
-    return DriverName;
+    return SnowflakeDriver.DRIVER_NAME;
   }
 
   @Override
   public String getDriverVersion() throws SQLException {
     connection.checkClosed();
-    throw new NotImplementedException();
+    return SnowflakeDriver.DRIVER_VERSION;
   }
 
   @Override
   public int getDriverMajorVersion() {
-    throw new NotImplementedException();
+    return SnowflakeDriver.MAJOR_VERSION;
   }
 
   @Override
   public int getDriverMinorVersion() {
-    throw new NotImplementedException();
+    return SnowflakeDriver.MINOR_VERSION;
   }
 
   @Override
@@ -1004,13 +1003,13 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public int getJDBCMajorVersion() throws SQLException {
     connection.checkClosed();
-    return Integer.parseInt(JDBCVersion.split("\\.", 2)[0]);
+    return SnowflakeDriver.JDBC_SPEC_MAJOR;
   }
 
   @Override
   public int getJDBCMinorVersion() throws SQLException {
     connection.checkClosed();
-    return Integer.parseInt(JDBCVersion.split("\\.", 2)[1]);
+    return SnowflakeDriver.JDBC_SPEC_MINOR;
   }
 
   @Override

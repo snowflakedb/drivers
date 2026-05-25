@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import json
+
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, time
+from datetime import tzinfo as tzinfo_type
 from math import isinf, isnan
+
+
+def assert_geojson(value: str, expected_type: str, expected_coords: list) -> None:
+    """Parse a GeoJSON string and assert it has the expected type and coordinates."""
+    geo = json.loads(value)
+    assert geo["type"] == expected_type
+    assert geo["coordinates"] == expected_coords
 
 
 # Minimum normalized positive value (smallest normal number)
@@ -33,20 +43,49 @@ def assert_type(values: Iterable, expected_type: type, can_be_none: bool = False
         )
 
 
-def assert_datetime_type(values: Iterable, can_be_none: bool = False, require_tzinfo: bool = False) -> None:
-    """Assert all values are datetime instances.
-
-    Args:
-        values: Iterable of values to check.
-        can_be_none: If True, None values are allowed.
-        require_tzinfo: If True, datetime values must have timezone info (tzinfo is not None).
-    """
+def assert_datetime_type(values: Iterable, can_be_none: bool = False) -> None:
+    """Assert all values are datetime instances."""
     for i, value in enumerate(values):
         if can_be_none and value is None:
             continue
         assert isinstance(value, datetime), f"Value at index {i} should be datetime, got {type(value).__name__}"
-        if require_tzinfo:
+
+
+def iana_tz_name(tzinfo: tzinfo_type | None) -> str | None:
+    """Resolve an IANA timezone name from tzinfo.
+
+    ``pytz`` exposes ``tzinfo.zone``; :class:`zoneinfo.ZoneInfo` (often used by
+    pandas for ``datetime64[ns, tz]`` scalars) exposes ``tzinfo.key`` instead.
+    Fixed-offset tzinfos typically have neither.
+    """
+    if tzinfo is None:
+        return None
+    zone = getattr(tzinfo, "zone", None)
+    if isinstance(zone, str) and zone:
+        return zone
+    key = getattr(tzinfo, "key", None)
+    if isinstance(key, str) and key:
+        return key
+    return None
+
+
+def assert_timezone(values: Iterable, expected_tz: str | None, can_be_none: bool = False) -> None:
+    """Assert all values have the expected timezone.
+
+    When expected_tz is set, every value must carry matching tzinfo.
+    When expected_tz is None, every value must be naive (tzinfo is None).
+    """
+    for i, value in enumerate(values):
+        if can_be_none and value is None:
+            continue
+        if expected_tz:
             assert value.tzinfo is not None, f"Value at index {i} should have timezone info (tzinfo is None)"
+            actual_tz = iana_tz_name(value.tzinfo)
+            assert actual_tz == expected_tz, (
+                f"Value at index {i}: expected tz '{expected_tz}', got '{actual_tz}' (tzinfo={value.tzinfo!r})"
+            )
+        else:
+            assert value.tzinfo is None, f"Value at index {i} should not have timezone info, got {value.tzinfo}"
 
 
 def assert_float_equal(actual: float, expected: float | None, msg: str = "") -> None:
@@ -117,7 +156,7 @@ def assert_floats_equal(actual: Iterable[float], expected: Iterable[float]) -> N
     actual_list = list(actual)
     expected_list = list(expected)
     assert len(actual_list) == len(expected_list), f"Length mismatch: {len(actual_list)} != {len(expected_list)}"
-    for i, (a, e) in enumerate(zip(actual_list, expected_list)):
+    for i, (a, e) in enumerate(zip(actual_list, expected_list, strict=True)):
         assert_float_equal(a, e, f"Mismatch at index {i}: expected {e}, got {a}")
 
 
@@ -159,6 +198,14 @@ def assert_sequential_values(
 
         if not is_equal:
             raise AssertionError(f"Value mismatch at index {i}: expected {expected!r}, got {actual!r}")
+
+
+def millis_to_time(ms: int) -> time:
+    """Convert an integer number of milliseconds since midnight to a time object."""
+    seconds, millis = divmod(ms, 1000)
+    minutes, secs = divmod(seconds, 60)
+    hours, mins = divmod(minutes, 60)
+    return time(hours, mins, secs, millis * 1000)
 
 
 def batch_insert(execute_query, table_name, values, quote_strings: bool = False) -> None:

@@ -2,7 +2,7 @@ use crate::common::arrow_deserialize::RecordBatch;
 use crate::common::arrow_result_helper::{
     ArrowResultHelper, assert_record_batches_match, assert_schemas_match,
 };
-use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_rs_handle};
 use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 use arrow::array::Array;
 use arrow::compute::concat_batches;
@@ -91,8 +91,9 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
 
     client.set_sql_query(&stmt, &select_query);
     let arrow_result = client.execute_statement_query(&stmt);
-    let arrow_query_id = unwrap_single_query_id(&arrow_result);
-    let arrow_rs = client.get_result_set(&stmt, &arrow_query_id);
+    let arrow_rs_handle = unwrap_single_rs_handle(&arrow_result);
+    let arrow_rs = client.result_set_get_stream(&arrow_rs_handle);
+    client.result_set_release(&arrow_rs_handle);
 
     client.set_sql_query(
         &stmt,
@@ -103,12 +104,17 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
         execute_query_response::Result::Single(d) => d,
         _ => panic!("expected single"),
     };
-    assert_eq!(desc.rows_affected, Some(1), "Cannot force JSON result set");
+    assert_eq!(
+        desc.result_descriptor.as_ref().unwrap().rows_affected,
+        Some(1),
+        "Cannot force JSON result set"
+    );
 
     client.set_sql_query(&stmt, &select_query);
     let json_result = client.execute_statement_query(&stmt);
-    let json_query_id = unwrap_single_query_id(&json_result);
-    let json_rs = client.get_result_set(&stmt, &json_query_id);
+    let json_rs_handle = unwrap_single_rs_handle(&json_result);
+    let json_rs = client.result_set_get_stream(&json_rs_handle);
+    client.result_set_release(&json_rs_handle);
 
     let mut arrow_helper = ArrowResultHelper::from_result(arrow_rs);
     let mut json_helper = ArrowResultHelper::from_result(json_rs);

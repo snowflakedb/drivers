@@ -12,14 +12,13 @@ import json
 import logging
 import os
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Callable, Literal, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar
 
 import tomlkit
 
-from ._internal.api_client.client_api import database_driver_client
-from ._internal.protobuf_gen.database_driver_v1_pb2 import ConfigGetPathsRequest, ConfigLoadAllSectionsRequest
+from ._internal.api_client.client_api import core_driver
 from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
 from .errors import ConfigManagerError, ConfigSourceError, MissingConfigOptionError
 from .errors import Error as DriverError
@@ -238,16 +237,13 @@ class ConfigManager:
         if self.file_path is None:
             raise ConfigManagerError("ConfigManager is trying to read config file, but it doesn't have one")
 
-        request = ConfigLoadAllSectionsRequest()
-        request.config_file = str(self.file_path)
-
         connections_file = self._get_connections_file_path()
-        if connections_file is not None:
-            request.connections_file = str(connections_file)
 
         try:
-            client = database_driver_client()
-            response = client.config_load_all_sections(request)
+            response = core_driver.config_load_all_sections(
+                config_file=str(self.file_path),
+                connections_file=str(connections_file) if connections_file is not None else None,
+            )
         except (ProtoApplicationException, DriverError) as e:
             msg = _extract_error_msg(e)
             if "permission" in msg.lower() or "Permission denied" in msg:
@@ -329,8 +325,7 @@ class ConfigManager:
 
 def _get_config_paths_from_core() -> tuple[Path, Path]:
     """Retrieve config file paths from sf_core via protobuf."""
-    client = database_driver_client()
-    response = client.config_get_paths(ConfigGetPathsRequest())
+    response = core_driver.config_get_paths()
     return Path(response.config_file), Path(response.connections_file)
 
 

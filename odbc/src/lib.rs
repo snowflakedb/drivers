@@ -4,6 +4,8 @@ mod api;
 pub mod c_api;
 mod conversion;
 #[cfg(target_os = "windows")]
+mod setup_common;
+#[cfg(target_os = "windows")]
 mod setup_dialog;
 
 extern crate sf_core;

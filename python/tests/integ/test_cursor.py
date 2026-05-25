@@ -2516,7 +2516,7 @@ class TestCursorDescribe:
 
         assert describe_result is not None
         assert cursor.description is not None
-        for d, e in zip(describe_result, cursor.description):
+        for d, e in zip(describe_result, cursor.description, strict=True):
             assert d.name == e.name
             assert d.type_code == e.type_code
 
@@ -2633,3 +2633,57 @@ class TestCursorAbortQuery:
         except ProgrammingError as e:
             assert "57014" in e.msg
             assert "canceled" in e.msg
+
+
+@with_paramstyle("pyformat")
+class TestInterpolateEmptySequences:
+    """Integration tests for _interpolate_empty_sequences flag.
+
+    The pyformat paramstyle doubles literal '%' to '%%' during compilation.
+    The connector must unescape '%%' back to '%' when the flag is set (as
+    SQLAlchemy does), but preserve '%%' when the flag is off (default).
+    """
+
+    def test_flag_defaults_to_false(self, connection):
+        assert connection._interpolate_empty_sequences is False
+
+    def test_doubled_percents_preserved_by_default(self, connection):
+        """Without the flag, '%%' is NOT unescaped with empty params."""
+        cursor = connection.cursor()
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT 1600 %% 400 AS a", {})
+
+    def test_doubled_percents_unescaped_when_flag_set(self, connection):
+        """With the flag set, '%%' is unescaped and the query succeeds."""
+        connection._interpolate_empty_sequences = True
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1600 %% 400 AS a, 1599 %% 400 AS b", {})
+            row = cursor.fetchone()
+            assert row == (0, 399)
+        finally:
+            connection._interpolate_empty_sequences = False
+
+    def test_doubled_percents_unescaped_with_empty_list(self, connection):
+        """With the flag set, '%%' is unescaped even with an empty list."""
+        connection._interpolate_empty_sequences = True
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT 100 %% 7 AS a", [])
+            row = cursor.fetchone()
+            assert row == (2,)
+        finally:
+            connection._interpolate_empty_sequences = False
+
+    def test_normal_params_always_interpolate(self, cursor):
+        """Parameterized queries work regardless of the flag."""
+        cursor.execute("SELECT %s AS a, %s AS b", [42, "hello"])
+        row = cursor.fetchone()
+        assert row == (42, "hello")
+
+    def test_percent_with_params_works(self, connection):
+        """When actual params are present, '%%' is unescaped even without the flag."""
+        cursor = connection.cursor()
+        cursor.execute("SELECT %s AS a, 100 %% 7 AS b", [42])
+        row = cursor.fetchone()
+        assert row == (42, 2)

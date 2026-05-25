@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .._internal.decorators import api_telemetry
 from ._base import DictRow, SnowflakeCursorBase
 
 
@@ -20,6 +21,7 @@ class DictCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return True
 
+    @api_telemetry
     def fetchone(self) -> DictRow | None:
         """
         Fetch the next row of a query result set as a dictionary.

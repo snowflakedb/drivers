@@ -1,0 +1,39 @@
+{
+  "name": "snowflake-sdk",
+  "version": "4.0.0-beta.0",
+  "description": "Node.js driver for Snowflake",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "typings": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/snowflakedb/universal-driver"
+  },
+  "author": {
+    "name": "Snowflake Computing, Inc.",
+    "email": "support@snowflake.com",
+    "url": "https://www.snowflake.com/"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "lint:check": "oxlint . --max-warnings=0",
+    "lint:fix": "oxlint --fix .",
+    "fmt:check": "oxfmt --check .",
+    "fmt:fix": "oxfmt --write .",
+    "test:unit": "vitest run --project unit",
+    "test:e2e": "vitest run --project e2e",
+    "test:e2e-old-driver": "vitest run --project e2e-old-driver"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@vitest/coverage-v8": "^4.1.5",
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.43.0",
+    "snowflake-sdk": "^2.4.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}

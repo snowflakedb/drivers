@@ -1,0 +1,15 @@
+# Alignment targets.
+#
+# Each [[target]] block pairs a Gherkin features directory with a
+# language-specific test directory.  The validator ensures that every
+# scenario in each paired feature has a matching test method with the
+# expected Gherkin step comments — without requiring scenario-level
+# tags in the .feature files.
+#
+# Paths are relative to the workspace root.
+
+[[target]]
+name     = "pandas-types"
+language = "python"
+features = "tests/definitions/shared/types"
+tests    = "python/tests/e2e/pandas/types"
