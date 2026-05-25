@@ -35,6 +35,13 @@ pub struct UploadData {
     /// `SingleUploadData` so that `upload_single_file` can populate the
     /// `message` column according to the active wrapper's contract.
     pub flavor: PutGetResultsetFlavor,
+    /// When true, PUT auto-detect mirrors legacy libsnowflakeclient
+    /// behavior: (1) unsupported compression formats are silently
+    /// treated as uncompressed instead of erroring, and (2) magic-byte
+    /// detection consults a short-prefix table (2-byte gzip, 2-byte
+    /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
+    /// of the `infer` crate.
+    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
 pub struct SingleUploadData {
@@ -46,6 +53,7 @@ pub struct SingleUploadData {
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
     pub flavor: PutGetResultsetFlavor,
+    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
 #[derive(Debug)]

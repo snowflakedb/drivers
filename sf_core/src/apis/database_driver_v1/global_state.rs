@@ -29,6 +29,13 @@ pub enum PutGetResultsetFlavor {
 #[derive(Debug, Clone, Default)]
 pub struct WrapperPresets {
     pub put_get_resultset_flavor: PutGetResultsetFlavor,
+    /// When true, PUT auto-detect mirrors legacy libsnowflakeclient
+    /// behavior: (1) unsupported compression formats are silently
+    /// treated as uncompressed instead of erroring, and (2) magic-byte
+    /// detection consults a short-prefix table (2-byte gzip, 2-byte
+    /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
+    /// of the `infer` crate.
+    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 }
 
 impl WrapperPresets {
@@ -45,6 +52,7 @@ impl WrapperPresets {
     pub fn odbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
+            legacy_compression_autodetect_libsnowflakeclient_behavior: true,
             ..Self::default()
         }
     }

@@ -64,6 +64,8 @@ pub async fn upload_files(
             source_compression: data.source_compression.clone(),
             overwrite: data.overwrite,
             flavor: data.flavor.clone(),
+            legacy_compression_autodetect_libsnowflakeclient_behavior: data
+                .legacy_compression_autodetect_libsnowflakeclient_behavior,
         };
 
         let result = upload_single_file(single_upload_data, &mut refresher).await?;
@@ -194,7 +196,7 @@ fn preprocess_file_before_upload(
         data.filename.as_str(),
         file_buffer.as_slice(),
         &data.source_compression,
-        &data.flavor,
+        data.legacy_compression_autodetect_libsnowflakeclient_behavior,
     )
     .context(CompressionTypeSnafu)?;
 
@@ -248,12 +250,14 @@ fn get_source_compression(
     filename: &str,
     file_buffer: &[u8],
     source_compression: &SourceCompressionParam,
-    flavor: &PutGetResultsetFlavor,
+    legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
     match source_compression {
-        SourceCompressionParam::AutoDetect => {
-            auto_detect_source_compression(filename, file_buffer, flavor)
-        }
+        SourceCompressionParam::AutoDetect => auto_detect_source_compression(
+            filename,
+            file_buffer,
+            legacy_compression_autodetect_libsnowflakeclient_behavior,
+        ),
         SourceCompressionParam::None => Ok(CompressionType::None),
         SourceCompressionParam::Gzip => Ok(CompressionType::Gzip),
         SourceCompressionParam::Bzip2 => Ok(CompressionType::Bzip2),
@@ -264,29 +268,39 @@ fn get_source_compression(
     }
 }
 
-/// Returns the resolved compression type for the `AUTO_DETECT` path,
-/// gated on the active wrapper flavor. Legacy libsnowflakeclient silently
-/// treated unsupported compression formats (e.g. `.xz`, `.lz`, `.parquet`)
-/// as uncompressed and continued the upload — the `Odbc` flavor restores
-/// that behavior. The `Python` flavor (default) surfaces the error,
-/// matching the current UD-Python contract. The recovery is keyed on the
-/// `UnsupportedCompressionType` error variant, so it fires regardless of
-/// whether the detection went through the filename extension or the
-/// magic-bytes (infer crate) path.
+/// Returns the resolved compression type for the `AUTO_DETECT` path.
+/// `legacy_compression_autodetect_libsnowflakeclient_behavior` (true) opts
+/// into two libsnowflakeclient-parity behaviors at once (see
+/// `WrapperPresets` for the full doc-comment):
+///
+/// 1. Short-prefix magic-byte table runs ahead of the `infer` crate,
+///    detecting 2-byte gzip / 2-byte zlib (mapped to `Deflate`) / 4-byte
+///    snowflake brotli marker that `infer` would miss.
+/// 2. Unsupported formats (`.xz`, `.lz`, `.lzma`, `.lzo`, `.Z`, plus the
+///    buffer-detected equivalents) are silently treated as uncompressed
+///    instead of erroring. Recovery is keyed on the
+///    `UnsupportedCompressionType` error variant, so it fires regardless
+///    of whether detection went through the filename extension or the
+///    magic-bytes path.
 fn auto_detect_source_compression(
     filename: &str,
     file_buffer: &[u8],
-    flavor: &PutGetResultsetFlavor,
+    legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
-    let detected = try_guess_compression_type(filename, file_buffer);
-    match flavor {
-        PutGetResultsetFlavor::Odbc => match detected {
+    let detected = try_guess_compression_type(
+        filename,
+        file_buffer,
+        legacy_compression_autodetect_libsnowflakeclient_behavior,
+    );
+    if legacy_compression_autodetect_libsnowflakeclient_behavior {
+        match detected {
             Err(CompressionTypeError::UnsupportedCompressionType { .. }) => {
                 Ok(CompressionType::None)
             }
             other => other,
-        },
-        _ => detected,
+        }
+    } else {
+        detected
     }
 }
 
@@ -684,8 +698,10 @@ mod tests {
 
     // BD#6 — when SOURCE_COMPRESSION=AUTO_DETECT detects an unsupported
     // compression format, legacy libsnowflakeclient silently fell back to
-    // no compression. The `Odbc` flavor restores that behavior; the
-    // `Python` flavor (default) keeps surfacing the error.
+    // no compression. ODBC (`legacy_compression_autodetect_libsnowflakeclient_behavior
+    // = true`) restores that behavior; Python / JDBC (false) keep surfacing
+    // the error. JDBC behavior verified equivalent to Python via
+    // `SnowflakeFileTransferAgent.java:3163-3308`.
     const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] = &[
         "test.xz",
         "test.lzma",
@@ -697,96 +713,112 @@ mod tests {
     ];
 
     #[test]
-    fn auto_detect_source_compression_odbc_falls_back_to_none_for_unsupported() {
+    fn auto_detect_source_compression_legacy_flag_true_swallows_unsupported_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
-            let result =
-                auto_detect_source_compression(filename, b"", &PutGetResultsetFlavor::Odbc);
+            let result = auto_detect_source_compression(filename, b"", true);
             assert_eq!(
                 result.unwrap(),
                 CompressionType::None,
-                "Odbc flavor must fall back to None for {filename}",
+                "legacy=true must fall back to None for {filename}",
             );
         }
     }
 
     #[test]
-    fn auto_detect_source_compression_python_surfaces_unsupported_error() {
+    fn auto_detect_source_compression_legacy_flag_false_propagates_unsupported_error() {
         for filename in UNSUPPORTED_COMPRESSION_FILENAMES {
-            let result =
-                auto_detect_source_compression(filename, b"", &PutGetResultsetFlavor::Python);
+            let result = auto_detect_source_compression(filename, b"", false);
             assert!(
                 matches!(
                     result,
                     Err(CompressionTypeError::UnsupportedCompressionType { .. })
                 ),
-                "Python flavor must propagate the unsupported error for {filename}, got: {result:?}",
+                "legacy=false must surface the unsupported error for {filename}, got: {result:?}",
             );
         }
     }
 
     // Buffer-detection branch (infer crate): an extension-less file whose
     // magic bytes match an unsupported format must still trigger the
-    // Odbc-flavor fallback. Locks in that the recovery is keyed on the
+    // legacy-flag fallback. Locks in that the recovery is keyed on the
     // `UnsupportedCompressionType` error variant, not on the
     // filename-extension detection path.
     #[test]
-    fn auto_detect_source_compression_odbc_falls_back_for_buffer_detected_unsupported() {
+    fn auto_detect_source_compression_legacy_flag_true_swallows_buffer_detected_unsupported() {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
-        let result =
-            auto_detect_source_compression("noext", xz_magic, &PutGetResultsetFlavor::Odbc);
+        let result = auto_detect_source_compression("noext", xz_magic, true);
         assert_eq!(result.unwrap(), CompressionType::None);
     }
 
     #[test]
-    fn auto_detect_source_compression_python_surfaces_buffer_detected_unsupported() {
+    fn auto_detect_source_compression_legacy_flag_false_propagates_buffer_detected_unsupported() {
         let xz_magic = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
-        let result =
-            auto_detect_source_compression("noext", xz_magic, &PutGetResultsetFlavor::Python);
+        let result = auto_detect_source_compression("noext", xz_magic, false);
         assert!(
             matches!(
                 result,
                 Err(CompressionTypeError::UnsupportedCompressionType { .. })
             ),
-            "Python flavor must propagate the buffer-detected unsupported error, got: {result:?}",
+            "legacy=false must surface the buffer-detected unsupported error, got: {result:?}",
         );
     }
 
     #[test]
-    fn auto_detect_source_compression_recognizes_gzip_for_both_flavors() {
-        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
-            let result = auto_detect_source_compression("test.csv.gz", b"", &flavor);
+    fn auto_detect_source_compression_recognizes_gzip_for_both_flag_values() {
+        for legacy in [false, true] {
+            let result = auto_detect_source_compression("test.csv.gz", b"", legacy);
             assert_eq!(
                 result.unwrap(),
                 CompressionType::Gzip,
-                "{flavor:?} flavor must still recognize supported extensions",
+                "legacy={legacy} must still recognize supported extensions",
             );
         }
     }
 
     #[test]
-    fn auto_detect_source_compression_returns_none_for_uncompressed_under_both_flavors() {
-        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
-            let result = auto_detect_source_compression("test.csv", b"", &flavor);
+    fn auto_detect_source_compression_returns_none_for_uncompressed_for_both_flag_values() {
+        for legacy in [false, true] {
+            let result = auto_detect_source_compression("test.csv", b"", legacy);
             assert_eq!(
                 result.unwrap(),
                 CompressionType::None,
-                "{flavor:?} flavor must report None for plain files",
+                "legacy={legacy} must report None for plain files",
             );
         }
     }
 
+    // Partial-prefix detection: `\x1F\x8B` is the first 2 bytes of gzip's
+    // 3-byte magic. With the legacy flag false (Python/JDBC default)
+    // `infer` requires the full 3 bytes and returns `None` here. With the
+    // legacy flag true (ODBC default), the short-prefix table matches
+    // first and returns `Gzip`, mirroring `libsnowflakeclient`'s
+    // `m_magicBytes = 2` for gzip.
     #[test]
-    fn get_source_compression_explicit_param_ignores_flavor() {
+    fn auto_detect_source_compression_legacy_flag_true_detects_2byte_gzip() {
+        let two_byte_gzip: &[u8] = &[0x1F, 0x8B];
+        let result = auto_detect_source_compression("noext", two_byte_gzip, true);
+        assert_eq!(result.unwrap(), CompressionType::Gzip);
+    }
+
+    #[test]
+    fn auto_detect_source_compression_legacy_flag_false_misses_2byte_gzip() {
+        let two_byte_gzip: &[u8] = &[0x1F, 0x8B];
+        let result = auto_detect_source_compression("noext", two_byte_gzip, false);
+        assert_eq!(result.unwrap(), CompressionType::None);
+    }
+
+    #[test]
+    fn get_source_compression_explicit_param_ignores_flag() {
         // Explicit SOURCE_COMPRESSION=<known type> never goes through the
-        // auto-detect path, so the flavor branch is a no-op here.
-        for flavor in [PutGetResultsetFlavor::Python, PutGetResultsetFlavor::Odbc] {
+        // auto-detect path, so the flag branch is a no-op here.
+        for legacy in [false, true] {
             assert_eq!(
-                get_source_compression("ignored.xz", b"", &SourceCompressionParam::Gzip, &flavor,)
+                get_source_compression("ignored.xz", b"", &SourceCompressionParam::Gzip, legacy,)
                     .unwrap(),
                 CompressionType::Gzip,
             );
             assert_eq!(
-                get_source_compression("ignored.xz", b"", &SourceCompressionParam::None, &flavor,)
+                get_source_compression("ignored.xz", b"", &SourceCompressionParam::None, legacy,)
                     .unwrap(),
                 CompressionType::None,
             );

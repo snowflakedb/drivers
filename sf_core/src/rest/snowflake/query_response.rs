@@ -323,6 +323,7 @@ impl Data {
     pub fn to_file_upload_data(
         &self,
         flavor: PutGetResultsetFlavor,
+        legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
         use_s3_regional_url_session_param: bool,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
@@ -409,6 +410,7 @@ impl Data {
             source_compression,
             overwrite,
             flavor,
+            legacy_compression_autodetect_libsnowflakeclient_behavior,
         })
     }
 
@@ -1275,7 +1277,7 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": null,"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1285,7 +1287,7 @@ mod tests {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1295,7 +1297,7 @@ mod tests {
         let json = make_upload_json(r#""encryptionMaterial": [],"#);
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
             .unwrap();
         assert!(upload.encryption_material.is_none());
     }
@@ -1307,7 +1309,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1319,7 +1321,7 @@ mod tests {
         );
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::default(), false)
+            .to_file_upload_data(PutGetResultsetFlavor::default(), false, false)
             .unwrap();
         assert!(upload.encryption_material.is_some());
     }
@@ -1333,7 +1335,7 @@ mod tests {
             ],"#,
         );
         let data: Data = serde_json::from_str(&json).unwrap();
-        let result = data.to_file_upload_data(PutGetResultsetFlavor::default(), false);
+        let result = data.to_file_upload_data(PutGetResultsetFlavor::default(), false, false);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -1343,23 +1345,25 @@ mod tests {
     }
 
     #[test]
-    fn upload_data_forwards_flavor_python() {
+    fn upload_data_forwards_legacy_compression_autodetect_libsnowflakeclient_behavior_false() {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Python, false)
+            .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Python);
+        assert!(!upload.legacy_compression_autodetect_libsnowflakeclient_behavior);
     }
 
     #[test]
-    fn upload_data_forwards_flavor_odbc() {
+    fn upload_data_forwards_legacy_compression_autodetect_libsnowflakeclient_behavior_true() {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
-            .to_file_upload_data(PutGetResultsetFlavor::Odbc, false)
+            .to_file_upload_data(PutGetResultsetFlavor::Odbc, true, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
+        assert!(upload.legacy_compression_autodetect_libsnowflakeclient_behavior);
     }
 
     fn make_download_json() -> String {
@@ -2027,6 +2031,7 @@ mod tests {
         let data: Data = serde_json::from_value(payload).expect("build upload Data");
         data.to_file_upload_data(
             PutGetResultsetFlavor::default(),
+            false,
             use_s3_regional_url_session_param,
         )
         .expect("convert to UploadData")
