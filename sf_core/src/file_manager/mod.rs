@@ -944,6 +944,50 @@ mod tests {
         );
     }
 
+    // Upload-prep passthrough on the explicit-param path: when the user
+    // sets `SOURCE_COMPRESSION=PARQUET` / `=ORC`, the file must NOT be
+    // re-wrapped in gzip even with `auto_compress = true`. Parallels the
+    // auto-detect passthrough tests above; the difference is that the
+    // compression type is taken from the user param rather than sniffed
+    // from filename or magic bytes.
+    #[test]
+    fn preprocess_parquet_passthrough_under_explicit_param() {
+        let payload = b"PAR1\x00\x01\x02\x03some-parquet-bytes-go-here".to_vec();
+        let data = SingleUploadData {
+            source_compression: SourceCompressionParam::Parquet,
+            ..passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Python, false)
+        };
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Parquet);
+        assert_eq!(metadata.source_compression, CompressionType::Parquet);
+        assert_eq!(
+            prepared.data, payload,
+            "payload must pass through bit-identical (no gzip wrap)",
+        );
+    }
+
+    #[test]
+    fn preprocess_orc_passthrough_under_explicit_param() {
+        let payload = b"ORC\x00\x01\x02some-orc-bytes-go-here".to_vec();
+        let data = SingleUploadData {
+            source_compression: SourceCompressionParam::Orc,
+            ..passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false)
+        };
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Orc);
+        assert_eq!(metadata.source_compression, CompressionType::Orc);
+        assert_eq!(
+            prepared.data, payload,
+            "payload must pass through bit-identical"
+        );
+    }
+
     // Locks in PR2 of Gap-12: parquet/orc detection is independent of the
     // unsupported-compression flag (ODBC sets the flag to true, matching
     // legacy libsnowflakeclient which detects PAR1/ORC magic via
