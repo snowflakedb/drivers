@@ -131,6 +131,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         return Ok(());
     }
     load_ini_config();
+    crate::api::encoding::negotiate_from_config();
     let log_manager = sf_core::logging::LogManager::for_odbc();
     if let Some(lm) = &log_manager {
         crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());

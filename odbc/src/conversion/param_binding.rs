@@ -1,13 +1,17 @@
 use std::{
     ffi::{CStr, c_char},
-    mem, slice, str,
+    slice, str,
 };
+
+#[cfg(test)]
+use std::mem;
 
 use serde_json::{Map, Value};
 use snafu::ResultExt;
 
 use crate::api::CDataType;
 use crate::api::TimestampSubtype;
+use crate::api::encoding::{OdbcEncoding, Wide, WideChar, wchar_byte_size, wide_strlen_bounded};
 use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding};
 use odbc_sys as sql;
 
@@ -598,35 +602,30 @@ pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, JsonBi
     acp_bytes_to_string(bytes)
 }
 
-/// Read a SQL_C_WCHAR (UTF-16) value and convert to a UTF-8 string.
+/// Read a `SQL_C_WCHAR` value and convert to a UTF-8 string. The DM-side
+/// wide-character encoding (UTF-16 or UTF-32) is the one negotiated at
+/// driver startup; see [`WideChar`] and the `encoding` module for details.
 ///
 /// When `StrLen_or_IndPtr` is NULL or points to `SQL_NTS`, the buffer is
-/// treated as null-terminated (scans for the first `0x0000` code unit).
-/// Otherwise the indicated byte length is used (clamped to `buffer_length`).
+/// treated as null-terminated (scans for the first null DM-side unit,
+/// bounded by `buffer_length`). Otherwise the indicated byte length is used.
 pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonBindingError> {
     let null_terminated =
         binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
+    let unit_size = wchar_byte_size();
+    let ptr = binding.parameter_value_ptr as *const WideChar;
 
-    let units = if null_terminated {
-        let ptr = binding.parameter_value_ptr as *const u16;
+    let unit_len = if null_terminated {
         let max_units = if binding.buffer_length > 0 {
-            binding.buffer_length as usize / mem::size_of::<u16>()
+            binding.buffer_length as usize / unit_size
         } else {
             usize::MAX
         };
-        let mut len = 0;
-        unsafe {
-            while len < max_units && *ptr.add(len) != 0 {
-                len += 1;
-            }
-            slice::from_raw_parts(ptr, len)
-        }
+        unsafe { wide_strlen_bounded(ptr, max_units) }
     } else {
-        let byte_len = buffer_data_len(binding);
-        let unit_len = byte_len / mem::size_of::<u16>();
-        unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u16, unit_len) }
+        buffer_data_len(binding) / unit_size
     };
-    String::from_utf16(units).map_err(|_| WCharConversionSnafu.build())
+    Wide::read_string(ptr, unit_len as i32).map_err(|_| WCharConversionSnafu.build())
 }
 
 /// Test-only entry point that mirrors what `odbc_bindings_to_json` does

@@ -40,6 +40,28 @@ available to other subsystems by calling
 [`sf_core::config::get_ini_config`](../sf_core/src/config/ini_loader.rs) and
 reading the entries directly.
 
+### `DriverManagerEncoding`
+
+The driver supports both UTF-16 and UTF-32 wide-character driver managers
+(`SQLWCHAR` width 2 vs. 4 bytes). The width is negotiated once during
+environment allocation and cached in a process-wide `OnceLock`. Subsequent
+calls — including all `*W` entry points and `SQLBindCol`/`SQLGetData`
+conversions for `SQL_C_WCHAR` — use that cached width without touching the
+INI again.
+
+| Key                     | Type | Description                                                                                                  |
+|-------------------------|------|--------------------------------------------------------------------------------------------------------------|
+| `DriverManagerEncoding` | enum | `UTF-16` (default) or `UTF-32`. Selects the wire encoding the driver uses to talk to the driver manager.     |
+
+Values are matched case-insensitively and accept either `UTF-16`/`UTF16` or
+`UTF-32`/`UTF32`. Unknown values cause a one-shot warning to be logged and
+the default (`UTF-16`) is used.
+
+Use `UTF-32` when the application links against an iODBC build
+where `SQLWCHAR` is `wchar_t` (4 bytes on Linux/macOS); use `UTF-16` for
+unixODBC, Windows DM, and any driver manager that defines `SQLWCHAR` as
+`unsigned short`.
+
 ## Testing
 
 ODBC tests are written in C++ using CMake and Catch2 framework.

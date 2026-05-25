@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
     use crate::conversion::test_utils::helpers::{
@@ -42,13 +43,13 @@ mod tests {
 
     fn binding_for_wchar_buffer(
         target_type: CDataType,
-        buffer: &mut [u16],
+        buffer: &mut [WideChar],
         str_len: &mut sql::Len,
     ) -> Binding {
         Binding {
             target_type,
             target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-            buffer_length: (buffer.len() * 2) as sql::Len,
+            buffer_length: (buffer.len() * WIDE_CHAR_SIZE) as sql::Len,
             octet_length_ptr: str_len as *mut sql::Len,
             indicator_ptr: str_len as *mut sql::Len,
             ..Default::default()
@@ -568,75 +569,64 @@ mod tests {
     #[test]
     fn real_wchar_positive() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(3.125, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "3.125".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("3.125");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_negative() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(-99.5, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "-99.5".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("-99.5");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_zero() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "0".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("0");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_integer() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(42.0, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "42".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("42");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_fractional_only_truncation_returns_01004() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 4]; // "7.98765" → whole digits "7" (1 char), fits in 4-wchar buffer
+        // "7.98765" → whole digits "7" (1 char), fits in 4-wchar buffer.
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
@@ -652,7 +642,8 @@ mod tests {
     #[test]
     fn real_wchar_whole_digits_lost_returns_22003() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 4]; // "123456.789" → whole digits "123456" (6 chars), doesn't fit in 4-wchar buffer
+        // "123456.789" → whole digits "123456" (6 chars), doesn't fit in 4-wchar buffer.
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 

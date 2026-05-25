@@ -5,6 +5,7 @@
 #![allow(non_snake_case)]
 
 use crate::api::CDataType;
+use crate::api::encoding::WideChar;
 use crate::api::{self, Narrow, ToSqlReturn, Wide};
 use odbc_sys as sql;
 
@@ -96,7 +97,7 @@ pub unsafe extern "system" fn SQLExecDirect(
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLExecDirectW(
     statement_handle: sql::Handle,
-    statement_text: *const sql::WChar,
+    statement_text: *const WideChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecDirect");
@@ -286,11 +287,11 @@ pub unsafe extern "system" fn SQLConnect(
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLConnectW(
     connection_handle: sql::Handle,
-    server_name: *const sql::WChar,
+    server_name: *const WideChar,
     name_length1: sql::SmallInt,
-    user_name: *const sql::WChar,
+    user_name: *const WideChar,
     name_length2: sql::SmallInt,
-    authentication: *const sql::WChar,
+    authentication: *const WideChar,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
@@ -569,9 +570,9 @@ pub unsafe extern "system" fn SQLDriverConnect(
 pub unsafe extern "system" fn SQLDriverConnectW(
     connection_handle: sql::Handle,
     _window_handle: sql::Handle,
-    in_connection_string: *const sql::WChar,
+    in_connection_string: *const WideChar,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut sql::WChar,
+    _out_connection_string: *mut WideChar,
     _buffer_length: sql::SmallInt,
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
@@ -753,7 +754,7 @@ pub unsafe extern "system" fn SQLColAttributeW(
         statement_handle,
         column_number,
         field_identifier,
-        character_attribute_ptr as *mut sql::WChar,
+        character_attribute_ptr as *mut WideChar,
         buffer_length,
         string_length_ptr,
         numeric_attribute_ptr,
@@ -814,7 +815,7 @@ pub unsafe extern "system" fn SQLDescribeCol(
 pub unsafe extern "system" fn SQLDescribeColW(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
-    column_name: *mut sql::WChar,
+    column_name: *mut WideChar,
     buffer_length: sql::SmallInt,
     name_length_ptr: *mut sql::SmallInt,
     data_type_ptr: *mut sql::SmallInt,
@@ -973,7 +974,7 @@ pub unsafe extern "system" fn SQLPrepare(
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLPrepareW(
     statement_handle: sql::Handle,
-    statement_text: *const sql::WChar,
+    statement_text: *const WideChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLPrepare");
@@ -1034,9 +1035,9 @@ pub unsafe extern "system" fn SQLGetDiagRecW(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
-    sql_state: *mut sql::WChar,
+    sql_state: *mut WideChar,
     native_error_ptr: *mut sql::Integer,
-    message_text: *mut sql::WChar,
+    message_text: *mut WideChar,
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
@@ -1312,9 +1313,9 @@ pub unsafe extern "system" fn SQLNativeSql(
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLNativeSqlW(
     connection_handle: sql::Handle,
-    in_statement_text: *const sql::WChar,
+    in_statement_text: *const WideChar,
     text_length1: sql::Integer,
-    out_statement_text: *mut sql::WChar,
+    out_statement_text: *mut WideChar,
     buffer_length: sql::Integer,
     text_length2_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
