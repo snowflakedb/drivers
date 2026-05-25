@@ -79,10 +79,10 @@ repos:
         language: system
     -   id: behavior-differences-validator
         name: Behavioral Differences format check
-        description: Validate BehaviorDifferences.yaml schema (status, type, required fields)
-        entry: python3 odbc_tests/validate_behavior_differences.py
-        pass_filenames: false
-        files: ^odbc_tests/BehaviorDifferences\.yaml$
+        description: Validate all BehaviorDifferences.yaml files — schema, no removals
+        entry: python3 scripts/validate_behavior_differences.py
+        pass_filenames: true
+        files: BehaviorDifferences\.yaml$
         language: system
     -   id: tests-format-validator
         name: Tests format validator
