@@ -64,8 +64,7 @@ pub async fn upload_files(
             source_compression: data.source_compression.clone(),
             overwrite: data.overwrite,
             flavor: data.flavor.clone(),
-            legacy_compression_autodetect_libsnowflakeclient_behavior: data
-                .legacy_compression_autodetect_libsnowflakeclient_behavior,
+            legacy_odbc_compression_autodetect: data.legacy_odbc_compression_autodetect,
         };
 
         let result = upload_single_file(single_upload_data, &mut refresher).await?;
@@ -196,7 +195,7 @@ fn preprocess_file_before_upload(
         data.filename.as_str(),
         file_buffer.as_slice(),
         &data.source_compression,
-        data.legacy_compression_autodetect_libsnowflakeclient_behavior,
+        data.legacy_odbc_compression_autodetect,
     )
     .context(CompressionTypeSnafu)?;
 
@@ -250,13 +249,13 @@ fn get_source_compression(
     filename: &str,
     file_buffer: &[u8],
     source_compression: &SourceCompressionParam,
-    legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    legacy_odbc_compression_autodetect: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
     match source_compression {
         SourceCompressionParam::AutoDetect => auto_detect_source_compression(
             filename,
             file_buffer,
-            legacy_compression_autodetect_libsnowflakeclient_behavior,
+            legacy_odbc_compression_autodetect,
         ),
         SourceCompressionParam::None => Ok(CompressionType::None),
         SourceCompressionParam::Gzip => Ok(CompressionType::Gzip),
@@ -269,7 +268,7 @@ fn get_source_compression(
 }
 
 /// Returns the resolved compression type for the `AUTO_DETECT` path.
-/// `legacy_compression_autodetect_libsnowflakeclient_behavior` (true) opts
+/// `legacy_odbc_compression_autodetect` (true) opts
 /// into two libsnowflakeclient-parity behaviors at once (see
 /// `WrapperPresets` for the full doc-comment):
 ///
@@ -285,14 +284,11 @@ fn get_source_compression(
 fn auto_detect_source_compression(
     filename: &str,
     file_buffer: &[u8],
-    legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    legacy_odbc_compression_autodetect: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
-    let detected = try_guess_compression_type(
-        filename,
-        file_buffer,
-        legacy_compression_autodetect_libsnowflakeclient_behavior,
-    );
-    if legacy_compression_autodetect_libsnowflakeclient_behavior {
+    let detected =
+        try_guess_compression_type(filename, file_buffer, legacy_odbc_compression_autodetect);
+    if legacy_odbc_compression_autodetect {
         match detected {
             Err(CompressionTypeError::UnsupportedCompressionType { .. }) => {
                 Ok(CompressionType::None)
@@ -698,9 +694,9 @@ mod tests {
 
     // BD#6 — when SOURCE_COMPRESSION=AUTO_DETECT detects an unsupported
     // compression format, legacy libsnowflakeclient silently fell back to
-    // no compression. ODBC (`legacy_compression_autodetect_libsnowflakeclient_behavior
-    // = true`) restores that behavior; Python / JDBC (false) keep surfacing
-    // the error. JDBC behavior verified equivalent to Python via
+    // no compression. ODBC (`legacy_odbc_compression_autodetect = true`)
+    // restores that behavior; Python / JDBC (false) keep surfacing the
+    // error. JDBC behavior verified equivalent to Python via
     // `SnowflakeFileTransferAgent.java:3163-3308`.
     #[rustfmt::skip]
     const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] = &[
@@ -941,7 +937,7 @@ mod tests {
     fn passthrough_upload_data(
         filename: &str,
         flavor: PutGetResultsetFlavor,
-        legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+        legacy_odbc_compression_autodetect: bool,
     ) -> SingleUploadData {
         SingleUploadData {
             file_path: format!("/tmp/{filename}"),
@@ -952,7 +948,7 @@ mod tests {
             source_compression: SourceCompressionParam::AutoDetect,
             overwrite: false,
             flavor,
-            legacy_compression_autodetect_libsnowflakeclient_behavior,
+            legacy_odbc_compression_autodetect,
         }
     }
 

@@ -320,14 +320,14 @@ impl Data {
     /// result set; it is forwarded into `SingleUploadData` so that
     /// `file_manager::upload_single_file` can populate the `message` column
     /// per `BehaviorDifferences.yaml` BD#3.
-    /// `legacy_compression_autodetect_libsnowflakeclient_behavior` opts the
+    /// `legacy_odbc_compression_autodetect` opts the
     /// PUT auto-detect path into the libsnowflakeclient-parity behaviors
     /// (short-prefix magic-byte detection plus error-swallowing on
     /// unsupported formats). See `WrapperPresets` for the full doc-comment.
     pub fn to_file_upload_data(
         &self,
         flavor: PutGetResultsetFlavor,
-        legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+        legacy_odbc_compression_autodetect: bool,
         use_s3_regional_url_session_param: bool,
     ) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
@@ -389,11 +389,6 @@ impl Data {
             })?
             .clone();
 
-        // TODO: explicit `SOURCE_COMPRESSION=PARQUET` / `=ORC` is accepted
-        // by the Python connector (both have `is_supported=True` in
-        // `file_compression_type.py`) and would skip auto-detect. Universal
-        // driver currently rejects them via the catch-all arm below; PR2 of
-        // Gap-12 only covers the AUTO_DETECT path. Track as follow-up.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
@@ -419,7 +414,7 @@ impl Data {
             source_compression,
             overwrite,
             flavor,
-            legacy_compression_autodetect_libsnowflakeclient_behavior,
+            legacy_odbc_compression_autodetect,
         })
     }
 
@@ -1357,25 +1352,25 @@ mod tests {
     }
 
     #[test]
-    fn upload_data_forwards_legacy_compression_autodetect_libsnowflakeclient_behavior_false() {
+    fn upload_data_forwards_legacy_odbc_compression_autodetect_false() {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
             .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Python);
-        assert!(!upload.legacy_compression_autodetect_libsnowflakeclient_behavior);
+        assert!(!upload.legacy_odbc_compression_autodetect);
     }
 
     #[test]
-    fn upload_data_forwards_legacy_compression_autodetect_libsnowflakeclient_behavior_true() {
+    fn upload_data_forwards_legacy_odbc_compression_autodetect_true() {
         let json = make_upload_json("");
         let data: Data = serde_json::from_str(&json).unwrap();
         let upload = data
             .to_file_upload_data(PutGetResultsetFlavor::Odbc, true, false)
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
-        assert!(upload.legacy_compression_autodetect_libsnowflakeclient_behavior);
+        assert!(upload.legacy_odbc_compression_autodetect);
     }
 
     fn make_download_json() -> String {
