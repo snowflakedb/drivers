@@ -34,7 +34,7 @@ const ODBC_PUT_MESSAGE_SKIPPED: &str = "File with same name already exists. SKIP
 
 pub async fn upload_files(
     data: &UploadData,
-    put_get_max_attempts: Option<u32>,
+    put_get_max_attempts: u32,
     mut refresher: Option<&mut dyn StageCredsRefresher>,
 ) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
@@ -93,7 +93,7 @@ fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageCredsRefresh
 /// refresher's `StageCredsCache` rather than returned here.
 pub async fn upload_single_file(
     data: SingleUploadData,
-    put_get_max_attempts: Option<u32>,
+    put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
@@ -308,7 +308,7 @@ fn auto_detect_source_compression(
 
 pub async fn download_files(
     mut data: DownloadData,
-    put_get_max_attempts: Option<u32>,
+    put_get_max_attempts: u32,
     mut refresher: Option<&mut dyn StageCredsRefresher>,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
@@ -339,7 +339,7 @@ pub async fn download_files(
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
 pub async fn download_single_file(
     data: SingleDownloadData,
-    put_get_max_attempts: Option<u32>,
+    put_get_max_attempts: u32,
     refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
     let DownloadResponse {

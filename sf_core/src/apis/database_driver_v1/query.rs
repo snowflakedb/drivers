@@ -56,8 +56,8 @@ pub struct StageCredsRefreshContext {
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
 ///
-/// `put_get_max_attempts` is the user-supplied `put_get_max_attempts` override
-/// for the per-file HTTP/transport retry loop (`None` = use the default).
+/// `put_get_max_attempts` is the user-supplied `put_get_max_attempts` value
+/// for the per-file HTTP/transport retry loop.
 ///
 /// When `stage_creds_refresh_context` is `Some`, an S3 `ExpiredToken` during a
 /// file transfer triggers a re-issue of the original PUT/GET SQL to obtain fresh
@@ -72,7 +72,7 @@ pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
-    put_get_max_attempts: Option<u32>,
+    put_get_max_attempts: u32,
     stage_creds_refresh_context: Option<StageCredsRefreshContext>,
     use_s3_regional_url_session_param: bool,
 ) -> Result<RowsetData, QueryResponseProcessingError> {

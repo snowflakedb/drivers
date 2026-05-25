@@ -22,7 +22,7 @@ pub async fn upload_to_azure_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-    max_attempts: Option<u32>,
+    max_attempts: u32,
 ) -> Result<UploadStatus, AzureUploadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -48,7 +48,7 @@ pub async fn upload_to_azure_or_skip(
 pub async fn download_from_azure(
     stage_info: &StageInfo,
     filename: &str,
-    max_attempts: Option<u32>,
+    max_attempts: u32,
 ) -> Result<DownloadResponse, AzureDownloadError> {
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -140,7 +140,7 @@ async fn upload_to_azure(
     url: &str,
     sas_token: &str,
     prepared: PreparedUpload,
-    max_attempts: Option<u32>,
+    max_attempts: u32,
 ) -> Result<(), AzureUploadError> {
     let encryption_data_str = prepared
         .encryption_metadata
@@ -193,21 +193,15 @@ async fn upload_to_azure(
 
 // --- Retry logic (delegates to http::retry) ---
 
-/// Default attempts cap when the user has not set `put_get_max_attempts`.
-/// Matches the S3/GCS policies for cross-cloud parity.
-const DEFAULT_MAX_ATTEMPTS: u32 = 6;
-
 /// Returns a retry policy tuned for Azure file-transfer operations.
 ///
 /// Azure treats 403 as retryable (SAS token clock skew / replication delays),
 /// matching JDBC/ODBC behavior.
 ///
-/// `max_attempts` is the user-supplied `put_get_max_attempts` override
-/// (`None` = use the default). See `s3_transfer::s3_retry_policy` for the
-/// canonical contract; this module mirrors it for cross-cloud parity.
-fn azure_retry_policy(max_attempts: Option<u32>) -> RetryPolicy {
+/// `max_attempts` is the user-supplied `put_get_max_attempts` override.
+fn azure_retry_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy {
-        max_attempts: max_attempts.unwrap_or(DEFAULT_MAX_ATTEMPTS),
+        max_attempts,
         backoff: BackoffConfig {
             base: Duration::from_secs(1),
             factor: 2.0,
@@ -230,7 +224,7 @@ fn azure_retry_policy(max_attempts: Option<u32>) -> RetryPolicy {
 async fn azure_request_with_retry<F>(
     build_request: F,
     method: Method,
-    max_attempts: Option<u32>,
+    max_attempts: u32,
 ) -> Result<reqwest::Response, AzureRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
@@ -732,7 +726,7 @@ mod tests {
 
     #[test]
     fn azure_retry_policy_includes_403() {
-        let policy = azure_retry_policy(None);
+        let policy = azure_retry_policy(6);
         assert!(
             policy.extra_retryable_statuses.contains(&403),
             "403 should be retryable (SAS token clock skew / replication delays)"
@@ -741,7 +735,7 @@ mod tests {
 
     #[test]
     fn azure_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = azure_retry_policy(None);
+        let policy = azure_retry_policy(6);
         assert_eq!(
             policy.max_elapsed,
             Duration::from_secs(600),
@@ -754,18 +748,12 @@ mod tests {
     }
 
     #[test]
-    fn azure_retry_policy_default_max_attempts() {
-        let policy = azure_retry_policy(None);
-        assert_eq!(policy.max_attempts, DEFAULT_MAX_ATTEMPTS);
-    }
-
-    #[test]
-    fn azure_retry_policy_max_attempts_override() {
-        // Mirrors the S3/GCS contract: a user-supplied
-        // `put_get_max_attempts` replaces the per-cloud default. `Some(1)`
-        // disables retries (1 attempt = no retry).
-        assert_eq!(azure_retry_policy(Some(25)).max_attempts, 25);
-        assert_eq!(azure_retry_policy(Some(1)).max_attempts, 1);
+    fn azure_retry_policy_propagates_max_attempts() {
+        // Mirrors the S3/GCS contract: the caller-supplied
+        // `put_get_max_attempts` is what bounds the per-file HTTP retry
+        // loop. `1` disables retries (1 attempt = no retry).
+        assert_eq!(azure_retry_policy(25).max_attempts, 25);
+        assert_eq!(azure_retry_policy(1).max_attempts, 1);
     }
 
     // ---------------------------------------------------------------

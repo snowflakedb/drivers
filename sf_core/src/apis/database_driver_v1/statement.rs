@@ -36,16 +36,19 @@ use std::{collections::HashMap, sync::Arc};
 
 /// Reads the user's `put_get_max_attempts` override from the connection seed.
 ///
-/// `None` means "use the per-cloud default" — either because the user did not
-/// set the option, or because the value is out of the supported `[1, u32::MAX]`
-/// range. Falling back silently on a bad value (rather than failing the
-/// statement) keeps the dispatch site robust against post-init
-/// `connection_set_option_int` writes that bypass param-registry validation.
-fn read_put_get_max_attempts(conn: &Connection) -> Option<u32> {
+/// Returns the resolved per-file PUT/GET HTTP retry budget. The default
+/// (6) lives on the `ParamDef` and is mirrored here for the
+/// not-yet-resolved case (no init-time `set_option`, no post-init write).
+/// Out-of-range values fall back to the default rather than failing the
+/// statement, keeping the dispatch site robust against post-init
+/// `connection_set_option_int` writes that bypass param-registry
+/// validation.
+fn read_put_get_max_attempts(conn: &Connection) -> u32 {
     conn.connection_seed
         .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
         .filter(|v| *v > 0 && *v <= u32::MAX as i64)
         .map(|v| v as u32)
+        .unwrap_or(6)
 }
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -834,14 +837,14 @@ mod tests {
     }
 
     /// `read_put_get_max_attempts` is the dispatch-site read for the
-    /// `put_get_max_attempts` knob. `None` means "use the per-cloud
-    /// default"; a parsed `u32` overrides the AWS retry config.
-    /// Out-of-range values must fall back to `None` rather than panic
-    /// or surface as a statement error — see the helper's doc comment.
+    /// `put_get_max_attempts` knob. The default (6) lives on the
+    /// `ParamDef` and is mirrored as the helper's fallback. Out-of-range
+    /// values must fall back to the default rather than panic or surface
+    /// as a statement error — see the helper's doc comment.
     #[test]
-    fn read_put_get_max_attempts_unset_yields_none() {
+    fn read_put_get_max_attempts_unset_yields_default() {
         let conn = Connection::new();
-        assert_eq!(read_put_get_max_attempts(&conn), None);
+        assert_eq!(read_put_get_max_attempts(&conn), 6);
     }
 
     #[test]
@@ -851,24 +854,24 @@ mod tests {
             param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
             Setting::Int(25),
         );
-        assert_eq!(read_put_get_max_attempts(&conn), Some(25));
+        assert_eq!(read_put_get_max_attempts(&conn), 25);
 
         conn.set_option(
             param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
             Setting::Int(1),
         );
-        assert_eq!(read_put_get_max_attempts(&conn), Some(1));
+        assert_eq!(read_put_get_max_attempts(&conn), 1);
     }
 
     #[test]
-    fn read_put_get_max_attempts_rejects_out_of_range() {
+    fn read_put_get_max_attempts_out_of_range_falls_back_to_default() {
         let mut conn = Connection::new();
         for bad in [0i64, -1, (u32::MAX as i64) + 1] {
             conn.set_option(
                 param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
                 Setting::Int(bad),
             );
-            assert_eq!(read_put_get_max_attempts(&conn), None, "bad value: {bad}");
+            assert_eq!(read_put_get_max_attempts(&conn), 6, "bad value: {bad}");
         }
     }
 

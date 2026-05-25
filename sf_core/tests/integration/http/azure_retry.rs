@@ -64,7 +64,7 @@ async fn azure_download_success_returns_data_and_metadata() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     let response = result.expect("download should succeed");
     assert_eq!(response.data, b"encrypted-data");
@@ -107,7 +107,7 @@ async fn azure_download_403_is_retried_then_succeeds() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     assert!(result.is_ok(), "403 should be retried and succeed");
     assert_eq!(
@@ -136,7 +136,7 @@ async fn azure_download_404_is_not_retried() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     assert!(result.is_err(), "404 should be a hard failure");
     assert_eq!(attempt.load(Ordering::SeqCst), 1, "should NOT retry 404");
@@ -166,7 +166,7 @@ async fn azure_download_503_is_retried_then_succeeds() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     assert!(
         result.is_ok(),
@@ -195,7 +195,7 @@ async fn azure_error_response_redacts_sas_token() {
         .await;
 
     let stage = azure_stage(&server.uri());
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
@@ -238,7 +238,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         storage_account: Some("test".to_string()),
     };
 
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     let err = result.unwrap_err();
     let err_display = format!("{err}");
@@ -266,7 +266,7 @@ async fn azure_download_with_wrong_creds_type_fails() {
         gcs_access_token: None,
     };
 
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
@@ -284,7 +284,7 @@ async fn azure_download_with_missing_storage_account_fails() {
     // Remove scheme so it falls through to the standard URL path
     stage.endpoint = Some("blob.core.windows.net".to_string());
 
-    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", None).await;
+    let result = sf_core::file_manager::download_from_azure(&stage, "file.csv", 6).await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
