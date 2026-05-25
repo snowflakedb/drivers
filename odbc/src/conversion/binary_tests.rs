@@ -477,6 +477,29 @@ mod tests {
         assert_eq!(offset, None);
     }
 
+    /// Chunked-retrieval companion to `wchar_hex_chunked_retrieval`:
+    /// when the input is empty, the chunked entry point must report 0
+    /// bytes, emit a null terminator, raise no truncation warning, and
+    /// leave the offset cleared so subsequent `SQLGetData` calls return
+    /// `SQL_NO_DATA` instead of looping. The non-chunked variant is
+    /// covered separately by `wchar_hex_empty_binary` above.
+    #[test]
+    fn wchar_hex_empty_input_chunked() {
+        let sn = sn();
+        let input: &[u8] = &[];
+        let mut buffer = vec![0xFFFF as WideChar; 3];
+        let mut str_len: sql::Len = 0;
+        let mut offset: Option<usize> = None;
+        let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
+        let warnings = sn
+            .write_odbc_type(Cow::Borrowed(input), &binding, &mut offset)
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(str_len, 0);
+        assert_eq!(buffer[0], 0);
+        assert_eq!(offset, None);
+    }
+
     // ========================================================================
     // Unsupported target type returns error
     // ========================================================================

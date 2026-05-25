@@ -619,8 +619,25 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
         let max_units = if binding.buffer_length > 0 {
             binding.buffer_length as usize / unit_size
         } else {
+            // ODBC spec: when the indicator is SQL_NTS, the application
+            // is required to NUL-terminate the buffer. A buggy or
+            // malicious binding with no terminator turns the scan into
+            // an unbounded read; the warn below makes that misuse
+            // visible without changing behaviour for spec-conformant
+            // callers (who may legitimately bind huge SQL_NTS strings
+            // and would be hurt by a hard cap).
+            tracing::warn!(
+                buffer_length = binding.buffer_length,
+                "SQL_NTS wide parameter bound with non-positive buffer_length; \
+                 falling back to an unbounded scan that relies on the \
+                 application-supplied NUL terminator"
+            );
             usize::MAX
         };
+        // Safety: ODBC requires the application to NUL-terminate
+        // `SQL_C_WCHAR` values bound with `SQL_NTS`; `wide_strlen_bounded`
+        // stops at the first zero DM-side unit. The `tracing::warn!`
+        // above surfaces the misuse case where that contract is broken.
         unsafe { wide_strlen_bounded(ptr, max_units) }
     } else {
         buffer_data_len(binding) / unit_size

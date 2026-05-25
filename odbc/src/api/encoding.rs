@@ -248,8 +248,16 @@ pub(crate) fn wide_unit_len(s: &str) -> usize {
 
 /// Encode `s` and write up to `max_units` DM-side code units of `enc`
 /// into `buf`, starting from `offset_units` in `s`. Returns the number of
-/// DM-side units actually written (may be less than `max_units` if the
-/// source runs out first).
+/// DM-side units actually written.
+///
+/// The returned count may be less than `max_units` for any of:
+/// - the source ran out (normal end-of-data);
+/// - **UTF-16 only**: the next code point would emit a surrogate pair
+///   and only one slot is left in `buf`. Splitting a surrogate pair
+///   across two `SQLGetData` chunks would leave the application unable
+///   to decode either chunk independently, so the lead surrogate is
+///   deliberately held back for the next call. UTF-32 never splits
+///   because one DM-side unit always equals one Unicode code point.
 ///
 /// Does **not** write a null terminator; pair with [`write_wide_null_in`]
 /// when one is needed.
@@ -271,8 +279,19 @@ pub(crate) unsafe fn write_wide_buffer_in(
     }
     match enc {
         WCharEncoding::Utf16 => {
+            let mut iter = s.encode_utf16().skip(offset_units).peekable();
             let mut written = 0;
-            for u in s.encode_utf16().skip(offset_units).take(max_units) {
+            while written < max_units {
+                let Some(u) = iter.next() else { break };
+                // High surrogate (lead) + remaining capacity is exactly
+                // one + more data follows ⇒ stop without writing, so the
+                // pair lands together on the next call.
+                if (0xD800..=0xDBFF).contains(&u)
+                    && written + 1 == max_units
+                    && iter.peek().is_some()
+                {
+                    break;
+                }
                 unsafe { std::ptr::write(buf.add(written), u) };
                 written += 1;
             }
@@ -869,18 +888,31 @@ mod tests {
 
     #[test]
     fn write_wide_buffer_in_utf32_round_trip() {
-        // 8 u16 slots = 4 u32 slots.
-        let mut buf = [0u16; 8];
-        let n =
-            unsafe { write_wide_buffer_in("Hi!", buf.as_mut_ptr(), 4, 0, WCharEncoding::Utf32) };
+        // 4-aligned u32 backing buffer: write_wide_buffer_in's UTF-32
+        // branch reinterprets the pointer as *mut u32, which requires
+        // 4-byte alignment. Casting at the call site preserves the
+        // public *mut WideChar signature.
+        let mut buf = [0u32; 4];
+        let n = unsafe {
+            write_wide_buffer_in(
+                "Hi!",
+                buf.as_mut_ptr() as *mut WideChar,
+                4,
+                0,
+                WCharEncoding::Utf32,
+            )
+        };
         assert_eq!(n, 3);
-        // Each ASCII char in UTF-32 LE: XX 00 00 00 -> two u16 slots:
-        // [XX 00] then [00 00].
-        assert_eq!(&buf[..6], &[b'H' as u16, 0, b'i' as u16, 0, b'!' as u16, 0]);
-        unsafe { write_wide_null_in(buf.as_mut_ptr(), n, WCharEncoding::Utf32) };
-        let decoded =
-            unsafe { read_wide_string_in(buf.as_ptr(), sql::NTS as i32, WCharEncoding::Utf32) }
-                .unwrap();
+        assert_eq!(&buf[..3], &[b'H' as u32, b'i' as u32, b'!' as u32]);
+        unsafe { write_wide_null_in(buf.as_mut_ptr() as *mut WideChar, n, WCharEncoding::Utf32) };
+        let decoded = unsafe {
+            read_wide_string_in(
+                buf.as_ptr() as *const WideChar,
+                sql::NTS as i32,
+                WCharEncoding::Utf32,
+            )
+        }
+        .unwrap();
         assert_eq!(decoded, "Hi!");
     }
 
@@ -888,24 +920,76 @@ mod tests {
     fn write_wide_buffer_in_utf32_handles_supplementary_plane() {
         // U+1F680 ROCKET — supplementary plane.
         let s = "\u{1F680}";
-        let mut buf = [0u16; 4];
-        let n = unsafe { write_wide_buffer_in(s, buf.as_mut_ptr(), 2, 0, WCharEncoding::Utf32) };
+        // 4-aligned u32 backing buffer; see _round_trip test for rationale.
+        let mut buf = [0u32; 2];
+        let n = unsafe {
+            write_wide_buffer_in(
+                s,
+                buf.as_mut_ptr() as *mut WideChar,
+                2,
+                0,
+                WCharEncoding::Utf32,
+            )
+        };
         assert_eq!(n, 1);
-        // 0x1F680 = 0x0001_F680: low half 0xF680, high half 0x0001.
-        assert_eq!(buf[0], 0xF680);
-        assert_eq!(buf[1], 0x0001);
-        unsafe { write_wide_null_in(buf.as_mut_ptr(), n, WCharEncoding::Utf32) };
-        let decoded =
-            unsafe { read_wide_string_in(buf.as_ptr(), sql::NTS as i32, WCharEncoding::Utf32) }
-                .unwrap();
+        assert_eq!(buf[0], 0x0001_F680);
+        unsafe { write_wide_null_in(buf.as_mut_ptr() as *mut WideChar, n, WCharEncoding::Utf32) };
+        let decoded = unsafe {
+            read_wide_string_in(
+                buf.as_ptr() as *const WideChar,
+                sql::NTS as i32,
+                WCharEncoding::Utf32,
+            )
+        }
+        .unwrap();
         assert_eq!(decoded, s);
+    }
+
+    /// `write_wide_buffer_in` must not split a UTF-16 surrogate pair
+    /// across two chunked SQLGetData calls. With `max_units == 1` and a
+    /// non-BMP code point pending, the call must return 0 (lead
+    /// surrogate held back); the next call with capacity ≥ 2 emits both
+    /// surrogates together.
+    #[test]
+    fn write_wide_buffer_in_utf16_does_not_split_surrogate_pair() {
+        let s = "\u{1F680}";
+        let mut buf = [0u16; 2];
+        let first =
+            unsafe { write_wide_buffer_in(s, buf.as_mut_ptr(), 1, 0, WCharEncoding::Utf16) };
+        assert_eq!(first, 0, "must not emit a lead surrogate as the final unit");
+        let second =
+            unsafe { write_wide_buffer_in(s, buf.as_mut_ptr(), 2, 0, WCharEncoding::Utf16) };
+        assert_eq!(second, 2);
+        assert_eq!(buf, [0xD83D, 0xDE80]);
+    }
+
+    /// When a lead surrogate genuinely *is* the last unit of the source
+    /// (e.g. malformed input or natural end-of-string), the no-split
+    /// guard must not hold it back: there is nothing to pair it with on
+    /// the next call. Emit it like any other unit.
+    #[test]
+    fn write_wide_buffer_in_utf16_emits_trailing_unit_when_no_more_data() {
+        // "A\u{1F680}" encodes to [0x0041, 0xD83D, 0xDE80].
+        let s = "A\u{1F680}";
+        // Ask for offset 2 (past the lead surrogate) so the iterator
+        // produces only the trail surrogate (0xDE80). This isn't a lead
+        // surrogate so the guard is irrelevant, but the test also
+        // exercises the `iter.peek().is_some()` arm: with max_units=1
+        // and only one unit left, no hold-back occurs.
+        let mut buf = [0u16; 1];
+        let n = unsafe { write_wide_buffer_in(s, buf.as_mut_ptr(), 1, 2, WCharEncoding::Utf16) };
+        assert_eq!(n, 1);
+        assert_eq!(buf, [0xDE80]);
     }
 
     #[test]
     fn read_wide_string_in_utf32_rejects_invalid_code_points() {
         // 0x0011_0000 is one past the highest valid Unicode code point.
-        let buf: [u16; 2] = [0x0000, 0x0011];
-        let res = unsafe { read_wide_string_in(buf.as_ptr(), 1, WCharEncoding::Utf32) };
+        // 4-aligned u32 backing buffer; see _round_trip test for rationale.
+        let buf: [u32; 1] = [0x0011_0000];
+        let res = unsafe {
+            read_wide_string_in(buf.as_ptr() as *const WideChar, 1, WCharEncoding::Utf32)
+        };
         assert!(matches!(
             res,
             Err(crate::api::OdbcError::InvalidWideChar { .. })
