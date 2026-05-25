@@ -170,7 +170,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         return DaeRequiredSnafu.fail();
     }
 
-    let (bindings, _json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
+    let (bindings, json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
     let stmt_handle = guard.stmt_handle;
     let query_timeout = inner.query_timeout;
     let max_rows = inner.max_rows;
@@ -190,6 +190,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         let token_clone = token.clone();
 
         let join_handle = g.spawn(async move {
+            let _json_owner = json_owner;
             tokio::select! {
                 biased;
                 _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
@@ -864,7 +865,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             }
         }
     };
-    let (bindings, _json_owner) = apply_parameter_bindings(
+    let (bindings, json_owner) = apply_parameter_bindings(
         &inner.apd,
         &inner.ipd,
         is_prepared,
@@ -899,6 +900,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         let token_clone = token.clone();
 
         let join_handle = g.spawn(async move {
+            let _json_owner = json_owner;
             tokio::select! {
                 biased;
                 _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),

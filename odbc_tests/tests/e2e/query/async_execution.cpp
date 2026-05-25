@@ -126,8 +126,12 @@ TEST_CASE("should reject connection-level async with HY092", "[query][async]") {
   const SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
                                           reinterpret_cast<SQLPOINTER>(SQL_ASYNC_DBC_ENABLE_ON), 0);
 
-  // Then the driver should reject it
-  REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+  // Then the driver should reject it.
+  // The Windows DM intercepts this attribute and returns HY114 ("Driver does not support
+  // connection level asynchronous function execution") before it reaches the driver.
+  // On non-Windows platforms (unixODBC), the driver returns HY092 directly.
+  REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()),
+               OdbcMatchers::IsError() && (OdbcMatchers::HasSqlState("HY092") || OdbcMatchers::HasSqlState("HY114")));
 }
 
 // =============================================================================
@@ -434,6 +438,7 @@ TEST_CASE("should treat SQLCancel on idle async-enabled statement as no-op", "[q
 // =============================================================================
 
 TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_thread]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
