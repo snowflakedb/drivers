@@ -10,7 +10,7 @@ behavior_differences:
   2:
     name: "DEFLATE compression type option is now correctly auto-detected"
     status: allowed
-    type: bug
+    type: bugfix
     reviewed: true
     is_breaking_change: true
     impact: medium
@@ -63,7 +63,7 @@ behavior_differences:
   13:
     name: "Empty connections.toml preserves config.toml connections"
     status: allowed
-    type: bug
+    type: bugfix
     reviewed: true
     is_breaking_change: true
     impact: medium
@@ -172,7 +172,7 @@ behavior_differences:
   21:
     name: "Closed cursor raises InterfaceError on all operations"
     status: allowed
-    type: bug
+    type: bugfix
     reviewed: true
     is_breaking_change: true
     impact: high
@@ -196,7 +196,7 @@ behavior_differences:
   22:
     name: "Fetching before execute raises ProgrammingError"
     status: allowed
-    type: bug
+    type: bugfix
     reviewed: true
     is_breaking_change: true
     impact: high
