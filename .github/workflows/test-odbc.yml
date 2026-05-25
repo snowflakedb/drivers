@@ -23,7 +23,7 @@ concurrency:
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
-  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 jobs:
   # Filter out PR runs triggered solely by adding an unrelated label
@@ -35,7 +35,7 @@ jobs:
   scope-label-gate:
     if: |
       github.event.action != 'labeled' ||
-      contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+      contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
     runs-on: ubuntu-latest
     steps:
       - run: 'true'
@@ -102,7 +102,7 @@ jobs:
 
   odbc_tests_reference:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_reference == 'true'
+    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_reference == 'true')"
     uses: ./.github/workflows/_test-odbc-reference.yml
     # secrets.PARAMETERS_SECRET is read by decode_secrets inside the
     # reusable workflow; reusable workflows do NOT auto-inherit secrets

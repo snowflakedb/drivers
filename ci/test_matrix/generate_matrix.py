@@ -40,7 +40,7 @@ GENERATED_DIR = REPO_ROOT / "ci" / "test_matrix" / "generated"
 # Trigger level ordering (lower index = lower coverage, subset of next)
 # ---------------------------------------------------------------------------
 
-TRIGGER_LEVELS = ["pr", "merge", "nightly"]
+TRIGGER_LEVELS = ["pr", "merge_queue", "merge", "nightly"]
 
 
 # ---------------------------------------------------------------------------
@@ -140,16 +140,19 @@ def load_model(
     list,
     list,
     list[dict[str, str]],
+    list[dict[str, str]],
     dict[str, list[dict[str, str]]],
 ]:
     """
     Load a model module and validate its shape.
 
-    Returns (params, constraints, merge_valid, pr_cells, json_cells).
+    Returns (params, constraints, merge_valid, pr_cells, merge_queue_cells, json_cells).
     Constraints and merge_valid are lists of callables `(combo) -> bool`
     returning True when the combo is valid. CONSTRAINTS gates *all* trigger
     levels (full cartesian product); MERGE_VALID additionally gates the
     pairwise pass — a combo blocked by MERGE_VALID still appears at nightly.
+    MERGE_QUEUE_CELLS are explicit cells pinned to trigger_level="merge";
+    they bypass MERGE_VALID and are excluded from the pairwise pool.
     Raises ValueError on any malformed input.
     """
     spec = importlib.util.spec_from_file_location(f"_model_{path.stem}", path)
@@ -162,6 +165,7 @@ def load_model(
     raw_constraints = getattr(module, "CONSTRAINTS", [])
     raw_merge_valid = getattr(module, "MERGE_VALID", [])
     raw_pr = getattr(module, "PR_CELLS", [])
+    raw_mq = getattr(module, "MERGE_QUEUE_CELLS", [])
     raw_json = getattr(module, "JSON_CELLS", {})
 
     if not isinstance(raw_params, dict) or not raw_params:
@@ -191,6 +195,10 @@ def load_model(
 
     pr_cells = [_normalize_cell(c, params, path, "PR_CELLS") for c in raw_pr]
 
+    if not isinstance(raw_mq, list):
+        raise ValueError(f"{path}: MERGE_QUEUE_CELLS must be a list")
+    merge_queue_cells = [_normalize_cell(c, params, path, "MERGE_QUEUE_CELLS") for c in raw_mq]
+
     json_cells: dict[str, list[dict[str, str]]] = {lvl: [] for lvl in _TRIGGER_LEVELS_FOR_JSON}
     if not isinstance(raw_json, dict):
         raise ValueError(f"{path}: JSON_CELLS must be a dict")
@@ -205,7 +213,7 @@ def load_model(
                 _normalize_cell(c, params, path, f"JSON_CELLS[{level!r}]")
             )
 
-    return params, constraints, merge_valid, pr_cells, json_cells
+    return params, constraints, merge_valid, pr_cells, merge_queue_cells, json_cells
 
 
 def _normalize_cell(
@@ -428,7 +436,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
 
     Returns the list of GitHub Actions matrix rows.
     """
-    params, constraints, merge_valid, pr_cells, json_cells = load_model(model_path)
+    params, constraints, merge_valid, pr_cells, merge_queue_cells, json_cells = load_model(model_path)
     param_names = list(params.keys())
     param_values = list(params.values())
 
@@ -446,6 +454,22 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     is_python = "PyVersion" in params or "HatchEnv" in params
     is_core = driver == "core"
 
+    # Precompute the MERGE_QUEUE_CELLS key set so _routing_valid can exclude
+    # them from the pairwise candidate pool. This prevents the greedy solver
+    # from also selecting a cell that is already explicitly pinned at merge
+    # level, which would produce no duplicate row (trigger assignment below
+    # prefers merge_queue_keys) but would waste a pairwise slot.
+    merge_queue_keys: set[tuple] = {tuple(c.values()) for c in merge_queue_cells}
+    valid_keys = {tuple(c.values()) for c in all_combos}
+
+    # Warn about MERGE_QUEUE_CELLS entries that violate constraints.
+    for cell in merge_queue_cells:
+        if tuple(cell.values()) not in valid_keys:
+            print(
+                f"WARNING: [merge_queue] cell {cell} violates constraints — no row will be emitted",
+                file=sys.stderr,
+            )
+
     # Routing-aware pairwise cover: only consider combos that survive
     # _build_*_row routing. Without this, the solver may pick a combo (e.g.
     # windows-arm × py3.13) that gets silently dropped at row-build time
@@ -457,11 +481,16 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     # pass: combos rejected here still flow through to nightly, but never
     # land in pr/merge. Use it to keep expensive lanes (e.g. limited macOS
     # runners) out of the merge queue without losing nightly coverage.
+    #
+    # MERGE_QUEUE_CELLS combos are also excluded from pairwise: they are
+    # already explicitly pinned at merge level and do not need a pairwise slot.
     def _routing_valid(combo_tuple: tuple) -> bool:
         combo = dict(zip(param_names, combo_tuple))
         if not apply_constraints(combo, constraints):
             return False
         if not apply_constraints(combo, merge_valid):
+            return False
+        if combo_tuple in merge_queue_keys:
             return False
         # `trigger` doesn't influence the build/skip decision, so any
         # placeholder value works. Pass "merge" for clarity.
@@ -479,7 +508,6 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     if pr_cells:
         pr_keys: set[tuple] = {tuple(c.values()) for c in pr_cells}
         # Warn about PR cells that violate constraints and will produce no output row.
-        valid_keys = {tuple(c.values()) for c in all_combos}
         for cell in pr_cells:
             if tuple(cell.values()) not in valid_keys:
                 print(
@@ -491,15 +519,20 @@ def generate(model_path: Path, driver: str) -> list[dict]:
         for key in list(pairwise_keys)[:3]:
             pr_keys.add(key)
 
-    # Assign trigger levels:
-    #   pr      - cells listed in [pr] (explicit) or first 3 pairwise rows (fallback)
-    #   merge   - remaining pairwise rows; pr cells are also included at merge level
-    #             (cumulative filter: merge runs pr+merge)
-    #   nightly - everything else (full matrix)
+    # Assign trigger levels (precedence: PR_CELLS > MERGE_QUEUE_CELLS > pairwise > nightly):
+    #   pr          - cells listed in PR_CELLS (explicit); run on every PR and
+    #                 cumulatively at push-to-main and nightly.
+    #   merge_queue - MERGE_QUEUE_CELLS (explicit, not gated by MERGE_VALID);
+    #                 run ONLY at merge_group events (non-cumulative filter).
+    #   merge       - pairwise rows; run at push-to-main (and cumulatively at
+    #                 nightly) but NOT at merge_group events.
+    #   nightly     - everything else (full cartesian product).
     for combo in all_combos:
         key = tuple(combo.values())
         if key in pr_keys:
             combo["_trigger"] = "pr"
+        elif key in merge_queue_keys:
+            combo["_trigger"] = "merge_queue"
         elif key in pairwise_keys:
             combo["_trigger"] = "merge"
         else:
@@ -510,12 +543,21 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     gha_rows: list[dict] = []
 
     for combo in combos:
+        # Capture the param key before popping _trigger so we can check
+        # MERGE_QUEUE_CELLS membership on the finished row.
+        key = tuple(combo[p] for p in param_names)
         trigger = combo.pop("_trigger")
         if is_core:
             row = _build_core_row(combo, trigger)
         else:
             row = _build_gha_row(combo, trigger, is_python)
         if row is not None:
+            # Mark every MERGE_QUEUE_CELLS row regardless of its trigger_level.
+            # A cell can be in both PR_CELLS and MERGE_QUEUE_CELLS (PR_CELLS wins
+            # for trigger assignment), but merge_queue_cell=True ensures
+            # filter_active("merge_queue") finds it even at trigger_level="pr".
+            if key in merge_queue_keys:
+                row["merge_queue_cell"] = True
             gha_rows.append(row)
 
     # Append result_format=json reference variants. Core has no JSON variants —
@@ -548,20 +590,21 @@ def generate(model_path: Path, driver: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 EVENT_TO_LEVEL = {
-    "pull_request": "pr",
+    "pull_request":        "pr",
     "pull_request_target": "pr",
-    "push": "merge",
-    "merge_group": "merge",
-    "schedule": "nightly",
-    "workflow_dispatch": "nightly",
+    "push":                "merge",        # push to main: full pairwise set
+    "merge_group":         "merge_queue",  # merge queue: MERGE_QUEUE_CELLS only
+    "schedule":            "nightly",
+    "workflow_dispatch":   "nightly",
 }
 
 
 # PR labels that force a higher trigger level than the event would produce.
 # When multiple are present the highest-scope label wins.
 LABEL_TO_LEVEL = {
-    "ci:scope-merge":   "merge",
-    "ci:scope-nightly": "nightly",
+    "ci:scope-merge-queue": "merge_queue",
+    "ci:scope-merge":       "merge",
+    "ci:scope-nightly":     "nightly",
 }
 
 
@@ -591,9 +634,27 @@ def level_for_event_and_labels(event: str | None, labels: list[str] | None) -> s
 
 
 def filter_active(rows: list[dict], level: str) -> list[dict]:
-    """Return rows whose trigger_level is at or below `level` (cumulative)."""
+    """Return rows active at the given trigger level.
+
+    For 'merge_queue' (merge_group event): non-cumulative — returns only rows
+    that have merge_queue_cell=True. This includes cells that are in
+    MERGE_QUEUE_CELLS regardless of their trigger_level: a cell that is in
+    both PR_CELLS and MERGE_QUEUE_CELLS gets trigger_level="pr" (PR_CELLS
+    wins for trigger assignment) but is still returned here because
+    merge_queue_cell=True is set on the row. If no such rows exist (model
+    has not defined MERGE_QUEUE_CELLS), falls back to PR_CELLS.
+
+    For all other levels: cumulative — returns every row whose trigger_level
+    index is at or below the requested level's index in TRIGGER_LEVELS.
+    """
     if level not in TRIGGER_LEVELS:
         raise ValueError(f"unknown trigger level: {level!r}; expected one of {TRIGGER_LEVELS}")
+    if level == "merge_queue":
+        mq_rows = [r for r in rows if r.get("merge_queue_cell")]
+        if mq_rows:
+            return mq_rows
+        # Fallback: model has no MERGE_QUEUE_CELLS — run PR_CELLS at merge queue.
+        return [r for r in rows if r["trigger_level"] == "pr"]
     cap = TRIGGER_LEVELS.index(level)
     return [r for r in rows if TRIGGER_LEVELS.index(r["trigger_level"]) <= cap]
 

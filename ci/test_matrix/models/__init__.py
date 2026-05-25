@@ -46,6 +46,37 @@ PR_CELLS: list[dict[str, str]]
     Explicit cells that always run on every PR. Each cell must list a value
     for every declared parameter (loader rejects missing or extra keys).
 
+MERGE_QUEUE_CELLS: list[dict[str, str]]   (optional, default [])
+    Explicit cells that run ONLY on the merge queue (merge_group event,
+    trigger_level="merge_queue"). They do NOT run on PRs (unless also in
+    PR_CELLS) and are NOT included in the pairwise set that runs at push-to-main.
+
+    Semantics differ from PR_CELLS in one critical way: filter_active at
+    "merge_queue" level is NON-CUMULATIVE — it returns ONLY these cells, not
+    PR_CELLS. This makes the merge queue a focused, fast validation gate while
+    push-to-main runs the full matrix (PR_CELLS + MERGE_QUEUE_CELLS + pairwise).
+
+    If MERGE_QUEUE_CELLS is empty or absent, the merge queue falls back to
+    running PR_CELLS (preserving backward compatibility for models that have
+    not yet defined an explicit merge-queue configuration).
+
+    If a cell appears in both PR_CELLS and MERGE_QUEUE_CELLS, PR_CELLS wins
+    and the cell runs at trigger_level="pr" (cumulative at all scopes).
+
+    MERGE_VALID does not gate these — they bypass the pairwise block-list and
+    run unconditionally at merge_queue. Cells listed here are also excluded
+    from the pairwise candidate pool so the greedy solver does not redundantly
+    select them and emit duplicate rows at the push-to-main ("merge") level.
+
+    Use MERGE_VALID to prevent pairwise from generating similar lanes that
+    would duplicate coverage already provided by MERGE_QUEUE_CELLS:
+
+        MERGE_QUEUE_CELLS = [
+            # windows-arm: fast gate on azure only; other clouds at push-to-main.
+            {"OS": "windows", "Arch": "arm", "Cloud": "azure"},
+        ]
+        # Also add to merge_valid() to block arm-aws and arm-gcp from pairwise.
+
 MERGE_VALID: list[Callable[[dict[str, str]], bool]]   (optional, default [])
     Pairwise-only block-list. Same shape and semantics as CONSTRAINTS
     (return True = keep, return False = forbid). Predicates here gate

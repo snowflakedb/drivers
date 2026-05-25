@@ -58,6 +58,10 @@ PR_CELLS = [
     {"OS": "windows", "Arch": "x64", "Cloud": "azure", "PyVersion": "3.14", "HatchEnv": "test"},
 ]
 
+MERGE_QUEUE_CELLS = [
+    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "PyVersion": "3.13", "HatchEnv": "test"},
+]
+
 JSON_CELLS = {
     "pr": [],
     "merge": [

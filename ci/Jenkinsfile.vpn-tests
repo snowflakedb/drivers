@@ -6,6 +6,10 @@ The cross-platform build matrix lives in a separate job: ci/Jenkinsfile.build-ma
 @Library('pipeline-utils') _
 import com.snowflake.DevEnvUtils
 
+def isMergeQueue() {
+  return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
+
 def e2eDockerSetup(String image) {
   new DevEnvUtils().withSfCli {
     sh "sf artifact oci auth"
@@ -27,6 +31,9 @@ pipeline {
   stages {
 
         stage('Tests') {
+          when {
+            expression { !isMergeQueue() }
+          }
           parallel {
             stage('Rust Core VPN E2E Tests') {
               agent { label 'build-node-extra-large' }

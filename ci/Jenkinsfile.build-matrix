@@ -5,6 +5,10 @@ Runs independently from the VPN E2E / revocation tests defined in ci/Jenkinsfile
 
 @Library('pipeline-utils') _
 
+def isMergeQueue() {
+  return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
+
 def getAgentLabel(platform) {
   switch (platform) {
     case 'linux-x86_64-musl':
@@ -246,6 +250,9 @@ pipeline {
   }
   stages {
         stage('Build Matrix') {
+          when {
+            expression { !isMergeQueue() }
+          }
           matrix {
             axes {
               axis {
