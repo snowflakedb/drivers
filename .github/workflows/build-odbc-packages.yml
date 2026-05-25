@@ -1,0 +1,34 @@
+name: Build ODBC Packages
+
+# Builds every distributable ODBC artifact
+on:
+  push:
+    branches:
+      - 'release/odbc-**'
+  pull_request:
+    paths:
+      - 'odbc/installer/**'
+      - 'ci/Dockerfile.rocky-rpm-build'
+      - '.github/actions/install-wix-from-artifact/**'
+      - '.github/workflows/build-odbc-packages.yml'
+      - '.github/workflows/_build-odbc-packages.yml'
+  workflow_dispatch:
+    inputs:
+      wix-ref:
+        description: 'WiX Toolset git ref to build the wix CLI from (e.g. "v7.0.0"). Bump in lock-step with the .wxs source compatibility.'
+        required: false
+        type: string
+        default: v7.0.0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_odbc_packages:
+    uses: ./.github/workflows/_build-odbc-packages.yml
+    with:
+      # workflow_dispatch supplies inputs.wix-ref; push / pull_request events
+      # don't, so we fall back to the same default exposed in the dispatch
+      # input above. Keep both in sync.
+      wix-ref: ${{ inputs.wix-ref || 'v7.0.0' }}
