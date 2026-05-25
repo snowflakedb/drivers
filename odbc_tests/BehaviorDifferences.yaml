@@ -235,7 +235,7 @@ behavior_differences:
     type: bugfix
     reviewed: true
     status_rationale: |
-      This is a ODBC compliance fix. The silent truncation may cause data discrepancies.
+      This is a ODBC compliance fix. The silent conversion may cause data discrepancies.
     old_driver_behavior: |
       When SQLGetData is called on a FLOAT/DOUBLE column containing NaN with an integer target type (SQL_C_SLONG, SQL_C_ULONG, SQL_C_SHORT, SQL_C_USHORT, SQL_C_STINYINT, SQL_C_UTINYINT, SQL_C_SBIGINT, SQL_C_UBIGINT) or SQL_C_BIT, the old driver returns SQL_SUCCESS_WITH_INFO and silently writes 0 to the output buffer. This happens because NaN comparisons always return false, so range checks pass, and the cast produces 0.
     new_driver_behavior: |
@@ -263,7 +263,7 @@ behavior_differences:
     name: "Interval leading field precision is enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is respected"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     status_rationale: |
       This is a ODBC compliance fix. Honors the default setting and settings explicitly set by the caller.
     old_driver_behavior: |
@@ -385,7 +385,7 @@ behavior_differences:
   26:
     name: "SQLBindParameter rejects negative DecimalDigits with HY104 instead of accepting silently"
     status: allowed
-    type: bug
+    type: bugfix
     reviewed: true
     status_rationale: |
       Negative decimal digits make no sense.
@@ -400,7 +400,7 @@ behavior_differences:
     type: enhancement
     reviewed: true
     status_rationale: |
-      Old driver parsed the query locally instead of passing it to the server. We are returning backend error now, as this is the role of the server to process the SQL query with the parser, instead of making the local parser version that may shift from the server's implementation.
+      Old driver parsed the query locally instead of passing it to the server. We are returning backend error now, as this is the role of the server to process the SQL query with the parser, instead of making the local parser version that may shift from the server's implementation. This change allows better diagnostics by providing the proper error code and description, as old drivers' error code and description was vague.
     old_driver_behavior: |
       After SQL_RESET_PARAMS, executing a prepared statement with unbound parameter markers returns SQL_ERROR with SQLSTATE 07002 (COUNT field incorrect), caught locally by the driver.
     new_driver_behavior: |
