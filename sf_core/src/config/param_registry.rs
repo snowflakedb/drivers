@@ -129,6 +129,11 @@ pub mod param_names {
     pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
 }
 
+/// Default value for `put_get_max_attempts` when the user has not set it.
+/// Single source of truth for the per-file PUT/GET HTTP retry budget across
+/// the S3, GCS, and Azure transfer paths.
+pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
+
 /// Which API layer owns writes for a parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamScope {
@@ -995,7 +1000,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         value_type: ValueType::Int,
         additional_value_type: None,
         required: Required::Never,
-        default: Some(|| Setting::Int(6)),
+        default: Some(|| Setting::Int(DEFAULT_PUT_GET_MAX_ATTEMPTS as i64)),
         sensitive: false,
         description: "Maximum total attempts for a single PUT/GET file transfer (1 = no retry; default 6)",
         deprecated_by: None,

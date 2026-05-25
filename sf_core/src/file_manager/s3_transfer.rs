@@ -675,6 +675,7 @@ pub enum DownloadFileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 
     #[test]
     fn s3_retry_policy_propagates_max_attempts() {
@@ -691,7 +692,7 @@ mod tests {
 
     #[test]
     fn s3_retry_policy_backoff_bounds() {
-        let policy = s3_retry_policy(6);
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert_eq!(policy.backoff.base, Duration::from_secs(1));
         assert_eq!(policy.backoff.cap, Duration::from_secs(16));
         assert_eq!(policy.backoff.factor, 2.0);
@@ -699,7 +700,7 @@ mod tests {
 
     #[test]
     fn s3_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = s3_retry_policy(6);
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
             "retry budget must exceed a single request timeout"
@@ -709,7 +710,7 @@ mod tests {
 
     #[test]
     fn s3_retry_policy_has_per_request_timeout() {
-        let policy = s3_retry_policy(6);
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert_eq!(
             policy.per_request_timeout,
             Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
@@ -719,7 +720,7 @@ mod tests {
 
     #[test]
     fn to_aws_retry_config_translates_policy() {
-        let policy = s3_retry_policy(6);
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         let aws = to_aws_retry_config(&policy);
         assert_eq!(aws.max_attempts(), policy.max_attempts);
         assert_eq!(aws.initial_backoff(), policy.backoff.base);
@@ -728,7 +729,7 @@ mod tests {
 
     #[test]
     fn to_aws_timeout_config_sets_attempt_and_operation_timeouts() {
-        let policy = s3_retry_policy(6);
+        let policy = s3_retry_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
         let cfg = to_aws_timeout_config(&policy);
         assert_eq!(cfg.operation_timeout(), Some(policy.max_elapsed));
         assert_eq!(cfg.operation_attempt_timeout(), policy.per_request_timeout);

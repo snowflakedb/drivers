@@ -1,3 +1,4 @@
+use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::file_manager::{CloudCredentials, LocationType, StageInfo};
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
@@ -82,7 +83,9 @@ async fn gcs_download_401_returns_token_expired() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", 6).await;
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", DEFAULT_PUT_GET_MAX_ATTEMPTS)
+            .await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
@@ -117,7 +120,9 @@ async fn gcs_download_403_is_retried_then_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", 6).await;
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", DEFAULT_PUT_GET_MAX_ATTEMPTS)
+            .await;
 
     assert!(result.is_ok(), "403 should be retried and succeed");
     assert_eq!(
@@ -152,7 +157,9 @@ async fn gcs_download_400_with_presigned_url_is_retried() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", 6).await;
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", DEFAULT_PUT_GET_MAX_ATTEMPTS)
+            .await;
 
     assert!(
         result.is_ok(),
@@ -177,7 +184,9 @@ async fn gcs_download_400_without_presigned_url_is_not_retried() {
         .await;
 
     let stage = gcs_stage_with_token(&server.uri());
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", 6).await;
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", DEFAULT_PUT_GET_MAX_ATTEMPTS)
+            .await;
 
     assert!(
         result.is_err(),
@@ -210,7 +219,9 @@ async fn gcs_download_404_is_not_retried() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", 6).await;
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", DEFAULT_PUT_GET_MAX_ATTEMPTS)
+            .await;
 
     assert!(result.is_err(), "404 should be a hard failure");
     assert_eq!(attempt.load(Ordering::SeqCst), 1, "should NOT retry 404");
@@ -241,7 +252,9 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", 6).await;
+    let result =
+        sf_core::file_manager::download_from_gcs(&stage, "file.csv", DEFAULT_PUT_GET_MAX_ATTEMPTS)
+            .await;
 
     assert!(
         result.is_ok(),

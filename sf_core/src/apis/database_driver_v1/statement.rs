@@ -17,7 +17,7 @@ use super::validation::{
 };
 use crate::config::ParamStore;
 use crate::config::param_registry::ParamKey;
-use crate::config::param_registry::param_names;
+use crate::config::param_registry::{DEFAULT_PUT_GET_MAX_ATTEMPTS, param_names};
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
@@ -37,18 +37,18 @@ use std::{collections::HashMap, sync::Arc};
 /// Reads the user's `put_get_max_attempts` override from the connection seed.
 ///
 /// Returns the resolved per-file PUT/GET HTTP retry budget. The default
-/// (6) lives on the `ParamDef` and is mirrored here for the
-/// not-yet-resolved case (no init-time `set_option`, no post-init write).
-/// Out-of-range values fall back to the default rather than failing the
-/// statement, keeping the dispatch site robust against post-init
-/// `connection_set_option_int` writes that bypass param-registry
-/// validation.
+/// (`DEFAULT_PUT_GET_MAX_ATTEMPTS`) is also declared on the `ParamDef`
+/// and is mirrored here for the not-yet-resolved case (no init-time
+/// `set_option`, no post-init write). Out-of-range values fall back to
+/// the default rather than failing the statement, keeping the dispatch
+/// site robust against post-init `connection_set_option_int` writes
+/// that bypass param-registry validation.
 fn read_put_get_max_attempts(conn: &Connection) -> u32 {
     conn.connection_seed
         .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
         .filter(|v| *v > 0 && *v <= u32::MAX as i64)
         .map(|v| v as u32)
-        .unwrap_or(6)
+        .unwrap_or(DEFAULT_PUT_GET_MAX_ATTEMPTS)
 }
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -837,14 +837,18 @@ mod tests {
     }
 
     /// `read_put_get_max_attempts` is the dispatch-site read for the
-    /// `put_get_max_attempts` knob. The default (6) lives on the
-    /// `ParamDef` and is mirrored as the helper's fallback. Out-of-range
-    /// values must fall back to the default rather than panic or surface
-    /// as a statement error — see the helper's doc comment.
+    /// `put_get_max_attempts` knob. The default
+    /// (`DEFAULT_PUT_GET_MAX_ATTEMPTS`) is declared on the `ParamDef`
+    /// and mirrored as the helper's fallback. Out-of-range values must
+    /// fall back to the default rather than panic or surface as a
+    /// statement error — see the helper's doc comment.
     #[test]
     fn read_put_get_max_attempts_unset_yields_default() {
         let conn = Connection::new();
-        assert_eq!(read_put_get_max_attempts(&conn), 6);
+        assert_eq!(
+            read_put_get_max_attempts(&conn),
+            DEFAULT_PUT_GET_MAX_ATTEMPTS
+        );
     }
 
     #[test]
@@ -871,7 +875,11 @@ mod tests {
                 param_names::PUT_GET_MAX_ATTEMPTS.as_str().to_string(),
                 Setting::Int(bad),
             );
-            assert_eq!(read_put_get_max_attempts(&conn), 6, "bad value: {bad}");
+            assert_eq!(
+                read_put_get_max_attempts(&conn),
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+                "bad value: {bad}"
+            );
         }
     }
 

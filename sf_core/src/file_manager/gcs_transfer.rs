@@ -569,6 +569,7 @@ pub enum GcsDownloadError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::sensitive::SensitiveString;
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
@@ -770,7 +771,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_403() {
-        let policy = gcs_retry_policy(false, 6);
+        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             policy.extra_retryable_statuses.contains(&403),
             "403 should be retryable for GCS (matches JDBC/ODBC)"
@@ -779,7 +780,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_400_for_presigned_urls() {
-        let policy = gcs_retry_policy(true, 6);
+        let policy = gcs_retry_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             policy.extra_retryable_statuses.contains(&400),
             "400 should be retryable when using presigned URLs"
@@ -788,7 +789,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_excludes_400_without_presigned_urls() {
-        let policy = gcs_retry_policy(false, 6);
+        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert!(
             !policy.extra_retryable_statuses.contains(&400),
             "400 should not be retryable without presigned URLs"
@@ -829,7 +830,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = gcs_retry_policy(false, 6);
+        let policy = gcs_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         assert_eq!(
             policy.max_elapsed,
             Duration::from_secs(600),
