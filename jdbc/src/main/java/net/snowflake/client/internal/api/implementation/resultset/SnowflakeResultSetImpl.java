@@ -36,6 +36,8 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.apache.arrow.c.ArrowArrayStream;
@@ -44,6 +46,8 @@ import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
+
+  private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeResultSetImpl.class);
 
   private final SnowflakeStatementImpl statement;
   private final CursorState cursor = new CursorState();
@@ -419,11 +423,21 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
     return fetchDirection;
   }
 
+  /**
+   * Stored for JDBC spec compatibility but otherwise unused. Chunked result-set fetching is
+   * controlled by the {@code CLIENT_PREFETCH_THREADS} session parameter (set via the connection
+   * properties), not by this hint. This matches the behavior of the legacy snowflake-jdbc driver.
+   */
   @Override
   public void setFetchSize(int rows) throws SQLException {
     checkClosed();
     if (rows < 0) {
       throw new SQLException("Fetch size must be >= 0");
+    }
+    if (rows != 0) {
+      logger.debug(
+          "setFetchSize({}) is a no-op; tune fetches via the CLIENT_PREFETCH_THREADS connection property",
+          rows);
     }
     this.fetchSize = rows;
   }

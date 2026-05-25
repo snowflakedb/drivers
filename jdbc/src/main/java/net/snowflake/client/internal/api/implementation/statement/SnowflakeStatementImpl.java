@@ -394,9 +394,19 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     return ResultSet.FETCH_FORWARD;
   }
 
+  /**
+   * Stored for JDBC spec compatibility but otherwise unused. Chunked result-set fetching is
+   * controlled by the {@code CLIENT_PREFETCH_THREADS} session parameter (set via the connection
+   * properties), not by this hint. This matches the behavior of the legacy snowflake-jdbc driver.
+   */
   @Override
   public void setFetchSize(int rows) throws SQLException {
     checkClosed();
+    if (rows != 0) {
+      logger.debug(
+          "setFetchSize({}) is a no-op; tune fetches via the CLIENT_PREFETCH_THREADS connection property",
+          rows);
+    }
     this.fetchSize = rows;
   }
 
