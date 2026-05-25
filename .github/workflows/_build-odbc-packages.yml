@@ -1,7 +1,7 @@
 name: Build ODBC Packages
 
 # Reusable workflow that builds every distributable ODBC artifact (MSI on
-# Windows for x64/x86/arm64, RPM on Linux for x86_64/aarch64, DMG on macOS
+# Windows for x64/x86/arm64, RPM on Linux for x86_64/aarch64, .pkg on macOS
 # universal). The Windows MSIs depend on a WiX toolchain that we build from
 # source as the first job here, so the whole graph lives together to keep
 # the build_wix → build_msi edge inside this file.
@@ -319,31 +319,31 @@ jobs:
           name: snowflake-odbc-ud-rpm-${{ matrix.arch }}
           path: build/snowflake-odbc-ud-*.rpm
 
-  build_dmg:
+  build_pkg:
     runs-on: macos-latest
-    name: build_dmg (macOS Universal)
+    name: build_pkg (macOS Universal)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Restore Cargo registry cache (DMG build)
+      - name: Restore Cargo registry cache (pkg build)
         uses: actions/cache/restore@v5
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-universal-cargo-registry-pkg-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-universal-cargo-registry-dmg-
+            ${{ runner.os }}-universal-cargo-registry-pkg-
 
-      - name: Restore Rust target cache (DMG build)
+      - name: Restore Rust target cache (pkg build)
         uses: actions/cache/restore@v5
         with:
-          path: .cargo-target-dmg
-          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
+          path: .cargo-target-pkg
+          key: ${{ runner.os }}-universal-rust-pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-universal-rust-dmg-release-target-
+            ${{ runner.os }}-universal-rust-pkg-release-target-
 
       - name: Prepare cache directories
-        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-dmg
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-pkg
 
       - name: Install Rust targets
         run: |
@@ -360,42 +360,42 @@ jobs:
         run: cargo build --release --package odbc --features vendored-openssl --target x86_64-apple-darwin
         env:
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-pkg
           RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
 
       - name: Build ODBC driver (aarch64)
         run: cargo build --release --package odbc --features vendored-openssl --target aarch64-apple-darwin
         env:
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-dmg
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-pkg
           RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
 
-      - name: Save Cargo registry cache (DMG build)
+      - name: Save Cargo registry cache (pkg build)
         if: always()
         continue-on-error: true
         timeout-minutes: 10
         uses: actions/cache/save@v5
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-universal-cargo-registry-dmg-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-universal-cargo-registry-pkg-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Save Rust target cache (DMG build)
+      - name: Save Rust target cache (pkg build)
         if: always()
         continue-on-error: true
         timeout-minutes: 15
         uses: actions/cache/save@v5
         with:
-          path: .cargo-target-dmg
-          key: ${{ runner.os }}-universal-rust-dmg-release-target-${{ hashFiles('**/Cargo.lock') }}
+          path: .cargo-target-pkg
+          key: ${{ runner.os }}-universal-rust-pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Package DMG
+      - name: Package pkg
         run: ./odbc/installer/mac/package.sh
         env:
-          DRIVER_X86_64: .cargo-target-dmg/x86_64-apple-darwin/release/libsfodbc.dylib
-          DRIVER_ARM64: .cargo-target-dmg/aarch64-apple-darwin/release/libsfodbc.dylib
+          DRIVER_X86_64: .cargo-target-pkg/x86_64-apple-darwin/release/libsfodbc.dylib
+          DRIVER_ARM64: .cargo-target-pkg/aarch64-apple-darwin/release/libsfodbc.dylib
 
-      - name: Upload DMG
+      - name: Upload pkg
         uses: actions/upload-artifact@v4
         with:
           name: snowflake-odbc-ud-macos-universal
-          path: build/snowflake-odbc-ud-*.dmg
+          path: build/snowflake-odbc-ud-*.pkg

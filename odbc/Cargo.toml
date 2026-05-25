@@ -8,7 +8,7 @@ edition = "2024"
 # registered as DriverODBCVer with unixODBC / the Windows ODBC registry.
 # Format is "MM.mm" (e.g. "03.80").
 odbc_api_version = "03.80"
-# Snowflake ODBC UD release version used as the RPM / DMG / MSI artifact
+# Snowflake ODBC UD release version used as the artifact
 # version and embedded in the Windows DLL VERSIONINFO resource. The git
 # short SHA is appended at packaging time to produce the full release string.
 # Format is "<major>.<minor>.<patch>" (e.g. "0.0.1").
