@@ -389,14 +389,14 @@ pub(crate) unsafe fn read_wide_string_in(
     if ptr.is_null() {
         return NullPointerSnafu.fail();
     }
-    // Matches the legacy Narrow/Wide read_string contract: explicit
-    // non-positive lengths are rejected; only [`sql::NTS`] is accepted as
-    // a special sentinel for "null-terminated".
-    if length != sql::NTS as i32 && length <= 0 {
+    if length != sql::NTS as i32 && length < 0 {
         return InvalidBufferLengthSnafu {
             length: length as i64,
         }
         .fail();
+    }
+    if length == 0 {
+        return Ok(String::new());
     }
     match enc {
         WCharEncoding::Utf16 => {
@@ -519,11 +519,14 @@ impl OdbcEncoding for Narrow {
         if text.is_null() {
             return NullPointerSnafu.fail();
         }
-        if length != sql::NTS as i32 && length <= 0 {
+        if length != sql::NTS as i32 && length < 0 {
             return InvalidBufferLengthSnafu {
                 length: length as i64,
             }
             .fail();
+        }
+        if length == 0 {
+            return Ok(String::new());
         }
         if length == sql::NTS as i32 {
             let cstr =
@@ -910,31 +913,48 @@ mod tests {
     }
 
     #[test]
-    fn read_wide_string_in_rejects_non_positive_explicit_lengths() {
+    fn read_wide_string_in_rejects_negative_explicit_lengths() {
         for enc in [WCharEncoding::Utf16, WCharEncoding::Utf32] {
             // 4-byte alignment so the UTF-32 reinterpretation can pass
             // any internal slice precondition; we only care about the
             // pre-slice length check here.
             let buf: [u32; 1] = [0];
-            for bad in [-1, 0] {
-                let res = unsafe { read_wide_string_in(buf.as_ptr() as *const u16, bad, enc) };
-                assert!(matches!(
-                    res,
-                    Err(crate::api::OdbcError::InvalidBufferLength { .. })
-                ));
-            }
-        }
-    }
-
-    #[test]
-    fn narrow_read_string_rejects_non_positive_explicit_lengths() {
-        let buf = [0u8; 1];
-        for bad in [-1, 0] {
-            let res = Narrow::read_string(buf.as_ptr(), bad);
+            let res = unsafe { read_wide_string_in(buf.as_ptr() as *const u16, -1, enc) };
             assert!(matches!(
                 res,
                 Err(crate::api::OdbcError::InvalidBufferLength { .. })
             ));
         }
+    }
+
+    /// Explicit length 0 must produce an empty string, not an error. This
+    /// is what `read_wchar_str` does for an empty null-terminated
+    /// `SQL_C_WCHAR` parameter (`SQLWCHAR val[] = {0}; SQL_NTS`):
+    /// `wide_strlen_bounded` returns 0 and the reader is called with
+    /// length 0, which must round-trip to "".
+    #[test]
+    fn read_wide_string_in_accepts_zero_length_as_empty() {
+        for enc in [WCharEncoding::Utf16, WCharEncoding::Utf32] {
+            let buf: [u32; 1] = [0];
+            let res = unsafe { read_wide_string_in(buf.as_ptr() as *const u16, 0, enc) }.unwrap();
+            assert_eq!(res, "");
+        }
+    }
+
+    #[test]
+    fn narrow_read_string_rejects_negative_explicit_lengths() {
+        let buf = [0u8; 1];
+        let res = Narrow::read_string(buf.as_ptr(), -1);
+        assert!(matches!(
+            res,
+            Err(crate::api::OdbcError::InvalidBufferLength { .. })
+        ));
+    }
+
+    #[test]
+    fn narrow_read_string_accepts_zero_length_as_empty() {
+        let buf = [0u8; 1];
+        let res = Narrow::read_string(buf.as_ptr(), 0).unwrap();
+        assert_eq!(res, "");
     }
 }
