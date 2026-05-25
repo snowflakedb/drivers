@@ -114,15 +114,12 @@ pub async fn upload_single_file(
         )
         .await
         .context(S3UploadSnafu)?,
-        // GCS and Azure transfers do not yet honor `put_get_max_attempts` —
-        // their retry budgets stay on the per-cloud built-in defaults.
-        // Wire it through here when the same gap is filled for those
-        // backends.
         LocationType::Gcs => upload_to_gcs_or_skip(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            put_get_max_attempts,
         )
         .await
         .context(GcsUploadSnafu)?,
@@ -131,6 +128,7 @@ pub async fn upload_single_file(
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
+            put_get_max_attempts,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -358,14 +356,20 @@ pub async fn download_single_file(
         )
         .await
         .context(S3DownloadSnafu)?,
-        // GCS/Azure download paths do not yet honor `put_get_max_attempts`;
-        // see the matching note in `upload_single_file`.
-        LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(GcsDownloadSnafu)?,
-        LocationType::Azure => download_from_azure(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(AzureDownloadSnafu)?,
+        LocationType::Gcs => download_from_gcs(
+            &data.stage_info,
+            data.src_location.as_str(),
+            put_get_max_attempts,
+        )
+        .await
+        .context(GcsDownloadSnafu)?,
+        LocationType::Azure => download_from_azure(
+            &data.stage_info,
+            data.src_location.as_str(),
+            put_get_max_attempts,
+        )
+        .await
+        .context(AzureDownloadSnafu)?,
     };
 
     let output_data = match data.encryption_material.as_ref() {

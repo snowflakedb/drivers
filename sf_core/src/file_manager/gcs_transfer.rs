@@ -21,6 +21,7 @@ pub async fn upload_to_gcs_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
+    max_attempts: Option<u32>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -32,7 +33,15 @@ pub async fn upload_to_gcs_or_skip(
         return Ok(UploadStatus::Skipped);
     }
 
-    upload_to_gcs(&client, &url, token, prepared, using_presigned_url).await?;
+    upload_to_gcs(
+        &client,
+        &url,
+        token,
+        prepared,
+        using_presigned_url,
+        max_attempts,
+    )
+    .await?;
     Ok(UploadStatus::Uploaded)
 }
 
@@ -47,6 +56,7 @@ pub async fn upload_to_gcs_or_skip(
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
+    max_attempts: Option<u32>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -63,6 +73,7 @@ pub async fn download_from_gcs(
         },
         Method::GET,
         using_presigned_url,
+        max_attempts,
     )
     .await?;
 
@@ -164,6 +175,7 @@ async fn upload_to_gcs(
     token: Option<&str>,
     prepared: PreparedUpload,
     using_presigned_url: bool,
+    max_attempts: Option<u32>,
 ) -> Result<(), GcsUploadError> {
     let encryption_data_str = prepared
         .encryption_metadata
@@ -206,6 +218,7 @@ async fn upload_to_gcs(
         },
         Method::PUT,
         using_presigned_url,
+        max_attempts,
     )
     .await?;
 
@@ -215,17 +228,25 @@ async fn upload_to_gcs(
 
 // --- Retry logic (delegates to http::retry) ---
 
+/// Default attempts cap when the user has not set `put_get_max_attempts`.
+/// Matches the S3/Azure policies for cross-cloud parity.
+const DEFAULT_MAX_ATTEMPTS: u32 = 6;
+
 /// Returns a retry policy tuned for GCS file-transfer operations.
 ///
 /// GCS treats 403 as retryable (temporary credential issues), and 400 is
 /// retryable when using presigned URLs (URL may have expired).
-fn gcs_retry_policy(using_presigned_url: bool) -> RetryPolicy {
+///
+/// `max_attempts` is the user-supplied `put_get_max_attempts` override
+/// (`None` = use the default). See `s3_transfer::s3_retry_policy` for the
+/// canonical contract; this module mirrors it for cross-cloud parity.
+fn gcs_retry_policy(using_presigned_url: bool, max_attempts: Option<u32>) -> RetryPolicy {
     let mut extra = vec![403];
     if using_presigned_url {
         extra.push(400);
     }
     RetryPolicy {
-        max_attempts: 6,
+        max_attempts: max_attempts.unwrap_or(DEFAULT_MAX_ATTEMPTS),
         backoff: BackoffConfig {
             base: Duration::from_secs(1),
             factor: 2.0,
@@ -245,12 +266,13 @@ async fn gcs_request_with_retry<F>(
     build_request: F,
     method: Method,
     using_presigned_url: bool,
+    max_attempts: Option<u32>,
 ) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
     let ctx = HttpContext::new(method, "gcs-transfer");
-    let policy = gcs_retry_policy(using_presigned_url);
+    let policy = gcs_retry_policy(using_presigned_url, max_attempts);
 
     let response = http_execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
         .await
@@ -754,7 +776,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_403() {
-        let policy = gcs_retry_policy(false);
+        let policy = gcs_retry_policy(false, None);
         assert!(
             policy.extra_retryable_statuses.contains(&403),
             "403 should be retryable for GCS (matches JDBC/ODBC)"
@@ -763,7 +785,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_includes_400_for_presigned_urls() {
-        let policy = gcs_retry_policy(true);
+        let policy = gcs_retry_policy(true, None);
         assert!(
             policy.extra_retryable_statuses.contains(&400),
             "400 should be retryable when using presigned URLs"
@@ -772,7 +794,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_excludes_400_without_presigned_urls() {
-        let policy = gcs_retry_policy(false);
+        let policy = gcs_retry_policy(false, None);
         assert!(
             !policy.extra_retryable_statuses.contains(&400),
             "400 should not be retryable without presigned URLs"
@@ -813,7 +835,7 @@ mod tests {
 
     #[test]
     fn gcs_retry_policy_max_elapsed_exceeds_request_timeout() {
-        let policy = gcs_retry_policy(false);
+        let policy = gcs_retry_policy(false, None);
         assert_eq!(
             policy.max_elapsed,
             Duration::from_secs(600),
@@ -826,9 +848,18 @@ mod tests {
     }
 
     #[test]
-    fn gcs_retry_policy_max_attempts() {
-        let policy = gcs_retry_policy(false);
-        assert_eq!(policy.max_attempts, 6);
+    fn gcs_retry_policy_default_max_attempts() {
+        let policy = gcs_retry_policy(false, None);
+        assert_eq!(policy.max_attempts, DEFAULT_MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn gcs_retry_policy_max_attempts_override() {
+        // Mirrors the S3/Azure contract: a user-supplied
+        // `put_get_max_attempts` replaces the per-cloud default. `Some(1)`
+        // disables retries (1 attempt = no retry).
+        assert_eq!(gcs_retry_policy(false, Some(25)).max_attempts, 25);
+        assert_eq!(gcs_retry_policy(false, Some(1)).max_attempts, 1);
     }
 
     // ---------------------------------------------------------------
