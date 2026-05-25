@@ -481,6 +481,18 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Non-character and non-binary data sent in pieces"))]
+    NonCharBinarySentInPieces {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Attempt to concatenate a null value"))]
+    ConcatNullValue {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -601,6 +613,8 @@ impl OdbcError {
             OdbcError::InvalidConnectionString { .. } => ErrorSource::ConfigParsing,
             OdbcError::DaeRequired { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDuringDae { .. } => ErrorSource::ApiMisuse,
+            OdbcError::NonCharBinarySentInPieces { .. } => ErrorSource::ApiMisuse,
+            OdbcError::ConcatNullValue { .. } => ErrorSource::ApiMisuse,
         }
     }
 
@@ -865,6 +879,10 @@ impl OdbcError {
             OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::DaeRequired { .. } => SqlState::GeneralError,
             OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
+            OdbcError::NonCharBinarySentInPieces { .. } => {
+                SqlState::NonCharacterAndNonBinaryDataSentInPieces
+            }
+            OdbcError::ConcatNullValue { .. } => SqlState::AttemptToConcatenateNullValue,
         }
     }
 
