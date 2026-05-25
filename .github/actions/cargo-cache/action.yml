@@ -87,11 +87,14 @@ runs:
     #   v1: initial cache action (Apr 17 2025)
     #   v2: aggressive slim + size cap + llvm-cov layout (Apr 29 2025) — busts
     #       the 13-15 GB tarpaulin caches that don't honour the 6 GB cap.
+    #   v3: include ~/.cache/protoc in the registry cache so the proto_generator
+    #       build script never has to hit GitHub Releases on a warm cache hit.
+    #       Bust v2 to force one clean rebuild that primes the new path layout.
     - name: Compute cache keys
       id: keys
       shell: bash
       run: |
-        CACHE_VERSION='v2'
+        CACHE_VERSION='v3'
         LOCK_HASH="${{ hashFiles(inputs.lockfiles) }}"
         echo "registry=${{ runner.os }}-cargo-registry-${CACHE_VERSION}-${LOCK_HASH}" >> $GITHUB_OUTPUT
         echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${CACHE_VERSION}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
@@ -102,11 +105,18 @@ runs:
     # ENOSPC during extract should not fail the job — the build can still run
     # from scratch. Workflow callers also wrap this composite in a step-level
     # continue-on-error for redundant protection.
-    # restore-keys include the CACHE_VERSION (v2) so a partial-prefix match
-    # never pulls in a v1 cache shaped under the old slim rules. The version
-    # is hard-coded here intentionally — duplicating the literal from the keys
-    # step above. If you bump CACHE_VERSION, also bump it here in both restore
-    # steps' restore-keys.
+    # restore-keys include the CACHE_VERSION (v3) so a partial-prefix match
+    # never pulls in an older cache shaped under different slim rules / path
+    # layouts. The version is hard-coded here intentionally — duplicating the
+    # literal from the keys step above. If you bump CACHE_VERSION, also bump it
+    # here in both restore steps' restore-keys.
+    #
+    # ~/.cache/protoc is included in the registry cache so a warm-cache job
+    # finds the already-extracted protoc binary at the path the build script
+    # checks first (proto_generator::protoc_installer::cache_dir) and never
+    # calls GitHub Releases. Path matches the Unix layout the build script
+    # writes to on every OS (see home_dir() fallback to USERPROFILE on Windows
+    # — actions/cache normalises ~/ correctly across runners).
     - name: Restore Cargo registry cache
       id: restore-registry
       if: inputs.mode == 'restore'
@@ -117,8 +127,9 @@ runs:
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
           ~/.cargo/git/db
+          ~/.cache/protoc
         key: ${{ steps.keys.outputs.registry }}
-        restore-keys: ${{ runner.os }}-cargo-registry-v2-
+        restore-keys: ${{ runner.os }}-cargo-registry-v3-
 
     - name: Restore Rust target cache
       id: restore-target
@@ -129,8 +140,8 @@ runs:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}
         restore-keys: |
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v2-${{ steps.rustc.outputs.hash }}-
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v2-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v3-${{ steps.rustc.outputs.hash }}-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v3-
 
     # ── Save mode ──
     # Two-layer guard before calling actions/cache/save@v5 (which is the slow step — tar of
@@ -154,6 +165,7 @@ runs:
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
           ~/.cargo/git/db
+          ~/.cache/protoc
         key: ${{ steps.keys.outputs.registry }}
         lookup-only: true
 
@@ -188,6 +200,7 @@ runs:
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
           ~/.cargo/git/db
+          ~/.cache/protoc
         key: ${{ steps.keys.outputs.registry }}
 
     - name: Pre-save check — target cache already exists?
