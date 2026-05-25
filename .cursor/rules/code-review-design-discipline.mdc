@@ -42,7 +42,18 @@ fn default_launch() -> Launcher {
     })
 }
 
-// ✅ Config-injected, cfg-defaulted, no global state
+// ✅ Primary: inject from the call site — zero global state, no cfg needed
+pub struct Connection {
+    browser_launcher: Arc<dyn Fn(&str) + Send + Sync>,
+}
+// In tests — thread the no-op from the test itself:
+Connection::new(config, Arc::new(|_url| {}))
+// In production — wire the real launcher at the top-level entry point:
+Connection::new(config, Arc::new(|url| { webbrowser::open(url).ok(); }))
+
+// ⚠️ Workaround (last resort): compile-time substitution via cfg, when threading DI
+//    through the call stack is impractical in the near term. No global state, but the
+//    override is binary (test vs. prod) and can't be varied per test.
 pub(crate) browser_launcher: Option<Arc<dyn Fn() -> Launcher + Send + Sync>>,
 // in from_settings():
 #[cfg(any(test, feature = "test-utils"))]
