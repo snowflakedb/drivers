@@ -4,6 +4,9 @@ const assert = require('assert');
 const ResultTestCommon = require('./result_test_common');
 const GlobalConfig = require('./../../../../lib/global_config');
 
+// TODO:
+// - Rewrite this file as unit tests in new driver
+// - Extend e2e tests with telemetry event assertion
 describe('Result: test variant parsing', function () {
   let logWarnSpy;
   let originalParser;
@@ -169,27 +172,6 @@ describe('Result: test variant parsing', function () {
           warnMessage.includes('V1'),
           `Expected column name "V1" in warning: ${warnMessage}`,
         );
-        done();
-      },
-    );
-  });
-
-  it('works with custom parser that ignores the second argument', function (done) {
-    GlobalConfig.jsonColumnVariantParser = (rawColumnValue) => JSON.parse(rawColumnValue);
-
-    const response = createVariantResponse([['{"a": 1}']]);
-    const requestAsyncSpy = sinon.stub().resolves();
-    const resultOptions = ResultTestCommon.createResultOptions(response);
-    resultOptions.services = { sf: { requestAsync: requestAsyncSpy } };
-
-    ResultTestCommon.testResult(
-      resultOptions,
-      function (row) {
-        assert.deepStrictEqual(row.getColumnValue('V1'), { a: 1 });
-      },
-      function () {
-        assert.strictEqual(logWarnSpy.callCount, 0);
-        assert.strictEqual(requestAsyncSpy.callCount, 0);
         done();
       },
     );

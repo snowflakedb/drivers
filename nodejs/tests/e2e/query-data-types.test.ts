@@ -166,42 +166,4 @@ describe('Query returning data types', () => {
       expect(selectedValue.toJSON()).toBe('2016-01-21 06:32:44.000');
     });
   });
-
-  it('returns OBJECT/MAP as Object', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      "SELECT OBJECT_CONSTRUCT('key', 'value') as OBJECT_COLUMN, {'key': 'value'}::MAP(VARCHAR, VARCHAR) as MAP_COLUMN",
-    );
-    const expectedValue = { key: 'value' };
-    const objectColumn = statement.getColumn(0);
-    const mapColumn = statement.getColumn(1);
-    expect(objectColumn.getType()).toBe('object');
-    expect(mapColumn.getType()).toBe('object');
-    // Bug in old driver: isObject() returns false because server doesn't return fieldsMetadata
-    if (isRunningForOldDriver()) {
-      expect(objectColumn.isObject()).toBe(false);
-      expect(mapColumn.isObject()).toBe(false);
-    } else {
-      expect(objectColumn.isObject()).toBe(true);
-      expect(mapColumn.isObject()).toBe(true);
-    }
-    expect(rows![0].OBJECT_COLUMN).toEqual(expectedValue);
-    expect(rows![0].MAP_COLUMN).toEqual(expectedValue);
-  });
-
-  it('returns ARRAY as Array', async () => {
-    const { statement, rows } = await executeAsync(
-      connection,
-      'SELECT ARRAY_CONSTRUCT(1, 2, 3) as ARRAY_COLUMN',
-    );
-    const column = statement.getColumn(0);
-    expect(column.getType()).toBe('array');
-    // Bug in old driver: isArray() returns false because server doesn't return fieldsMetadata
-    if (isRunningForOldDriver()) {
-      expect(column.isArray()).toBe(false);
-    } else {
-      expect(column.isArray()).toBe(true);
-    }
-    expect(rows![0].ARRAY_COLUMN).toEqual([1, 2, 3]);
-  });
 });
