@@ -19,7 +19,7 @@ pub mod telemetry;
 pub mod types;
 pub mod utils;
 
-pub use encoding::{Narrow, Wide};
+pub(crate) use encoding::{Narrow, Wide};
 pub use error::OdbcError;
 pub use sql_state::SqlState;
 pub use types::OdbcResult;

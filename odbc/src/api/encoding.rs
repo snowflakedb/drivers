@@ -38,10 +38,10 @@ pub type WideChar = u16;
 pub const WIDE_CHAR_SIZE: usize = std::mem::size_of::<WideChar>();
 
 /// `sf.odbc.ini` key that selects the encoding interpretation.
-pub const DRIVER_MANAGER_ENCODING_KEY: &str = "DriverManagerEncoding";
+const DRIVER_MANAGER_ENCODING_KEY: &str = "DriverManagerEncoding";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum WCharEncoding {
+pub(crate) enum WCharEncoding {
     Utf16,
     Utf32,
 }
@@ -75,22 +75,18 @@ static WCHAR_ENCODING: OnceLock<WCharEncoding> = OnceLock::new();
 
 static MISMATCH_WARNED: AtomicBool = AtomicBool::new(false);
 
-#[derive(Debug)]
-pub struct AlreadyInitialisedError;
-
-pub fn init_wchar_encoding(enc: WCharEncoding) -> Result<(), AlreadyInitialisedError> {
-    WCHAR_ENCODING.set(enc).map_err(|_| AlreadyInitialisedError)
-}
-
-pub fn negotiate_from_config() {
+pub(crate) fn negotiate_from_config() {
     let enc = sf_core::config::get_ini_config()
         .and_then(|ini| ini.get(DRIVER_MANAGER_ENCODING_KEY))
         .and_then(parse_wchar_encoding_value)
         .unwrap_or(WCharEncoding::Utf16);
-    let _ = init_wchar_encoding(enc);
+    // First call wins; subsequent calls are no-ops by design (the
+    // negotiated DM-side wide width must remain stable for the life of
+    // the process).
+    let _ = WCHAR_ENCODING.set(enc);
 }
 
-pub fn parse_wchar_encoding_value(s: &str) -> Option<WCharEncoding> {
+fn parse_wchar_encoding_value(s: &str) -> Option<WCharEncoding> {
     let s = s.trim();
     if s.eq_ignore_ascii_case("utf-16") || s.eq_ignore_ascii_case("utf16") {
         Some(WCharEncoding::Utf16)
@@ -102,7 +98,7 @@ pub fn parse_wchar_encoding_value(s: &str) -> Option<WCharEncoding> {
 }
 
 #[inline]
-pub fn current_wchar_encoding() -> WCharEncoding {
+pub(crate) fn current_wchar_encoding() -> WCharEncoding {
     WCHAR_ENCODING
         .get()
         .copied()
@@ -110,7 +106,7 @@ pub fn current_wchar_encoding() -> WCharEncoding {
 }
 
 #[inline]
-pub fn wchar_byte_size() -> usize {
+pub(crate) fn wchar_byte_size() -> usize {
     current_wchar_encoding().byte_size()
 }
 
@@ -131,7 +127,7 @@ pub fn wchar_byte_size() -> usize {
 /// data before evaluating, because a single-char-plus-null UTF-16 buffer
 /// (`XX 00 00 00`) is byte-identical to a single-char UTF-32 buffer in the
 /// first 4 bytes. No warning is ever issued for ambiguous inputs.
-pub fn detect_wchar_encoding_from_bytes(ptr: *const WideChar, length: sql::Integer) {
+fn detect_wchar_encoding_from_bytes(ptr: *const WideChar, length: sql::Integer) {
     if MISMATCH_WARNED.load(Ordering::Relaxed) {
         return;
     }
@@ -203,17 +199,22 @@ fn inspect_wchar_byte_pattern(ptr: *const WideChar, length: sql::Integer) -> Opt
 // ---------------------------------------------------------------------------
 
 /// Encode `s` as UTF-16 code units. Always UTF-16, regardless of runtime
-/// encoding.
+/// encoding. Not part of the driver's public API — production code must
+/// use [`write_wide_buffer`] so the runtime [`WCharEncoding`] is honoured.
 #[allow(dead_code)] // used only from `#[cfg(test)]` modules
+#[doc(hidden)]
 #[inline]
-pub fn encode_wide(s: &str) -> Vec<WideChar> {
+pub(crate) fn encode_wide(s: &str) -> Vec<WideChar> {
     s.encode_utf16().collect()
 }
 
 /// Decode a UTF-16 slice into a `String`. Always UTF-16, regardless of
-/// runtime encoding.
+/// runtime encoding. Not part of the driver's public API — production
+/// code must use the [`OdbcEncoding`] trait so the runtime
+/// [`WCharEncoding`] is honoured.
 #[allow(dead_code)] // used only from `#[cfg(test)]` modules
-pub fn decode_wide(units: &[WideChar]) -> OdbcResult<String> {
+#[doc(hidden)]
+pub(crate) fn decode_wide(units: &[WideChar]) -> OdbcResult<String> {
     String::from_utf16(units).context(TextConversionFromUtf16Snafu {})
 }
 
@@ -221,9 +222,7 @@ pub fn decode_wide(units: &[WideChar]) -> OdbcResult<String> {
 // Encoding-aware helpers — explicit-encoding form.
 //
 // The `*_in` variants take a `WCharEncoding` directly and are pure with
-// respect to global state. Tests that need to exercise both encodings in
-// the same process call these directly. The convenience wrappers below
-// route through `current_wchar_encoding()` for production callers.
+// respect to global state.
 //
 // All counts and offsets they operate on are in **DM-side code units**
 // (one `u16` in UTF-16 mode; one `u32` in UTF-32 mode).
@@ -231,8 +230,9 @@ pub fn decode_wide(units: &[WideChar]) -> OdbcResult<String> {
 
 /// Number of DM-side `SQLWCHAR` code units required to encode `s` under
 /// `enc`.
+#[doc(hidden)]
 #[inline]
-pub fn wide_unit_len_in(s: &str, enc: WCharEncoding) -> usize {
+pub(crate) fn wide_unit_len_in(s: &str, enc: WCharEncoding) -> usize {
     match enc {
         WCharEncoding::Utf16 => s.encode_utf16().count(),
         WCharEncoding::Utf32 => s.chars().count(),
@@ -242,7 +242,7 @@ pub fn wide_unit_len_in(s: &str, enc: WCharEncoding) -> usize {
 /// Number of DM-side `SQLWCHAR` code units required to encode `s` under
 /// the negotiated runtime encoding.
 #[inline]
-pub fn wide_unit_len(s: &str) -> usize {
+pub(crate) fn wide_unit_len(s: &str) -> usize {
     wide_unit_len_in(s, current_wchar_encoding())
 }
 
@@ -258,7 +258,8 @@ pub fn wide_unit_len(s: &str) -> usize {
 /// `buf` must point to a writable buffer of at least
 /// `max_units * enc.byte_size()` bytes that remains valid for the
 /// duration of the call.
-pub unsafe fn write_wide_buffer_in(
+#[doc(hidden)]
+pub(crate) unsafe fn write_wide_buffer_in(
     s: &str,
     buf: *mut WideChar,
     max_units: usize,
@@ -294,7 +295,7 @@ pub unsafe fn write_wide_buffer_in(
 /// # Safety
 /// See [`write_wide_buffer_in`].
 #[inline]
-pub unsafe fn write_wide_buffer(
+pub(crate) unsafe fn write_wide_buffer(
     s: &str,
     buf: *mut WideChar,
     max_units: usize,
@@ -309,7 +310,8 @@ pub unsafe fn write_wide_buffer(
 /// # Safety
 /// `buf.add(pos)` (UTF-16) or `(buf as *mut u32).add(pos)` (UTF-32) must
 /// be a valid writable address.
-pub unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCharEncoding) {
+#[doc(hidden)]
+pub(crate) unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCharEncoding) {
     match enc {
         WCharEncoding::Utf16 => unsafe { std::ptr::write(buf.add(pos), 0) },
         WCharEncoding::Utf32 => unsafe {
@@ -323,7 +325,7 @@ pub unsafe fn write_wide_null_in(buf: *mut WideChar, pos: usize, enc: WCharEncod
 /// # Safety
 /// See [`write_wide_null_in`].
 #[inline]
-pub unsafe fn write_wide_null(buf: *mut WideChar, pos: usize) {
+pub(crate) unsafe fn write_wide_null(buf: *mut WideChar, pos: usize) {
     unsafe { write_wide_null_in(buf, pos, current_wchar_encoding()) }
 }
 
@@ -334,7 +336,8 @@ pub unsafe fn write_wide_null(buf: *mut WideChar, pos: usize) {
 /// `ptr` must be valid for reads of at least `max_units * enc.byte_size()`
 /// bytes (or unbounded if `max_units == usize::MAX` and the caller has
 /// guaranteed a null terminator exists).
-pub unsafe fn wide_strlen_bounded_in(
+#[doc(hidden)]
+pub(crate) unsafe fn wide_strlen_bounded_in(
     ptr: *const WideChar,
     max_units: usize,
     enc: WCharEncoding,
@@ -367,7 +370,7 @@ pub unsafe fn wide_strlen_bounded_in(
 /// # Safety
 /// See [`wide_strlen_bounded_in`].
 #[inline]
-pub unsafe fn wide_strlen_bounded(ptr: *const WideChar, max_units: usize) -> usize {
+pub(crate) unsafe fn wide_strlen_bounded(ptr: *const WideChar, max_units: usize) -> usize {
     unsafe { wide_strlen_bounded_in(ptr, max_units, current_wchar_encoding()) }
 }
 
@@ -377,7 +380,8 @@ pub unsafe fn wide_strlen_bounded(ptr: *const WideChar, max_units: usize) -> usi
 /// # Safety
 /// `ptr` must be valid for reads of either `length * enc.byte_size()`
 /// bytes (explicit length) or up to the first null terminator (SQL_NTS).
-pub unsafe fn read_wide_string_in(
+#[doc(hidden)]
+pub(crate) unsafe fn read_wide_string_in(
     ptr: *const WideChar,
     length: sql::Integer,
     enc: WCharEncoding,
@@ -435,7 +439,7 @@ pub unsafe fn read_wide_string_in(
 }
 
 #[cfg(not(windows))]
-pub fn is_ascii_locale() -> bool {
+pub(crate) fn is_ascii_locale() -> bool {
     static RESULT: OnceLock<bool> = OnceLock::new();
     *RESULT.get_or_init(|| {
         let locale = unsafe { libc::setlocale(libc::LC_CTYPE, std::ptr::null()) };
@@ -448,7 +452,7 @@ pub fn is_ascii_locale() -> bool {
 }
 
 #[cfg(windows)]
-pub fn is_ascii_locale() -> bool {
+pub(crate) fn is_ascii_locale() -> bool {
     false
 }
 
@@ -459,7 +463,7 @@ pub fn is_ascii_locale() -> bool {
 /// ASCII-only in C/POSIX locales, and in practice the vast majority of
 /// values that flow through here (numbers, dates, times, English text)
 /// are already ASCII.
-pub fn mask_non_ascii_characters(src: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn mask_non_ascii_characters(src: &str) -> std::borrow::Cow<'_, str> {
     if src.is_ascii() {
         return std::borrow::Cow::Borrowed(src);
     }
@@ -472,7 +476,7 @@ pub fn mask_non_ascii_characters(src: &str) -> std::borrow::Cow<'_, str> {
 
 /// Abstracts over ANSI (narrow) and Unicode (wide) ODBC string operations,
 /// allowing API-layer functions to be written once as generics.
-pub trait OdbcEncoding {
+pub(crate) trait OdbcEncoding {
     type Char;
 
     /// Effective byte size of one DM-side code unit (1 for narrow, 2 or 4
@@ -496,13 +500,13 @@ pub trait OdbcEncoding {
 }
 
 /// Marker type for ANSI (narrow, `sql::Char` / `u8`) encoding.
-pub struct Narrow;
+pub(crate) struct Narrow;
 
 /// Marker type for Unicode (wide) encoding. The C ABI element type is
 /// always `u16` ([`WideChar`]); whether the bytes inside a buffer are
 /// interpreted as UTF-16 or UTF-32 is decided at runtime via
 /// [`WCharEncoding`].
-pub struct Wide;
+pub(crate) struct Wide;
 
 impl OdbcEncoding for Narrow {
     type Char = sql::Char;
@@ -601,7 +605,7 @@ impl OdbcEncoding for Wide {
 /// Returns an empty string if the pointer is null.
 ///
 /// Used by: `SQLSetConnectAttr`.
-pub fn read_string_from_pointer<E: OdbcEncoding>(
+pub(crate) fn read_string_from_pointer<E: OdbcEncoding>(
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
 ) -> OdbcResult<String> {
@@ -624,7 +628,7 @@ pub fn read_string_from_pointer<E: OdbcEncoding>(
 /// **DM-side code units** (characters) as `sql::SmallInt`.
 ///
 /// Used by: `SQLGetDiagRec`, `SQLDescribeCol`.
-pub fn write_string_chars<E: OdbcEncoding>(
+pub(crate) fn write_string_chars<E: OdbcEncoding>(
     string: &str,
     buffer: *mut E::Char,
     buffer_length: sql::SmallInt,
@@ -654,7 +658,7 @@ pub fn write_string_chars<E: OdbcEncoding>(
 /// length is multiplied back.
 ///
 /// Used by: `SQLGetDiagField`, `SQLGetInfo`.
-pub fn write_string_bytes<E: OdbcEncoding>(
+pub(crate) fn write_string_bytes<E: OdbcEncoding>(
     string: &str,
     buffer: *mut E::Char,
     buffer_length: sql::SmallInt,
@@ -683,7 +687,7 @@ pub fn write_string_bytes<E: OdbcEncoding>(
 /// **bytes** as `sql::Integer`.
 ///
 /// Used by: `SQLGetConnectAttr`.
-pub fn write_string_bytes_i32<E: OdbcEncoding>(
+pub(crate) fn write_string_bytes_i32<E: OdbcEncoding>(
     string: &str,
     buffer: *mut E::Char,
     buffer_length: sql::Integer,
