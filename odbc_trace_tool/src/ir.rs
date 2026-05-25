@@ -484,6 +484,26 @@ impl TraceIr {
             .collect()
     }
 
+    /// Collect DBC nodes paired with the env they were allocated under, if any.
+    /// Windows DM traces typically yield `(None, dbc)` because Excel/Power Query
+    /// never explicitly allocate an environment; unixODBC/iODBC traces yield
+    /// `(Some(env), dbc)` so callers can re-wrap the env when splitting.
+    fn dbc_nodes(&self) -> Vec<(Option<&HandleNode>, &HandleNode)> {
+        let mut dbcs = Vec::new();
+        for root in &self.roots {
+            if root.handle_type == HandleType::Dbc {
+                dbcs.push((None, root));
+            } else if root.handle_type == HandleType::Env {
+                for child in &root.children {
+                    if child.handle_type == HandleType::Dbc {
+                        dbcs.push((Some(root), child));
+                    }
+                }
+            }
+        }
+        dbcs
+    }
+
     /// Split the IR by handle type. Each returned pair is (logical_name, sub-IR).
     pub fn split(&self, mode: SplitMode) -> Vec<(String, TraceIr)> {
         match mode {
@@ -506,50 +526,46 @@ impl TraceIr {
                 .collect(),
             SplitMode::Connection => {
                 let mut result = Vec::new();
-                for env in &self.roots {
-                    for dbc in &env.children {
-                        if dbc.handle_type != HandleType::Dbc {
-                            continue;
-                        }
-                        let wrapped = wrap_in_parent(env, dbc.clone());
-                        let total = wrapped.all_operations_recursive().len() as SeqNum;
-                        result.push((
-                            dbc.logical_name.clone(),
-                            TraceIr {
-                                header: self.header.clone(),
-                                roots: vec![wrapped],
-                                unscoped_operations: vec![],
-                                total_operations: total,
-                            },
-                        ));
-                    }
+                for (env, dbc) in self.dbc_nodes() {
+                    let root = match env {
+                        Some(env) => wrap_in_parent(env, dbc.clone()),
+                        None => dbc.clone(),
+                    };
+                    let total = root.all_operations_recursive().len() as SeqNum;
+                    result.push((
+                        dbc.logical_name.clone(),
+                        TraceIr {
+                            header: self.header.clone(),
+                            roots: vec![root],
+                            unscoped_operations: vec![],
+                            total_operations: total,
+                        },
+                    ));
                 }
                 result
             }
             SplitMode::Statement => {
                 let mut result = Vec::new();
-                for env in &self.roots {
-                    for dbc in &env.children {
-                        if dbc.handle_type != HandleType::Dbc {
+                for (env, dbc) in self.dbc_nodes() {
+                    for stmt in &dbc.children {
+                        if stmt.handle_type != HandleType::Stmt {
                             continue;
                         }
-                        for stmt in &dbc.children {
-                            if stmt.handle_type != HandleType::Stmt {
-                                continue;
-                            }
-                            let dbc_wrapped = wrap_in_parent(dbc, stmt.clone());
-                            let env_wrapped = wrap_in_parent(env, dbc_wrapped);
-                            let total = env_wrapped.all_operations_recursive().len() as SeqNum;
-                            result.push((
-                                stmt.logical_name.clone(),
-                                TraceIr {
-                                    header: self.header.clone(),
-                                    roots: vec![env_wrapped],
-                                    unscoped_operations: vec![],
-                                    total_operations: total,
-                                },
-                            ));
-                        }
+                        let dbc_wrapped = wrap_in_parent(dbc, stmt.clone());
+                        let root = match env {
+                            Some(env) => wrap_in_parent(env, dbc_wrapped),
+                            None => dbc_wrapped,
+                        };
+                        let total = root.all_operations_recursive().len() as SeqNum;
+                        result.push((
+                            stmt.logical_name.clone(),
+                            TraceIr {
+                                header: self.header.clone(),
+                                roots: vec![root],
+                                unscoped_operations: vec![],
+                                total_operations: total,
+                            },
+                        ));
                     }
                 }
                 result
@@ -1048,5 +1064,115 @@ mod tests {
         for window in all_ops.windows(2) {
             assert!(window[0].seq < window[1].seq);
         }
+    }
+
+    // -- Split mode regression: env-rooted traces must keep env wrapping --
+
+    #[test]
+    fn test_split_connection_preserves_env_wrapping() {
+        let trace = unixodbc::parse_str(UNIXODBC_TRACE).expect("parse failed");
+        let ir = build_ir(&trace);
+        let splits = ir.split(SplitMode::Connection);
+
+        assert_eq!(splits.len(), 1, "one connection");
+        let (_, sub) = &splits[0];
+        assert_eq!(sub.roots.len(), 1);
+        assert_eq!(
+            sub.roots[0].handle_type,
+            HandleType::Env,
+            "env-rooted trace must keep env as the split root",
+        );
+        let env_ops: Vec<&str> = sub.roots[0]
+            .operations
+            .iter()
+            .map(|o| o.call.function_name())
+            .collect();
+        assert!(
+            env_ops.contains(&"SQLSetEnvAttr"),
+            "env-level SetEnvAttr must survive Connection split, got {env_ops:?}",
+        );
+    }
+
+    #[test]
+    fn test_split_statement_preserves_env_wrapping() {
+        let trace = unixodbc::parse_str(UNIXODBC_TRACE).expect("parse failed");
+        let ir = build_ir(&trace);
+        let splits = ir.split(SplitMode::Statement);
+
+        assert_eq!(splits.len(), 1, "one statement");
+        let (_, sub) = &splits[0];
+        assert_eq!(sub.roots.len(), 1);
+        assert_eq!(sub.roots[0].handle_type, HandleType::Env);
+        let dbc = &sub.roots[0].children[0];
+        assert_eq!(dbc.handle_type, HandleType::Dbc);
+        let stmt = &dbc.children[0];
+        assert_eq!(stmt.handle_type, HandleType::Stmt);
+    }
+
+    // -- Split mode regression: DBC-rooted traces (Windows DM) work too --
+
+    const WINODBC_TRACE: &str = "\
+b6dcc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  2 <SQL_HANDLE_DBC>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000018E00866BE0\n\
+\n\
+b6dcc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  2 <SQL_HANDLE_DBC>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000018E00866BE0 ( 0x0000018E656DAC50)\n\
+\n\
+b6dcc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  3 <SQL_HANDLE_STMT>\n\
+\t\tSQLHANDLE           0x0000018E656DAC50\n\
+\t\tSQLHANDLE *         0x0000018E00866C30\n\
+\n\
+b6dcc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  3 <SQL_HANDLE_STMT>\n\
+\t\tSQLHANDLE           0x0000018E656DAC50\n\
+\t\tSQLHANDLE *         0x0000018E00866C30 ( 0x0000018E656DA1E0)\n\
+\n\
+b6dcc-1 1234-5678\tENTER SQLExecDirectW\n\
+\t\tHSTMT               0x0000018E656DA1E0\n\
+\t\tWCHAR *             0x0000018E006DF854 [      -3] \"SELECT 1;\\0\"\n\
+\t\tSDWORD                    -3\n\
+\n\
+b6dcc-1 1234-5678\tEXIT  SQLExecDirectW  with return code 0 (SQL_SUCCESS)\n\
+\t\tHSTMT               0x0000018E656DA1E0\n\
+\t\tWCHAR *             0x0000018E006DF854 [      -3] \"SELECT 1;\\0\"\n\
+\t\tSDWORD                    -3\n\
+";
+
+    use crate::parser::winodbc;
+
+    #[test]
+    fn test_winodbc_split_connection_dbc_rooted() {
+        let trace = winodbc::parse_str(WINODBC_TRACE).expect("parse failed");
+        let ir = build_ir(&trace);
+
+        // Windows DM trace never allocates an env, so the IR root is the DBC.
+        assert_eq!(ir.roots.len(), 1);
+        assert_eq!(ir.roots[0].handle_type, HandleType::Dbc);
+
+        let splits = ir.split(SplitMode::Connection);
+        assert_eq!(splits.len(), 1);
+        let (_, sub) = &splits[0];
+        assert_eq!(
+            sub.roots[0].handle_type,
+            HandleType::Dbc,
+            "DBC-rooted trace stays DBC-rooted after split",
+        );
+    }
+
+    #[test]
+    fn test_winodbc_split_statement_dbc_rooted() {
+        let trace = winodbc::parse_str(WINODBC_TRACE).expect("parse failed");
+        let ir = build_ir(&trace);
+
+        let splits = ir.split(SplitMode::Statement);
+        assert_eq!(splits.len(), 1);
+        let (_, sub) = &splits[0];
+        assert_eq!(sub.roots[0].handle_type, HandleType::Dbc);
+        assert_eq!(sub.roots[0].children[0].handle_type, HandleType::Stmt);
     }
 }

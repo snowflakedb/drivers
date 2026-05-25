@@ -50,6 +50,10 @@ enum Commands {
         /// Tag used in the Catch2 test (e.g. "[replay]").
         #[arg(short, long, default_value = "replay")]
         tag: String,
+
+        /// Emit C++ with TODO comments for unsupported ODBC calls instead of failing.
+        #[arg(long, default_value = "false")]
+        allow_unsupported: bool,
     },
 
     /// Extract SQL queries from a trace and write a YAML mapping file.
@@ -146,6 +150,7 @@ enum FormatArg {
     Auto,
     Iodbc,
     Unixodbc,
+    Winodbc,
 }
 
 fn main() {
@@ -163,6 +168,7 @@ fn main() {
             format,
             test_name,
             tag,
+            allow_unsupported,
         } => {
             let calls = load_calls(&input, &format);
 
@@ -175,8 +181,19 @@ fn main() {
                 test_name,
                 tag,
                 query_map: Some(qm),
+                allow_unsupported,
             };
-            let cpp_output = generator::cpp::generate(&calls, &config);
+            let cpp_output = match generator::cpp::generate(&calls, &config) {
+                Ok(cpp) => cpp,
+                Err(generator::cpp::GenerateError::Unsupported(calls)) => {
+                    eprintln!("Error: trace contains unsupported ODBC calls:");
+                    for entry in &calls {
+                        eprintln!("  {} ({} occurrence(s))", entry.name, entry.count);
+                    }
+                    eprintln!("Add typed handlers in odbc_trace_tool or pass --allow-unsupported");
+                    process::exit(1);
+                }
+            };
 
             let out_path = output.unwrap_or_else(|| default_sibling_path(&input, "test.cpp"));
 
@@ -437,11 +454,15 @@ fn parse_trace(input: &std::path::Path, format: &FormatArg) -> model::TraceLog {
         FormatArg::Auto => parser::parse_file_auto(input),
         FormatArg::Iodbc => parser::parse_file(input, model::TraceFormat::IOdbc),
         FormatArg::Unixodbc => parser::parse_file(input, model::TraceFormat::UnixOdbc),
+        FormatArg::Winodbc => parser::parse_file(input, model::TraceFormat::WinOdbc),
     };
 
     match result {
         Ok(mut trace) => {
             trace.header.source_file = Some(input.display().to_string());
+            if matches!(format, FormatArg::Auto) {
+                println!("Detected format: {:?}", trace.header.format);
+            }
             trace
         }
         Err(e) => {

@@ -3510,6 +3510,7 @@ name = "odbc_trace_tool"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "encoding_rs",
  "regex",
  "serde",
  "serde_yaml",
