@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use jni::JNIEnv;
@@ -26,9 +27,16 @@ impl JdbcBridge {
             wrapper_presets: WrapperPresets::jdbc(),
             ..Default::default()
         };
+        let parallelism = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2);
         Self {
             runtime: tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
+                .worker_threads(parallelism.clamp(2, 8))
+                .thread_name_fn(|| {
+                    static N: AtomicUsize = AtomicUsize::new(0);
+                    format!("sf-jdbc-worker-{}", N.fetch_add(1, Ordering::Relaxed))
+                })
                 .enable_all()
                 .build()
                 .expect("Failed to create tokio runtime"),
