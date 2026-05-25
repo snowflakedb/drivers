@@ -27,9 +27,10 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
-import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.util.HexUtil;
 
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
@@ -41,8 +42,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private final SqlPlaceholderMetadata placeholderMetadata;
   private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
 
-  public SnowflakePreparedStatementImpl(SnowflakeConnectionImpl connection, String sql) {
-    super(connection);
+  public SnowflakePreparedStatementImpl(
+      InternalSnowflakeConnection connection, String sql, CoreDriverApi coreDriverApi) {
+    super(connection, coreDriverApi);
     this.sql = sql;
     this.placeholderMetadata = SqlPlaceholderMetadata.analyze(sql);
     this.parameterValues = new HashMap<>();

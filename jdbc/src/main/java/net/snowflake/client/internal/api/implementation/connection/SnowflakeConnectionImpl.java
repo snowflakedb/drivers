@@ -5,7 +5,6 @@ import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
 import java.sql.Clob;
-import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
@@ -22,10 +21,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
-import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
@@ -45,18 +45,21 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Wrapp
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity.Builder;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
+public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
+
+  private final AtomicBoolean closed = new AtomicBoolean(false);
+  private final Set<Statement> openStatements = ConcurrentHashMap.newKeySet();
+  private final CoreDriverApi coreDriverApi;
+  private final DatabaseHandle databaseHandle;
+  private final ConnectionHandle connectionHandle;
   private final String url;
   private final Properties properties;
-  private final CoreDriverApi coreDriverApi;
+
   private boolean autoCommit = true;
-  private final AtomicBoolean closed = new AtomicBoolean(false);
   private String catalog;
   private String schema;
-  private final DatabaseHandle databaseHandle;
-  public final ConnectionHandle connectionHandle;
 
   private volatile String cachedDatabaseVersion;
   private final Object databaseVersionLock = new Object();
@@ -137,15 +140,24 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   }
 
   @Override
+  public ConnectionHandle getHandle() {
+    return connectionHandle;
+  }
+
+  @Override
   public Statement createStatement() throws SQLException {
     checkClosed();
-    return new SnowflakeStatementImpl(this);
+    Statement stmt = new SnowflakeStatementImpl(this, coreDriverApi);
+    openStatements.add(stmt);
+    return stmt;
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql) throws SQLException {
     checkClosed();
-    return new SnowflakePreparedStatementImpl(this, sql);
+    PreparedStatement stmt = new SnowflakePreparedStatementImpl(this, sql, coreDriverApi);
+    openStatements.add(stmt);
+    return stmt;
   }
 
   @Override
@@ -211,14 +223,15 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     throw new NotImplementedException();
   }
 
-  // TODO: track open statements and close them here (+ implement Statement.close() →
-  // statementRelease)
   @Override
   public void close() throws SQLException {
     if (!closed.compareAndSet(false, true)) {
       return;
     }
+
     logger.debug("Closing connection");
+    closeOpenStatements();
+
     try {
       coreDriverApi.connectionClose(connectionHandle);
     } catch (SQLException e) {
@@ -228,6 +241,24 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     } finally {
       releaseHandlesQuietly(coreDriverApi, connectionHandle, databaseHandle);
     }
+  }
+
+  @Override
+  public void removeStatement(Statement stmt) {
+    openStatements.remove(stmt);
+  }
+
+  private void closeOpenStatements() {
+    for (Statement stmt : openStatements) {
+      try {
+        if (!stmt.isClosed()) {
+          stmt.close();
+        }
+      } catch (SQLException e) {
+        logger.debug("Error closing statement during connection close", e);
+      }
+    }
+    openStatements.clear();
   }
 
   private static void releaseHandlesQuietly(

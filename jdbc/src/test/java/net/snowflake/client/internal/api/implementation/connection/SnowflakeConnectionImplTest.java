@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Properties;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,6 +31,9 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -57,7 +61,7 @@ public class SnowflakeConnectionImplTest {
     ConfigSetting configSetting = SnowflakeConnectionImpl.toConfigSetting(Boolean.TRUE);
 
     assertEquals(ConfigSetting.ValueCase.BOOL_VALUE, configSetting.getValueCase());
-    assertEquals(true, configSetting.getBoolValue());
+    assertTrue(configSetting.getBoolValue());
   }
 
   @Test
@@ -250,6 +254,45 @@ public class SnowflakeConnectionImplTest {
       verify(mockCoreApi, never()).connectionClose(any());
       verify(mockCoreApi, never()).connectionRelease(any());
       verify(mockCoreApi, never()).databaseRelease(any());
+    }
+
+    @Test
+    void closesOpenStatementsBeforeConnectionClose() throws Exception {
+      stubSuccessfulClose();
+      StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
+      when(mockCoreApi.statementNew(any()))
+          .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
+      when(mockCoreApi.statementRelease(any()))
+          .thenReturn(StatementReleaseResponse.getDefaultInstance());
+
+      Connection conn = createConnection();
+      Statement stmt = conn.createStatement();
+      assertFalse(stmt.isClosed());
+
+      conn.close();
+
+      assertTrue(stmt.isClosed());
+      verify(mockCoreApi).statementRelease(any());
+    }
+
+    @Test
+    void manuallyClosedStatementIsNotDoubleClosedOnConnectionClose() throws Exception {
+      stubSuccessfulClose();
+      StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
+      when(mockCoreApi.statementNew(any()))
+          .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
+      when(mockCoreApi.statementRelease(any()))
+          .thenReturn(StatementReleaseResponse.getDefaultInstance());
+
+      Connection conn = createConnection();
+      Statement stmt = conn.createStatement();
+      stmt.close();
+
+      clearInvocations(mockCoreApi);
+      stubSuccessfulClose();
+      conn.close();
+
+      verify(mockCoreApi, never()).statementRelease(any());
     }
   }
 }
