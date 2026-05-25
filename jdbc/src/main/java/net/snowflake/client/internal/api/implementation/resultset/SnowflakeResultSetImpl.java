@@ -1132,7 +1132,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet {
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new NotImplementedException();
+    return statement.getQueryID();
   }
 
   @Override

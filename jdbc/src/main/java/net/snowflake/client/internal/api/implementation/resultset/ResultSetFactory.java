@@ -6,6 +6,7 @@ import java.nio.ByteOrder;
 import java.sql.SQLException;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -14,11 +15,14 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
 
 /**
- * Creates {@link SnowflakeResultSetImpl} instances from a core-driver {@link ResultSetHandle}.
+ * Central factory for all ResultSet creation.
  *
- * <p>Encapsulates the fetch-stream-and-release lifecycle: {@code resultSetGetStream} takes
- * ownership of the prebuilt Arrow stream (one-shot), so the handle is released immediately after,
- * regardless of success or failure.
+ * <p>For synchronous results, encapsulates the fetch-stream-and-release lifecycle: {@code
+ * resultSetGetStream} takes ownership of the prebuilt Arrow stream (one-shot), so the handle is
+ * released immediately after, regardless of success or failure.
+ *
+ * <p>For asynchronous results, creates an {@link SnowflakeAsyncResultSetImpl} that lazily
+ * materializes on first data access.
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class ResultSetFactory {
@@ -30,6 +34,11 @@ public class ResultSetFactory {
       throws SQLException {
     ResultSetGetStreamResponse response = fetchStreamAndRelease(coreDriverApi, handle);
     return resultSetFromResponse(statement, response);
+  }
+
+  public static InternalAsyncResultSet createAsync(
+      String queryId, InternalSnowflakeConnection connection, SnowflakeStatementImpl statement) {
+    return new SnowflakeAsyncResultSetImpl(queryId, connection, statement);
   }
 
   public static InternalResultSet createIfHasStream(
