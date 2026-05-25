@@ -389,6 +389,11 @@ impl Data {
             })?
             .clone();
 
+        // TODO: explicit `SOURCE_COMPRESSION=PARQUET` / `=ORC` is accepted
+        // by the Python connector (both have `is_supported=True` in
+        // `file_compression_type.py`) and would skip auto-detect. Universal
+        // driver currently rejects them via the catch-all arm below; PR2 of
+        // Gap-12 only covers the AUTO_DETECT path. Track as follow-up.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
