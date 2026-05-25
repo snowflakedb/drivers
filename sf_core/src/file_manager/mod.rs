@@ -702,8 +702,14 @@ mod tests {
     // = true`) restores that behavior; Python / JDBC (false) keep surfacing
     // the error. JDBC behavior verified equivalent to Python via
     // `SnowflakeFileTransferAgent.java:3163-3308`.
-    const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] =
-        &["test.xz", "test.lzma", "test.lz", "test.lzo", "test.Z"];
+    #[rustfmt::skip]
+    const UNSUPPORTED_COMPRESSION_FILENAMES: &[&str] = &[
+        "test.xz",
+        "test.lzma",
+        "test.lz",
+        "test.lzo",
+        "test.Z",
+    ];
 
     #[test]
     fn auto_detect_source_compression_legacy_flag_true_swallows_unsupported_error() {
@@ -875,17 +881,7 @@ mod tests {
     #[test]
     fn preprocess_parquet_passthrough_under_auto_compress() {
         let payload = b"PAR1\x00\x01\x02\x03some-parquet-bytes-go-here".to_vec();
-        let data = SingleUploadData {
-            file_path: "/tmp/data.parquet".to_string(),
-            filename: "data.parquet".to_string(),
-            stage_info: dummy_stage_info(),
-            encryption_material: None,
-            auto_compress: true,
-            source_compression: SourceCompressionParam::AutoDetect,
-            overwrite: false,
-            flavor: PutGetResultsetFlavor::Python,
-            legacy_compression_autodetect_libsnowflakeclient_behavior: false,
-        };
+        let data = passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Python, false);
 
         let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
 
@@ -901,17 +897,7 @@ mod tests {
     #[test]
     fn preprocess_orc_passthrough_under_auto_compress() {
         let payload = b"ORC\x00\x01\x02some-orc-bytes-go-here".to_vec();
-        let data = SingleUploadData {
-            file_path: "/tmp/data.orc".to_string(),
-            filename: "data.orc".to_string(),
-            stage_info: dummy_stage_info(),
-            encryption_material: None,
-            auto_compress: true,
-            source_compression: SourceCompressionParam::AutoDetect,
-            overwrite: false,
-            flavor: PutGetResultsetFlavor::Python,
-            legacy_compression_autodetect_libsnowflakeclient_behavior: false,
-        };
+        let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false);
 
         let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
 
@@ -924,30 +910,50 @@ mod tests {
         );
     }
 
+    // Locks in PR2 of Gap-12: parquet/orc detection is independent of the
+    // unsupported-compression flag (ODBC sets the flag to true, matching
+    // legacy libsnowflakeclient which detects PAR1/ORC magic via
+    // FileCompressionType::PARQUET / ::ORC with isSupported=true).
     #[test]
     fn preprocess_parquet_passthrough_when_unsupported_compression_swallowed() {
-        // Locks in PR2 of Gap-12: parquet detection is independent of the
-        // unsupported-compression flag (ODBC sets the flag to true,
-        // matching legacy libsnowflakeclient which detects PAR1 magic via
-        // FileCompressionType::PARQUET with isSupported=true).
         let payload = b"PAR1\x00\x01\x02\x03more-bytes".to_vec();
-        let data = SingleUploadData {
-            file_path: "/tmp/data.parquet".to_string(),
-            filename: "data.parquet".to_string(),
-            stage_info: dummy_stage_info(),
-            encryption_material: None,
-            auto_compress: true,
-            source_compression: SourceCompressionParam::AutoDetect,
-            overwrite: false,
-            flavor: PutGetResultsetFlavor::Odbc,
-            legacy_compression_autodetect_libsnowflakeclient_behavior: true,
-        };
+        let data = passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Odbc, true);
 
         let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
 
         assert_eq!(metadata.target, "data.parquet");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(prepared.data, payload);
+    }
+
+    #[test]
+    fn preprocess_orc_passthrough_when_unsupported_compression_swallowed() {
+        let payload = b"ORC\x00\x01\x02more-bytes".to_vec();
+        let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Odbc, true);
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.orc");
+        assert_eq!(metadata.target_compression, CompressionType::Orc);
+        assert_eq!(prepared.data, payload);
+    }
+
+    fn passthrough_upload_data(
+        filename: &str,
+        flavor: PutGetResultsetFlavor,
+        legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    ) -> SingleUploadData {
+        SingleUploadData {
+            file_path: format!("/tmp/{filename}"),
+            filename: filename.to_string(),
+            stage_info: dummy_stage_info(),
+            encryption_material: None,
+            auto_compress: true,
+            source_compression: SourceCompressionParam::AutoDetect,
+            overwrite: false,
+            flavor,
+            legacy_compression_autodetect_libsnowflakeclient_behavior,
+        }
     }
 
     fn dummy_stage_info() -> StageInfo {

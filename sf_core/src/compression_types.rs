@@ -141,12 +141,9 @@ fn try_match_short_prefix(file_buffer: &[u8]) -> Option<CompressionType> {
         .find_map(|(prefix, kind)| file_buffer.starts_with(prefix).then(|| kind.clone()))
 }
 
-// Parquet and ORC magic bytes are sniffed explicitly because the `infer`
-// crate has no matchers for them. Mirrors the legacy libsnowflakeclient
-// `FileCompressionType` table — PAR1 (4 bytes) for Parquet, ORC (3 bytes)
-// for Orc. Sniffing happens before the `infer` fallback so a buffer that
-// *also* happens to look like something else to `infer` still gets
-// identified correctly.
+// Parquet (PAR1, 4 bytes) and ORC ("ORC", 3 bytes) magic bytes are
+// sniffed explicitly because the `infer` crate has no matchers for them.
+// Mirrors current Python / JDBC / libsnowflakeclient behavior.
 // TODO: DEFLATE cannot be detected by the infer crate - we might need a custom implementation for that
 fn try_guess_compression_type_from_buffer(
     file_buffer: &[u8],
