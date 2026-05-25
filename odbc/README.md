@@ -29,7 +29,7 @@ case-insensitively. The logging subsystem recognises:
 | `LogFile`            | string  | Log file name (default `snowflake_odbc.log`).                |
 | `LogMaxSize`         | bytes   | Per-file size cap before rotation.                           |
 | `LogMaxCount`        | integer | Number of rotated files to retain.                           |
-| `LogRotation`        | enum    | `none`, `hourly`, `daily`.                                   |
+| `LogRotation`        | enum    | `never` (or `none`), `minutely`, `hourly`, `daily`.          |
 | `LogEnabled`         | bool    | Master switch; defaults to `true`.                           |
 | `LogQueryText`       | bool    | Log the SQL text of executed statements.                     |
 | `LogQueryParameters` | bool    | Log bound parameter values.                                  |

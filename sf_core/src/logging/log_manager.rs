@@ -185,12 +185,13 @@ impl LogManager {
     /// snapshot loaded via [`crate::config::load_ini_files`] and initialise
     /// logging with it.
     ///
-    /// Recoverable failures degrade silently to [`LoggingConfig::default`]:
-    /// if the wrapper never seeded the snapshot, or if `load_ini_files`
-    /// returned an error and left the global uninitialised (in which case
-    /// the wrapper itself has already emitted a diagnostic), or if a
-    /// recognised key carries an invalid value, the driver still comes up
-    /// with default logging.
+    /// Recoverable failures degrade to [`LoggingConfig::default`] with a
+    /// diagnostic on stderr: a missing snapshot (caller forgot to invoke
+    /// `load_ini_files`, or that call returned an error and left the global
+    /// uninitialised), a parse failure inside `logging_config_from_ini`, or
+    /// a recognised key carrying an invalid value all surface as a
+    /// `Failed to derive logging config from sf.odbc.ini: ...` line so the
+    /// silent fallback is at least visible.
     pub fn for_odbc() -> Option<Self> {
         let config = match crate::config::get_ini_config() {
             Some(ini) => crate::config::logging_config_from_ini(ini).unwrap_or_else(|e| {
@@ -199,7 +200,19 @@ impl LogManager {
                 );
                 LoggingConfig::default()
             }),
-            None => LoggingConfig::default(),
+            None => {
+                // The ODBC wrapper is expected to call `load_ini_files` before
+                // `for_odbc`. Reaching this arm means either the wrapper
+                // skipped that step or `load_ini_files` itself failed; the
+                // wrapper already emits its own diagnostic in the latter case,
+                // so a second line here is redundant but harmless.
+                eprintln!(
+                    "No sf.odbc.ini snapshot available (sf_core::config::load_ini_files \
+                     was not called or did not complete successfully); using default \
+                     logging configuration"
+                );
+                LoggingConfig::default()
+            }
         };
         match Self::init(config) {
             Ok(lm) => Some(lm),
