@@ -12,11 +12,11 @@ use crate::api::error::{
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
 use crate::api::{
-    ApdRecord, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord, OdbcResult,
-    ParamDirection, ParamValue, SQL_CONCUR_LOCK, SQL_CONCUR_READ_ONLY, SQL_CONCUR_VALUES,
-    SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF, SQL_NOSCAN_ON, SQL_RD_OFF, SQL_RD_ON,
-    SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner, StatementState,
-    stmt_from_handle,
+    ApdRecord, Connection, ConnectionState, DaeContext, ExecutionOrigin, FreeStmtOption, IpdRecord,
+    OdbcResult, ParamDirection, ParamValue, SQL_CONCUR_LOCK, SQL_CONCUR_READ_ONLY,
+    SQL_CONCUR_VALUES, SQL_INSENSITIVE, SQL_NONSCROLLABLE, SQL_NOSCAN_OFF, SQL_NOSCAN_ON,
+    SQL_RD_OFF, SQL_RD_ON, SQL_SCROLLABLE, SQL_SENSITIVE, SQL_UNSPECIFIED, SqlType, StatementInner,
+    StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
@@ -27,8 +27,9 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ExecuteQueryResponse, QueryBindings,
     ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
-    StatementExecuteQueryRequest, StatementPrepareRequest, StatementSetOptionsRequest,
-    StatementSetSqlQueryRequest, config_setting, execute_query_response, query_bindings,
+    StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
+    StatementSetOptionsRequest, StatementSetSqlQueryRequest, config_setting,
+    execute_query_response, query_bindings,
 };
 use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
@@ -576,7 +577,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     });
 
     let token = CancellationToken::new();
-    *guard.active_cancel.lock() = Some(token.clone());
+    let _cancel_guard = ActiveCancelGuard::arm(&guard.active_cancel, token.clone());
 
     let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         tokio::select! {
@@ -620,7 +621,6 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         }
     });
 
-    *guard.active_cancel.lock() = None;
     let response = match response {
         Ok(r) => r,
         Err(e) => {
@@ -1879,7 +1879,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             if !string_length_ptr.is_null() {
                 unsafe {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())
@@ -2011,6 +2011,400 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
     }
 }
 
+/// SQLParamData — advance the DAE state machine.
+///
+/// State transitions:
+/// - S8 (AwaitingParamData) → S9 (AwaitingPutData): writes the current
+///   parameter's token to `*value_ptr_ptr` and returns `SQL_NEED_DATA`.
+/// - S9 (AwaitingPutData) → HY010: consecutive `SQLParamData` without an
+///   intervening `SQLPutData` is a function-sequence error.
+/// - S10 (PutDataCalled) → S9 (AwaitingPutData) if more params remain,
+///   returning `SQL_NEED_DATA`. If all params are supplied, executes the
+///   deferred query and transitions to the appropriate executed state.
+pub fn param_data(
+    statement_handle: sql::Handle,
+    value_ptr_ptr: *mut sql::Pointer,
+) -> OdbcResult<()> {
+    tracing::debug!("param_data: statement_handle={statement_handle:?}");
+
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    // Lock `Connection` before `inner` so the all-DAE-params-supplied branch can
+    // hand a `&mut Connection` to `execute_dae` without re-locking. Acquiring it
+    // unconditionally also closes the TOCTOU window against a concurrent
+    // `SQLDisconnect`, matching `exec_direct_impl` / `prepare_impl`.
+    let mut conn = dbc.connection.lock();
+    let mut inner = guard.inner.lock();
+
+    match inner.state.take() {
+        // S8 → S9: first SQLParamData call after SQLExecute/SQLExecDirect
+        // returned SQL_NEED_DATA. Expose the first DAE parameter's token.
+        StatementState::AwaitingParamData {
+            dae_context,
+            origin,
+        } => {
+            let param_num = dae_context.dae_params[dae_context.current_index];
+            if !value_ptr_ptr.is_null() {
+                let token = get_param_token(&inner.apd, param_num);
+                unsafe { *value_ptr_ptr = token };
+            }
+            inner.state.set(StatementState::AwaitingPutData {
+                dae_context,
+                origin,
+            });
+            DaeRequiredSnafu.fail()
+        }
+
+        // S9 → HY010: SQLParamData called again without SQLPutData.
+        StatementState::AwaitingPutData {
+            dae_context,
+            origin,
+        } => {
+            inner.state.set(StatementState::AwaitingPutData {
+                dae_context,
+                origin,
+            });
+            InvalidDuringDaeSnafu.fail()
+        }
+
+        // S10 → S9 or execute: SQLPutData was called at least once.
+        // Advance to the next parameter, or execute if all are provided.
+        StatementState::PutDataCalled {
+            mut dae_context,
+            origin,
+        } => {
+            dae_context.current_index += 1;
+
+            if dae_context.current_index < dae_context.dae_params.len() {
+                let param_num = dae_context.dae_params[dae_context.current_index];
+                if !value_ptr_ptr.is_null() {
+                    let token = get_param_token(&inner.apd, param_num);
+                    unsafe { *value_ptr_ptr = token };
+                }
+                inner.state.set(StatementState::AwaitingPutData {
+                    dae_context,
+                    origin,
+                });
+                DaeRequiredSnafu.fail()
+            } else {
+                let restored = origin.restore_state();
+                execute_dae(
+                    &mut inner,
+                    &mut conn,
+                    guard.stmt_handle,
+                    &guard.active_cancel,
+                    *dae_context,
+                    origin,
+                    restored,
+                )
+            }
+        }
+
+        other => {
+            inner.state.set(other);
+            InvalidDuringDaeSnafu.fail()
+        }
+    }
+}
+
+/// Return the application's `ParameterValuePtr` token for a DAE parameter.
+/// This is the value the application passed to `SQLBindParameter` as the
+/// `ParameterValuePtr` argument — the DM commonly uses a small integer
+/// cast to pointer so the application can identify which parameter is being
+/// requested.
+fn get_param_token(apd: &crate::api::ApdDescriptor, param_num: u16) -> sql::Pointer {
+    apd.records
+        .get(&param_num)
+        .map_or(std::ptr::null_mut(), |r| r.data_ptr)
+}
+
+/// SQLPutData — supply data for a DAE parameter.
+///
+/// Accumulates one chunk of data for the current parameter.
+/// Transitions S9 (AwaitingPutData) → S10 (PutDataCalled).
+/// Also accepts S10 → S10 for multi-chunk puts.
+pub fn put_data(
+    statement_handle: sql::Handle,
+    data_ptr: sql::Pointer,
+    str_len_or_ind: sql::Len,
+) -> OdbcResult<()> {
+    tracing::debug!("put_data: statement_handle={statement_handle:?}");
+
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+
+    let guard = stmt_from_handle(statement_handle)?;
+    let mut inner = guard.inner.lock();
+
+    match inner.state.take() {
+        StatementState::AwaitingPutData {
+            mut dae_context,
+            origin,
+        } => {
+            let param_num = dae_context.dae_params[dae_context.current_index];
+            let result = accumulate_put_data(&mut dae_context, param_num, data_ptr, str_len_or_ind);
+            inner.state.set(if result.is_ok() {
+                StatementState::PutDataCalled {
+                    dae_context,
+                    origin,
+                }
+            } else {
+                StatementState::AwaitingPutData {
+                    dae_context,
+                    origin,
+                }
+            });
+            result
+        }
+
+        StatementState::PutDataCalled {
+            mut dae_context,
+            origin,
+        } => {
+            let param_num = dae_context.dae_params[dae_context.current_index];
+            let result = accumulate_put_data(&mut dae_context, param_num, data_ptr, str_len_or_ind);
+            inner.state.set(StatementState::PutDataCalled {
+                dae_context,
+                origin,
+            });
+            result
+        }
+
+        other => {
+            inner.state.set(other);
+            InvalidDuringDaeSnafu.fail()
+        }
+    }
+}
+
+/// Accumulate a single `SQLPutData` chunk into the DAE context.
+fn accumulate_put_data(
+    ctx: &mut DaeContext,
+    param_num: u16,
+    data_ptr: sql::Pointer,
+    str_len_or_ind: sql::Len,
+) -> OdbcResult<()> {
+    let entry = ctx.pushed_data.get_mut(&param_num).ok_or_else(|| {
+        crate::api::error::CountFieldIncorrectSnafu {
+            reason: format!("DAE param {param_num} not found in pushed_data"),
+        }
+        .build()
+    })?;
+
+    if str_len_or_ind == sql::NULL_DATA {
+        *entry = ParamValue::Null;
+        return Ok(());
+    }
+
+    if data_ptr.is_null() {
+        return NullPointerSnafu.fail();
+    }
+
+    let len = if str_len_or_ind == sql::NTS {
+        unsafe {
+            let cstr = std::ffi::CStr::from_ptr(data_ptr as *const std::os::raw::c_char);
+            cstr.to_bytes().len()
+        }
+    } else if str_len_or_ind < 0 {
+        return InvalidBufferLengthSnafu {
+            length: str_len_or_ind as i64,
+        }
+        .fail();
+    } else {
+        str_len_or_ind as usize
+    };
+
+    let chunk = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, len) }.to_vec();
+
+    match entry {
+        ParamValue::Pending => *entry = ParamValue::Data(vec![chunk]),
+        ParamValue::Data(chunks) => chunks.push(chunk),
+        ParamValue::Null => *entry = ParamValue::Data(vec![chunk]),
+    }
+    Ok(())
+}
+
+/// Clears `active_cancel` when dropped so every exit path releases the
+/// in-flight cancellation slot.
+struct ActiveCancelGuard<'a> {
+    slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
+}
+
+impl<'a> ActiveCancelGuard<'a> {
+    fn arm(
+        slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
+        token: CancellationToken,
+    ) -> Self {
+        *slot.lock() = Some(token);
+        Self { slot }
+    }
+}
+
+impl Drop for ActiveCancelGuard<'_> {
+    fn drop(&mut self) {
+        *self.slot.lock() = None;
+    }
+}
+
+/// Overwrite a DAE parameter's APD record to represent SQL NULL.
+fn mark_apd_record_null(
+    apd: &mut crate::api::ApdDescriptor,
+    param_num: u16,
+    null_indicators: &mut Vec<sql::Len>,
+) {
+    null_indicators.push(sql::NULL_DATA);
+    if let Some(rec) = apd.records.get_mut(&param_num) {
+        rec.data_ptr = std::ptr::null_mut();
+        rec.str_len_or_ind_ptr = null_indicators.last_mut().unwrap();
+    }
+}
+
+/// Execute the deferred query after all DAE parameters have been supplied.
+///
+/// Builds temporary `ApdRecord`s from the accumulated `ParamValue` data,
+/// merges them with the existing APD/IPD bindings, serializes to JSON,
+/// and sends the query to sf_core.
+fn execute_dae(
+    inner: &mut StatementInner,
+    conn: &mut Connection,
+    stmt_handle: StatementHandle,
+    active_cancel: &parking_lot::Mutex<Option<CancellationToken>>,
+    dae_context: DaeContext,
+    origin: ExecutionOrigin,
+    restored: StatementState,
+) -> OdbcResult<()> {
+    let is_prepared = origin.is_prepared();
+
+    let conn_handle = match &conn.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => {
+            tracing::error!("execute_dae: connection is disconnected");
+            inner.state.set(restored);
+            return DisconnectedSnafu.fail();
+        }
+    };
+
+    // Build a temporary APD with DAE parameters replaced by their
+    // accumulated data, keeping non-DAE records as-is.
+    let mut temp_apd = crate::api::ApdDescriptor::new();
+    for (&param_num, rec) in &inner.apd.records {
+        temp_apd.records.insert(
+            param_num,
+            ApdRecord {
+                value_type: rec.value_type,
+                data_ptr: rec.data_ptr,
+                buffer_length: rec.buffer_length,
+                str_len_or_ind_ptr: rec.str_len_or_ind_ptr,
+            },
+        );
+    }
+
+    let mut dae_buffers: Vec<Vec<u8>> = Vec::new();
+    let param_count = dae_context.pushed_data.len();
+    let mut null_indicators: Vec<sql::Len> = Vec::with_capacity(param_count);
+    let mut len_indicators: Vec<sql::Len> = Vec::with_capacity(param_count);
+    for (&param_num, value) in &dae_context.pushed_data {
+        match value {
+            ParamValue::Null | ParamValue::Pending => {
+                if matches!(value, ParamValue::Pending) {
+                    tracing::warn!(
+                        "execute_dae: param {param_num} still pending, treating as null"
+                    );
+                }
+                mark_apd_record_null(&mut temp_apd, param_num, &mut null_indicators);
+            }
+            ParamValue::Data(chunks) => {
+                let concatenated: Vec<u8> = chunks.iter().flat_map(|c| c.iter().copied()).collect();
+                len_indicators.push(concatenated.len() as sql::Len);
+                dae_buffers.push(concatenated);
+                let buf = dae_buffers.last().unwrap();
+                if let Some(rec) = temp_apd.records.get_mut(&param_num) {
+                    rec.data_ptr = buf.as_ptr() as sql::Pointer;
+                    rec.buffer_length = buf.len() as sql::Len;
+                    rec.str_len_or_ind_ptr = len_indicators.last_mut().unwrap();
+                }
+            }
+        }
+    }
+
+    let (bindings, _json_owner) = match apply_parameter_bindings(
+        &temp_apd,
+        &inner.ipd,
+        is_prepared,
+        inner.prepared_param_count,
+    ) {
+        Ok(b) => b,
+        Err(e) => {
+            inner.state.set(restored);
+            return Err(e);
+        }
+    };
+
+    let query_timeout = inner.query_timeout;
+    let deferred_query = dae_context.deferred_query;
+
+    let token = CancellationToken::new();
+    let _cancel_guard = ActiveCancelGuard::arm(active_cancel, token.clone());
+
+    let globals = match global().context(OdbcRuntimeSnafu) {
+        Err(e) => {
+            inner.state.set(restored);
+            return Err(e);
+        }
+        Ok(globals) => globals,
+    };
+    let response = globals.block_on(async |c| {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            result = async {
+                if let Some(query) = deferred_query {
+                    c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        query,
+                    })
+                    .await?;
+                }
+                c.statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings,
+                    timeout_seconds: if query_timeout > 0 {
+                        Some(query_timeout.min(u32::MAX as sql::ULen) as u32)
+                    } else {
+                        None
+                    },
+                })
+                .await
+            } => result.map_err(Into::into),
+        }
+    });
+
+    let response = match response {
+        Ok(r) => r,
+        Err(e) => {
+            inner.state.set(restored);
+            if let Some(qid) = e.query_id() {
+                inner.last_query_id = Some(qid.to_owned());
+            }
+            return Err(e);
+        }
+    };
+
+    tracing::info!("execute_dae: Successfully executed deferred statement");
+    if let Err(e) = update_numeric_settings(&conn_handle, &mut conn.numeric_settings) {
+        inner.state.set(restored);
+        return Err(e);
+    }
+    apply_execute_response(inner, conn_handle, response, origin)?;
+    inner.rows_returned = 0;
+    Ok(())
+}
+
 /// Cancel processing on a statement (SQLCancel).
 ///
 /// Two-path design for safe cross-thread cancellation:
@@ -2121,7 +2515,31 @@ pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::runtime::global;
     use crate::api::{ApdDescriptor, IpdDescriptor, SqlState};
+
+    #[test]
+    fn active_cancel_guard_clears_slot_on_drop() {
+        let slot = parking_lot::Mutex::new(None);
+        {
+            let token = CancellationToken::new();
+            let _guard = ActiveCancelGuard::arm(&slot, token);
+            assert!(slot.lock().is_some());
+        }
+        assert!(slot.lock().is_none());
+    }
+
+    /// Mirrors `execute` / `execute_dae`: arm `active_cancel`, fail before `block_on`, slot must clear.
+    #[test]
+    fn active_cancel_cleared_after_runtime_unavailable() {
+        let slot = parking_lot::Mutex::new(None);
+        {
+            let token = CancellationToken::new();
+            let _guard = ActiveCancelGuard::arm(&slot, token);
+            assert!(global().context(OdbcRuntimeSnafu).is_err());
+        }
+        assert!(slot.lock().is_none());
+    }
 
     #[test]
     fn apply_bindings_prepared_without_param_count_errors() {

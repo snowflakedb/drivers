@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCFixtures.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -153,6 +154,42 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLParamData: Succeeds with NULL ValueP
   REQUIRE(ret == SQL_NEED_DATA);
 
   SQLCancel(stmt_handle());
+}
+
+TEST_CASE_METHOD(StmtSessionSchemaFixture,
+                 "SQLParamData: zero-row DAE DML leaves DmlExecuted state and SQLRowCount returns 0",
+                 "[odbc-api][paramdata][submitting_request]") {
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE dae_zero_dml_t(c1 INTEGER)"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+
+  ret = SQLPrepare(stmt_handle(), sqlchar("UPDATE dae_zero_dml_t SET c1 = ? WHERE 1 = 0"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLPOINTER valuePtr = nullptr;
+  ret = SQLParamData(stmt_handle(), &valuePtr);
+  REQUIRE(ret == SQL_NEED_DATA);
+  REQUIRE(valuePtr == reinterpret_cast<SQLPOINTER>(1));
+
+  SQLINTEGER val = 42;
+  ret = SQLPutData(stmt_handle(), &val, static_cast<SQLLEN>(sizeof(val)));
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLParamData(stmt_handle(), &valuePtr);
+  REQUIRE(ret == SQL_NO_DATA);
+
+  SQLLEN rowCount = -1;
+  ret = SQLRowCount(stmt_handle(), &rowCount);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(rowCount == 0);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLParamData: SQLCancel aborts data-at-execution and restores prepared state",
