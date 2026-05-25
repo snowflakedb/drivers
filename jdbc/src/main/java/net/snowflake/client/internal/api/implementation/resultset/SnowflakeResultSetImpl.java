@@ -1,20 +1,16 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
-import com.google.protobuf.ByteString;
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URL;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Date;
 import java.sql.NClob;
 import java.sql.Ref;
-import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.RowId;
 import java.sql.SQLException;
@@ -28,7 +24,6 @@ import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
 import net.snowflake.client.api.exception.SFException;
-import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
@@ -36,14 +31,13 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.apache.arrow.c.ArrowArrayStream;
 import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
+public class SnowflakeResultSetImpl implements InternalResultSet {
 
   private final SnowflakeStatementImpl statement;
   private final CursorState cursor = new CursorState();
@@ -54,14 +48,10 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
-  public SnowflakeResultSetImpl(SnowflakeStatementImpl statement, ResultSetGetStreamResponse result)
+  SnowflakeResultSetImpl(SnowflakeStatementImpl statement, long arrowStreamPointer)
       throws SQLException {
     this.statement = statement;
-    ByteString streamPointerBytes = result.getStream().getValue();
-    // TODO Check how will this behave on AIX (Big Endian)
-    long pointer =
-        ByteBuffer.wrap(streamPointerBytes.toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
-    ArrowArrayStream stream = ArrowArrayStream.wrap(pointer);
+    ArrowArrayStream stream = ArrowArrayStream.wrap(arrowStreamPointer);
     RootAllocator allocator = new RootAllocator();
     ArrowResources resources =
         new ArrowResources(stream, allocator, Data.importArrayStream(allocator, stream));

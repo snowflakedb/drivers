@@ -16,7 +16,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
-import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
+import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
+import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
@@ -25,8 +26,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Execu
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.MultiStatementResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 
@@ -103,32 +102,6 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     return coreDriverApi.connectionGetResultSet(connection.getHandle(), queryId);
   }
 
-  /**
-   * Fetch the Arrow stream and release the ResultSet handle.
-   *
-   * <p>{@code resultSetGetStream} takes ownership of the prebuilt stream (one-shot), so the handle
-   * is released immediately after.
-   */
-  private ResultSetGetStreamResponse fetchStreamAndRelease(ResultSetHandle handle)
-      throws SQLException {
-    try {
-      ResultSetGetStreamResponse response = coreDriverApi.resultSetGetStream(handle);
-      releaseResultSet(handle);
-      return response;
-    } catch (SQLException e) {
-      releaseResultSet(handle);
-      throw e;
-    }
-  }
-
-  private void releaseResultSet(ResultSetHandle handle) {
-    try {
-      coreDriverApi.resultSetRelease(handle);
-    } catch (SQLException e) {
-      logger.warn("Failed to release ResultSet handle", e);
-    }
-  }
-
   private void applyExecuteQueryResult(ExecuteQueryResponse response) throws SQLException {
     if (response.hasMulti()) {
       applyMultiStatementResult(response.getMulti());
@@ -160,9 +133,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     queryId = descriptor.getQueryId();
 
     if (StatementTypeClassifier.producesResultSet(descriptor)) {
-      ResultSetGetStreamResponse streamResponse =
-          fetchStreamAndRelease(rsResponse.getResultSetHandle());
-      currentResultSet = new SnowflakeResultSetImpl(this, streamResponse);
+      currentResultSet =
+          ResultSetFactory.create(coreDriverApi, this, rsResponse.getResultSetHandle());
       currentUpdateCount = NO_UPDATE_COUNT;
       return true;
     }
@@ -170,10 +142,10 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     if (forceResultSet) {
       // DML/DDL that returned via executeQuery() — still surface a ResultSet if the server
       // provides a stream (matches old JDBC driver behavior)
-      ResultSetGetStreamResponse streamResponse =
-          fetchStreamAndRelease(rsResponse.getResultSetHandle());
-      if (streamResponse.hasStream() && !streamResponse.getStream().getValue().isEmpty()) {
-        currentResultSet = new SnowflakeResultSetImpl(this, streamResponse);
+      InternalResultSet maybeResultSet =
+          ResultSetFactory.createIfHasStream(coreDriverApi, this, rsResponse.getResultSetHandle());
+      if (maybeResultSet != null) {
+        currentResultSet = maybeResultSet;
         currentUpdateCount = NO_UPDATE_COUNT;
         return true;
       }
@@ -210,9 +182,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     }
 
     if (producesResultSet) {
-      ResultSetGetStreamResponse streamResponse =
-          fetchStreamAndRelease(rsResponse.getResultSetHandle());
-      currentResultSet = new SnowflakeResultSetImpl(this, streamResponse);
+      currentResultSet =
+          ResultSetFactory.create(coreDriverApi, this, rsResponse.getResultSetHandle());
       currentUpdateCount = NO_UPDATE_COUNT;
     } else {
       currentResultSet = null;
