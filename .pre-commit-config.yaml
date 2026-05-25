@@ -90,3 +90,14 @@ repos:
         entry: ./tests/tests_format_validator/run_validator.sh
         pass_filenames: false
         language: system
+    -   id: ai-rules-sync
+        name: AI rules sync check
+        description: >
+          Verify .cursor/rules/*.mdc body matches the .claude/rules/*.md canonical source.
+          alwaysApply rules need full content in both files (pointer files place the body
+          in tool-call history where context compaction can drop it). Edit .claude/ first,
+          then copy the body to .cursor/rules/. Run scripts/check-ai-rules-sync.sh to fix.
+        entry: bash scripts/check-ai-rules-sync.sh
+        pass_filenames: false
+        files: (\.claude/rules/|\.cursor/rules/)
+        language: system
