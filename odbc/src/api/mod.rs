@@ -9,6 +9,7 @@ pub mod error;
 pub(crate) mod error_trace_flag;
 pub mod handle_allocation;
 pub mod handle_registry;
+pub mod ini_paths;
 pub mod oauth;
 pub mod query_type;
 pub mod runtime;

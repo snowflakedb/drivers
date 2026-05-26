@@ -1,8 +1,8 @@
 use std::thread;
 use std::time::Duration;
 
+use sf_core::config::{IniConfig, logging_config_from_ini};
 use sf_core::logging::LogManager;
-use sf_core::logging::ini_config::parse_ini_file;
 
 /// When `LogEnabled=false`, the LogManager initialises successfully but no
 /// test messages appear in any log file under the configured path.
@@ -12,17 +12,13 @@ fn disabled_logging_produces_no_output() {
     let log_dir = dir.path().join("logs");
     std::fs::create_dir_all(&log_dir).unwrap();
 
-    let ini_path = dir.path().join("sf.odbc.ini");
-    std::fs::write(
-        &ini_path,
-        format!(
-            "LogEnabled=false\nLogPath={}\nLogFile=disabled.log\n",
-            log_dir.display()
-        ),
-    )
+    let ini = IniConfig::from_ini_content(&format!(
+        "LogEnabled=false\nLogPath={}\nLogFile=disabled.log\n",
+        log_dir.display()
+    ))
     .unwrap();
 
-    let config = parse_ini_file(&ini_path).unwrap();
+    let config = logging_config_from_ini(&ini).unwrap();
     assert!(!config.enabled);
 
     LogManager::init(config).unwrap();

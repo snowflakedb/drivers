@@ -1,8 +1,8 @@
 use std::thread;
 use std::time::Duration;
 
+use sf_core::config::{IniConfig, logging_config_from_ini};
 use sf_core::logging::LogManager;
-use sf_core::logging::ini_config::parse_ini_file;
 
 /// Configure LogLevel=WARN, emit ERROR/WARN/INFO/DEBUG events, and verify
 /// that only ERROR and WARN appear in the log file.
@@ -12,17 +12,13 @@ fn warn_level_filters_info_and_debug() {
     let log_dir = dir.path().join("logs");
     std::fs::create_dir_all(&log_dir).unwrap();
 
-    let ini_path = dir.path().join("sf.odbc.ini");
-    std::fs::write(
-        &ini_path,
-        format!(
-            "LogLevel=WARN\nLogPath={}\nLogFile=level_filter.log\n",
-            log_dir.display()
-        ),
-    )
+    let ini = IniConfig::from_ini_content(&format!(
+        "LogLevel=WARN\nLogPath={}\nLogFile=level_filter.log\n",
+        log_dir.display()
+    ))
     .unwrap();
 
-    let config = parse_ini_file(&ini_path).unwrap();
+    let config = logging_config_from_ini(&ini).unwrap();
     assert_eq!(config.level, tracing::level_filters::LevelFilter::WARN);
 
     LogManager::init(config).unwrap();

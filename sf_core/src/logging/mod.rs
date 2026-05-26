@@ -11,7 +11,6 @@ use tracing_subscriber::Layer;
 pub mod c_api;
 pub(crate) mod callback_layer;
 pub(crate) mod error;
-pub mod ini_config;
 pub mod log_manager;
 pub(crate) mod opentelemetry;
 
@@ -40,7 +39,7 @@ impl LogRotation {
 }
 
 /// Configuration for the logging subsystem.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoggingConfig {
     pub enabled: bool,
     pub level: LevelFilter,

@@ -2,9 +2,9 @@ use std::thread;
 use std::time::Duration;
 
 use sf_core::config::config_manager::load_config_section_with_paths;
+use sf_core::config::logging_config_from_toml_section;
 use sf_core::config::path_resolver::ConfigPaths;
 use sf_core::logging::LogManager;
-use sf_core::logging::ini_config::load_from_toml_section;
 
 /// Load a `[log]` section from a TOML file, init `LogManager` at DEBUG level,
 /// and verify that DEBUG events appear but TRACE events do not.
@@ -37,7 +37,7 @@ fn toml_log_section_with_level_filtering() {
         .expect("load_config_section_with_paths failed")
         .expect("[log] section should exist");
 
-    let config = load_from_toml_section(&section);
+    let config = logging_config_from_toml_section(&section);
     assert_eq!(config.level, tracing::level_filters::LevelFilter::DEBUG);
 
     LogManager::init(config).unwrap();

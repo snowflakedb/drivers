@@ -181,17 +181,38 @@ impl LogManager {
         })
     }
 
-    /// Factory: find and parse `sf.odbc.ini`, falling back to defaults.
+    /// Factory: derive a [`LoggingConfig`] from the process-wide INI
+    /// snapshot loaded via [`crate::config::load_ini_files`] and initialise
+    /// logging with it.
+    ///
+    /// Recoverable failures degrade to [`LoggingConfig::default`] with a
+    /// diagnostic on stderr: a missing snapshot (caller forgot to invoke
+    /// `load_ini_files`, or that call returned an error and left the global
+    /// uninitialised), a parse failure inside `logging_config_from_ini`, or
+    /// a recognised key carrying an invalid value all surface as a
+    /// `Failed to derive logging config from sf.odbc.ini: ...` line so the
+    /// silent fallback is at least visible.
     pub fn for_odbc() -> Option<Self> {
-        let config = match super::ini_config::find_odbc_ini() {
-            Some(path) => super::ini_config::parse_ini_file(&path).unwrap_or_else(|e| {
+        let config = match crate::config::get_ini_config() {
+            Some(ini) => crate::config::logging_config_from_ini(ini).unwrap_or_else(|e| {
                 eprintln!(
-                    "Failed to parse sf.odbc.ini at {}: {e:?}, using defaults",
-                    path.display()
+                    "Failed to derive logging config from sf.odbc.ini: {e:?}; using defaults"
                 );
                 LoggingConfig::default()
             }),
-            None => LoggingConfig::default(),
+            None => {
+                // The ODBC wrapper is expected to call `load_ini_files` before
+                // `for_odbc`. Reaching this arm means either the wrapper
+                // skipped that step or `load_ini_files` itself failed; the
+                // wrapper already emits its own diagnostic in the latter case,
+                // so a second line here is redundant but harmless.
+                eprintln!(
+                    "No sf.odbc.ini snapshot available (sf_core::config::load_ini_files \
+                     was not called or did not complete successfully); using default \
+                     logging configuration"
+                );
+                LoggingConfig::default()
+            }
         };
         match Self::init(config) {
             Ok(lm) => Some(lm),
@@ -206,7 +227,7 @@ impl LogManager {
     /// defaults.
     pub fn for_toml() -> Option<Self> {
         let config = match crate::config::config_manager::load_config_section("log") {
-            Ok(Some(section)) => super::ini_config::load_from_toml_section(&section),
+            Ok(Some(section)) => crate::config::logging_config_from_toml_section(&section),
             _ => LoggingConfig::default(),
         };
         match Self::init(config) {
