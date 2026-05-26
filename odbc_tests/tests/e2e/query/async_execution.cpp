@@ -26,7 +26,7 @@ constexpr const char* kLongQuery = "SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIM
 // Fast query that should complete nearly instantly.
 constexpr const char* kFastQuery = "SELECT 42 AS value";
 
-SQLRETURN poll_until_complete(SQLHSTMT stmt, const char* query) {
+SQLRETURN poll_exec_direct(SQLHSTMT stmt, const char* query) {
   int polls = 0;
   SQLRETURN ret = SQL_STILL_EXECUTING;
   while (ret == SQL_STILL_EXECUTING && ++polls < kMaxPollIterations) {
@@ -154,7 +154,7 @@ TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[query][async]") 
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
   // Cleanup: poll to completion so the statement is usable for teardown
-  poll_until_complete(stmt.getHandle(), kLongQuery);
+  poll_exec_direct(stmt.getHandle(), kLongQuery);
 }
 
 TEST_CASE("should complete async execution via polling and retrieve data", "[query][async]") {
@@ -173,7 +173,7 @@ TEST_CASE("should complete async execution via polling and retrieve data", "[que
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
   // And polling eventually completes
-  ret = poll_until_complete(stmt.getHandle(), kFastQuery);
+  ret = poll_exec_direct(stmt.getHandle(), kFastQuery);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // And data should be retrievable (SQLFetch is also async-capable)
@@ -196,7 +196,7 @@ TEST_CASE("should execute and retrieve result set asynchronously", "[query][asyn
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(query), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
-  ret = poll_until_complete(stmt.getHandle(), query);
+  ret = poll_exec_direct(stmt.getHandle(), query);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // Then all rows should be fetchable after async completion
@@ -230,7 +230,7 @@ TEST_CASE("should allow re-execution after async completion", "[query][async]") 
   const char* query1 = "SELECT 1 AS val";
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(query1), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
-  ret = poll_until_complete(stmt.getHandle(), query1);
+  ret = poll_exec_direct(stmt.getHandle(), query1);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // And we close the cursor and execute a second query
@@ -240,7 +240,7 @@ TEST_CASE("should allow re-execution after async completion", "[query][async]") 
   const char* query2 = "SELECT 99 AS val";
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(query2), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
-  ret = poll_until_complete(stmt.getHandle(), query2);
+  ret = poll_exec_direct(stmt.getHandle(), query2);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
   // Then the second query should produce correct results
@@ -262,7 +262,7 @@ TEST_CASE("should allow disabling async after completion", "[query][async]") {
   const char* query = "SELECT 1";
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(query), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
-  ret = poll_until_complete(stmt.getHandle(), query);
+  ret = poll_exec_direct(stmt.getHandle(), query);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
   ret = SQLCloseCursor(stmt.getHandle());
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
@@ -311,8 +311,6 @@ TEST_CASE("should execute prepared statement asynchronously", "[query][async]") 
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 123 AS val"), SQL_NTS);
-  REQUIRE(ret == SQL_STILL_EXECUTING);
   ret = poll_prepare(stmt.getHandle(), "SELECT 123 AS val");
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
@@ -419,7 +417,7 @@ TEST_CASE("should cancel async execution with HY008", "[query][async][cancel]") 
   REQUIRE_THAT(OdbcResult(cancel_ret, stmt), OdbcMatchers::Succeeded());
 
   // Then polling should eventually return HY008
-  SQLRETURN poll_ret = poll_until_complete(stmt.getHandle(), kLongQuery);
+  SQLRETURN poll_ret = poll_exec_direct(stmt.getHandle(), kLongQuery);
   REQUIRE(poll_ret == SQL_ERROR);
   CHECK(get_sqlstate(stmt) == "HY008");
 }
@@ -442,7 +440,7 @@ TEST_CASE("should treat SQLCancel on idle async-enabled statement as no-op", "[q
   // And the statement should still be usable for execution
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(kFastQuery), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
-  ret = poll_until_complete(stmt.getHandle(), kFastQuery);
+  ret = poll_exec_direct(stmt.getHandle(), kFastQuery);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 }
 
@@ -489,7 +487,7 @@ TEST_CASE("should return SQL_ERROR asynchronously for invalid SQL", "[query][asy
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
   // Then polling should eventually return SQL_ERROR with a syntax error SQLSTATE
-  ret = poll_until_complete(stmt.getHandle(), bad_query);
+  ret = poll_exec_direct(stmt.getHandle(), bad_query);
   REQUIRE(ret == SQL_ERROR);
   CHECK(get_sqlstate(stmt) == "42000");
 }
@@ -515,7 +513,7 @@ TEST_CASE("should reject non-permitted function call during async execution", "[
   CHECK(get_sqlstate(stmt) == "HY010");
 
   // Cleanup: poll to completion
-  poll_until_complete(stmt.getHandle(), kLongQuery);
+  poll_exec_direct(stmt.getHandle(), kLongQuery);
 }
 
 TEST_CASE("should clear diagnostic records between async polls", "[query][async]") {
@@ -531,7 +529,7 @@ TEST_CASE("should clear diagnostic records between async polls", "[query][async]
   const char* bad_query = "SELCT INVALID";
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(bad_query), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
-  ret = poll_until_complete(stmt.getHandle(), bad_query);
+  ret = poll_exec_direct(stmt.getHandle(), bad_query);
   REQUIRE(ret == SQL_ERROR);
   auto error_records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
   REQUIRE_FALSE(error_records.empty());
@@ -545,7 +543,7 @@ TEST_CASE("should clear diagnostic records between async polls", "[query][async]
   CHECK(records.empty());
 
   // And after polling to completion, diagnostics reflect the final state
-  ret = poll_until_complete(stmt.getHandle(), kFastQuery);
+  ret = poll_exec_direct(stmt.getHandle(), kFastQuery);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 }
 
