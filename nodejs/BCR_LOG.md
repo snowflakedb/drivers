@@ -1,5 +1,9 @@
 This document outlines API behavior changes that should be reviewed or addressed in the new driver.
 
+### API Argument Validation
+
+In the new driver, we will remove most runtime argument validation and instead rely on TypeScript's static type checking. Previously, we had multiple layers of validation, which sometimes led to inconsistent error handling between methods. Omitting redundant runtime validation is standard practice in TypeScript codebases, as static type checks catch most usage errors during development.
+
 ### snowflake .connectAsync(callback)
 
 - In the old driver, this method, in some cases, returns errors via `callback(err)` and in other cases throws errors directly. This inconsistent behavior is a bug. In the new driver, async methods should not accept a callback, and all errors should be handled via rejected promises.
@@ -31,6 +35,8 @@ This document outlines API behavior changes that should be reviewed or addressed
 
 These are potential improvements to consider after the UD release:
 
+- `snowflake.serializeConnection` should throw or return null when called on a disconnected connection, rather than returning an unusable object.
+- `snowflake.deserializeConnection` should throw an exception when provided an invalid or malformed serialized string, instead of failing in some cases and returning a disconnected connection.
 - Remove the `big-number` dependency and use native `BigInt` throughout the codebase for large integers.
 - Reevaluate the `jsTreatIntegerAsBigInt` parameter; consider either always converting all fixed numeric values to `BigInt`, or using `BigInt` only when the value exceeds the safe integer range (using `Number.isSafeInteger()`), and review approaches for handling floating-point numbers in a similar, consistent manner.
 - Variant JSON/XML parsing is a mess: it is slow, does eval() and adds 6 dependencies (2MB). We should follow other drivers and let user decide how to parse variants. See "parses JSON with undefined, Infinity, NaN as JS types" test
