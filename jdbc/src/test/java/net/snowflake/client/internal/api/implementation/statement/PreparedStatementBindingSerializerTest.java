@@ -11,13 +11,29 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
 public class PreparedStatementBindingSerializerTest {
+
+  /**
+   * Detect ArrowBuf leaks. Any code path inside {@code serialize()} that allocates a buffer but
+   * fails to close it (e.g. a future refactor that throws between {@code allocator.buffer(…)} and
+   * {@code NativeBindings} construction) leaves bytes accounted on the shared allocator; this
+   * assertion fires immediately after the test class completes.
+   */
+  @AfterAll
+  public static void assertSharedAllocatorEmpty() {
+    assertEquals(
+        0L,
+        PreparedStatementBindingSerializer.sharedAllocatorAllocatedBytes(),
+        "ArrowBuf leak: shared allocator still has bytes after binding serializer tests");
+  }
 
   @Test
   public void testSerializeEmptyParametersReturnsNullBindings() throws Exception {
@@ -97,6 +113,36 @@ public class PreparedStatementBindingSerializerTest {
           expectedJsonBytes.length,
           bindings.getJson().getLength(),
           "JSON byte length should match numeric placeholder payload length");
+    }
+  }
+
+  @Test
+  public void testSerializeListValuedParameterEmitsJsonArrayWithNullSlots() throws Exception {
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
+    params.put(
+        1,
+        new PreparedStatementBindingSerializer.ParameterValue(
+            "FIXED", Arrays.asList("1", "2", null, "4")));
+    params.put(
+        2,
+        new PreparedStatementBindingSerializer.ParameterValue(
+            "TEXT", Arrays.asList("a", null, "c", "d")));
+
+    String expectedJson =
+        "{\"1\":{\"type\":\"FIXED\",\"value\":[\"1\",\"2\",null,\"4\"]},"
+            + "\"2\":{\"type\":\"TEXT\",\"value\":[\"a\",null,\"c\",\"d\"]}}";
+    byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
+
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(
+            SqlPlaceholderMetadata.analyze("INSERT INTO t VALUES (?, ?)"), params)) {
+      QueryBindings bindings = nativeBindings.bindings();
+      assertNotNull(bindings, "Expected non-null bindings for array bind");
+      assertTrue(bindings.hasJson(), "Expected JSON variant for array bind");
+      assertEquals(
+          expectedJsonBytes.length,
+          bindings.getJson().getLength(),
+          "Array-bind JSON byte length should match the canonical payload");
     }
   }
 }

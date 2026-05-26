@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Map;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -17,6 +18,14 @@ import org.json.JSONStringer;
 final class PreparedStatementBindingSerializer {
   private static final SFLogger logger =
       SFLoggerFactory.getLogger(PreparedStatementBindingSerializer.class);
+
+  /** Process-wide; a fresh allocator per execute is measurably expensive in batch scenarios. */
+  private static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
+
+  /** Test-only: outstanding bytes on the shared allocator (for {@code @AfterAll} leak checks). */
+  static long sharedAllocatorAllocatedBytes() {
+    return SHARED_ALLOCATOR.getAllocatedMemory();
+  }
 
   static final class ParameterValue {
     private final String bindType;
@@ -36,10 +45,16 @@ final class PreparedStatementBindingSerializer {
     }
   }
 
-  /** Holds bindings plus the native buffer backing the pointer stored in the RPC payload. */
+  /**
+   * The {@link BinaryDataPtr} address is a raw {@code long}, not a Java reference to the underlying
+   * {@link ArrowBuf}. Callers must keep this object reachable until the synchronous {@code
+   * statementExecuteQuery} returns — the standard try-with-resources around the RPC suffices per
+   * JLS §12.6.1.
+   */
   static final class NativeBindings implements AutoCloseable {
     private final QueryBindings bindings;
     private final NativeBuffer buffer;
+    private boolean closed;
 
     NativeBindings(QueryBindings bindings, NativeBuffer buffer) {
       this.bindings = bindings;
@@ -52,8 +67,11 @@ final class PreparedStatementBindingSerializer {
 
     @Override
     public void close() {
-      // The bindings payload includes a pointer into this native buffer, so the owner must release
-      // it after the RPC has been constructed and sent.
+      // Idempotent — guards against double-close in nested try-with-resources / finally chains.
+      if (closed) {
+        return;
+      }
+      closed = true;
       if (buffer != null) {
         buffer.close();
       }
@@ -88,18 +106,51 @@ final class PreparedStatementBindingSerializer {
             "Bindings serialization failed: missing parameter value for index {}", parameterIndex);
         throw new SQLException("Missing value for parameter index: " + parameterIndex);
       }
-
       jsonStringer.key(String.valueOf(parameterIndex)).object();
       jsonStringer.key("type").value(parameterValue.bindType());
-      if (parameterValue.value() == null) {
-        jsonStringer.key("value").value(null);
-      } else {
-        jsonStringer.key("value").value(String.valueOf(parameterValue.value()));
-      }
+      jsonStringer.key("value");
+      writeBindingValue(jsonStringer, parameterIndex, parameterValue.value());
       jsonStringer.endObject();
     }
     jsonStringer.endObject();
     return jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static void writeBindingValue(JSONStringer json, int parameterIndex, Object value)
+      throws SQLException {
+    if (value == null || value instanceof String) {
+      json.value(value);
+      return;
+    }
+    if (value instanceof List) {
+      json.array();
+      for (Object element : (List<?>) value) {
+        requireNullOrString(element, parameterIndex, "list-valued binding");
+        json.value(element);
+      }
+      json.endArray();
+      return;
+    }
+    throw unsupportedBindingValue(parameterIndex, value, "binding");
+  }
+
+  private static void requireNullOrString(Object element, int parameterIndex, String context)
+      throws SQLException {
+    if (element != null && !(element instanceof String)) {
+      throw unsupportedBindingValue(parameterIndex, element, context);
+    }
+  }
+
+  private static SQLException unsupportedBindingValue(
+      int parameterIndex, Object value, String context) {
+    return new SQLException(
+        "Internal error: "
+            + context
+            + " for parameter "
+            + parameterIndex
+            + " has an unsupported value type ("
+            + value.getClass().getCanonicalName()
+            + ")");
   }
 
   private static NativeBindings allocateNativeBindings(byte[] jsonBytes) throws SQLException {
@@ -128,23 +179,20 @@ final class PreparedStatementBindingSerializer {
   }
 
   private static final class NativeBuffer implements AutoCloseable {
-    private final RootAllocator allocator;
     private final ArrowBuf arrowBuf;
     private final long address;
+    private boolean closed;
 
-    private NativeBuffer(RootAllocator allocator, ArrowBuf arrowBuf, long address) {
-      this.allocator = allocator;
+    private NativeBuffer(ArrowBuf arrowBuf, long address) {
       this.arrowBuf = arrowBuf;
       this.address = address;
     }
 
     private static NativeBuffer fromBytes(byte[] source) throws SQLException {
-      RootAllocator allocator = null;
       ArrowBuf arrowBuf = null;
       boolean success = false;
       try {
-        allocator = new RootAllocator(Long.MAX_VALUE);
-        arrowBuf = allocator.buffer(source.length);
+        arrowBuf = SHARED_ALLOCATOR.buffer(source.length);
         arrowBuf.setBytes(0, source);
         long address = arrowBuf.memoryAddress();
         if (address == 0L) {
@@ -154,15 +202,10 @@ final class PreparedStatementBindingSerializer {
         }
         logger.debug("Allocated native binding buffer: payloadBytes={}", source.length);
         success = true;
-        return new NativeBuffer(allocator, arrowBuf, address);
+        return new NativeBuffer(arrowBuf, address);
       } finally {
-        if (!success) {
-          if (arrowBuf != null) {
-            arrowBuf.close();
-          }
-          if (allocator != null) {
-            allocator.close();
-          }
+        if (!success && arrowBuf != null) {
+          arrowBuf.close();
         }
       }
     }
@@ -176,8 +219,11 @@ final class PreparedStatementBindingSerializer {
 
     @Override
     public void close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
       arrowBuf.close();
-      allocator.close();
     }
   }
 }

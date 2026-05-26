@@ -32,3 +32,37 @@ behavior_differences:
       authenticators except SNOWFLAKE_JWT and EXTERNALBROWSER. This prevents PAT (Programmatic
       Access Token) authentication via DataSource even though setToken() and setAuthenticator()
       exist. The new driver correctly allows token-based authentication without a password.
+  2:
+    name: "Statement.executeBatch update-count int overflow"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver throws SnowflakeSQLLoggedException(EXECUTE_BATCH_INTEGER_OVERFLOW,
+      NUMERIC_VALUE_OUT_OF_RANGE) for any per-row count that exceeds Integer.MAX_VALUE in
+      executeBatch(). The new driver maps such counts to Statement.SUCCESS_NO_INFO so the
+      batch result array stays valid and length-correct; callers wanting full fidelity should
+      use executeLargeBatch().
+  3:
+    name: "getBatchQueryIDs positional alignment with updateCounts"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      In the old driver, Statement.executeBatch's success branch is the only place that appends
+      to batchQueryIDs, so failed entries skip the append and the resulting list is shorter than
+      updateCounts (positional alignment broken). The new driver always appends, using null for
+      failed entries, so callers can correlate updateCounts[i] with batchQueryIDs.get(i).
+      For the PreparedStatement array-bind path, the old driver does not populate batchQueryIDs
+      at all; the new driver appends a single entry covering the whole batch (or null on RPC
+      failure).
+  4:
+    name: "executeBatch resets current-result state on return"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Per JDBC spec, after Statement.executeBatch() the statement should have no current result
+      (getResultSet() returns null, getUpdateCount() returns -1). The old driver leaves
+      currentResultSet / currentUpdateCount populated by the last batched entry. The new driver
+      resets both in finalizeBatch.

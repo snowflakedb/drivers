@@ -2,12 +2,14 @@ package net.snowflake.client.internal.api.implementation.statement;
 
 import static net.snowflake.client.internal.api.implementation.statement.StatementTypeClassifier.NO_UPDATE_COUNT;
 
+import java.sql.BatchUpdateException;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +31,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Resul
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
+import net.snowflake.client.internal.util.StringUtil;
 
 public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeStatementImpl.class);
@@ -45,6 +48,9 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   protected long currentUpdateCount = NO_UPDATE_COUNT;
   protected String queryId;
   protected final Set<ResultSet> openResultSets = ConcurrentHashMap.newKeySet();
+  private final StatementBatch batch = new StatementBatch();
+  /** Per-batch-entry query IDs collected during {@link #executeBatch()}. */
+  private final List<String> batchQueryIds = new ArrayList<>();
   /** Non-null only while navigating a multi-statement result set sequence. */
   private MultiStatementState multiState;
 
@@ -62,18 +68,19 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   @Override
   public ResultSet executeQuery(String sql) throws SQLException {
     checkClosed();
-    return executeQueryWithBindings(sql, null);
+    return executeQueryWithBindings(sql, (PreparedStatementBindingSerializer.NativeBindings) null);
   }
 
-  protected ResultSet executeQueryWithBindings(String sql, QueryBindings bindings)
-      throws SQLException {
+  protected ResultSet executeQueryWithBindings(
+      String sql, PreparedStatementBindingSerializer.NativeBindings bindings) throws SQLException {
     checkClosed();
     ExecuteQueryResponse response = executeStatement(sql, bindings);
     applyExecuteQueryResult(response);
     return currentResultSet;
   }
 
-  protected int executeUpdateWithBindings(String sql, QueryBindings bindings) throws SQLException {
+  protected int executeUpdateWithBindings(
+      String sql, PreparedStatementBindingSerializer.NativeBindings bindings) throws SQLException {
     boolean producedResultSet = executeWithBindings(sql, bindings);
     if (producedResultSet) {
       throw new SnowflakeSQLException(
@@ -82,18 +89,33 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     return getCurrentUpdateCountAsInt();
   }
 
-  protected boolean executeWithBindings(String sql, QueryBindings bindings) throws SQLException {
+  protected long executeLargeUpdateWithBindings(
+      String sql, PreparedStatementBindingSerializer.NativeBindings bindings) throws SQLException {
+    boolean producedResultSet = executeWithBindings(sql, bindings);
+    if (producedResultSet) {
+      throw new SnowflakeSQLException(
+          "executeUpdate() cannot be used for statements that produce a ResultSet");
+    }
+    return currentUpdateCount;
+  }
+
+  protected boolean executeWithBindings(
+      String sql, PreparedStatementBindingSerializer.NativeBindings bindings) throws SQLException {
     checkClosed();
     ExecuteQueryResponse response = executeStatement(sql, bindings);
     return updateExecutionStateAndReturnHasResultSet(response);
   }
 
-  private ExecuteQueryResponse executeStatement(String sql, QueryBindings bindings)
+  private ExecuteQueryResponse executeStatement(
+      String sql, PreparedStatementBindingSerializer.NativeBindings nativeBindings)
       throws SQLException {
+    QueryBindings bindings = nativeBindings != null ? nativeBindings.bindings() : null;
     boolean hasBindings = bindings != null;
     logger.debug("Statement executeWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
     prepareForExecution();
     coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+    // PreparedStatement callers must wrap this in try-with-resources on the NativeBindings so
+    // the embedded native pointer remains valid across the synchronous RPC (JLS §12.6.1).
     ExecuteQueryResponse response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
     logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
     return response;
@@ -420,17 +442,88 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public void addBatch(String sql) throws SQLException {
-    throw new SQLFeatureNotSupportedException("addBatch not supported");
+    checkClosed();
+    if (sql == null) {
+      throw new SnowflakeSQLException("addBatch requires a non-null SQL string");
+    }
+    batch.add(sql);
   }
 
   @Override
   public void clearBatch() throws SQLException {
-    throw new SQLFeatureNotSupportedException("clearBatch not supported");
+    checkClosed();
+    batch.clear();
+    // batchQueryIds is intentionally not cleared here — see SnowflakeStatement#getBatchQueryIDs.
   }
 
+  // TODO: honour CLIENT_CLEAR_BATCH_ONLY_AFTER_SUCCESSFUL_EXECUTION once sf_core surfaces session
+  // params; today we always clear in finally.
   @Override
   public int[] executeBatch() throws SQLException {
-    throw new SQLFeatureNotSupportedException("executeBatch not supported");
+    checkClosed();
+    return batch.executeAll(this);
+  }
+
+  protected static BatchUpdateException buildBatchFailureException(
+      SQLException firstFailure, int[] updateCounts) {
+    return new BatchUpdateException(
+        firstFailure.getLocalizedMessage(),
+        firstFailure.getSQLState(),
+        firstFailure.getErrorCode(),
+        updateCounts,
+        firstFailure);
+  }
+
+  /**
+   * Shared cleanup for executeBatch paths: clear the batch and reset current-result state. If a BUE
+   * is pending from the catch path, attach cleanup failures as suppressed; on the success path, log
+   * + swallow so cleanup errors don't mask successful update counts.
+   */
+  protected void finalizeBatch(BatchUpdateException pending) {
+    try {
+      clearBatch();
+    } catch (SQLException cleanupEx) {
+      if (pending != null) {
+        pending.addSuppressed(cleanupEx);
+      } else {
+        logger.warn("clearBatch failed after successful executeBatch", cleanupEx);
+      }
+    }
+    resetCurrentResultState();
+  }
+
+  /**
+   * Map a long update count to a JDBC batch int. {@code NO_UPDATE_COUNT} and out-of-int values
+   * collapse to {@link Statement#SUCCESS_NO_INFO}; callers wanting full fidelity should use {@link
+   * Statement#executeLargeBatch()}.
+   */
+  protected static int toBatchInt(long value) {
+    if (value == NO_UPDATE_COUNT || value > Integer.MAX_VALUE || value < Integer.MIN_VALUE) {
+      return Statement.SUCCESS_NO_INFO;
+    }
+    return (int) value;
+  }
+
+  /** Both {@code null} and the empty string (proto3 default) collapse to {@code null}. */
+  protected static String normalizeQueryId(String queryId) {
+    return StringUtil.isNullOrEmpty(queryId) ? null : queryId;
+  }
+
+  protected void recordBatchQueryId() {
+    batchQueryIds.add(normalizeQueryId(queryId));
+  }
+
+  protected void clearBatchQueryIds() {
+    batchQueryIds.clear();
+  }
+
+  /**
+   * Per JDBC spec, after {@code executeBatch()} {@link Statement#getResultSet()} returns null and
+   * {@link Statement#getUpdateCount()} returns -1.
+   */
+  protected void resetCurrentResultState() {
+    currentResultSet = null;
+    currentUpdateCount = NO_UPDATE_COUNT;
   }
 
   @Override
@@ -573,7 +666,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public List<String> getBatchQueryIDs() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getBatchQueryIDs not supported");
+    checkClosed();
+    return Collections.unmodifiableList(new ArrayList<>(batchQueryIds));
   }
 
   @Override

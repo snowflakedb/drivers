@@ -41,6 +41,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private final String sql;
   private final SqlPlaceholderMetadata placeholderMetadata;
   private final Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues;
+  private final PreparedBatch batch = new PreparedBatch();
 
   public SnowflakePreparedStatementImpl(
       InternalSnowflakeConnection connection, String sql, CoreDriverApi coreDriverApi) {
@@ -55,7 +56,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      return executeQueryWithBindings(sql, nativeBindings.bindings());
+      return executeQueryWithBindings(sql, nativeBindings);
     }
   }
 
@@ -64,13 +65,14 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      return executeUpdateWithBindings(sql, nativeBindings.bindings());
+      return executeUpdateWithBindings(sql, nativeBindings);
     }
   }
 
   @Override
   public void setNull(int parameterIndex, int sqlType) throws SQLException {
     checkClosed();
+    // ANY is the sentinel; addBatch promotes the column to a real type on first non-null.
     setParameter(parameterIndex, "ANY", null);
   }
 
@@ -285,13 +287,44 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      return executeWithBindings(sql, nativeBindings.bindings());
+      return executeWithBindings(sql, nativeBindings);
     }
   }
 
   @Override
   public void addBatch() throws SQLException {
-    throw new SQLFeatureNotSupportedException("addBatch not supported");
+    checkClosed();
+    batch.addRow(placeholderMetadata, parameterValues);
+  }
+
+  @Override
+  public void clearBatch() throws SQLException {
+    super.clearBatch();
+    batch.clear();
+  }
+
+  @Override
+  public void addBatch(String sql) throws SQLException {
+    checkClosed();
+    throw new SQLFeatureNotSupportedException(
+        "addBatch(String) is not allowed on PreparedStatement");
+  }
+
+  @Override
+  public int[] executeBatch() throws SQLException {
+    checkClosed();
+    long[] expanded = batch.executeAll(this, sql, placeholderMetadata);
+    int[] result = new int[expanded.length];
+    for (int i = 0; i < expanded.length; i++) {
+      result[i] = toBatchInt(expanded[i]);
+    }
+    return result;
+  }
+
+  @Override
+  public long[] executeLargeBatch() throws SQLException {
+    checkClosed();
+    return batch.executeAll(this, sql, placeholderMetadata);
   }
 
   @Override
@@ -472,8 +505,12 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
           placeholderMetadata.placeholderCount());
       return;
     }
+    // Boxed primitives passed through setObject must be stringified before they reach the
+    // serializer (which rejects non-String values).
+    String normalized = java.util.Objects.toString(value, null);
     parameterValues.put(
-        parameterIndex, new PreparedStatementBindingSerializer.ParameterValue(bindType, value));
+        parameterIndex,
+        new PreparedStatementBindingSerializer.ParameterValue(bindType, normalized));
     logger.debug(
         "Prepared parameter set: index={}, bindType={}, isNull={}, placeholders={}",
         parameterIndex,
@@ -486,7 +523,11 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       int parameterIndex, int sqlType, String bindType, T value, Function<T, String> serializer)
       throws SQLException {
     if (value == null) {
-      setNull(parameterIndex, sqlType);
+      // Preserve the typed bind type for the typed setX-with-null path. The generic
+      // setNull(idx, sqlType) entry point still maps to "ANY" (matches reference); this avoids
+      // silently widening every typed null to ANY when the user clearly intended a typed
+      // column.
+      setParameter(parameterIndex, bindType, null);
       return;
     }
     setParameter(parameterIndex, bindType, serializer.apply(value));
@@ -525,6 +566,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public void setBigInteger(int parameterIndex, BigInteger x) throws SQLException {
+    checkClosed();
     throw new SQLFeatureNotSupportedException("setBigInteger not supported");
   }
 
