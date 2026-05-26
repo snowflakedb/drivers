@@ -116,9 +116,27 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     coreDriverApi.statementSetSqlQuery(statementHandle, sql);
     // PreparedStatement callers must wrap this in try-with-resources on the NativeBindings so
     // the embedded native pointer remains valid across the synchronous RPC (JLS §12.6.1).
-    ExecuteQueryResponse response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+    ExecuteQueryResponse response;
+    try {
+      response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+    } catch (SQLException e) {
+      // Mirror snowflake-jdbc: surface the server-side queryId on a failed execute so callers
+      // can correlate the error with a Snowflake history entry.
+      captureQueryIdFromException(e);
+      throw e;
+    }
     logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
     return response;
+  }
+
+  private void captureQueryIdFromException(SQLException e) {
+    // prepareForExecution() already cleared queryId; only overwrite when the server surfaced one.
+    if (e instanceof SnowflakeSQLException) {
+      String exceptionQueryId = ((SnowflakeSQLException) e).getQueryId();
+      if (!StringUtil.isNullOrEmpty(exceptionQueryId)) {
+        this.queryId = exceptionQueryId;
+      }
+    }
   }
 
   private ResultSetResponse fetchResultSetByQueryId(String queryId) throws SQLException {
@@ -184,7 +202,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     if (StatementTypeClassifier.producesResultSet(descriptor)) {
       ResultSetGetStreamResponse streamResponse =
           fetchStreamAndRelease(rsResponse.getResultSetHandle());
-      currentResultSet = new SnowflakeResultSetImpl(this, streamResponse);
+      currentResultSet = new SnowflakeResultSetImpl(this, queryId, streamResponse);
       currentUpdateCount = NO_UPDATE_COUNT;
       return true;
     }
@@ -195,7 +213,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       ResultSetGetStreamResponse streamResponse =
           fetchStreamAndRelease(rsResponse.getResultSetHandle());
       if (streamResponse.hasStream() && !streamResponse.getStream().getValue().isEmpty()) {
-        currentResultSet = new SnowflakeResultSetImpl(this, streamResponse);
+        currentResultSet = new SnowflakeResultSetImpl(this, queryId, streamResponse);
         currentUpdateCount = NO_UPDATE_COUNT;
         return true;
       }
@@ -234,7 +252,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     if (producesResultSet) {
       ResultSetGetStreamResponse streamResponse =
           fetchStreamAndRelease(rsResponse.getResultSetHandle());
-      currentResultSet = new SnowflakeResultSetImpl(this, streamResponse);
+      currentResultSet = new SnowflakeResultSetImpl(this, childQueryId, streamResponse);
       currentUpdateCount = NO_UPDATE_COUNT;
     } else {
       currentResultSet = null;

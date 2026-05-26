@@ -14,9 +14,12 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
@@ -172,10 +175,51 @@ public class SnowflakePreparedStatementImplTest {
         "second executeBatch resets and re-populates rather than appending");
   }
 
+  @Test
+  void getQueryIdReflectsLastSuccessfulExecuteQuery() throws Exception {
+    SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenReturn(insertResponse(1L, "qid-prepared"));
+
+    ps.setInt(1, 1);
+    ps.executeUpdate();
+
+    assertEquals("qid-prepared", ((SnowflakeStatement) ps).getQueryID());
+  }
+
+  @Test
+  void getQueryIdIsPreservedFromFailedPreparedExecuteWhenServerProvidesIt() throws Exception {
+    SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenReturn(insertResponse(1L, "qid-prior"))
+        .thenThrow(driverExceptionWithQueryId("qid-prepared-failed"));
+
+    ps.setInt(1, 1);
+    ps.executeUpdate();
+    assertEquals("qid-prior", ((SnowflakeStatement) ps).getQueryID());
+
+    ps.setInt(1, 2);
+    assertThrows(SQLException.class, ps::executeUpdate);
+    assertEquals(
+        "qid-prepared-failed",
+        ((SnowflakeStatement) ps).getQueryID(),
+        "Failed prepared execute should overwrite the prior id with the server-side one");
+  }
+
+  private static SnowflakeSQLException driverExceptionWithQueryId(String queryId) {
+    DriverException error =
+        DriverException.newBuilder().setMessage("server-side failure").setQueryId(queryId).build();
+    return new SnowflakeSQLException(error, new RuntimeException("test cause"));
+  }
+
   private static ExecuteQueryResponse insertResponse(long rowsAffected) {
+    return insertResponse(rowsAffected, "qid");
+  }
+
+  private static ExecuteQueryResponse insertResponse(long rowsAffected, String queryId) {
     ResultSetDescriptor descriptor =
         ResultSetDescriptor.newBuilder()
-            .setQueryId("qid")
+            .setQueryId(queryId)
             .setStatementTypeId(INSERT_TYPE_ID)
             .setRowsAffected(rowsAffected)
             .build();

@@ -46,6 +46,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   private final SnowflakeStatementImpl statement;
+  private final String queryId;
   private final CursorState cursor = new CursorState();
   private final SchemaState schema;
   private final ArrowResources resources;
@@ -54,9 +55,11 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
-  public SnowflakeResultSetImpl(SnowflakeStatementImpl statement, ResultSetGetStreamResponse result)
+  public SnowflakeResultSetImpl(
+      SnowflakeStatementImpl statement, String queryId, ResultSetGetStreamResponse result)
       throws SQLException {
     this.statement = statement;
+    this.queryId = queryId;
     ByteString streamPointerBytes = result.getStream().getValue();
     // TODO Check how will this behave on AIX (Big Endian)
     long pointer =
@@ -288,7 +291,8 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new SnowflakeResultSetMetaDataImpl(schema.getColumnNames(), schema.getColumnTypes());
+    return new SnowflakeResultSetMetaDataImpl(
+        schema.getColumnNames(), schema.getColumnTypes(), queryId);
   }
 
   @Override
@@ -1142,7 +1146,8 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return queryId;
   }
 
   @Override
