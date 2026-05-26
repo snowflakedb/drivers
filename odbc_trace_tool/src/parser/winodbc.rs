@@ -183,17 +183,7 @@ fn parse_param_value(raw: &str) -> ParamValue {
     }
 
     if let Some(caps) = STRING_VALUE_RE.captures(trimmed) {
-        let mut text = caps[1].to_string();
-        // Windows DM traces NUL as `\ 0` at end of wide strings, e.g. `"SELECT 1;\ 0"`.
-        if text.ends_with("\\ 0") {
-            text.truncate(text.len() - 3);
-        } else if text.ends_with(" 0") && text.contains(';') {
-            text.truncate(text.len() - 2);
-        }
-        text = text.replace("\\0", "");
-        if text.ends_with('\0') {
-            text.pop();
-        }
+        let text = decode_winodbc_string(&caps[1]);
         return ParamValue::StringValue {
             value: text,
             truncated: false,
@@ -234,6 +224,61 @@ fn parse_param_value(raw: &str) -> ParamValue {
     }
 
     ParamValue::Address(trimmed.to_string())
+}
+
+/// Decode the contents of a quoted string parameter as emitted by the
+/// Windows ODBC Driver Manager trace.
+///
+/// The DM emits the underlying wide-string buffer as a C-style quoted literal
+/// where:
+///   * non-printable bytes are rendered as `\ <hex>` (backslash, space, single
+///     lowercase hex digit) — e.g. `\ a` is `0x0a` (LF), `\ 0` is `0x00` (NUL),
+///     `\ 9` would be `0x09` (TAB)
+///   * standard C escapes (`\\`, `\"`, `\n`, `\r`, `\t`, `\0`) are honored as
+///     a fallback so synthetic / test traces using C-string conventions still
+///     parse correctly
+///   * the trailing NUL terminator written by the DM is stripped
+fn decode_winodbc_string(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(' ') => match chars.next() {
+                Some(h) if h.is_ascii_hexdigit() => {
+                    let v = h.to_digit(16).unwrap() as u8;
+                    out.push(v as char);
+                }
+                Some(other) => {
+                    out.push('\\');
+                    out.push(' ');
+                    out.push(other);
+                }
+                None => {
+                    out.push('\\');
+                    out.push(' ');
+                }
+            },
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('0') => out.push('\0'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    if out.ends_with('\0') {
+        out.pop();
+    }
+    out
 }
 
 fn is_constant_name(s: &str) -> bool {
@@ -591,5 +636,62 @@ mod tests {
                 .any(|c| matches!(c.call, OdbcCall::Unsupported(_))),
             "no unsupported calls"
         );
+    }
+
+    #[test]
+    fn decode_string_handles_dm_hex_escapes() {
+        assert_eq!(decode_winodbc_string("SELECT 1;\\ 0"), "SELECT 1;");
+        assert_eq!(decode_winodbc_string("a\\ ab"), "a\nb");
+        assert_eq!(decode_winodbc_string("\\ 9"), "\t");
+        assert_eq!(decode_winodbc_string("\\ d"), "\r");
+        assert_eq!(
+            decode_winodbc_string(
+                "SELECT * REPLACE(\\ a  DATEADD('day', -1, TSLTZ) AS TSLTZ\\ a) \
+                 FROM ALLDATATYPES;\\ 0"
+            ),
+            "SELECT * REPLACE(\n  DATEADD('day', -1, TSLTZ) AS TSLTZ\n) FROM ALLDATATYPES;",
+        );
+    }
+
+    #[test]
+    fn decode_string_handles_c_style_escapes_for_synthetic_traces() {
+        assert_eq!(decode_winodbc_string("SELECT 1;\\0"), "SELECT 1;");
+        assert_eq!(decode_winodbc_string("a\\nb"), "a\nb");
+        assert_eq!(decode_winodbc_string("a\\\\b"), "a\\b");
+        assert_eq!(decode_winodbc_string("a\\\"b"), "a\"b");
+    }
+
+    #[test]
+    fn parse_extracts_multiline_sql_from_dm_escapes() {
+        let trace = "proc-1 1234-5678\tENTER SQLAllocHandle\n\
+             \t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+             \t\tSQLHANDLE           0x0000000000000000\n\
+             \t\tSQLHANDLE *         0x0000018E00866BE0\n\
+             \n\
+             proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+             \t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+             \t\tSQLHANDLE           0x0000000000000000\n\
+             \t\tSQLHANDLE *         0x0000018E00866BE0 ( 0x0000018E656DAC50)\n\
+             \n\
+             proc-1 1234-5678\tENTER SQLExecDirectW\n\
+             \t\tHSTMT               0x0000018E656DA1E0\n\
+             \t\tWCHAR *             0x0000018E006DF854 [      -3] \"SELECT *\\ a  FROM T;\\ 0\"\n\
+             \t\tSDWORD                    -3\n\
+             \n\
+             proc-1 1234-5678\tEXIT  SQLExecDirectW  with return code 0 (SQL_SUCCESS)\n\
+             \t\tHSTMT               0x0000018E656DA1E0\n\
+             \t\tWCHAR *             0x0000018E006DF854 [      -3] \"SELECT *\\ a  FROM T;\\ 0\"\n\
+             \t\tSDWORD                    -3\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let exec = parsed
+            .calls
+            .iter()
+            .find_map(|c| match &c.call {
+                OdbcCall::ExecDirect(e) => Some(e),
+                _ => None,
+            })
+            .expect("exec direct");
+        assert_eq!(exec.sql.as_deref(), Some("SELECT *\n  FROM T;"));
     }
 }

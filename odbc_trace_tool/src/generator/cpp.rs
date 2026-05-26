@@ -602,7 +602,7 @@ impl<'a> GenContext<'a> {
         let stmt_var = self.stmt_var_for(&call.handle);
         let col_num = call.column_number.unwrap_or(1);
         let target_type = call.target_type_name.as_deref().unwrap_or("SQL_C_CHAR");
-        let buf_len = call.buffer_length.unwrap_or(1024).min(4096);
+        let buf_len = call.buffer_length.unwrap_or(1024).max(0);
 
         self.writeln(&format!("// SQLGetData col {col_num}"));
         self.writeln("{");
@@ -623,14 +623,18 @@ impl<'a> GenContext<'a> {
             );
 
             if let Some(ind_val) = call.indicator {
-                if ind_val == -1 {
-                    self.writeln("CHECK(ind == SQL_NULL_DATA);");
-                } else {
-                    if let Some(val) = &call.value {
-                        let escaped = escape_cpp_string_literal(val);
-                        self.writeln(&format!("CHECK(std::string(buf.data()) == \"{escaped}\");"));
+                match ind_val {
+                    -1 => self.writeln("CHECK(ind == SQL_NULL_DATA);"),
+                    -4 => self.writeln("CHECK(ind == SQL_NO_TOTAL);"),
+                    _ => {
+                        if let Some(val) = &call.value {
+                            let escaped = escape_cpp_string_literal(val);
+                            self.writeln(&format!(
+                                "CHECK(std::string(buf.data()) == \"{escaped}\");"
+                            ));
+                        }
+                        self.writeln(&format!("CHECK(ind == {ind_val});"));
                     }
-                    self.writeln(&format!("CHECK(ind == {ind_val});"));
                 }
             } else if let Some(val) = &call.value {
                 let escaped = escape_cpp_string_literal(val);
@@ -652,13 +656,13 @@ impl<'a> GenContext<'a> {
 
             // For non-narrow target types (SQL_C_WCHAR, etc.) the indicator is
             // a byte count that depends on the driver's wide-char encoding
-            // (UTF-16 vs UTF-32) and the DM's translation. Assert presence
-            // rather than the captured byte count to keep the test portable.
+            // (UTF-16 vs UTF-32) and the DM's translation. Assert sentinel
+            // values exactly, otherwise just assert presence to stay portable.
             if let Some(ind_val) = call.indicator {
-                if ind_val == -1 {
-                    self.writeln("CHECK(ind == SQL_NULL_DATA);");
-                } else {
-                    self.writeln("CHECK(ind > 0);");
+                match ind_val {
+                    -1 => self.writeln("CHECK(ind == SQL_NULL_DATA);"),
+                    -4 => self.writeln("CHECK(ind == SQL_NO_TOTAL);"),
+                    _ => self.writeln("CHECK(ind > 0);"),
                 }
             }
         }
@@ -1164,6 +1168,64 @@ mod tests {
         assert!(
             output.contains("SQLRETURN ret = SQLFreeHandle(SQL_HANDLE_ENV, env0)"),
             "env freed"
+        );
+    }
+
+    #[test]
+    fn test_get_data_emits_sql_no_total_and_keeps_large_buffer() {
+        use crate::model::{GetData, OdbcCall};
+
+        let calls = vec![
+            OdbcCall::GetData(GetData {
+                return_code: crate::model::ReturnCode::SuccessWithInfo,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(131074),
+                value: None,
+                indicator: Some(-4),
+            }),
+            OdbcCall::GetData(GetData {
+                return_code: crate::model::ReturnCode::Success,
+                handle: Some("0xstmt".to_string()),
+                column_number: Some(1),
+                target_type: Some(-8),
+                target_type_name: Some("SQL_C_WCHAR".to_string()),
+                buffer_length: Some(262146),
+                value: None,
+                indicator: Some(2),
+            }),
+        ];
+
+        let config = GeneratorConfig {
+            test_name: "lob streaming".to_string(),
+            tag: "replay".to_string(),
+            query_map: None,
+            allow_unsupported: true,
+        };
+
+        let output = generate(&calls, &config).expect("generate");
+
+        assert!(
+            output.contains("std::vector<char> buf(131074, 0);"),
+            "131074-byte buffer must be preserved (no 4096 clamp); output:\n{output}",
+        );
+        assert!(
+            output.contains("std::vector<char> buf(262146, 0);"),
+            "262146-byte buffer must be preserved; output:\n{output}",
+        );
+        assert!(
+            output.contains("CHECK(ind == SQL_NO_TOTAL);"),
+            "ind == -4 must render as SQL_NO_TOTAL; output:\n{output}",
+        );
+        assert!(
+            output.contains("CHECK(ind > 0);"),
+            "final positive indicator should still use presence check for wide chars; output:\n{output}",
+        );
+        assert!(
+            !output.contains("CHECK(ind == -4)"),
+            "must not emit raw -4 literal; output:\n{output}",
         );
     }
 
