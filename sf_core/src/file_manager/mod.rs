@@ -89,6 +89,20 @@ pub async fn upload_files(
 /// Returns a copy of `base` with `creds` replaced by the refresher's current
 /// snapshot, when a refresher is present. Without a refresher, `base` is
 /// returned unchanged.
+///
+/// Exposed as `pub` (rather than `fn`) so that `perform_upload_with_bytes_source`
+/// in `query.rs` can build a `SingleUploadData` for a `ByteSource::Bytes` upload
+/// without duplicating the credential-snapshot logic.
+pub fn current_stage_info_pub(
+    base: &StageInfo,
+    refresher: Option<&dyn StageCredsRefresher>,
+) -> StageInfo {
+    current_stage_info(base, refresher)
+}
+
+/// Returns a copy of `base` with `creds` replaced by the refresher's current
+/// snapshot, when a refresher is present. Without a refresher, `base` is
+/// returned unchanged.
 fn current_stage_info(base: &StageInfo, refresher: Option<&dyn StageCredsRefresher>) -> StageInfo {
     let mut info = base.clone();
     if let Some(r) = refresher {

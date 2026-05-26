@@ -609,6 +609,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionHeartbeatResponse { valid })
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_upload_stream", skip(self, input))]
+    async fn connection_upload_stream(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> Result<ConnectionUploadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let rs_info = self
+            .driver
+            .connection_upload_stream(conn_handle.into(), input.sql, input.data)
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionUploadStreamResponse {
+            result_set_handle: Some(rs_info.handle.into()),
+            result_descriptor: Some(rs_info.descriptor.into()),
+        })
+    }
+
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]
     async fn statement_new(
         &self,

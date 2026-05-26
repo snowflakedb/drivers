@@ -679,6 +679,14 @@ fn is_file_transfer(sql: &str) -> bool {
 }
 
 /// Strips leading whitespace, line comments (--), and block comments (/* */)
+///
+/// Exposed as `pub(super)` so that `upload_stream.rs` (a sibling module) can
+/// reuse the same SQL-prefix detection logic without duplicating it.
+pub(super) fn skip_leading_whitespace_and_comments_pub(s: &str) -> &str {
+    skip_leading_whitespace_and_comments(s)
+}
+
+/// Strips leading whitespace, line comments (--), and block comments (/* */)
 fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     let mut s = s;
     loop {

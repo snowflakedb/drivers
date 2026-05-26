@@ -9,8 +9,8 @@ use crate::chunks::{
 };
 use crate::file_manager;
 use crate::file_manager::{
-    CloudCredentials, DownloadResult, StageCredsCache, StageCredsRefreshError, UploadResult,
-    download_files, upload_files,
+    ByteSource, CloudCredentials, DownloadResult, SingleUploadData, StageCredsCache,
+    StageCredsRefreshError, UploadResult, download_files, upload_files, upload_single_file,
 };
 use crate::query_types::RowType;
 use crate::rest;
@@ -52,6 +52,80 @@ pub struct StageCredsRefreshContext {
     pub sql: String,
     pub query_parameters: crate::config::rest_parameters::QueryParameters,
     pub conn: Arc<Mutex<Connection>>,
+}
+
+/// Upload in-memory bytes to a stage using the transfer parameters from a GS
+/// PUT response.
+///
+/// This is the core of `ConnectionUploadStream`: the caller has already
+/// executed the PUT SQL against GS to obtain `gs_data`; this function
+/// bypasses the filesystem-path expansion that `perform_put_get_transfer`
+/// delegates to `upload_files`, and instead calls `upload_single_file`
+/// directly with `ByteSource::Bytes(data)`.
+///
+/// The virtual filename for the stage object (the `target` column in the PUT
+/// result) is derived from the basename of `src_locations[0]` returned by GS
+/// — the same string that the reference Python connector uses when
+/// `file_stream` is supplied.
+pub(super) async fn perform_upload_with_bytes_source(
+    gs_data: &query_response::Data,
+    wrapper_presets: &WrapperPresets,
+    stage_creds_refresh_context: Option<StageCredsRefreshContext>,
+    use_s3_regional_url_session_param: bool,
+    data: Vec<u8>,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    let upload_data = gs_data
+        .to_file_upload_data(
+            wrapper_presets.put_get_resultset_flavor.clone(),
+            wrapper_presets.legacy_odbc_compression_autodetect,
+            use_s3_regional_url_session_param,
+        )
+        .context(FileTransferPreparationSnafu)?;
+
+    // Derive the display filename from the server-returned src_location
+    // (basename only), matching what upload_files does when building
+    // SingleUploadData from an expanded file glob.
+    let src_location = upload_data.src_location_pattern.clone();
+    let filename = std::path::Path::new(&src_location)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&src_location)
+        .to_string();
+
+    // Seed the refresher's cache with the initial creds (same as perform_put_get_transfer).
+    let initial_creds = gs_data
+        .stage_info_creds()
+        .context(FileTransferPreparationSnafu)?;
+    let mut refresher = stage_creds_refresh_context
+        .zip(initial_creds)
+        .map(|(ctx, initial_creds)| SnowflakeStageCredsRefresher::new(ctx, initial_creds));
+    let mut refresher_handle = refresher
+        .as_mut()
+        .map(|r| r as &mut dyn file_manager::StageCredsRefresher);
+
+    let stage_info = crate::file_manager::current_stage_info_pub(
+        &upload_data.stage_info,
+        refresher_handle.as_deref(),
+    );
+
+    let single = SingleUploadData {
+        source: ByteSource::Bytes(data),
+        source_path_str: filename.clone(),
+        filename,
+        stage_info,
+        encryption_material: upload_data.encryption_material.clone(),
+        auto_compress: upload_data.auto_compress,
+        source_compression: upload_data.source_compression.clone(),
+        overwrite: upload_data.overwrite,
+        flavor: upload_data.flavor.clone(),
+        legacy_odbc_compression_autodetect: upload_data.legacy_odbc_compression_autodetect,
+    };
+
+    let result = upload_single_file(single, &mut refresher_handle)
+        .await
+        .context(FileUploadSnafu)?;
+
+    Ok(RowsetData::Upload(vec![result]))
 }
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
