@@ -161,10 +161,12 @@ behavior_differences:
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
 
   11:
-    name: "SQL_C_CHAR returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in buffer"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "SQL_C_CHAR returns SQL_ERROR (22003) instead of SQL_SUCCESS when whole digits do not fit in buffer"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC spec compliance fix. This helps to prevent the loss of the non-fractional digits.
     old_driver_behavior: |
       When SQLGetData is called with SQL_C_CHAR on a DECIMAL/NUMERIC column and the buffer is too small to hold even the whole (non-fractional) digits, the old driver returns SQL_SUCCESS and silently truncates the data.
     new_driver_behavior: |
@@ -174,9 +176,11 @@ behavior_differences:
 
   12:
     name: "SQL_C_BINARY returns SQL_SUCCESS instead of SQL_ERROR (22003) when buffer is too small for SQL_NUMERIC_STRUCT"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC spec compliance fix. This helps to prevent the loss of the data. You cannot read the SQL_NUMERIC struct if the buffer is too small.
     old_driver_behavior: |
       When SQLGetData is called with SQL_C_BINARY on a DECIMAL/NUMERIC column and the buffer is smaller than sizeof(SQL_NUMERIC_STRUCT), the old driver silently writes a partial struct and returns SQL_SUCCESS.
     new_driver_behavior: |
@@ -186,9 +190,11 @@ behavior_differences:
 
   13:
     name: "SQL_C_NUMERIC ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC spec compliance fix. Honors the settings explicitly set by the caller for the conversions.
     old_driver_behavior: |
       When SQLSetDescField is used to set SQL_DESC_PRECISION and SQL_DESC_SCALE on the ARD before calling SQLGetData with SQL_C_NUMERIC, the old driver ignores these values and always uses its own defaults (precision=38, scale=0). The resulting SQL_NUMERIC_STRUCT does not reflect the requested precision/scale.
     new_driver_behavior: |
@@ -197,6 +203,7 @@ behavior_differences:
       Applications that set descriptor fields for SQL_C_NUMERIC will now see the correct precision and scale in the output struct, matching the ODBC specification behavior.
 
   14:
+    # TODO: Verify if the conversion follows the correct path; for SQL_DOUBLE, the old driver behavior is correct, but for the SQL_NUMERIC it is not
     name: "SQL_C_BINARY on FLOAT/DOUBLE/REAL columns returns raw f64 bytes instead of SQL_NUMERIC_STRUCT"
     status: unknown
     type: bug
@@ -209,10 +216,12 @@ behavior_differences:
       Applications requesting SQL_C_BINARY for floating-point columns now receive a standards-compliant SQL_NUMERIC_STRUCT instead of raw double bytes.
 
   15:
-    name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_SUCCESS_WITH_INFO instead of SQL_ERROR for fractional values"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC compliance fix. Now we allow the partial conversion.
     old_driver_behavior: |
       When SQLGetData is called with SQL_C_CHAR on a FLOAT/DOUBLE/REAL column and the buffer is too small to hold the full string representation, the old driver returns SQL_ERROR.
     new_driver_behavior: |
@@ -221,10 +230,12 @@ behavior_differences:
       Applications providing small buffers for SQL_C_CHAR on FLOAT columns will now receive a truncated result with a warning instead of an error.
 
   16:
-    name: "NaN FLOAT value silently converts to 0 for integer and BIT targets instead of returning 22003"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "NaN FLOAT value returns SQL_ERROR (22003) instead of silently converting to 0 for integer and BIT targets"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC compliance fix. The silent conversion may cause data discrepancies.
     old_driver_behavior: |
       When SQLGetData is called on a FLOAT/DOUBLE column containing NaN with an integer target type (SQL_C_SLONG, SQL_C_ULONG, SQL_C_SHORT, SQL_C_USHORT, SQL_C_STINYINT, SQL_C_UTINYINT, SQL_C_SBIGINT, SQL_C_UBIGINT) or SQL_C_BIT, the old driver returns SQL_SUCCESS_WITH_INFO and silently writes 0 to the output buffer. This happens because NaN comparisons always return false, so range checks pass, and the cast produces 0.
     new_driver_behavior: |
@@ -238,7 +249,9 @@ behavior_differences:
     name: "On Windows, PUT source column returns filename only instead of full absolute path"
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Regression.
     old_driver_behavior: |
       On Windows, the PUT result set source column returns the full absolute file path (e.g. C:/Users/.../test_data.csv).
     new_driver_behavior: |
@@ -247,10 +260,12 @@ behavior_differences:
       Applications that parse the PUT source column for the full path on Windows will now receive only the filename.
 
   18:
-    name: "Interval leading field precision is not enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is not supported"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "Interval leading field precision is enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is respected"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC compliance fix. Honors the default setting and settings explicitly set by the caller.
     old_driver_behavior: |
       Does not enforce the ODBC-mandated default interval leading precision of 2 digits. When a NUMBER value is converted to a single-field interval C type (SQL_C_INTERVAL_YEAR, _MONTH, _DAY, _HOUR, _MINUTE, _SECOND), any value that fits in a SQLUINTEGER (up to 4,294,967,295) succeeds regardless of leading precision. Setting SQL_DESC_DATETIME_INTERVAL_PRECISION via SQLSetDescField has no effect.
     new_driver_behavior: |
@@ -261,9 +276,10 @@ behavior_differences:
       Reference: ODBC spec "Interval Data Type Precision" — "The SQL_DESC_DATETIME_INTERVAL_PRECISION field is automatically set to the default interval leading precision of 2."
 
   19:
+    #TODO: Think how to proceed; for the parsers, both versions are correct.
     name: "DECFLOAT values are returned in scientific notation and properly normalized"
     status: unknown
-    type: bug
+    type: enhancement
     reviewed: false
     old_driver_behavior: |
       DECFLOAT values are not properly normalized, when using scientific notation. (e.g. "12e199" is returned instead of "1.2e200")
@@ -273,10 +289,12 @@ behavior_differences:
       Applications that parse the DECFLOAT values will now receive values in properly formatted scientific notation.
 
   20:
-    name: "SQLNumResultCols returns 0 after SQL_CLOSE on prepared statement"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "SQLNumResultCols returns the correct column count instead of 0 after SQL_CLOSE on prepared statement"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC compliance fix. Now the caller receives the correct count of the columns for the prepared statement even after closing the cursor.
     old_driver_behavior: |
       After Prepare -> Execute -> SQL_CLOSE, SQLNumResultCols returns 0. The old driver does not preserve prepared statement metadata across SQL_CLOSE.
     new_driver_behavior: |
@@ -287,10 +305,12 @@ behavior_differences:
       Spec reference: ODBC Statement Transitions table, SQLFreeStmt row (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/statement-transitions#sqlfreestmt) states that SQL_CLOSE from S4-S7 with [p] (prepared) transitions to S2/S3. SQLNumResultCols is defined to succeed in states S2-S12.
 
   21:
-    name: "SQLDescribeCol fails after SQL_CLOSE on prepared statement"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "SQLDescribeCol returns SQL_SUCCESS with correct name and type instead of failing after SQL_CLOSE on prepared statement"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC compliance fix. Now the caller receives the correct column metadata.
     old_driver_behavior: |
       After Prepare -> Execute -> SQL_CLOSE, SQLDescribeCol returns SQL_ERROR. The old driver does not preserve prepared statement metadata across SQL_CLOSE.
     new_driver_behavior: |
@@ -301,7 +321,8 @@ behavior_differences:
       Spec reference: ODBC Statement Transitions table, SQLFreeStmt row (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/statement-transitions#sqlfreestmt) states that SQL_CLOSE from S4-S7 with [p] (prepared) transitions to S2/S3. SQLDescribeCol is defined to succeed in states S2-S12 (prepared or executed).
 
   22:
-    name: "SQL_C_WCHAR chunked SQLGetData fits fewer characters per call"
+    # TODO: Verify within the test the behavior of old driver; it may be connected to the DriverManagerEncoding setting in the ini file causing the discrepancy
+    name: "SQL_C_WCHAR chunked SQLGetData fits more characters per call than previously"
     status: unknown
     type: enhancement
     reviewed: false
@@ -316,9 +337,11 @@ behavior_differences:
 
   23:
     name: "SQLGetData truncation indicator is consistently the actual data length"
-    status: unknown
+    status: todo
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      This is a performance bug, but still within ODBC spec and allows the same code path to work both on old and new driver. Performance bug to be fixed with SNOW-3560513
     old_driver_behavior: |
       The truncation indicator returned by the old driver is inconsistent across target C types and platforms: - SQL_C_BINARY truncation: always returns actual byte length. - SQL_C_CHAR truncation via SQLGetData: returns actual length on x86_64 Linux but SQL_NO_TOTAL (-4) on arm64. - SQL_C_CHAR truncation via SQLBindCol: always returns actual length. - SQL_C_WCHAR truncation (string source): returns SQL_NO_TOTAL. - SQL_C_WCHAR truncation (binary source): returns actual byte length.
     new_driver_behavior: |
@@ -330,9 +353,11 @@ behavior_differences:
 
   24:
     name: "SQLDescribeCol reports SQL_VARBINARY for BINARY columns instead of SQL_BINARY"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
+    status_rationale: |
+      Both versions are correct, but to keep the backwards compatibility this should be kept as SQL_BINARY.
     old_driver_behavior: |
       Reports data_type as SQL_BINARY (-2) for Snowflake BINARY columns via SQLDescribeCol.
     new_driver_behavior: |
@@ -342,10 +367,12 @@ behavior_differences:
       Most applications treat SQL_BINARY and SQL_VARBINARY interchangeably. Applications that switch on the exact data_type value may need to handle SQL_VARBINARY in addition to SQL_BINARY.
 
   25:
-    name: "SQLRowCount with null RowCountPtr returns SQL_SUCCESS instead of SQL_ERROR (HY009)"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    name: "SQLRowCount with null RowCountPtr returns SQL_ERROR (HY009) instead of SQL_SUCCESS"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      Row count returns only the amount of rows modified. Calling it with nullptr makes no sense.
     old_driver_behavior: |
       When SQLRowCount is called with a null RowCountPtr after executing a statement, the old driver returns SQL_SUCCESS and silently ignores the null pointer.
     new_driver_behavior: |
@@ -357,29 +384,35 @@ behavior_differences:
 
   26:
     name: "SQLBindParameter rejects negative DecimalDigits with HY104 instead of accepting silently"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      Negative decimal digits make no sense.
     old_driver_behavior: |
       Accepts negative DecimalDigits values without error.
     new_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE HY104 (Invalid precision or scale value) per the ODBC specification.
 
   27:
-    name: "Unbound parameter marker returns 42000 (server error) instead of 07002 (COUNT field incorrect)"
-    status: unknown
+    name: "Unbound parameter marker returns SQL_ERROR (42000) server error instead of SQL_ERROR (07002) COUNT field incorrect"
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Old driver parsed the query locally instead of passing it to the server. We are returning backend error now, as this is the role of the server to process the SQL query with the parser, instead of making the local parser version that may shift from the server's implementation. This change allows better diagnostics by providing the proper error code and description, as old drivers' error code and description was vague.
     old_driver_behavior: |
       After SQL_RESET_PARAMS, executing a prepared statement with unbound parameter markers returns SQL_ERROR with SQLSTATE 07002 (COUNT field incorrect), caught locally by the driver.
     new_driver_behavior: |
       Sends the query to the server, which returns SQL_ERROR with SQLSTATE 42000 (Syntax error: Bind variable ? not set).
 
   28:
-    name: "SQLGetDescField on empty IPD returns SQL_ERROR instead of SQL_NO_DATA"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "SQLGetDescField on empty IPD returns SQL_NO_DATA instead of SQL_ERROR"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC spec compliance fix.
     old_driver_behavior: |
       Querying a record field on an empty IPD (no parameters bound, no prepare) returns SQL_ERROR.
     new_driver_behavior: |
@@ -388,10 +421,12 @@ behavior_differences:
       Per the ODBC spec, "SQL_NO_DATA is returned if RecNumber is greater than the current number of descriptor records."
 
   29:
-    name: "DECFLOAT extreme exponent to SQL_C_BINARY returns 22003 instead of silently succeeding"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "DECFLOAT extreme exponent to SQL_C_BINARY returns SQL_ERROR (22003) instead of silently succeeding"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This prevents the data loss when extreme exponent numbers are used.
     old_driver_behavior: |
       Converting a DECFLOAT with an extreme exponent (e.g. 1e100) to SQL_C_BINARY returns SQL_SUCCESS with an incorrect/clamped value.
     new_driver_behavior: |
@@ -401,9 +436,11 @@ behavior_differences:
 
   30:
     name: "TIMESTAMP to character truncation crashes old driver"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      Well, it's better not to crash.
     old_driver_behavior: |
       Converting a TIMESTAMP_NTZ, TIMESTAMP_LTZ, or TIMESTAMP_TZ with fractional seconds to SQL_C_CHAR or SQL_C_WCHAR with a buffer of 20-29 bytes (enough for the base timestamp but not the fractional part) crashes with SIGSEGV.
     new_driver_behavior: |
@@ -414,6 +451,8 @@ behavior_differences:
     status: unknown
     type: bug
     reviewed: false
+    status_rationale: |
+      To be reviewed with Product. This is a big deviation from the ODBC spec, but some customers may explicitly use this behavior in the products.
     old_driver_behavior: |
       SQLExecDirect and SQLExecute silently overwrite the statement state when called with an open cursor, allowing re-execution without explicitly closing the cursor first.
     new_driver_behavior: |
@@ -424,9 +463,9 @@ behavior_differences:
       Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function
 
   32:
-    name: "Async cancel does not interrupt in-progress operations"
+    name: "Async cancel does interrupt in-progress operations instead of waiting for completion"
     status: unknown
-    type: bug
+    type: bugfix
     reviewed: false
     old_driver_behavior: |
       Supports SQL_ATTR_ASYNC_ENABLE (SQLSetStmtAttr succeeds), but SQLCancel during async polling does not actually interrupt the in-progress operation. The query runs to completion instead of returning HY008 (Operation canceled).
@@ -439,9 +478,11 @@ behavior_differences:
 
   33:
     name: "SQL_C_NUMERIC to VARCHAR applies scale from SQL_NUMERIC_STRUCT instead of ignoring it"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This is a ODBC compliance fix. New driver now honors the explicitly set scale by the user.
     old_driver_behavior: |
       When binding SQL_C_NUMERIC to SQL_VARCHAR, the driver ignores the scale field of SQL_NUMERIC_STRUCT and converts the raw magnitude to a string without inserting a decimal point or appending trailing zeros. For example, val=12345 with scale=2 produces "12345" instead of "123.45", and val=123 with scale=-2 produces "123" instead of "12300".
     new_driver_behavior: |
@@ -451,21 +492,25 @@ behavior_differences:
 
   34:
     name: "SQL_C_BINARY to VARCHAR hex-encodes bytes instead of failing with HTTP 400"
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: enhancement
+    reviewed: true
+    status_rationale: |
+      Adds a new conversion, that was previously not supported.
     old_driver_behavior: |
       When binding SQL_C_BINARY to SQL_VARCHAR, the driver passes the raw binary data to Snowflake, which rejects the request with HTTP 400.
     new_driver_behavior: |
-      When binding SQL_C_BINARY to SQL_VARCHAR, the driver ex-encodes the binary data before sending (e.g. 0xDEADBEEF → "deadbeef"), which Snowflake accepts as a valid VARCHAR value.
+      When binding SQL_C_BINARY to SQL_VARCHAR, the driver hex-encodes the binary data before sending (e.g. 0xDEADBEEF → "deadbeef"), which Snowflake accepts as a valid VARCHAR value.
     description: |
       Spec reference: ODBC "C to SQL: Character" conversion table lists SQL_C_BINARY as a valid source type for SQL_VARCHAR. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
 
   35:
-    name: "Limited cross-type conversion support for SQL_BIT parameter binding"
-    status: unknown
-    type: enhancement
-    reviewed: false
+    name: "Add cross-type conversion support for SQL_BIT parameter binding"
+    status: todo
+    type: bug
+    reviewed: true
+    status_rationale: |
+      Based on the ODBC API (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/c-to-sql-numeric?view=sql-server-ver17) the conversions are incorrect. To be fixed and aligned.
     old_driver_behavior: |
       Has restricted value ranges for SQL_BIT parameter binding. Integer and SQL_C_DOUBLE types only accept 0 and 1; other values (negative, >1) fail with 22003. SQL_C_CHAR only accepts "0"/"1"; string literals like "true"/"false" and numeric strings are rejected. SQL_C_FLOAT is not supported at all. SQL_C_DOUBLE NaN is silently converted to false instead of failing.
     new_driver_behavior: |
@@ -474,10 +519,12 @@ behavior_differences:
       Applications using cross-type conversions to BOOLEAN columns will succeed on the new driver where the old driver returned errors.
 
   36:
-    name: "Subnormal double (DBL_MIN) stored as zero during parameter binding"
-    status: unknown
-    type: bug
-    reviewed: false
+    name: "Preserves subnormal double (DBL_MIN) values instead of storing them as zero during parameter binding"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This fixes the data loss that may happen in a very specific scenarios.
     old_driver_behavior: |
       Loses precision for very small subnormal double values near DBL_MIN (2.2e-308), storing them as 0.0.
     new_driver_behavior: |
@@ -486,10 +533,12 @@ behavior_differences:
       Applications working with extremely small floating-point values will get correct results on the new driver.
 
   37:
-    name: "SQL_C_NUMERIC nonzero value to SQL_BIT rejected during parameter binding"
-    status: unknown
+    name: "SQL_C_NUMERIC >=1 conversion converts SQL_BIT to true instead of rejecting"
+    status: todo
     type: bug
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      It's related to BD#35. The conversion of the old driver is correct.
     old_driver_behavior: |
       Returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range) when binding a SQL_C_NUMERIC with a value other than 0 or 1 (e.g., 42) to SQL_BIT. The driver sends the raw numeric magnitude to the server which rejects it for a BOOLEAN column.
     new_driver_behavior: |
