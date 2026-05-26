@@ -5,6 +5,7 @@ import java.util.Map;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetParameterResponse;
@@ -20,6 +21,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
@@ -143,4 +145,19 @@ public interface CoreDriverApi {
 
   TelemetrySendResponse telemetrySendWrapperError(
       ConnectionHandle connHandle, String exceptionType, String errorSource) throws SQLException;
+
+  // Stream-based file transfer (gap 4 / gap 16)
+
+  ConnectionUploadStreamResponse connectionUploadStream(
+      ConnectionHandle connHandle,
+      String stageName,
+      String destFilename,
+      byte[] data,
+      String destPrefix,
+      boolean compressData)
+      throws SQLException;
+
+  ConnectionDownloadStreamResponse connectionDownloadStream(
+      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
+      throws SQLException;
 }

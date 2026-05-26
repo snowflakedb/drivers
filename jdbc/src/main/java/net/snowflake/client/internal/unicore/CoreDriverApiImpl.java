@@ -10,6 +10,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionDownloadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetAllParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoRequest;
@@ -39,6 +41,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetSessionParametersResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionTokenResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitResponse;
@@ -375,6 +379,45 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setErrorSource(errorSource)
             .build();
     return invoke(() -> client.telemetrySendWrapperError(request));
+  }
+
+  // =========================================================================
+  // Stream-based file transfer (gap 4 / gap 16)
+  // =========================================================================
+
+  public ConnectionUploadStreamResponse connectionUploadStream(
+      ConnectionHandle connHandle,
+      String stageName,
+      String destFilename,
+      byte[] data,
+      String destPrefix,
+      boolean compressData)
+      throws SQLException {
+    ConnectionUploadStreamRequest.Builder builder =
+        ConnectionUploadStreamRequest.newBuilder()
+            .setConnHandle(connHandle)
+            .setStageName(stageName)
+            .setDestFilename(destFilename)
+            .setData(com.google.protobuf.ByteString.copyFrom(data))
+            .setCompressData(compressData);
+    if (destPrefix != null && !destPrefix.isEmpty()) {
+      builder.setDestPrefix(destPrefix);
+    }
+    ConnectionUploadStreamRequest request = builder.build();
+    return invoke(() -> client.connectionUploadStream(request));
+  }
+
+  public ConnectionDownloadStreamResponse connectionDownloadStream(
+      ConnectionHandle connHandle, String stageName, String sourceFilename, boolean decompress)
+      throws SQLException {
+    ConnectionDownloadStreamRequest request =
+        ConnectionDownloadStreamRequest.newBuilder()
+            .setConnHandle(connHandle)
+            .setStageName(stageName)
+            .setSourceFilename(sourceFilename)
+            .setDecompress(decompress)
+            .build();
+    return invoke(() -> client.connectionDownloadStream(request));
   }
 
   // =========================================================================
