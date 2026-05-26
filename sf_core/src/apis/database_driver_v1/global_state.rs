@@ -35,7 +35,7 @@ pub struct WrapperPresets {
     /// detection consults a short-prefix table (2-byte gzip, 2-byte
     /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
     /// of the `infer` crate.
-    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    pub legacy_odbc_compression_autodetect: bool,
 }
 
 impl WrapperPresets {
@@ -52,7 +52,7 @@ impl WrapperPresets {
     pub fn odbc() -> Self {
         Self {
             put_get_resultset_flavor: PutGetResultsetFlavor::Odbc,
-            legacy_compression_autodetect_libsnowflakeclient_behavior: true,
+            legacy_odbc_compression_autodetect: true,
             ..Self::default()
         }
     }

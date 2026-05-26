@@ -9,6 +9,8 @@ pub enum CompressionType {
     Zstd,
     Deflate,
     RawDeflate,
+    Parquet,
+    Orc,
     None,
 }
 
@@ -21,6 +23,8 @@ impl CompressionType {
             CompressionType::Zstd => "ZSTD",
             CompressionType::Deflate => "DEFLATE",
             CompressionType::RawDeflate => "RAW_DEFLATE",
+            CompressionType::Parquet => "PARQUET",
+            CompressionType::Orc => "ORC",
             CompressionType::None => "NONE",
         }
     }
@@ -36,6 +40,8 @@ fn get_compression_type_from_extension(
         "zst" => Ok(Some(CompressionType::Zstd)),
         "deflate" => Ok(Some(CompressionType::Deflate)),
         "raw_deflate" => Ok(Some(CompressionType::RawDeflate)),
+        "parquet" => Ok(Some(CompressionType::Parquet)),
+        "orc" => Ok(Some(CompressionType::Orc)),
         "lz" => UnsupportedCompressionTypeSnafu {
             type_name: "LZ".to_string(),
         }
@@ -56,14 +62,6 @@ fn get_compression_type_from_extension(
             type_name: "COMPRESS".to_string(),
         }
         .fail(),
-        "parquet" => UnsupportedCompressionTypeSnafu {
-            type_name: "PARQUET".to_string(),
-        }
-        .fail(),
-        "orc" => UnsupportedCompressionTypeSnafu {
-            type_name: "ORC".to_string(),
-        }
-        .fail(),
         _ => Ok(None),
     }
 }
@@ -72,7 +70,7 @@ fn get_compression_type_from_extension(
 /// `FileCompressionType.cpp`. Each entry is matched with `starts_with` —
 /// shorter than what the `infer` crate requires (e.g. infer's gzip matcher
 /// needs the 3-byte `1F 8B 08`; ODBC accepts the 2-byte `1F 8B`). Used
-/// only when `legacy_compression_autodetect_libsnowflakeclient_behavior`
+/// only when `legacy_odbc_compression_autodetect`
 /// is true; Python/JDBC do not consult this table.
 ///
 /// `0x78 0x01 / 0x9C / 0xDA` are zlib stream headers. UD has no separate
@@ -95,7 +93,7 @@ const SHORT_MAGIC_PREFIXES: &[(&[u8], CompressionType)] = &[
 // If both fail, it returns CompressionType::None
 // Returns an error if the compression type is unsupported
 //
-// `legacy_compression_autodetect_libsnowflakeclient_behavior` enables a
+// `legacy_odbc_compression_autodetect` enables a
 // libsnowflakeclient-style short-prefix match (see `SHORT_MAGIC_PREFIXES`)
 // ahead of the `infer` crate's full-buffer detection. ODBC sets this to
 // true to keep parity with legacy behavior; Python / JDBC keep it false.
@@ -104,7 +102,7 @@ const SHORT_MAGIC_PREFIXES: &[(&[u8], CompressionType)] = &[
 pub fn try_guess_compression_type(
     filename: &str,
     file_buffer: &[u8],
-    legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    legacy_odbc_compression_autodetect: bool,
 ) -> Result<CompressionType, CompressionTypeError> {
     let compression_type = try_guess_compression_type_from_filename(filename)?;
 
@@ -112,7 +110,7 @@ pub fn try_guess_compression_type(
         return Ok(compression_type);
     }
 
-    if legacy_compression_autodetect_libsnowflakeclient_behavior
+    if legacy_odbc_compression_autodetect
         && let Some(compression_type) = try_match_short_prefix(file_buffer)
     {
         return Ok(compression_type);
@@ -138,7 +136,23 @@ fn try_guess_compression_type_from_filename(
 }
 
 fn try_match_short_prefix(file_buffer: &[u8]) -> Option<CompressionType> {
-    SHORT_MAGIC_PREFIXES
+    try_match_magic_prefix(SHORT_MAGIC_PREFIXES, file_buffer)
+}
+
+// Parquet ("PAR1", 4 bytes) and ORC ("ORC", 3 bytes) magic bytes are
+// sniffed explicitly because the `infer` crate has no matchers for them.
+// These are real format markers — applied for all wrappers, not gated
+// on the ODBC-only legacy flag.
+const FILE_FORMAT_MAGIC_PREFIXES: &[(&[u8], CompressionType)] = &[
+    (b"PAR1", CompressionType::Parquet),
+    (b"ORC", CompressionType::Orc),
+];
+
+fn try_match_magic_prefix(
+    table: &[(&[u8], CompressionType)],
+    file_buffer: &[u8],
+) -> Option<CompressionType> {
+    table
         .iter()
         .find_map(|(prefix, kind)| file_buffer.starts_with(prefix).then(|| kind.clone()))
 }
@@ -147,6 +161,9 @@ fn try_match_short_prefix(file_buffer: &[u8]) -> Option<CompressionType> {
 fn try_guess_compression_type_from_buffer(
     file_buffer: &[u8],
 ) -> Result<Option<CompressionType>, CompressionTypeError> {
+    if let Some(kind) = try_match_magic_prefix(FILE_FORMAT_MAGIC_PREFIXES, file_buffer) {
+        return Ok(Some(kind));
+    }
     // Use the infer crate to guess the file type based on content
     match infer::get(file_buffer) {
         Some(kind) => get_compression_type_from_extension(kind.extension()),
@@ -168,8 +185,6 @@ pub enum CompressionTypeError {
 mod tests {
     use super::*;
 
-    // Supported extensions: each maps to the matching `CompressionType`
-    // variant via `try_guess_compression_type` (filename branch).
     #[test]
     fn extension_gz_maps_to_gzip() {
         let result = try_guess_compression_type("file.gz", b"", false).unwrap();
@@ -204,6 +219,37 @@ mod tests {
     fn extension_raw_deflate_maps_to_raw_deflate() {
         let result = try_guess_compression_type("file.raw_deflate", b"", false).unwrap();
         assert_eq!(result, CompressionType::RawDeflate);
+    }
+
+    // Parquet and ORC are now first-class supported types. The earlier
+    // `extension_parquet_errors_*` / `extension_orc_errors_*` tests from
+    // PR1 are gone — they locked a behavior PR2 deliberately changes.
+    #[test]
+    fn extension_parquet_returns_parquet() {
+        let result = try_guess_compression_type("data.parquet", b"", false).unwrap();
+        assert_eq!(result, CompressionType::Parquet);
+    }
+
+    #[test]
+    fn extension_orc_returns_orc() {
+        let result = try_guess_compression_type("data.orc", b"", false).unwrap();
+        assert_eq!(result, CompressionType::Orc);
+    }
+
+    // Magic-byte sniffing for Parquet (`PAR1`) and ORC (`ORC`) — both run
+    // ahead of the `infer` crate fallback and don't require the legacy
+    // libsnowflakeclient flag (these matchers are a Python/JDBC parity
+    // feature, not an ODBC-only one).
+    #[test]
+    fn parquet_magic_in_buffer_returns_parquet() {
+        let result = try_guess_compression_type("noext", b"PAR1trailing-bytes", false).unwrap();
+        assert_eq!(result, CompressionType::Parquet);
+    }
+
+    #[test]
+    fn orc_magic_in_buffer_returns_orc() {
+        let result = try_guess_compression_type("noext", b"ORCtrailing-bytes", false).unwrap();
+        assert_eq!(result, CompressionType::Orc);
     }
 
     // Unsupported extensions: each errors with `UnsupportedCompressionType`
@@ -246,16 +292,6 @@ mod tests {
         assert_unsupported_with_name("file.Z", "COMPRESS");
     }
 
-    #[test]
-    fn extension_parquet_errors_with_parquet_type_name() {
-        assert_unsupported_with_name("file.parquet", "PARQUET");
-    }
-
-    #[test]
-    fn extension_orc_errors_with_orc_type_name() {
-        assert_unsupported_with_name("file.orc", "ORC");
-    }
-
     // Extension match is case-sensitive: `foo.GZ` does not match by
     // extension and must fall through to the magic-byte branch (here:
     // empty buffer => None).
@@ -266,13 +302,31 @@ mod tests {
     }
 
     #[test]
+    fn parquet_magic_exact_4_bytes_returns_parquet() {
+        let result = try_guess_compression_type("noext", b"PAR1", false).unwrap();
+        assert_eq!(result, CompressionType::Parquet);
+    }
+
+    #[test]
+    fn orc_magic_exact_3_bytes_returns_orc() {
+        let result = try_guess_compression_type("noext", b"ORC", false).unwrap();
+        assert_eq!(result, CompressionType::Orc);
+    }
+
+    #[test]
+    fn buffer_too_short_does_not_match_either_parquet_or_orc() {
+        // A 2-byte buffer can't carry either magic; must fall through to
+        // None (no extension, no infer match).
+        let result = try_guess_compression_type("noext", b"OR", false).unwrap();
+        assert_eq!(result, CompressionType::None);
+    }
+
+    #[test]
     fn unknown_extension_with_empty_buffer_returns_none() {
         let result = try_guess_compression_type("file.unknownext", b"", false).unwrap();
         assert_eq!(result, CompressionType::None);
     }
 
-    // Magic-byte sniffing detects gzip, bzip2, and zstd when the filename
-    // has no recognized extension.
     #[test]
     fn magic_bytes_detect_gzip() {
         let gzip_magic: &[u8] = &[0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
@@ -321,8 +375,8 @@ mod tests {
     }
 
     // Buffer-detection branch surfaces unsupported magic bytes (e.g. xz
-    // / 7z) as `UnsupportedCompressionType` — locks current behavior so
-    // PR2 has a baseline to change against.
+    // / 7z) as `UnsupportedCompressionType` — `infer` matches xz before
+    // the parquet/orc branch can run.
     #[test]
     fn magic_bytes_detect_xz_as_unsupported() {
         let xz_magic: &[u8] = b"\xFD7zXZ\x00\x00\x01\x69\x22\xDE\x36";
@@ -333,6 +387,19 @@ mod tests {
             }
             other => panic!("Expected UnsupportedCompressionType for xz magic, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn parquet_snowflake_representation() {
+        assert_eq!(
+            CompressionType::Parquet.get_snowflake_representation(),
+            "PARQUET"
+        );
+    }
+
+    #[test]
+    fn orc_snowflake_representation() {
+        assert_eq!(CompressionType::Orc.get_snowflake_representation(), "ORC");
     }
 
     // Extension/magic conflict: filename says gzip, magic bytes say bzip2.

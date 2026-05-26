@@ -41,7 +41,7 @@ pub struct UploadData {
     /// detection consults a short-prefix table (2-byte gzip, 2-byte
     /// zlib mapped to `Deflate`, 4-byte snowflake brotli marker) ahead
     /// of the `infer` crate.
-    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    pub legacy_odbc_compression_autodetect: bool,
 }
 
 pub struct SingleUploadData {
@@ -53,7 +53,7 @@ pub struct SingleUploadData {
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
     pub flavor: PutGetResultsetFlavor,
-    pub legacy_compression_autodetect_libsnowflakeclient_behavior: bool,
+    pub legacy_odbc_compression_autodetect: bool,
 }
 
 #[derive(Debug)]
