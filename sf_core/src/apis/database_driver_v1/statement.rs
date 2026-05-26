@@ -345,11 +345,8 @@ impl DatabaseDriverV1 {
         drop(stmt);
 
         let data = response.data;
-        // Build refresh context for PUT/GET so the file manager can
-        // recover from STS `ExpiredToken` by re-issuing the original
-        // PUT/GET SQL to obtain fresh stage credentials. The refresher
-        // calls back into `RefreshContext::execute_with_refresh`, so a
-        // session-token expiry mid-batch is renewed transparently.
+        // PUT/GET refresh context: lets the file manager re-issue this SQL when
+        // stage credentials expire mid-transfer. Shared across cloud backends.
         let stage_creds_refresh_context = StageCredsRefreshContext {
             sql: query.clone(),
             query_parameters: query_parameters.clone(),
@@ -359,12 +356,10 @@ impl DatabaseDriverV1 {
             .await
     }
 
-    /// Turns a query response into an `ExecuteQueryResult`, dispatching
-    /// PUT/GET to the file manager when needed. Shared between the sync
-    /// `execute_query_internal` path and the async-fetch
-    /// `connection_get_query_result` path; the only per-caller input is
-    /// `stage_creds_refresh_context` (`Some` for the sync path, `None` for
-    /// async-fetch).
+    /// Turns a query response into an `ExecuteQueryResult`, dispatching PUT/GET
+    /// when needed. Shared by `execute_query_internal` (passes `Some` refresh
+    /// context) and `connection_get_query_result` (passes `None`, since
+    /// async-fetch can't re-issue the original SQL).
     async fn finalize_execute_result(
         &self,
         conn: &Arc<Mutex<Connection>>,
