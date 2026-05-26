@@ -239,10 +239,10 @@ jobs:
           $triplet = "${{ matrix.vcpkg_triplet }}"
           if ("${{ matrix.msvc_arch }}" -eq "arm64") {
             # ARM64 vcpkg builds require the ARM64 MSVC toolchain environment
-            cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet openssl:$triplet"
+            cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet"
             if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
           } else {
-            Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet openssl:$triplet }
+            Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet }
           }
 
       - name: Setup MSVC environment (Windows)
