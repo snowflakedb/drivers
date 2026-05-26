@@ -2197,3 +2197,119 @@ class TestExecuteAsync:
         result = cursor.execute_async("SELECT 1")
 
         assert result["queryId"] is None
+
+
+# ---------------------------------------------------------------------------
+# file_stream kwarg tests
+# ---------------------------------------------------------------------------
+
+
+class TestFileStream:
+    """Unit tests for the ``file_stream`` kwarg on ``cursor.execute()``.
+
+    These tests mock ``core_driver.connection_upload_stream`` so they do not
+    need a real Snowflake connection.
+    """
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        """Mock connection with stubs for both normal execute and upload_stream."""
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.paramstyle = ParamStyle.QMARK
+
+        # Stub for normal statement_execute_query (should NOT be called in file_stream path).
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+
+        def make_upload_response(*_args, **_kwargs):
+            rs = MagicMock()
+            rs.result_set_handle = ResultSetHandle(id=42)
+            rs.result_descriptor.query_id = "upload-qid"
+            rs.result_descriptor.HasField = MagicMock(return_value=False)
+            rs.result_descriptor.rows_affected = 1
+            rs.result_descriptor.sql_state = "00000"
+            return rs
+
+        mock_core_client.connection_upload_stream.side_effect = make_upload_response
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_file_stream_calls_upload_stream_rpc(self, cursor, mock_core_client):
+        """execute() with file_stream calls connection_upload_stream, not statement_execute_query."""
+        import io
+
+        # When execute() is called with a PUT SQL and file_stream kwarg
+        cursor.execute(
+            "PUT file://data.csv @my_stage AUTO_COMPRESS=FALSE",
+            file_stream=io.BytesIO(b"hello"),
+        )
+
+        # Then connection_upload_stream is called and the normal query path is not used
+        mock_core_client.connection_upload_stream.assert_called_once()
+        mock_core_client.statement_execute_query.assert_not_called()
+
+    def test_file_stream_passes_bytes_to_rpc(self, cursor, mock_core_client):
+        """The bytes read from file_stream are forwarded to connection_upload_stream."""
+        import io
+
+        payload = b"col1,col2\n1,2\n"
+
+        # When execute() is called with file_stream containing specific bytes
+        cursor.execute(
+            "PUT file://data.csv @my_stage AUTO_COMPRESS=FALSE",
+            file_stream=io.BytesIO(payload),
+        )
+
+        # Then the request sent to the RPC contains the exact bytes from the stream
+        # CoreDriver.connection_upload_stream wraps the args into a request proto and
+        # passes it as the single positional argument to self.client.connection_upload_stream.
+        request = mock_core_client.connection_upload_stream.call_args.args[0]
+        assert request.data == payload
+
+    def test_file_stream_passes_sql_to_rpc(self, cursor, mock_core_client):
+        """The full PUT SQL is forwarded to connection_upload_stream."""
+        import io
+
+        sql = "PUT file://data.csv @my_stage AUTO_COMPRESS=FALSE"
+
+        # When execute() is called with a specific PUT SQL and file_stream
+        cursor.execute(sql, file_stream=io.BytesIO(b"x"))
+
+        # Then the request sent to the RPC contains the original PUT SQL
+        # CoreDriver.connection_upload_stream wraps the args into a request proto and
+        # passes it as the single positional argument to self.client.connection_upload_stream.
+        request = mock_core_client.connection_upload_stream.call_args.args[0]
+        assert request.sql == sql
+
+    def test_file_stream_non_put_raises_programming_error(self, cursor, mock_core_client):
+        """file_stream on a non-PUT SQL raises ProgrammingError."""
+        import io
+
+        # When file_stream is supplied alongside a non-PUT SQL
+        # Then ProgrammingError is raised and the upload RPC is never called
+        with pytest.raises(ProgrammingError, match="(?i)file_stream"):
+            cursor.execute("SELECT 1", file_stream=io.BytesIO(b"data"))
+
+        mock_core_client.connection_upload_stream.assert_not_called()
+
+    def test_file_stream_none_uses_normal_path(self, cursor, mock_core_client):
+        """When file_stream=None, the normal statement_execute_query path is used."""
+        normal_response = MagicMock()
+        normal_response.HasField = MagicMock(return_value=False)
+        normal_response.single.result_set_handle = ResultSetHandle(id=99)
+        normal_response.single.result_descriptor.query_id = "normal-qid"
+        normal_response.single.result_descriptor.HasField = MagicMock(return_value=False)
+        normal_response.single.result_descriptor.rows_affected = 0
+        normal_response.single.result_descriptor.sql_state = "00000"
+        mock_core_client.statement_execute_query.return_value = normal_response
+
+        # When execute() is called without file_stream (or file_stream=None)
+        cursor.execute("SELECT 1", file_stream=None)
+
+        # Then the normal statement_execute_query path is used and upload RPC is not called
+        mock_core_client.statement_execute_query.assert_called_once()
+        mock_core_client.connection_upload_stream.assert_not_called()
