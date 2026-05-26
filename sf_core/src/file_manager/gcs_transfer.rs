@@ -182,7 +182,10 @@ async fn upload_to_gcs(
         .transpose()
         .context(gcs_upload_error::SerializationSnafu)?;
 
-    let data = prepared.data;
+    let data = prepared
+        .data
+        .into_bytes()
+        .context(gcs_upload_error::SourceIoSnafu)?;
     let digest = prepared.digest;
 
     gcs_request_with_retry(
@@ -459,6 +462,12 @@ impl From<GcsRequestError> for GcsDownloadError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum GcsUploadError {
+    #[snafu(display("Failed to read upload source data"))]
+    SourceIo {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("GCS HTTP error"))]
     Http {
         source: reqwest::Error,

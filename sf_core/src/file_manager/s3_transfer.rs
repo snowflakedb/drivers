@@ -1,6 +1,6 @@
 use super::types::{
-    CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageCredsRefreshError, StageCredsRefresher, StageInfo, UploadStatus,
+    ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription,
+    PreparedUpload, StageCredsRefreshError, StageCredsRefresher, StageInfo, UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -264,17 +264,40 @@ fn is_expired_token_error(err: &aws_sdk_s3::Error) -> bool {
 
 /// Issues the S3 `PutObject` call and folds `ExpiredToken` into the
 /// `S3AttemptError::StsExpired` arm so the generic refresh helper can catch it.
+///
+/// For `ByteSource::Path`, the file is streamed via `ByteStream::read_from()`
+/// so the full file is never loaded into memory. For `ByteSource::Bytes` (the
+/// encrypted-ciphertext case), the Vec is moved into `ByteStream::from` — no
+/// additional copy.
 async fn put_object(
     prepared: PreparedUpload,
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
 ) -> Result<(), S3AttemptError<UploadFileError>> {
+    // Build the ByteStream from the data source without loading the whole file.
+    let body =
+        match prepared.data {
+            ByteSource::Path(ref path) => ByteStream::read_from()
+                .path(path)
+                .build()
+                .await
+                .map_err(|e| {
+                    S3AttemptError::Other(
+                        upload_file_error::SourceOpenSnafu {
+                            detail: e.to_string(),
+                        }
+                        .build(),
+                    )
+                })?,
+            ByteSource::Bytes(bytes) => ByteStream::from(bytes),
+        };
+
     let mut put_object_request = s3_client
         .put_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
-        .body(ByteStream::from(prepared.data))
+        .body(body)
         .content_type(CONTENT_TYPE_OCTET_STREAM)
         .metadata("sfc-digest", &prepared.digest);
 
@@ -581,6 +604,12 @@ impl From<S3CredentialError> for DownloadFileError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum UploadFileError {
+    #[snafu(display("Failed to open upload source for S3 PUT: {detail}"))]
+    SourceOpen {
+        detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
         #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]

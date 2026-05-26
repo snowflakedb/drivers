@@ -155,7 +155,10 @@ async fn upload_to_azure(
         .transpose()
         .context(azure_upload_error::SerializationSnafu)?;
 
-    let data = prepared.data;
+    let data = prepared
+        .data
+        .into_bytes()
+        .context(azure_upload_error::SourceIoSnafu)?;
     let digest = prepared.digest;
     let full_url = build_sas_url(url, sas_token);
 
@@ -469,6 +472,12 @@ impl From<AzureRequestError> for AzureDownloadError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum AzureUploadError {
+    #[snafu(display("Failed to read upload source data"))]
+    SourceIo {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Azure HTTP error: {detail}"))]
     Http {
         detail: String,

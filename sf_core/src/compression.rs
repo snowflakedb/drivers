@@ -1,6 +1,6 @@
 use flate2::{Compression, GzBuilder, bufread::GzDecoder};
 use snafu::{Location, ResultExt, Snafu};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 
 // PUT/GET compression
 pub fn compress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
@@ -13,6 +13,22 @@ pub fn compress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
     let compressed_data = encoder.finish().context(DataWritingSnafu)?;
 
     Ok(compressed_data)
+}
+
+/// Returns a streaming gzip encoder wrapping `reader`.
+///
+/// The gzip header is produced with `mtime = 0` (no timestamp), identical to
+/// `compress_data`. For a given input the byte output is therefore bit-for-bit
+/// the same whether you use `compress_data` or drain this reader — the
+/// underlying `GzBuilder` is the same either way.
+///
+/// This function is the foundation for the wrapper-facing streaming API that
+/// lands in PR-3/PR-4. There are no call sites in this crate yet.
+#[allow(dead_code)]
+pub fn compress_reader<R: Read>(reader: R) -> impl Read {
+    GzBuilder::new()
+        .mtime(0) // zeroed timestamp, matches compress_data
+        .read(BufReader::new(reader), Compression::best())
 }
 
 #[allow(unused)]
@@ -75,5 +91,24 @@ mod tests {
         assert!(compressed.len() < payload.len());
         let decompressed = decompress_data(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, payload);
+    }
+
+    /// `compress_reader` must produce byte-identical output to `compress_data`
+    /// for the same input — both use `GzBuilder::mtime(0)`.
+    #[test]
+    fn compress_reader_output_matches_compress_data() {
+        let payload = b"hello, streaming gzip with mtime=0".to_vec();
+
+        let expected = compress_data(payload.clone()).expect("compress_data succeeds");
+
+        let mut reader_output = Vec::new();
+        compress_reader(payload.as_slice())
+            .read_to_end(&mut reader_output)
+            .expect("compress_reader succeeds");
+
+        assert_eq!(
+            reader_output, expected,
+            "compress_reader output must be bit-identical to compress_data"
+        );
     }
 }

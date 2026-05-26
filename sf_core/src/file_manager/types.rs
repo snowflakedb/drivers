@@ -4,6 +4,7 @@ use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
 use snafu::{Location, Snafu};
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 /// Result of an upload-or-skip operation.
@@ -18,6 +19,51 @@ impl fmt::Display for UploadStatus {
         match self {
             UploadStatus::Uploaded => f.write_str("UPLOADED"),
             UploadStatus::Skipped => f.write_str("SKIPPED"),
+        }
+    }
+}
+
+/// The source of bytes for a file upload.
+///
+/// `Path` streams content directly from a filesystem path, enabling end-to-end
+/// streaming without buffering the whole file in memory. `Bytes` holds an
+/// in-memory buffer and is used by tests and as the output of the encryption
+/// path (where ciphertext is necessarily materialized). A `Stream` variant for
+/// wrapper-supplied async readers will be added in PR-3/PR-4.
+#[derive(Debug, Clone)]
+pub enum ByteSource {
+    Path(PathBuf),
+    Bytes(Vec<u8>),
+}
+
+impl ByteSource {
+    /// Returns the byte length if known without reading the source.
+    /// `Path` requires a stat; `Bytes` is always known.
+    pub fn len(&self) -> Option<u64> {
+        match self {
+            ByteSource::Path(p) => std::fs::metadata(p).ok().map(|m| m.len()),
+            ByteSource::Bytes(b) => Some(b.len() as u64),
+        }
+    }
+
+    /// Returns `true` if the source contains no bytes.
+    ///
+    /// For `Path`, this requires a filesystem stat — returns `false` when the
+    /// metadata cannot be read (conservative). For `Bytes`, returns whether the
+    /// buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == Some(0)
+    }
+
+    /// Reads the entire source into a `Vec<u8>`.
+    ///
+    /// Used by GCS/Azure until their own streaming refactor (PR-2). Prefer
+    /// the S3 path which streams via `ByteStream` without materializing the
+    /// full buffer.
+    pub fn into_bytes(self) -> std::io::Result<Vec<u8>> {
+        match self {
+            ByteSource::Path(p) => std::fs::read(p),
+            ByteSource::Bytes(b) => Ok(b),
         }
     }
 }
@@ -45,7 +91,16 @@ pub struct UploadData {
 }
 
 pub struct SingleUploadData {
-    pub file_path: String,
+    /// The data source for this upload. When built from a filesystem glob (the
+    /// normal PUT path) this is `ByteSource::Path`; wrappers that supply an
+    /// in-memory buffer (JDBC uploadStream, Python file_stream — PR-3/PR-4) use
+    /// `ByteSource::Bytes`.
+    pub source: ByteSource,
+    /// The original filesystem path string used for the ODBC `source` result
+    /// column (full path on Windows ODBC, basename everywhere else). Distinct
+    /// from `source` because a `ByteSource::Bytes` upload still needs a display
+    /// name.
+    pub source_path_str: String,
     pub filename: String,
     pub stage_info: StageInfo,
     pub encryption_material: Option<EncryptionMaterial>,
@@ -82,14 +137,19 @@ pub struct SingleDownloadData {
 /// Bytes plus metadata returned by the cloud transfer layer for a single
 /// downloaded blob.
 ///
-/// `cloud_byte_count` is the on-cloud (pre-decryption) byte count of the
-/// blob — typically the value reported by the storage layer's
-/// `Content-Length` header. For `PutGetResultsetFlavor::Odbc` it becomes
-/// the value of the GET result's `size` column (legacy `srcFileSize`
-/// parity); for `Python` we keep reporting the post-decryption buffer
-/// length out of `download_single_file`.
+/// `data` holds the raw cloud bytes (ciphertext for encrypted stages, plaintext
+/// for SSE stages). `cloud_byte_count` is the on-cloud (pre-decryption) byte
+/// count — typically `data.len()`. For `PutGetResultsetFlavor::Odbc` it
+/// becomes the GET result's `size` column (legacy `srcFileSize` parity); for
+/// `Python` we keep reporting the post-decryption length.
+///
+/// The decryption step in `download_single_file` streams the `data` bytes
+/// through `decrypt_ciphertext_to_writer` directly into the output file,
+/// so the decrypted plaintext is never buffered as a full `Vec<u8>`.
 #[derive(Debug)]
 pub struct DownloadResponse {
+    /// Raw cloud bytes (ciphertext). Never the plaintext — decryption happens
+    /// in mod.rs via streaming decrypt to the output file.
     pub data: Vec<u8>,
     pub digest: Option<String>,
     pub file_metadata: Option<EncryptedFileMetadata>,
@@ -202,9 +262,14 @@ pub struct EncryptionMaterial {
 /// Prepared file data ready for cloud upload.
 /// For client-side encryption: contains encrypted data + encryption metadata.
 /// For server-side encryption (SSE): contains raw data with no encryption metadata.
+///
+/// `data` is a `ByteSource` so the S3 PUT path can stream directly from a
+/// file path (no full-file buffer) or from an already-encrypted in-memory
+/// ciphertext. GCS/Azure continue to call `.into_bytes()` until their
+/// streaming refactor (PR-2).
 #[derive(Debug, Clone)]
 pub struct PreparedUpload {
-    pub data: Vec<u8>,
+    pub data: ByteSource,
     /// SHA-256 digest of the data (always present for integrity verification).
     pub digest: String,
     /// Client-side encryption metadata. `None` for SSE stages.
