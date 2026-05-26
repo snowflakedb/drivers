@@ -90,14 +90,28 @@ runs:
     #   v3: include ~/.cache/protoc in the registry cache so the proto_generator
     #       build script never has to hit GitHub Releases on a warm cache hit.
     #       Bust v2 to force one clean rebuild that primes the new path layout.
+    #   v4: add runner.arch to both cache keys. v3 became an active footgun on
+    #       macOS: GitHub Actions reports runner.os='macOS' for both the x86_64
+    #       and arm64 runners, so they shared a single registry cache key. When
+    #       v3 also began caching the arch-specific protoc binary at
+    #       ~/.cache/protoc/<ver>/bin/protoc, whichever arch saved first
+    #       poisoned the cache for the other arch — the x86_64 runner restored
+    #       the arm64 binary and exec'd it, producing `Bad CPU type in
+    #       executable (os error 86)` and a red main build (see SNOW-3571146
+    #       resolution comment). Adding runner.arch (Linux: X64/ARM64, macOS:
+    #       X64/ARM64, Windows: X64/ARM64) segregates the caches per HOST
+    #       arch. (Cross-target builds on the same host — e.g. building
+    #       aarch64-linux on an x86_64 runner — still need a distinct
+    #       shared-key from the caller to keep their target/ caches apart.)
+    #       Bump v3 → v4 to evict the poisoned v3 caches in one shot.
     - name: Compute cache keys
       id: keys
       shell: bash
       run: |
-        CACHE_VERSION='v3'
+        CACHE_VERSION='v4'
         LOCK_HASH="${{ hashFiles(inputs.lockfiles) }}"
-        echo "registry=${{ runner.os }}-cargo-registry-${CACHE_VERSION}-${LOCK_HASH}" >> $GITHUB_OUTPUT
-        echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${CACHE_VERSION}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
+        echo "registry=${{ runner.os }}-${{ runner.arch }}-cargo-registry-${CACHE_VERSION}-${LOCK_HASH}" >> $GITHUB_OUTPUT
+        echo "target=${{ runner.os }}-${{ runner.arch }}-rust-${{ inputs.shared-key }}-${CACHE_VERSION}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
 
     # ── Restore mode ──
     # continue-on-error on restore: cache restore is a CI optimisation, not a
@@ -105,11 +119,11 @@ runs:
     # ENOSPC during extract should not fail the job — the build can still run
     # from scratch. Workflow callers also wrap this composite in a step-level
     # continue-on-error for redundant protection.
-    # restore-keys include the CACHE_VERSION (v3) so a partial-prefix match
+    # restore-keys include the CACHE_VERSION (v4) so a partial-prefix match
     # never pulls in an older cache shaped under different slim rules / path
-    # layouts. The version is hard-coded here intentionally — duplicating the
-    # literal from the keys step above. If you bump CACHE_VERSION, also bump it
-    # here in both restore steps' restore-keys.
+    # layouts. The version and runner.{os,arch} prefix are hard-coded here
+    # intentionally — duplicating the literal from the keys step above. If you
+    # bump CACHE_VERSION, also bump it here in both restore steps' restore-keys.
     #
     # ~/.cache/protoc is included in the registry cache so a warm-cache job
     # finds the already-extracted protoc binary at the path the build script
@@ -129,7 +143,7 @@ runs:
           ~/.cargo/git/db
           ~/.cache/protoc
         key: ${{ steps.keys.outputs.registry }}
-        restore-keys: ${{ runner.os }}-cargo-registry-v3-
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}-cargo-registry-v4-
 
     - name: Restore Rust target cache
       id: restore-target
@@ -140,8 +154,8 @@ runs:
         path: ${{ inputs.target-dir }}
         key: ${{ steps.keys.outputs.target }}
         restore-keys: |
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v3-${{ steps.rustc.outputs.hash }}-
-          ${{ runner.os }}-rust-${{ inputs.shared-key }}-v3-
+          ${{ runner.os }}-${{ runner.arch }}-rust-${{ inputs.shared-key }}-v4-${{ steps.rustc.outputs.hash }}-
+          ${{ runner.os }}-${{ runner.arch }}-rust-${{ inputs.shared-key }}-v4-
 
     # ── Save mode ──
     # Two-layer guard before calling actions/cache/save@v5 (which is the slow step — tar of
