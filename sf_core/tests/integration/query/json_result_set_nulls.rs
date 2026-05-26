@@ -149,11 +149,30 @@ fn should_handle_null_values_in_json_result_set() {
 fn should_handle_show_schemas_json_result_with_nulls() {
     let client = SnowflakeTestClient::connect_with_default_auth();
 
-    // SHOW SCHEMAS returns JSON format with nullable columns like comment, options
-    let mut helper = execute_json_query(&client, "SHOW SCHEMAS");
+    // Create a schema so SHOW SCHEMAS LIKE is guaranteed to return exactly one row.
+    // Using LIKE scopes the result to the schema we own, making the test independent
+    // of account state and role visibility.
+    let schema_name = unique_table_name("json_null_schema");
+    let stmt = client.new_statement();
+    client.set_sql_query(&stmt, &format!("CREATE SCHEMA {schema_name}"));
+    client.execute_statement_query(&stmt);
+    client.release_statement(&stmt);
+    let _guard = TableCleanupGuard::new(schema_name.clone(), |name| {
+        let stmt = client.new_statement();
+        client.set_sql_query(&stmt, &format!("DROP SCHEMA IF EXISTS {name}"));
+        client.execute_statement_query(&stmt);
+        client.release_statement(&stmt);
+    });
+
+    // SHOW SCHEMAS returns JSON format with nullable columns like comment, options.
+    let mut helper = execute_json_query(&client, &format!("SHOW SCHEMAS LIKE '{schema_name}'"));
 
     let batch = helper.next_batch().expect("Expected a record batch");
-    assert!(batch.num_rows() > 0, "Expected at least one schema");
+    assert_eq!(
+        batch.num_rows(),
+        1,
+        "Expected exactly the schema we created"
+    );
     assert!(
         batch.num_columns() > 0,
         "Expected at least one column in SHOW SCHEMAS result"
