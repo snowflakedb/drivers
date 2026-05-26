@@ -8,20 +8,9 @@ name: Build ODBC Packages
 
 on:
   workflow_call:
-    inputs:
-      wix-ref:
-        description: >
-          WiX Toolset git ref to build the wix CLI from (e.g. "v7.0.0").
-          Threaded into the WIX_REF env var below so existing
-          env.WIX_REF references inside the jobs keep working.
-        type: string
-        required: true
 
 env:
-  # Re-publish the caller's input as an env var so existing
-  # ${{ env.WIX_REF }} references inside build_wix and build_msi resolve
-  # without per-step input plumbing.
-  WIX_REF: ${{ inputs.wix-ref }}
+  WIX_VERSION: v7.0.0
 
 jobs:
   build_wix:
@@ -42,14 +31,14 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: wix-artifacts
-          key: wix-v7-${{ env.WIX_REF }}-${{ runner.os }}-v1
+          key: wix-${{ env.WIX_VERSION }}-${{ runner.os }}
 
-      - name: Checkout wixtoolset/wix @ ${{ env.WIX_REF }}
+      - name: Checkout wixtoolset/wix @ ${{ env.WIX_VERSION }}
         if: steps.wix-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
         with:
           repository: wixtoolset/wix
-          ref: ${{ env.WIX_REF }}
+          ref: ${{ env.WIX_VERSION }}
           path: wix-src
           fetch-depth: 0
 
@@ -105,7 +94,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: wix-artifacts
-          key: wix-v7-${{ env.WIX_REF }}-${{ runner.os }}-v1
+          key: wix-${{ env.WIX_VERSION }}-${{ runner.os }}
 
       - name: Upload WiX artifacts
         uses: actions/upload-artifact@v4
@@ -186,7 +175,7 @@ jobs:
       - name: Install WiX from local source
         uses: ./.github/actions/install-wix-from-artifact
         with:
-          wix-version: ${{ env.WIX_REF }}
+          wix-version: ${{ env.WIX_VERSION }}
 
       - name: Build ODBC driver
         run: cargo build ${{ matrix.cargo_profile }} --package odbc --features vendored-openssl ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
