@@ -4,6 +4,7 @@ pub mod async_query_registry;
 pub mod connection;
 mod database;
 pub(crate) mod error;
+pub(crate) mod file_transfer;
 mod global_state;
 // Gated public visibility so integration tests (via the `test-utils` feature) can reach
 // `spawn_heartbeat_task` / `HeartbeatHandle` without widening the production surface of `sf_core`.
@@ -26,6 +27,7 @@ pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
 pub use error::ApiError;
+pub use file_transfer::{DownloadStreamResult, UploadStreamResult};
 pub use global_state::{DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor, WrapperPresets};
 pub use result_set::{
     ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult, InlineData,

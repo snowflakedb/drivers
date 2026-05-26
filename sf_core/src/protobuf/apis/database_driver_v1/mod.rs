@@ -609,6 +609,53 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionHeartbeatResponse { valid })
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_upload_stream", skip(self, input))]
+    async fn connection_upload_stream(
+        &self,
+        input: ConnectionUploadStreamRequest,
+    ) -> Result<ConnectionUploadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let dest_prefix = input.dest_prefix.as_deref();
+        let result = self
+            .driver
+            .connection_upload_stream(
+                conn_handle.into(),
+                &input.stage_name,
+                &input.dest_filename,
+                dest_prefix,
+                input.data,
+                input.compress_data,
+            )
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUploadStreamResponse {
+            status: result.status,
+            target_filename: result.target_filename,
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_download_stream",
+        skip(self, input)
+    )]
+    async fn connection_download_stream(
+        &self,
+        input: ConnectionDownloadStreamRequest,
+    ) -> Result<ConnectionDownloadStreamResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let result = self
+            .driver
+            .connection_download_stream(
+                conn_handle.into(),
+                &input.stage_name,
+                &input.source_filename,
+                input.decompress,
+            )
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionDownloadStreamResponse { data: result.data })
+    }
+
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]
     async fn statement_new(
         &self,

@@ -78,7 +78,7 @@ pub(super) async fn perform_put_get_transfer(
         .context(FileTransferPreparationSnafu)?;
     let mut refresher = stage_creds_refresh_context
         .zip(initial_creds)
-        .map(|(ctx, initial_creds)| SnowflakeStageCredsRefresher::new(ctx, initial_creds));
+        .map(|(ctx, initial_creds)| SnowflakeStageCredsRefresherPub::new(ctx, initial_creds));
     let refresher_handle = refresher
         .as_mut()
         .map(|r| r as &mut dyn file_manager::StageCredsRefresher);
@@ -144,14 +144,14 @@ const REFRESH_COALESCE_WINDOW: Duration = Duration::from_secs(10 * 60);
 /// `ExpiredToken` responses (long batch upload, concurrent parts in a future
 /// parallel implementation) without either capping retries artificially or
 /// hammering GS.
-struct SnowflakeStageCredsRefresher {
+pub(super) struct SnowflakeStageCredsRefresherPub {
     ctx: StageCredsRefreshContext,
     cache: StageCredsCache,
     last_refresh_at: Option<Instant>,
 }
 
-impl SnowflakeStageCredsRefresher {
-    fn new(ctx: StageCredsRefreshContext, initial_creds: CloudCredentials) -> Self {
+impl SnowflakeStageCredsRefresherPub {
+    pub(super) fn new(ctx: StageCredsRefreshContext, initial_creds: CloudCredentials) -> Self {
         Self {
             ctx,
             cache: StageCredsCache::new(initial_creds),
@@ -167,7 +167,7 @@ fn should_coalesce(last: Option<Instant>, now: Instant) -> bool {
     last.is_some_and(|at| now.saturating_duration_since(at) < REFRESH_COALESCE_WINDOW)
 }
 
-impl file_manager::StageCredsRefresher for SnowflakeStageCredsRefresher {
+impl file_manager::StageCredsRefresher for SnowflakeStageCredsRefresherPub {
     fn refresh(&mut self) -> file_manager::RefreshFuture<'_> {
         Box::pin(async move {
             // Coalesce rapid-fire refreshes: if we already fetched creds
