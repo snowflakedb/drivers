@@ -1660,6 +1660,17 @@ pub struct QueryStatusResult {
     pub status_name: String,
     pub error_code: Option<i32>,
     pub error_message: Option<String>,
+    pub end_time: i64,
+    pub start_time: i64,
+    pub total_duration: i32,
+    pub query_id: String,
+    pub session_id: i64,
+    pub sql_text: String,
+    pub warehouse_id: i64,
+    pub warehouse_name: Option<String>,
+    pub warehouse_external_size: Option<String>,
+    pub warehouse_server_type: Option<String>,
+    pub state: String,
 }
 
 const MONITORING_QUERIES_PATH: &str = "/monitoring/queries/";
@@ -1748,6 +1759,17 @@ pub async fn get_query_status(
         status_name: query_entry.status,
         error_code,
         error_message,
+        end_time: query_entry.end_time,
+        start_time: query_entry.start_time,
+        total_duration: query_entry.total_duration,
+        query_id: query_entry.id,
+        session_id: query_entry.session_id,
+        sql_text: query_entry.sql_text,
+        warehouse_id: query_entry.warehouse_id,
+        warehouse_name: query_entry.warehouse_name,
+        warehouse_external_size: query_entry.warehouse_external_size,
+        warehouse_server_type: query_entry.warehouse_server_type,
+        state: query_entry.state,
     })
 }
 
@@ -1769,6 +1791,28 @@ struct QueryStatusEntry {
     error_code: Option<String>,
     #[serde(rename = "errorMessage")]
     error_message: Option<String>,
+    #[serde(rename = "endTime", default)]
+    end_time: i64,
+    #[serde(rename = "startTime", default)]
+    start_time: i64,
+    #[serde(rename = "totalDuration", default)]
+    total_duration: i32,
+    #[serde(default)]
+    id: String,
+    #[serde(rename = "sessionId", default)]
+    session_id: i64,
+    #[serde(rename = "sqlText", default)]
+    sql_text: String,
+    #[serde(rename = "warehouseId", default)]
+    warehouse_id: i64,
+    #[serde(rename = "warehouseName")]
+    warehouse_name: Option<String>,
+    #[serde(rename = "warehouseExternalSize")]
+    warehouse_external_size: Option<String>,
+    #[serde(rename = "warehouseServerType")]
+    warehouse_server_type: Option<String>,
+    #[serde(default)]
+    state: String,
 }
 
 /// Snowflake returns `errorCode` as either a JSON string (`"002003"`) or an
