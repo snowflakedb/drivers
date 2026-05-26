@@ -523,14 +523,31 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   @Override
   public void uploadStream(String stageName, String destFileName, InputStream inputStream)
       throws SQLException {
-    throw new NotImplementedException();
+    uploadStream(stageName, destFileName, inputStream, UploadStreamConfig.builder().build());
   }
 
   @Override
   public void uploadStream(
       String stageName, String destFileName, InputStream inputStream, UploadStreamConfig config)
       throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    byte[] data;
+    try {
+      java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+      byte[] buf = new byte[8192];
+      int n;
+      while ((n = inputStream.read(buf)) != -1) {
+        baos.write(buf, 0, n);
+      }
+      data = baos.toByteArray();
+    } catch (java.io.IOException e) {
+      throw new net.snowflake.client.api.exception.SnowflakeSQLException(
+          "Failed to read input stream: " + e.getMessage(), e);
+    }
+    String destPrefix = config != null ? config.getDestPrefix() : null;
+    boolean compressData = config == null || config.isCompressData();
+    coreDriverApi.connectionUploadStream(
+        connectionHandle, stageName, destFileName, data, destPrefix, compressData);
   }
 
   @Override
@@ -541,7 +558,15 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   @Override
   public InputStream downloadStream(
       String stageName, String sourceFileName, DownloadStreamConfig config) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    boolean decompress = config != null && config.isDecompress();
+    net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1
+            .ConnectionDownloadStreamResponse
+        response =
+            coreDriverApi.connectionDownloadStream(
+                connectionHandle, stageName, sourceFileName, decompress);
+    byte[] bytes = response.getData().toByteArray();
+    return new java.io.ByteArrayInputStream(bytes);
   }
 
   @Override
