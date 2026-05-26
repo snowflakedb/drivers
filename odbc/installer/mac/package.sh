@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Package the Snowflake ODBC UD driver as a macOS DMG (universal binary).
+# Package the Snowflake ODBC UD driver as a macOS .pkg (universal binary).
 #
 # Builds or accepts pre-built dylibs for x86_64 and aarch64, merges them
-# with lipo into a universal binary, creates a .pkg installer, and wraps
-# it in a .dmg.
+# with lipo into a universal binary and produces a flat .pkg installer
+# via pkgbuild.
 #
 # Must be run from the repository root on macOS.
 #
@@ -81,7 +81,6 @@ cp "$TEMPLATES_DIR/odbc.ini.template" "$SCRIPTS_STAGE_DIR/odbc.ini.template"
 mkdir -p "$BUILD_DIR"
 
 PKG_NAME="snowflake-odbc-ud-${VERSION}-universal.pkg"
-DMG_NAME="snowflake-odbc-ud-${VERSION}-universal.dmg"
 
 echo "=== Building pkg: $PKG_NAME ==="
 pkgbuild \
@@ -92,14 +91,4 @@ pkgbuild \
     --scripts "$SCRIPTS_STAGE_DIR" \
     "$BUILD_DIR/$PKG_NAME"
 
-echo "=== Creating DMG: $DMG_NAME ==="
-hdiutil create \
-    -volname "Snowflake ODBC UD" \
-    -srcfolder "$BUILD_DIR/$PKG_NAME" \
-    -ov \
-    -format UDZO \
-    "$BUILD_DIR/$DMG_NAME"
-
-rm -rf "$STAGE_DIR"
-
-echo "=== Successfully created DMG at $BUILD_DIR/$DMG_NAME ==="
+echo "=== Successfully created pkg at $BUILD_DIR/$PKG_NAME ==="

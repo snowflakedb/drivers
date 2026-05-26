@@ -62,7 +62,7 @@ on:
         description: "True if Node.js reference tests should run (e2e tests changed)"
         value: ${{ jobs.detect.outputs.run_nodejs_reference }}
       run_odbc_packaging:
-        description: "True if ODBC packaging (MSI/RPM/DMG) should run"
+        description: "True if ODBC packaging should run"
         value: ${{ jobs.detect.outputs.run_odbc_packaging }}
 
 jobs:
