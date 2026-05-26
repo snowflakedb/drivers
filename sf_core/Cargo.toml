@@ -96,6 +96,7 @@ der = "0.7"
 num-traits = "0.2.19"
 os_info = "3"
 rust-ini = "0.21.3"
+tempfile = "3.21.0"
 
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }

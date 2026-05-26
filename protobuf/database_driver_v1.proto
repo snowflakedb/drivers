@@ -495,6 +495,44 @@ message ConnectionAbortQueryResponse {
   bool success = 1;
 }
 
+// Upload an in-memory byte buffer to a Snowflake stage.
+// The caller reads the InputStream into `data` before crossing the JNI boundary.
+// `stage_name`    – fully qualified stage reference, e.g. "@my_stage"
+// `dest_filename` – leaf filename on the stage (no leading slash)
+// `dest_prefix`   – optional path prefix prepended to dest_filename (empty = stage root)
+// `compress_data` – when true, gzip-compress before upload; dest gets ".gz" appended
+message ConnectionUploadStreamRequest {
+  ConnectionHandle conn_handle = 1;
+  string stage_name = 2;
+  string dest_filename = 3;
+  bytes data = 4;
+  optional string dest_prefix = 5;
+  bool compress_data = 6;
+}
+
+message ConnectionUploadStreamResponse {
+  // Human-readable outcome, e.g. "UPLOADED" or "SKIPPED".
+  string status = 1;
+  // The final filename stored on the stage (may have ".gz" appended when
+  // compress_data was true).
+  string target_filename = 2;
+}
+
+// Download a single file from a Snowflake stage and return its bytes.
+// `stage_name`      – fully qualified stage reference, e.g. "@my_stage"
+// `source_filename` – path to the file within the stage
+// `decompress`      – when true, gunzip the downloaded bytes before returning
+message ConnectionDownloadStreamRequest {
+  ConnectionHandle conn_handle = 1;
+  string stage_name = 2;
+  string source_filename = 3;
+  bool decompress = 4;
+}
+
+message ConnectionDownloadStreamResponse {
+  bytes data = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -827,6 +865,10 @@ service DatabaseDriver {
   rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
   // Heartbeat to validate connection and session are still alive
   rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
+
+  // Stream-based file transfer (gap 4 / gap 16)
+  rpc ConnectionUploadStream(ConnectionUploadStreamRequest) returns (ConnectionUploadStreamResponse);
+  rpc ConnectionDownloadStream(ConnectionDownloadStreamRequest) returns (ConnectionDownloadStreamResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
