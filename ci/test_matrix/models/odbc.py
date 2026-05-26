@@ -48,6 +48,10 @@ PR_CELLS = [
     {"OS": "windows", "Arch": "x86", "Cloud": "aws"},
 ]
 
+MERGE_QUEUE_CELLS = [
+    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws"},
+]
+
 JSON_CELLS = {
     "pr": [],
     "merge": [

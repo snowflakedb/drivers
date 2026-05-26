@@ -28,7 +28,8 @@ ci/test_matrix/
 **Models** (`models/*.py`) declare parameters, constraints, and the explicit
 `PR_CELLS` + `JSON_CELLS` sections — the *combinatorial* shape of the matrix.
 Each module exposes four top-level names (`PARAMS`, `CONSTRAINTS`, `PR_CELLS`,
-`JSON_CELLS`) — see `models/__init__.py` for the schema. **Mappings**
+`JSON_CELLS`) and two optional ones (`MERGE_QUEUE_CELLS`, `MERGE_VALID`) —
+see `models/__init__.py` for the schema. **Mappings**
 (`mappings/*.py`) translate each `(OS, Arch)` cell into concrete CI fields:
 runner label, driver/wheel artifact name, cargo flags, msvc_arch,
 vcpkg_triplet, etc. The generator joins both at runtime;
@@ -37,13 +38,31 @@ no mapping covers.
 
 ## Trigger levels
 
-Each emitted row carries a `trigger_level`. Levels are cumulative.
+Each emitted row carries a `trigger_level`. Levels are cumulative except for `merge_queue`.
 
-| Level     | When it runs                  | Coverage                            |
-|-----------|-------------------------------|-------------------------------------|
-| `pr`      | Every PR                      | Explicit `PR_CELLS` only            |
-| `merge`   | Merge queue + push to `main`  | `pr` cells + pairwise cover         |
-| `nightly` | Scheduled nightly run         | All valid combinations              |
+| Level         | When it runs                              | Coverage                                                                          |
+|---------------|-------------------------------------------|-----------------------------------------------------------------------------------|
+| `pr`          | Every PR (`pull_request`)                 | Explicit `PR_CELLS` only                                                          |
+| `merge_queue` | Merge queue (`merge_group`) — **non-cumulative** | `MERGE_QUEUE_CELLS` only (fast, explicit gate; PR_CELLS do NOT run here) |
+| `merge`       | Push to `main` (`push`)                   | `pr` + `merge_queue` + pairwise cover (full cumulative set)                      |
+| `nightly`     | Scheduled nightly run (`schedule`)        | All valid combinations                                                            |
+
+**Precedence within the merge set.** Trigger assignment is first-match:
+1. `PR_CELLS` → `trigger_level="pr"` (cumulative; appears at every scope).
+2. `MERGE_QUEUE_CELLS` → `trigger_level="merge_queue"` (non-cumulative; only at `merge_group`).
+3. Pairwise → `trigger_level="merge"` (auto-generated; only at push-to-main and nightly).
+4. Everything else → `trigger_level="nightly"`.
+
+**Non-cumulative `merge_queue` semantics.** `filter_active("merge_queue")` returns **only**
+rows with `trigger_level == "merge_queue"` (MERGE_QUEUE_CELLS). PR_CELLS do not run at the
+merge queue. Push-to-main (`filter_active("merge")`) is still cumulative and includes all
+three lower levels.
+
+**Fallback.** If a model defines no `MERGE_QUEUE_CELLS`, `filter_active("merge_queue")`
+falls back to returning PR_CELLS, preserving backward compatibility.
+
+`MERGE_QUEUE_CELLS` entries are also excluded from the pairwise candidate pool so the
+greedy solver never redundantly selects a cell that is already explicitly pinned.
 
 **Pairwise cover (the "merge" set).** A minimal set of rows in which every
 (parameter A value, parameter B value) pair appears together at least once,
@@ -64,17 +83,18 @@ least once across those 4 rows. The remaining 8 combinations only run at
 only on macOS-arm-aws-py3.13) are not guaranteed to surface at `merge`.
 
 GHA picks the level from `GITHUB_EVENT_NAME` (`pull_request` → pr,
-`merge_group`/`push` → merge, `schedule` → nightly).
+`merge_group` → merge_queue, `push` → merge, `schedule` → nightly).
 
 ### Forcing a higher scope on a PR
 
 Apply one of these labels to a PR. Adding the label re-triggers the
 workflow automatically (no commit required) at the upgraded scope:
 
-| Label              | Effect                                              |
-|--------------------|-----------------------------------------------------|
-| `ci:scope-merge`   | Run the pairwise cover (`pr` + `merge` cells).      |
-| `ci:scope-nightly` | Run every constraint-valid combination.             |
+| Label                   | Effect                                                                         |
+|-------------------------|--------------------------------------------------------------------------------|
+| `ci:scope-merge-queue`  | Run exactly what the merge queue runs (MERGE_QUEUE_CELLS only). Useful for testing merge_group behaviour on a PR. |
+| `ci:scope-merge`        | Run the full push-to-main set (`pr` + `merge_queue` + pairwise cover).         |
+| `ci:scope-nightly`      | Run every constraint-valid combination.                                        |
 
 Labels can only upgrade scope — they never downgrade an event's level.
 `detect-changes` still gates which drivers run, so labeling a Python-only
@@ -105,6 +125,34 @@ Append a dict to `PR_CELLS` in the relevant `models/<driver>.py`. Every
 declared parameter must be present (the loader validates this), and the
 combination must satisfy every constraint — a violating cell warns at
 generate time and is silently dropped from the output.
+
+### Add a merge-queue cell
+
+Append a dict to `MERGE_QUEUE_CELLS` in the relevant `models/<driver>.py`
+to pin a cell that always runs in the merge queue but not on every PR.
+Same completeness rule as `PR_CELLS`.
+
+```python
+MERGE_QUEUE_CELLS = [
+    # windows-arm: one explicit cloud at merge scope — azure is fastest.
+    {"OS": "windows", "Arch": "arm", "Cloud": "azure"},
+]
+```
+
+`MERGE_QUEUE_CELLS` entries bypass `MERGE_VALID` (they are unconditional at
+merge level) and are excluded from the pairwise candidate pool (so the solver
+does not also select them, creating duplicate rows). If a cell appears in
+both `PR_CELLS` and `MERGE_QUEUE_CELLS`, `PR_CELLS` wins and the cell runs
+at PR scope. Use `MERGE_VALID` to complement `MERGE_QUEUE_CELLS` by blocking
+other variants of the same lane from pairwise:
+
+```python
+def merge_valid(c):
+    # Cap windows-arm to one cloud at merge; MERGE_QUEUE_CELLS pins azure.
+    if c["OS"] == "windows" and c["Arch"] == "arm":
+        if c["Cloud"] != "azure": return False
+    return True
+```
 
 ### Add a constraint
 

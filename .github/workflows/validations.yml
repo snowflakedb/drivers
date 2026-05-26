@@ -101,6 +101,7 @@ jobs:
         run: python -m unittest ci/test_matrix/test_generate_matrix.py
 
   test-coverage-report:
+    if: '!contains(github.event.pull_request.labels.*.name, ''ci:scope-merge-queue'') && github.event_name != ''merge_group'''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

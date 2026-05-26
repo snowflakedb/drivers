@@ -17,7 +17,7 @@ concurrency:
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
   # push/synchronize/reopen events should replace the running matrix.
-  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -32,7 +32,7 @@ jobs:
   scope-label-gate:
     if: |
       github.event.action != 'labeled' ||
-      contains(fromJSON('["ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
+      contains(fromJSON('["ci:scope-merge-queue","ci:scope-merge","ci:scope-nightly"]'), github.event.label.name)
     runs-on: ubuntu-latest
     steps:
       - run: 'true'

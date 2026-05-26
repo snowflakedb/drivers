@@ -316,6 +316,11 @@ pipeline {
             agent { label 'drivers-perf-regular-memory-node-snowos' }
             steps {
                 script {
+                    if (isMergeQueue()) {
+                        skipAll = true
+                        echo "Merge queue build — skipping all performance tests"
+                        return
+                    }
                     detectChanges()
                     if (skipAll) {
                         postRegressionStatus('SUCCESS', 'Skipped — no performance-relevant changes')
