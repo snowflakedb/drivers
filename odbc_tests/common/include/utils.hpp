@@ -1,8 +1,10 @@
 #ifndef UTILS_HPP
 #define UTILS_HPP
 
+#include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -20,6 +22,19 @@
 #endif
 
 namespace test_utils {
+
+/// Returns the QUERY_RESULT_FORMAT environment variable normalized to uppercase,
+/// or an empty string if unset or empty.
+inline std::string get_query_result_format() {
+  const char* result_format = std::getenv("QUERY_RESULT_FORMAT");
+  if (result_format == nullptr || result_format[0] == '\0') {
+    return {};
+  }
+  std::string normalized(result_format);
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  return normalized;
+}
 
 /// Base64-encode a string using OpenSSL's EVP_EncodeBlock.
 inline std::string base64_encode(const std::string& input) {

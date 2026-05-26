@@ -175,9 +175,14 @@ pub fn create_field_with_type(
                     .with_metadata(metadata),
             )
         }
-        RowType::Decfloat { name, nullable } => {
+        RowType::Decfloat {
+            name,
+            nullable,
+            precision,
+        } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DECFLOAT".to_string());
+            metadata.insert("precision".to_string(), precision.to_string());
             let data_type = data_type.unwrap_or_else(|| {
                 DataType::Struct(
                     vec![
