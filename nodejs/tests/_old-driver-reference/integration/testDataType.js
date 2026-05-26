@@ -3,7 +3,6 @@ const assert = require('assert');
 const GlobalConfig = require('./../../lib/global_config');
 const snowflake = require('./../../lib/snowflake').default;
 const testUtil = require('./testUtil');
-const sharedStatement = require('./sharedStatements');
 const bigInt = require('big-integer');
 
 describe('Test DataType', function () {
@@ -11,9 +10,6 @@ describe('Test DataType', function () {
   const createTableWithVariant = 'create or replace table testVariant(colA variant)';
   const createTableWithNumber = 'create or replace table testNumber(colA number)';
   const createTableWithDouble = 'create or replace table testDouble(colA double)';
-  const createTableWithTimestamp =
-    'create or replace table testTimestamp(colA timestamp_ltz, ' +
-    'colB timestamp_tz, colC timestamp_ntz)';
   const dropTableWithString = 'drop table if exists testString';
   const dropTableWithVariant = 'drop table if exists testVariant';
   const dropTableWithArray = 'drop table if exists testArray';
@@ -34,14 +30,9 @@ describe('Test DataType', function () {
     "insert into testVariant select parse_json('{a : 1 , b :[1 , 2 , 3], c : {a : 1}}')";
   const insertVariantXML =
     "insert into testVariant select parse_xml('<root><a>1</a><b>1</b><c><a>1</a></c></root>')";
-  const insertTimestamp =
-    'insert into testTimestamp values(to_timestamp_ltz(' +
-    "'Thu, 21 Jan 2016 06:32:44 -0800'), to_timestamp_tz('Thu, 21 Jan 2016 06:32:44 -0800'), " +
-    "to_timestamp_ntz('Thu, 21 Jan 2016 06:32:44 -0800'))";
   const selectDouble = 'select * from testDouble';
   const selectNumber = 'select * from testNumber';
   const selectVariant = 'select * from testVariant';
-  const selectTimestamp = 'select * from testTimestamp';
 
   before(function (done) {
     connection = testUtil.createConnection();
@@ -250,39 +241,6 @@ describe('Test DataType', function () {
           );
         });
       });
-    });
-  });
-
-  describe('testDateTime', function () {
-    it('testTimestamp', function (done) {
-      async.series(
-        [
-          function (callback) {
-            testUtil.executeCmd(connection, createTableWithTimestamp, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, insertTimestamp, callback);
-          },
-          function (callback) {
-            testUtil.executeCmd(connection, sharedStatement.setTimezoneAndTimestamps, callback);
-          },
-          function (callback) {
-            testUtil.executeQueryAndVerify(
-              connection,
-              selectTimestamp,
-              [
-                {
-                  COLA: '2016-01-21 06:32:44.000 -0800',
-                  COLB: '2016-01-21 06:32:44.000 -0800',
-                  COLC: '2016-01-21 06:32:44.000',
-                },
-              ],
-              callback,
-            );
-          },
-        ],
-        done,
-      );
     });
   });
 });

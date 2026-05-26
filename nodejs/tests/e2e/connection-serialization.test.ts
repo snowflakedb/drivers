@@ -34,10 +34,7 @@ describe('Connection Serialization', () => {
     expect(snowflake.serializeConnection(connection)).toBe(connection.serialize());
   });
 
-  // TODO:
-  // Enable after new driver release with a fix:
-  // https://github.com/snowflakedb/snowflake-connector-nodejs/pull/1406
-  it.skip('snowflake.deserializeConnection() rehydrates into a usable Connection', async () => {
+  it('snowflake.deserializeConnection() rehydrates into a usable Connection', async () => {
     const snowflake = getSnowflakeSDK();
     const connection2 = snowflake.deserializeConnection(
       {

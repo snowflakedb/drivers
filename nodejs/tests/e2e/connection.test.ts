@@ -35,11 +35,6 @@ describe('Connection', () => {
       }
     });
 
-    // NOTE:
-    // This test is skipped for the old driver due to a known bug — some errors are delivered
-    // in the callback, others are thrown. In this case, the error is returned via callback. In the
-    // new driver, connectAsync SHOULD NOT take a callback.
-    // TODO: Move this note to BCR docs.
     (name === '.connectAsync()' && isRunningForOldDriver() ? it.skip : it)(
       'surfaces an error on invalid parameters',
       async () => {
