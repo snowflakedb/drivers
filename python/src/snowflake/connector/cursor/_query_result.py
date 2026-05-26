@@ -4,6 +4,7 @@ from .._internal.arrow_stream_utils import release_arrow_stream
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     MultiStatementResult,
     PrepareResult,
+    ResultSetDescriptor,
     ResultSetResponse,
 )
 from .._internal.statement_utils import (
@@ -130,8 +131,26 @@ class _QueryResult:
         Returns:
             _QueryResult instance with metadata populated.
         """
-        descriptor = response.result_descriptor
+        return _QueryResult.from_result_descriptor(response.result_descriptor, query=query)
 
+    @staticmethod
+    def from_result_descriptor(
+        descriptor: ResultSetDescriptor,
+        query: str | None = None,
+    ) -> _QueryResult:
+        """Create _QueryResult from a ResultSetDescriptor proto message.
+
+        This is the canonical factory used by both ``from_result_set_response``
+        and any other code path (e.g. ``connection_upload_stream``) that
+        produces a ``ResultSetDescriptor`` but not a full ``ResultSetResponse``.
+
+        Args:
+            descriptor: ``ResultSetDescriptor`` proto message with query metadata.
+            query: Optional query text to attach to the result.
+
+        Returns:
+            _QueryResult instance with metadata populated.
+        """
         return _QueryResult(
             description=ResultMetadata.create_description(descriptor),
             sqlstate=extract_sqlstate(descriptor),

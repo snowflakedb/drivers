@@ -12,9 +12,10 @@ import abc
 import ctypes
 import functools
 import logging
+import re
 
 from collections.abc import Callable, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast, overload
 
 from .._internal.api_client.client_api import core_driver
 from .._internal.arrow_stream_utils import (
@@ -48,6 +49,22 @@ from ._query_result import _MultiStatementQueryResultState, _QueryResult
 from ._query_result_waiter import QueryResultWaiter
 from ._result_metadata import QueryResultStats, ResultMetadata
 from ._result_set_wrapper import _ResultSetWrapper
+
+
+# ---------------------------------------------------------------------------
+# SQL-text helpers
+# ---------------------------------------------------------------------------
+
+# Matches the leading tokens of a PUT statement, skipping whitespace.  A
+# comment-stripping pre-pass is not needed here because whitespace-only or
+# `-- comment` prefixes are uncommon in practice and the reference connector
+# likewise uses a simple regex for this detection.
+_PUT_PREFIX_RE = re.compile(r"^\s*PUT\s", re.IGNORECASE)
+
+
+def _is_put_sql(sql: str) -> bool:
+    """Return True if *sql* appears to be a PUT statement."""
+    return bool(_PUT_PREFIX_RE.match(sql))
 
 
 if TYPE_CHECKING:
@@ -433,6 +450,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
         num_statements: int | None = None,
+        file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -446,13 +464,20 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
             num_statements (int, optional): Number of statements in a multistatement query.
+            file_stream (BinaryIO, optional): An open binary stream (e.g. ``io.BytesIO``)
+                whose bytes are uploaded in place of the local file path named in a PUT
+                SQL statement.  The stream is read fully at call time; no async I/O or
+                chunked transfer is performed.  If supplied for a non-PUT statement a
+                ``ProgrammingError`` is raised.  If both a real ``file://`` path and
+                ``file_stream`` are present in the SQL, ``file_stream`` takes precedence
+                (the path is used only as the destination filename in the stage).
         """
         if num_statements is not None:
             # TODO Create a global known parameters registry
             self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
 
         self.reset()
-        return self._execute(operation, parameters, _is_put_get, **kwargs)
+        return self._execute(operation, parameters, _is_put_get, file_stream=file_stream, **kwargs)
 
     def _format_query_for_log(self, query: str) -> str:
         return self._connection._format_query_for_log(query)
@@ -462,6 +487,7 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        file_stream: BinaryIO | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
@@ -469,6 +495,30 @@ class SnowflakeCursorBase(ErrorHandlerMixin, abc.ABC):
             logger.debug("query: [%s]", self._format_query_for_log(operation))
 
         query, bindings = self._prepare_query(operation, parameters)
+
+        # ---------------------------------------------------------------
+        # file_stream path: upload in-memory bytes via ConnectionUploadStream
+        # instead of the normal statement_execute_query path.
+        # ---------------------------------------------------------------
+        if file_stream is not None:
+            if not _is_put_sql(query):
+                raise ProgrammingError(
+                    msg=(
+                        "file_stream was provided but the SQL statement is not a PUT command. "
+                        "file_stream is only supported for PUT statements."
+                    ),
+                    errno=ER_INVALID_VALUE,
+                )
+            data = file_stream.read()
+            rs_response = core_driver.connection_upload_stream(
+                conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+                sql=query,
+                data=data,
+            )
+            self._result_set.replace(rs_response.result_set_handle)
+            self._query_result = _QueryResult.from_result_descriptor(rs_response.result_descriptor, query)
+            self._rownumber = -1
+            return self
 
         with statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             if self._statement_parameters:

@@ -57,6 +57,8 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionSetSessionParametersResponse,
     ConnectionTokenRequest,
     ConnectionTokenResponse,
+    ConnectionUploadStreamRequest,
+    ConnectionUploadStreamResponse,
     DatabaseFetchChunkRequest,
     DatabaseFetchChunkResponse,
     DatabaseHandle,
@@ -385,6 +387,31 @@ class CoreDriver:
     def connection_heartbeat(self, conn_handle: ConnectionHandle) -> ConnectionHeartbeatResponse:
         request = ConnectionHeartbeatRequest(conn_handle=conn_handle)
         return self.client.connection_heartbeat(request)
+
+    def connection_upload_stream(
+        self,
+        conn_handle: ConnectionHandle,
+        sql: str,
+        data: bytes,
+    ) -> ConnectionUploadStreamResponse:
+        """Execute a PUT SQL using caller-supplied in-memory bytes as the upload source.
+
+        This is the backend for ``cursor.execute("PUT ...", file_stream=stream)``.
+        The bytes are passed to the Rust core which executes the PUT SQL against
+        Snowflake GS to obtain stage credentials, then uploads ``data`` directly
+        instead of reading from the filesystem path in the SQL.
+
+        Args:
+            conn_handle: Active connection handle.
+            sql: A PUT SQL statement (e.g. ``"PUT file://data.csv @stage"``).
+            data: Raw bytes of the file to upload (caller has read the stream).
+
+        Returns:
+            ``ConnectionUploadStreamResponse`` with ``result_set_handle`` and
+            ``result_descriptor`` — same shape as a normal PUT result set.
+        """
+        request = ConnectionUploadStreamRequest(conn_handle=conn_handle, sql=sql, data=data)
+        return self.client.connection_upload_stream(request)
 
     def connection_get_info(
         self,
