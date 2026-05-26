@@ -6,7 +6,7 @@ use super::connection::{Connection, RefreshContext, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::multistatement;
-use super::query::perform_put_get_transfer;
+use super::query::{StageCredsRefreshContext, perform_put_get_transfer};
 use super::result_set::{
     ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
     response_to_descriptor,
@@ -21,7 +21,8 @@ use crate::config::param_registry::{DEFAULT_PUT_GET_MAX_ATTEMPTS, param_names};
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, snowflake_abort_query, snowflake_query_with_client,
+    QueryExecutionMode, QueryInput, query_response, snowflake_abort_query,
+    snowflake_query_with_client,
 };
 
 use crate::config::rest_parameters::QueryParameters;
@@ -344,6 +345,32 @@ impl DatabaseDriverV1 {
         drop(stmt);
 
         let data = response.data;
+        // Build refresh context for PUT/GET so the file manager can
+        // recover from STS `ExpiredToken` by re-issuing the original
+        // PUT/GET SQL to obtain fresh stage credentials. The refresher
+        // calls back into `RefreshContext::execute_with_refresh`, so a
+        // session-token expiry mid-batch is renewed transparently.
+        let stage_creds_refresh_context = StageCredsRefreshContext {
+            sql: query.clone(),
+            query_parameters: query_parameters.clone(),
+            conn: conn_arc.clone(),
+        };
+        self.finalize_execute_result(&conn_arc, data, Some(stage_creds_refresh_context))
+            .await
+    }
+
+    /// Turns a query response into an `ExecuteQueryResult`, dispatching
+    /// PUT/GET to the file manager when needed. Shared between the sync
+    /// `execute_query_internal` path and the async-fetch
+    /// `connection_get_query_result` path; the only per-caller input is
+    /// `stage_creds_refresh_context` (`Some` for the sync path, `None` for
+    /// async-fetch).
+    async fn finalize_execute_result(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        data: query_response::Data,
+        stage_creds_refresh_context: Option<StageCredsRefreshContext>,
+    ) -> Result<ExecuteQueryResult, ApiError> {
         let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
 
         if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
@@ -352,31 +379,21 @@ impl DatabaseDriverV1 {
 
         let rowset_data = match data.command.as_deref() {
             Some(command) => {
-                // Build refresh context for PUT/GET so the file manager can
-                // recover from STS `ExpiredToken` by re-issuing the original
-                // PUT/GET SQL to obtain fresh stage credentials. The refresher
-                // calls back into `RefreshContext::execute_with_refresh`, so a
-                // session-token expiry mid-batch is renewed transparently.
-                let stage_creds_refresh_context = super::query::StageCredsRefreshContext {
-                    sql: query.clone(),
-                    query_parameters: query_parameters.clone(),
-                    conn: conn_arc.clone(),
-                };
                 // Late-bind `put_get_max_attempts` so post-init `set_option`
                 // overrides take effect (mirrors `LogoutConfig`).
                 let (put_get_max_attempts, use_s3_regional_url_session_param) = {
-                    let conn = conn_arc.lock().await;
-                    let put_get_max_attempts = read_put_get_max_attempts(&conn);
-                    let use_s3_regional_url_session_param =
-                        conn.use_s3_regional_url_session_param().await;
-                    (put_get_max_attempts, use_s3_regional_url_session_param)
+                    let conn = conn.lock().await;
+                    (
+                        read_put_get_max_attempts(&conn),
+                        conn.use_s3_regional_url_session_param().await,
+                    )
                 };
                 perform_put_get_transfer(
                     command,
                     &data,
                     &self.wrapper_presets,
                     put_get_max_attempts,
-                    Some(stage_creds_refresh_context),
+                    stage_creds_refresh_context,
                     use_s3_regional_url_session_param,
                 )
                 .await
@@ -384,7 +401,7 @@ impl DatabaseDriverV1 {
             }
             None => data.into_rowset_data(),
         };
-        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        let reader_ctx = resolve_reader_ctx(conn).await?;
         Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
     }
 
@@ -469,37 +486,7 @@ impl DatabaseDriverV1 {
             })?;
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
-            let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-
-            if let Some(multi) = multistatement::try_into_multi_result(&data, descriptor.clone()) {
-                return Ok(multi);
-            }
-
-            let rowset_data = match data.command.as_deref() {
-                Some(command) => {
-                    // See `statement_execute` for the late-binding rationale.
-                    let (put_get_max_attempts, use_s3_regional_url_session_param) = {
-                        let conn = conn_ptr.lock().await;
-                        let put_get_max_attempts = read_put_get_max_attempts(&conn);
-                        let use_s3_regional_url_session_param =
-                            conn.use_s3_regional_url_session_param().await;
-                        (put_get_max_attempts, use_s3_regional_url_session_param)
-                    };
-                    perform_put_get_transfer(
-                        command,
-                        &data,
-                        &self.wrapper_presets,
-                        put_get_max_attempts,
-                        None,
-                        use_s3_regional_url_session_param,
-                    )
-                    .await
-                    .context(QueryResponseProcessingSnafu)?
-                }
-                None => data.into_rowset_data(),
-            };
-            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
-            Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx))
+            self.finalize_execute_result(&conn_ptr, data, None).await
         }
         .instrument(crate::snowflake_op_span!(
             "connection_get_query_result",
