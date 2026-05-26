@@ -197,8 +197,6 @@ async fn upload_to_azure(
 ///
 /// Azure treats 403 as retryable (SAS token clock skew / replication delays),
 /// matching JDBC/ODBC behavior.
-///
-/// `max_attempts` is the user-supplied `put_get_max_attempts` override.
 fn azure_retry_policy(max_attempts: u32) -> RetryPolicy {
     RetryPolicy {
         max_attempts,
@@ -749,10 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn azure_retry_policy_propagates_max_attempts() {
-        // Mirrors the S3/GCS contract: the caller-supplied
-        // `put_get_max_attempts` is what bounds the per-file HTTP retry
-        // loop. `1` disables retries (1 attempt = no retry).
+    fn azure_retry_policy_max_attempts() {
         assert_eq!(azure_retry_policy(25).max_attempts, 25);
         assert_eq!(azure_retry_policy(1).max_attempts, 1);
     }

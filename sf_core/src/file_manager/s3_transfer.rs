@@ -438,8 +438,6 @@ async fn get_object(
 /// retry budget of 600s (2× `REQUEST_TIMEOUT_SECS`) so at least one
 /// full-timeout attempt can complete before the budget expires.
 ///
-/// `max_attempts` is the user-supplied `put_get_max_attempts` override.
-///
 /// The AWS SDK's standard retry strategy already covers transient transport
 /// errors, 5xx server errors, and throttling (429, SlowDown). 403 is left to
 /// the SDK's defaults: unlike GCS/Azure (where 403 commonly means "token not
@@ -678,11 +676,7 @@ mod tests {
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 
     #[test]
-    fn s3_retry_policy_propagates_max_attempts() {
-        // Mirrors libsnowflakeclient's `setPutMaxRetries` / JDBC's
-        // `putGetMaxRetries`: the user-supplied value reaches the AWS retry
-        // config. `1` is libsf's `setPutMaxRetries(0)` after the
-        // attempts/retries flip — 1 attempt = no retry.
+    fn s3_retry_policy_max_attempts() {
         let policy = s3_retry_policy(25);
         assert_eq!(policy.max_attempts, 25);
         assert_eq!(to_aws_retry_config(&policy).max_attempts(), 25);

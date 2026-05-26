@@ -232,8 +232,6 @@ async fn upload_to_gcs(
 ///
 /// GCS treats 403 as retryable (temporary credential issues), and 400 is
 /// retryable when using presigned URLs (URL may have expired).
-///
-/// `max_attempts` is the user-supplied `put_get_max_attempts` override.
 fn gcs_retry_policy(using_presigned_url: bool, max_attempts: u32) -> RetryPolicy {
     let mut extra = vec![403];
     if using_presigned_url {
@@ -843,10 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn gcs_retry_policy_propagates_max_attempts() {
-        // Mirrors the S3/Azure contract: the caller-supplied
-        // `put_get_max_attempts` is what bounds the per-file HTTP retry
-        // loop. `1` disables retries (1 attempt = no retry).
+    fn gcs_retry_policy_max_attempts() {
         assert_eq!(gcs_retry_policy(false, 25).max_attempts, 25);
         assert_eq!(gcs_retry_policy(false, 1).max_attempts, 1);
     }

@@ -56,8 +56,7 @@ pub struct StageCredsRefreshContext {
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
 ///
-/// `put_get_max_attempts` is the user-supplied `put_get_max_attempts` value
-/// for the per-file HTTP/transport retry loop.
+/// `put_get_max_attempts` bounds the per-file HTTP/transport retry loop.
 ///
 /// When `stage_creds_refresh_context` is `Some`, an S3 `ExpiredToken` during a
 /// file transfer triggers a re-issue of the original PUT/GET SQL to obtain fresh

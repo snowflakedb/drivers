@@ -2266,12 +2266,8 @@ mod tests {
         ds.connection_release(handle).unwrap();
     }
 
-    /// End-to-end wiring for `put_get_max_attempts`: calling the public
-    /// `connection_set_option` API with the canonical key must land the
-    /// value on `connection_seed` so the PUT/GET dispatch site can read
-    /// it. Catches regressions where the param's canonical-name
-    /// canonicalization, scope guard, or `mutable_after_connect` flag
-    /// would silently swallow the override before it reaches the seed.
+    /// `set_option` with the canonical `put_get_max_attempts` key must land
+    /// on `connection_seed` so the PUT/GET dispatch site can read it.
     #[tokio::test]
     async fn connection_set_option_put_get_max_attempts_lands_on_seed() {
         let ds = DatabaseDriverV1::new();

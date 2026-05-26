@@ -34,15 +34,8 @@ use serde_json::value::RawValue;
 use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
-/// Reads the user's `put_get_max_attempts` override from the connection seed.
-///
-/// Returns the resolved per-file PUT/GET HTTP retry budget. The default
-/// (`DEFAULT_PUT_GET_MAX_ATTEMPTS`) is also declared on the `ParamDef`
-/// and is mirrored here for the not-yet-resolved case (no init-time
-/// `set_option`, no post-init write). Out-of-range values fall back to
-/// the default rather than failing the statement, keeping the dispatch
-/// site robust against post-init `connection_set_option_int` writes
-/// that bypass param-registry validation.
+/// Reads `put_get_max_attempts` from the connection seed; falls back to
+/// `DEFAULT_PUT_GET_MAX_ATTEMPTS` for unset or out-of-range values.
 fn read_put_get_max_attempts(conn: &Connection) -> u32 {
     conn.connection_seed
         .get_int(param_names::PUT_GET_MAX_ATTEMPTS)
@@ -369,11 +362,8 @@ impl DatabaseDriverV1 {
                     query_parameters: query_parameters.clone(),
                     conn: conn_arc.clone(),
                 };
-                // Re-read `put_get_max_attempts` from the connection seed at
-                // PUT/GET dispatch time so post-init
-                // `connection_set_option_int` overrides take effect (mirrors
-                // `LogoutConfig`'s late-binding in `connection_close`).
-                // Out-of-range values fall back to the per-cloud default.
+                // Late-bind `put_get_max_attempts` so post-init `set_option`
+                // overrides take effect (mirrors `LogoutConfig`).
                 let (put_get_max_attempts, use_s3_regional_url_session_param) = {
                     let conn = conn_arc.lock().await;
                     let put_get_max_attempts = read_put_get_max_attempts(&conn);
@@ -487,9 +477,7 @@ impl DatabaseDriverV1 {
 
             let rowset_data = match data.command.as_deref() {
                 Some(command) => {
-                    // See the late-binding rationale in `statement_execute`: the
-                    // value is re-read from the connection seed so post-init
-                    // `set_option` calls are honored.
+                    // See `statement_execute` for the late-binding rationale.
                     let (put_get_max_attempts, use_s3_regional_url_session_param) = {
                         let conn = conn_ptr.lock().await;
                         let put_get_max_attempts = read_put_get_max_attempts(&conn);
@@ -836,12 +824,6 @@ mod tests {
         assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
     }
 
-    /// `read_put_get_max_attempts` is the dispatch-site read for the
-    /// `put_get_max_attempts` knob. The default
-    /// (`DEFAULT_PUT_GET_MAX_ATTEMPTS`) is declared on the `ParamDef`
-    /// and mirrored as the helper's fallback. Out-of-range values must
-    /// fall back to the default rather than panic or surface as a
-    /// statement error — see the helper's doc comment.
     #[test]
     fn read_put_get_max_attempts_unset_yields_default() {
         let conn = Connection::new();
