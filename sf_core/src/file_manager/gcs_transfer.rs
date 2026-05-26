@@ -1,11 +1,12 @@
 use super::types::{
-    CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription,
+    PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use futures::StreamExt as _;
 use reqwest::{Method, StatusCode};
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
@@ -157,6 +158,15 @@ async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Optio
 }
 
 /// Upload data to GCS with retry logic.
+///
+/// Streams the body without buffering the whole file in memory:
+/// - `ByteSource::Path` opens the file on each retry attempt via
+///   `tokio::fs::File` and wraps it in a streaming `reqwest::Body` — the
+///   file content is never fully resident in memory at the same time.
+/// - `ByteSource::Bytes` (the usual case after client-side encryption) uses
+///   the already-in-memory ciphertext directly; the `Vec<u8>` is cloned for
+///   each retry via `reqwest::Body::from`.
+///
 /// Sets encryption metadata headers only when client-side encryption was used.
 async fn upload_to_gcs(
     client: &reqwest::Client,
@@ -182,19 +192,30 @@ async fn upload_to_gcs(
         .transpose()
         .context(gcs_upload_error::SerializationSnafu)?;
 
-    let data = prepared
-        .data
-        .into_bytes()
-        .context(gcs_upload_error::SourceIoSnafu)?;
+    let source = prepared.data;
     let digest = prepared.digest;
 
-    gcs_request_with_retry(
+    gcs_upload_with_retry(
         || {
+            // Build the streaming body from the data source.
+            // ByteSource::Path: open fresh file handle on each attempt —
+            //   the file is streamed to GCS without loading it into memory.
+            // ByteSource::Bytes: Vec<u8> is cloned (already in-memory ciphertext).
+            let body = match &source {
+                ByteSource::Path(p) => {
+                    let std_file = std::fs::File::open(p)
+                        .map_err(|e| gcs_upload_error::SourceIoSnafu.into_error(e))?;
+                    let tokio_file = tokio::fs::File::from_std(std_file);
+                    reqwest::Body::from(tokio_file)
+                }
+                ByteSource::Bytes(v) => reqwest::Body::from(v.clone()),
+            };
+
             let mut req = client
                 .put(url)
                 .header(GCS_META_SFC_DIGEST, &digest)
                 .header("content-encoding", "")
-                .body(data.clone());
+                .body(body);
 
             if let Some(ref enc_str) = encryption_data_str {
                 req = req.header(GCS_META_ENCRYPTIONDATA, enc_str);
@@ -205,9 +226,8 @@ async fn upload_to_gcs(
             if let Some(t) = token {
                 req = req.bearer_auth(t);
             }
-            req
+            Ok(req)
         },
-        Method::PUT,
         using_presigned_url,
     )
     .await?;
@@ -273,6 +293,91 @@ where
     Err(GcsRequestError::GcsHttp { status_code, body })
 }
 
+/// Executes a GCS upload with retry, accepting a **fallible** request-builder closure.
+///
+/// Unlike `gcs_request_with_retry`, the closure may return `Err(GcsUploadError)`
+/// (e.g. if the source file cannot be opened on a retry attempt). A build failure
+/// is treated as non-retryable and propagated immediately — it indicates a local
+/// problem (missing file, permission denied) rather than a transient network error.
+async fn gcs_upload_with_retry<F>(
+    build_request: F,
+    using_presigned_url: bool,
+) -> Result<(), GcsUploadError>
+where
+    F: Fn() -> Result<reqwest::RequestBuilder, GcsUploadError>,
+{
+    let policy = gcs_retry_policy(using_presigned_url);
+    let max_attempts = policy.max_attempts;
+    let start = std::time::Instant::now();
+    let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+
+    for attempt in 1..=max_attempts {
+        let elapsed = start.elapsed();
+        if elapsed >= policy.max_elapsed {
+            return Err(GcsUploadError::RetryExhausted {
+                detail: format!(
+                    "GCS upload deadline exceeded after {elapsed:?} (budget {:?})",
+                    policy.max_elapsed
+                ),
+                location: Location::default(),
+            });
+        }
+        let remaining = policy.max_elapsed - elapsed;
+        let timeout = remaining.min(Duration::from_secs(REQUEST_TIMEOUT_SECS));
+
+        // Build the request (may re-open the source file on each retry).
+        let req = build_request()?.timeout(timeout);
+
+        match req.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    return Ok(());
+                }
+
+                // 401: token expired — propagate immediately
+                if resp.status() == StatusCode::UNAUTHORIZED {
+                    return Err(GcsUploadError::TokenExpired {
+                        location: Location::default(),
+                    });
+                }
+
+                let status_code = resp.status().as_u16();
+                let is_retryable =
+                    is_retryable_status(status_code, &policy.extra_retryable_statuses);
+
+                if !is_retryable || attempt >= max_attempts {
+                    let body_text = read_error_body(resp).await;
+                    return Err(GcsUploadError::GcsHttp {
+                        status_code,
+                        body: body_text,
+                        location: Location::default(),
+                    });
+                }
+
+                let delay = Duration::from_millis(sleep_ms as u64);
+                sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => {
+                if attempt >= max_attempts {
+                    return Err(GcsUploadError::Http {
+                        source: e,
+                        location: Location::default(),
+                    });
+                }
+                let delay = Duration::from_millis(sleep_ms as u64);
+                sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+
+    Err(GcsUploadError::RetryExhausted {
+        detail: format!("GCS upload exhausted {max_attempts} attempts"),
+        location: Location::default(),
+    })
+}
+
 fn map_http_error(e: HttpError) -> GcsRequestError {
     match e {
         HttpError::Transport { source, .. } => GcsRequestError::Http { source },
@@ -280,6 +385,17 @@ fn map_http_error(e: HttpError) -> GcsRequestError {
             detail: other.to_string(),
         },
     }
+}
+
+/// Returns true when the HTTP status code should trigger a retry.
+/// Mirrors the logic in `http::retry::should_retry_status`.
+fn is_retryable_status(status: u16, extra: &[u16]) -> bool {
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504) || extra.contains(&status)
+}
+
+/// Computes the next back-off delay in milliseconds (exponential, capped).
+fn next_delay_ms(current: f64, backoff: &crate::config::retry::BackoffConfig) -> f64 {
+    (current * backoff.factor).min(backoff.cap.as_millis() as f64)
 }
 
 // --- Helpers ---
@@ -386,6 +502,174 @@ async fn read_error_body(response: reqwest::Response) -> String {
             tracing::warn!("Failed to read GCS error response body: {}", e);
             format!("<could not read body: {}>", e)
         }
+    }
+}
+
+/// Downloads a file from GCS, streams the response body without buffering the
+/// full ciphertext in memory, and returns a [`GcsStreamingDownload`] that the
+/// caller can use to read the body via a sync `Read` interface.
+///
+/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
+/// The public `download_from_gcs` keeps the old `DownloadResponse` shape for
+/// the integration-test / retry-test surface.
+///
+/// The body is streamed from the HTTP response through a tokio-spawned producer
+/// task into a `std::sync::mpsc::sync_channel`. `GcsStreamReader` consumes from
+/// the channel, implementing `Read` so `decrypt_ciphertext_to_writer` (which is
+/// sync) can consume the body without blocking the async runtime.
+pub async fn download_from_gcs_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+) -> Result<GcsStreamingDownload, GcsDownloadError> {
+    let client = create_gcs_client().map_err(GcsDownloadError::from)?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+    let (url, token) = resolve_url_and_token(stage_info, &key).map_err(GcsDownloadError::from)?;
+    let using_presigned_url = stage_info.presigned_url.is_some();
+
+    let response = gcs_request_with_retry(
+        || {
+            let mut req = client.get(&url);
+            if let Some(ref t) = token {
+                req = req.bearer_auth(t);
+            }
+            req
+        },
+        Method::GET,
+        using_presigned_url,
+    )
+    .await
+    .map_err(GcsDownloadError::from)?;
+
+    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
+    // Falls back to 0 when the header is absent; mod.rs uses the actual written
+    // byte count as a fallback for the Python flavor.
+    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+
+    let headers = response.headers();
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
+
+    let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
+        Some(encryption_data_str) => {
+            let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
+
+            let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
+                .as_str()
+                .context(gcs_download_error::MissingMetadataSnafu {
+                    field: "WrappedContentKey.EncryptedKey",
+                })?
+                .to_string();
+
+            let iv = enc_data["ContentEncryptionIV"]
+                .as_str()
+                .context(gcs_download_error::MissingMetadataSnafu {
+                    field: "ContentEncryptionIV",
+                })?
+                .to_string();
+
+            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
+                gcs_download_error::MissingMetadataSnafu {
+                    field: GCS_META_MATDESC,
+                },
+            )?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
+
+            Some(EncryptedFileMetadata {
+                encrypted_key,
+                iv,
+                material_desc,
+            })
+        }
+        None => None,
+    };
+
+    // Bridge async response body → sync Read via a bounded mpsc channel.
+    // Channel capacity of 8 chunks (8 × up to 256 KiB each ≈ 2 MiB in flight)
+    // is enough to keep the producer busy while the consumer decrypts.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<Vec<u8>>>(8);
+    let stream = response.bytes_stream();
+    let _producer = tokio::spawn(async move {
+        let mut stream = stream;
+        while let Some(chunk_result) = stream.next().await {
+            let mapped = chunk_result
+                .map(|b| b.to_vec())
+                .map_err(std::io::Error::other);
+            if tx.send(mapped).is_err() {
+                break; // consumer dropped (decryption finished / error)
+            }
+        }
+        // tx is dropped here, signalling EOF to the receiver.
+    });
+
+    Ok(GcsStreamingDownload {
+        cloud_byte_count,
+        file_metadata,
+        digest,
+        reader: GcsStreamReader::new(rx),
+    })
+}
+
+/// Result of `download_from_gcs_streaming`.
+pub struct GcsStreamingDownload {
+    /// On-cloud (pre-decryption) byte count from the `Content-Length` header.
+    /// May be 0 when the header is absent (chunked transfer encoding).
+    pub cloud_byte_count: i64,
+    pub file_metadata: Option<EncryptedFileMetadata>,
+    pub digest: Option<String>,
+    /// Streaming body reader — feed to `decrypt_ciphertext_to_writer`.
+    pub reader: GcsStreamReader,
+}
+
+/// A sync `Read` adapter that consumes bytes from a `std::sync::mpsc::Receiver`.
+///
+/// Produced by `download_from_gcs_streaming`. Each `read` call fetches the next
+/// chunk from the channel (blocking if the tokio producer hasn't sent
+/// one yet). Partial reads from a single chunk are handled by a `buf_offset`
+/// cursor so callers always get a full buffer fill when possible.
+///
+/// Call `bytes_read()` after draining the reader to get the total on-wire
+/// byte count for the `cloud_byte_count` column.
+pub struct GcsStreamReader {
+    rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    buf: Vec<u8>,
+    buf_offset: usize,
+}
+
+impl GcsStreamReader {
+    fn new(rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>) -> Self {
+        Self {
+            rx,
+            buf: Vec::new(),
+            buf_offset: 0,
+        }
+    }
+}
+
+impl std::io::Read for GcsStreamReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        // Refill the internal buffer when exhausted.
+        if self.buf_offset >= self.buf.len() {
+            match self.rx.recv() {
+                Ok(Ok(chunk)) => {
+                    self.buf = chunk;
+                    self.buf_offset = 0;
+                }
+                Ok(Err(e)) => {
+                    return Err(e);
+                }
+                Err(_disconnected) => {
+                    // Producer task finished / channel closed — EOF.
+                    return Ok(0);
+                }
+            }
+        }
+
+        let available = &self.buf[self.buf_offset..];
+        let n = available.len().min(out.len());
+        out[..n].copy_from_slice(&available[..n]);
+        self.buf_offset += n;
+        Ok(n)
     }
 }
 

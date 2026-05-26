@@ -6,12 +6,16 @@ mod s3_transfer;
 mod path_expansion;
 pub mod types;
 
-/// Re-exports of internal encryption helpers for integration tests and the
-/// `test-utils` feature. This module is only compiled when running tests or
-/// when the crate is built with `--features test-utils`.
+/// Re-exports of internal helpers for integration tests and the `test-utils`
+/// feature. This module is only compiled when running tests or when the crate
+/// is built with `--features test-utils`.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod internal {
     pub use super::encryption::{decrypt_ciphertext_to_writer, encrypt_file_data};
+    // PR-2: expose GCS streaming download path for round-trip tests.
+    pub use super::gcs_transfer::{
+        GcsStreamReader, GcsStreamingDownload, download_from_gcs_streaming,
+    };
 }
 
 pub use self::types::*;
@@ -21,11 +25,15 @@ pub use gcs_transfer::download_from_gcs;
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
+use azure_transfer::{
+    AzureDownloadError, AzureUploadError, download_from_azure_streaming, upload_to_azure_or_skip,
+};
 use encryption::{
     EncryptionError, compute_sha256_digest, decrypt_ciphertext_to_writer, encrypt_file_data,
 };
-use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
+use gcs_transfer::{
+    GcsDownloadError, GcsUploadError, download_from_gcs_streaming, upload_to_gcs_or_skip,
+};
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
@@ -392,64 +400,164 @@ pub async fn download_files(
 }
 
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
+///
+/// For GCS and Azure, the response body is streamed directly into the
+/// decrypt/write operation via `decrypt_ciphertext_to_writer` without buffering
+/// the full ciphertext in memory. The blocking decrypt call runs in
+/// `tokio::task::spawn_blocking` so the async runtime thread is free while the
+/// blocking channel receive waits for the next chunk from the async producer.
+///
+/// For S3, the existing `DownloadResponse { data: Vec<u8> }` path is preserved
+/// (S3 streaming is a follow-up optimization).
 pub async fn download_single_file(
     data: SingleDownloadData,
     refresher: &mut Option<&mut dyn StageCredsRefresher>,
 ) -> Result<DownloadResult, FileManagerError> {
-    let DownloadResponse {
-        data: raw_data,
-        digest,
-        file_metadata,
-        cloud_byte_count,
-    } = match data.stage_info.location_type {
-        LocationType::S3 => {
-            download_from_s3(&data.stage_info, data.src_location.as_str(), refresher)
-                .await
-                .context(S3DownloadSnafu)?
-        }
-        LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(GcsDownloadSnafu)?,
-        LocationType::Azure => download_from_azure(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(AzureDownloadSnafu)?,
-    };
-
     let filename = Path::new(&data.src_location)
         .file_name()
         .unwrap_or(std::ffi::OsStr::new(&data.src_location));
     let output_path = Path::new(&data.local_location).join(filename);
 
-    // The output byte length for the `Python` flavor's `size` column.
+    // GCS and Azure use the streaming path: no intermediate Vec<u8> for ciphertext.
+    // S3 retains the DownloadResponse Vec<u8> path (its streaming is a separate effort).
+    let (cloud_byte_count, output_byte_len) = match data.stage_info.location_type {
+        LocationType::S3 => {
+            let DownloadResponse {
+                data: raw_data,
+                digest,
+                file_metadata,
+                cloud_byte_count,
+            } = download_from_s3(&data.stage_info, data.src_location.as_str(), refresher)
+                .await
+                .context(S3DownloadSnafu)?;
 
-    let output_byte_len: i64 = match data.encryption_material.as_ref() {
-        Some(enc_material) => {
-            let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
-                detail: "encryption metadata headers missing from downloaded file",
-            })?;
-            let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
-                detail: "digest header missing from downloaded file",
-            })?;
-            // Stream ciphertext through the Crypter directly into the output
-            // file. The plaintext is never held as a full Vec<u8> — each
-            // decrypted chunk is written immediately. The digest is verified
-            // at finalize time (post-decryption — see behavioral-change note
-            // in `decrypt_ciphertext_to_writer`).
-            let mut output_file = File::create(&output_path).context(IoSnafu)?;
-            decrypt_ciphertext_to_writer(
-                raw_data.as_slice(),
-                &enc_metadata,
-                d,
-                enc_material,
-                &mut output_file,
-            )
-            .context(DecryptionSnafu)?
+            let output_byte_len: i64 = match data.encryption_material.as_ref() {
+                Some(enc_material) => {
+                    let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
+                        detail: "encryption metadata headers missing from downloaded file",
+                    })?;
+                    let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
+                        detail: "digest header missing from downloaded file",
+                    })?;
+                    let mut output_file = File::create(&output_path).context(IoSnafu)?;
+                    decrypt_ciphertext_to_writer(
+                        raw_data.as_slice(),
+                        &enc_metadata,
+                        d,
+                        enc_material,
+                        &mut output_file,
+                    )
+                    .context(DecryptionSnafu)?
+                }
+                None => {
+                    let mut output_file = File::create(&output_path).context(IoSnafu)?;
+                    std::io::copy(&mut raw_data.as_slice(), &mut output_file).context(IoSnafu)?;
+                    raw_data.len() as i64
+                }
+            };
+            (cloud_byte_count, output_byte_len)
         }
-        None => {
-            // SSE stage: write the raw body bytes directly to the output file.
-            let mut output_file = File::create(&output_path).context(IoSnafu)?;
-            std::io::copy(&mut raw_data.as_slice(), &mut output_file).context(IoSnafu)?;
-            raw_data.len() as i64
+
+        LocationType::Gcs => {
+            let dl = download_from_gcs_streaming(&data.stage_info, data.src_location.as_str())
+                .await
+                .context(GcsDownloadSnafu)?;
+
+            let cloud_byte_count_hint = dl.cloud_byte_count;
+            let file_metadata = dl.file_metadata;
+            let digest = dl.digest;
+            let reader = dl.reader;
+            let enc_material = data.encryption_material.clone();
+            let output_path2 = output_path.clone();
+
+            // Blocking decrypt/write in a spawn_blocking task so the async runtime
+            // thread is free to run the GCS producer that feeds the channel reader.
+            let output_byte_len = tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
+                match enc_material.as_ref() {
+                    Some(enc_material) => {
+                        let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
+                            detail: "encryption metadata headers missing from downloaded file",
+                        })?;
+                        let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
+                            detail: "digest header missing from downloaded file",
+                        })?;
+                        let mut output_file = File::create(&output_path2).context(IoSnafu)?;
+                        decrypt_ciphertext_to_writer(
+                            reader,
+                            &enc_metadata,
+                            d,
+                            enc_material,
+                            &mut output_file,
+                        )
+                        .context(DecryptionSnafu)
+                    }
+                    None => {
+                        let mut output_file = File::create(&output_path2).context(IoSnafu)?;
+                        let n = std::io::copy(&mut { reader }, &mut output_file).context(IoSnafu)?;
+                        Ok(n as i64)
+                    }
+                }
+            })
+            .await
+            .context(BlockingTaskSnafu)??;
+
+            // Use Content-Length hint as cloud_byte_count; if absent (chunked), fall back
+            // to output_byte_len for the ODBC srcFileSize column (conservative).
+            let cloud_byte_count = if cloud_byte_count_hint > 0 {
+                cloud_byte_count_hint
+            } else {
+                output_byte_len
+            };
+            (cloud_byte_count, output_byte_len)
+        }
+
+        LocationType::Azure => {
+            let dl = download_from_azure_streaming(&data.stage_info, data.src_location.as_str())
+                .await
+                .context(AzureDownloadSnafu)?;
+
+            let cloud_byte_count_hint = dl.cloud_byte_count;
+            let file_metadata = dl.file_metadata;
+            let digest = dl.digest;
+            let reader = dl.reader;
+            let enc_material = data.encryption_material.clone();
+            let output_path2 = output_path.clone();
+
+            let output_byte_len = tokio::task::spawn_blocking(move || -> Result<i64, FileManagerError> {
+                match enc_material.as_ref() {
+                    Some(enc_material) => {
+                        let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
+                            detail: "encryption metadata headers missing from downloaded file",
+                        })?;
+                        let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
+                            detail: "digest header missing from downloaded file",
+                        })?;
+                        let mut output_file = File::create(&output_path2).context(IoSnafu)?;
+                        decrypt_ciphertext_to_writer(
+                            reader,
+                            &enc_metadata,
+                            d,
+                            enc_material,
+                            &mut output_file,
+                        )
+                        .context(DecryptionSnafu)
+                    }
+                    None => {
+                        let mut output_file = File::create(&output_path2).context(IoSnafu)?;
+                        std::io::copy(&mut { reader }, &mut output_file).context(IoSnafu)?;
+                        Ok(cloud_byte_count_hint)
+                    }
+                }
+            })
+            .await
+            .context(BlockingTaskSnafu)??;
+
+            let cloud_byte_count = if cloud_byte_count_hint > 0 {
+                cloud_byte_count_hint
+            } else {
+                output_byte_len
+            };
+            (cloud_byte_count, output_byte_len)
         }
     };
 
@@ -573,6 +681,12 @@ pub enum FileManagerError {
     #[snafu(display("File does not exist: {pattern}"))]
     NoFilesMatched {
         pattern: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Blocking task failed: {source}"))]
+    BlockingTask {
+        source: tokio::task::JoinError,
         #[snafu(implicit)]
         location: Location,
     },

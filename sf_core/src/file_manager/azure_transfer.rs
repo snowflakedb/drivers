@@ -1,12 +1,14 @@
 use super::types::{
-    CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData, MaterialDescription,
-    PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
+    MaterialDescription, PreparedUpload, StageInfo, UploadStatus, build_encryption_metadata_json,
+    percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::sensitive::SensitiveString;
+use futures::StreamExt as _;
 use reqwest::{Method, StatusCode};
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
@@ -131,6 +133,15 @@ async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str)
 }
 
 /// Upload data to Azure with retry logic.
+///
+/// Streams the body without buffering the whole file in memory:
+/// - `ByteSource::Path` opens the file on each retry attempt via
+///   `tokio::fs::File` and wraps it in a streaming `reqwest::Body` — the
+///   file content is never fully resident in memory at the same time.
+/// - `ByteSource::Bytes` (the usual case after client-side encryption) uses
+///   the already-in-memory ciphertext directly; the `Vec<u8>` is cloned for
+///   each retry via `reqwest::Body::from`.
+///
 /// Sets encryption metadata headers only when client-side encryption was used.
 async fn upload_to_azure(
     client: &reqwest::Client,
@@ -155,34 +166,42 @@ async fn upload_to_azure(
         .transpose()
         .context(azure_upload_error::SerializationSnafu)?;
 
-    let data = prepared
-        .data
-        .into_bytes()
-        .context(azure_upload_error::SourceIoSnafu)?;
+    let source = prepared.data;
     let digest = prepared.digest;
     let full_url = build_sas_url(url, sas_token);
 
-    azure_request_with_retry(
-        || {
-            let mut req = client
-                .put(&full_url)
-                .header("x-ms-blob-type", "BlockBlob")
-                // Empty content-encoding matches JDBC/ODBC behavior: explicitly clears
-                // any default encoding to ensure the blob is stored as-is.
-                .header("content-encoding", "")
-                .header(AZURE_META_SFC_DIGEST, &digest)
-                .body(data.clone());
+    azure_upload_with_retry(|| {
+        // Build the streaming body from the data source.
+        // ByteSource::Path: open fresh file handle on each attempt —
+        //   the file is streamed to Azure without loading it into memory.
+        // ByteSource::Bytes: Vec<u8> is cloned (already in-memory ciphertext).
+        let body = match &source {
+            ByteSource::Path(p) => {
+                let std_file = std::fs::File::open(p)
+                    .map_err(|e| azure_upload_error::SourceIoSnafu.into_error(e))?;
+                let tokio_file = tokio::fs::File::from_std(std_file);
+                reqwest::Body::from(tokio_file)
+            }
+            ByteSource::Bytes(v) => reqwest::Body::from(v.clone()),
+        };
 
-            if let Some(ref enc_str) = encryption_data_str {
-                req = req.header(AZURE_META_ENCRYPTIONDATA, enc_str);
-            }
-            if let Some(ref md_str) = mat_desc_str {
-                req = req.header(AZURE_META_MATDESC, md_str);
-            }
-            req
-        },
-        Method::PUT,
-    )
+        let mut req = client
+            .put(&full_url)
+            .header("x-ms-blob-type", "BlockBlob")
+            // Empty content-encoding matches JDBC/ODBC behavior: explicitly clears
+            // any default encoding to ensure the blob is stored as-is.
+            .header("content-encoding", "")
+            .header(AZURE_META_SFC_DIGEST, &digest)
+            .body(body);
+
+        if let Some(ref enc_str) = encryption_data_str {
+            req = req.header(AZURE_META_ENCRYPTIONDATA, enc_str);
+        }
+        if let Some(ref md_str) = mat_desc_str {
+            req = req.header(AZURE_META_MATDESC, md_str);
+        }
+        Ok(req)
+    })
     .await?;
 
     tracing::debug!("Azure blob upload successful");
@@ -238,6 +257,80 @@ where
     let status_code = response.status().as_u16();
     let body = read_error_body(response).await;
     Err(AzureRequestError::AzureHttp { status_code, body })
+}
+
+/// Executes an Azure upload with retry, accepting a **fallible** request-builder closure.
+///
+/// Unlike `azure_request_with_retry`, the closure may return `Err(AzureUploadError)`
+/// (e.g. if the source file cannot be opened on a retry attempt). A build failure
+/// is treated as non-retryable and propagated immediately.
+async fn azure_upload_with_retry<F>(build_request: F) -> Result<(), AzureUploadError>
+where
+    F: Fn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
+{
+    let policy = azure_retry_policy();
+    let max_attempts = policy.max_attempts;
+    let start = std::time::Instant::now();
+    let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+
+    for attempt in 1..=max_attempts {
+        let elapsed = start.elapsed();
+        if elapsed >= policy.max_elapsed {
+            return Err(AzureUploadError::RetryExhausted {
+                detail: format!(
+                    "Azure upload deadline exceeded after {elapsed:?} (budget {:?})",
+                    policy.max_elapsed
+                ),
+                location: Location::default(),
+            });
+        }
+        let remaining = policy.max_elapsed - elapsed;
+        let timeout = remaining.min(Duration::from_secs(REQUEST_TIMEOUT_SECS));
+
+        // Build the request (may re-open the source file on each retry).
+        let req = build_request()?.timeout(timeout);
+
+        match req.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    return Ok(());
+                }
+
+                let status_code = resp.status().as_u16();
+                let is_retryable =
+                    is_retryable_status(status_code, &policy.extra_retryable_statuses);
+
+                if !is_retryable || attempt >= max_attempts {
+                    let body_text = read_error_body(resp).await;
+                    return Err(AzureUploadError::AzureHttp {
+                        status_code,
+                        body: body_text,
+                        location: Location::default(),
+                    });
+                }
+
+                let delay = Duration::from_millis(sleep_ms as u64);
+                sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => {
+                if attempt >= max_attempts {
+                    return Err(AzureUploadError::Http {
+                        detail: sanitize_sas(e.to_string()),
+                        location: Location::default(),
+                    });
+                }
+                let delay = Duration::from_millis(sleep_ms as u64);
+                sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+
+    Err(AzureUploadError::RetryExhausted {
+        detail: format!("Azure upload exhausted {max_attempts} attempts"),
+        location: Location::default(),
+    })
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
@@ -372,6 +465,135 @@ async fn read_error_body(response: reqwest::Response) -> String {
     };
     // Scrub SAS tokens (sig=…) from Azure error responses which may echo the request URL.
     sanitize_sas(body)
+}
+
+/// Returns true when the HTTP status code should trigger a retry.
+fn is_retryable_status(status: u16, extra: &[u16]) -> bool {
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504) || extra.contains(&status)
+}
+
+/// Computes the next back-off delay in milliseconds (exponential, capped).
+fn next_delay_ms(current: f64, backoff: &crate::config::retry::BackoffConfig) -> f64 {
+    (current * backoff.factor).min(backoff.cap.as_millis() as f64)
+}
+
+/// Downloads a file from Azure, streams the response body without buffering the
+/// full ciphertext in memory, and returns an [`AzureStreamingDownload`] that the
+/// caller uses to read the body via a sync `Read` interface.
+///
+/// This is the internal streaming path used by `mod.rs`'s `download_single_file`.
+/// The public `download_from_azure` keeps the old `DownloadResponse` shape for
+/// the integration-test / retry-test surface.
+pub(super) async fn download_from_azure_streaming(
+    stage_info: &StageInfo,
+    filename: &str,
+) -> Result<AzureStreamingDownload, AzureDownloadError> {
+    let client = create_azure_client().map_err(AzureDownloadError::from)?;
+    let key = format!("{}{filename}", stage_info.key_prefix);
+    let (url, sas_token) =
+        resolve_url_and_token(stage_info, &key).map_err(AzureDownloadError::from)?;
+    let full_url = build_sas_url(&url, sas_token.reveal());
+
+    let response = azure_request_with_retry(|| client.get(&full_url), Method::GET).await?;
+
+    // cloud_byte_count from Content-Length (accurate for non-chunked responses).
+    let cloud_byte_count = response.content_length().unwrap_or(0) as i64;
+
+    let headers = response.headers();
+    let digest = try_get_header(headers, AZURE_META_SFC_DIGEST)?;
+
+    let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
+        Some(encryption_data_str) => {
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
+                .context(azure_download_error::DeserializationSnafu)?;
+
+            let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
+                azure_download_error::MissingMetadataSnafu {
+                    field: AZURE_META_MATDESC,
+                },
+            )?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(azure_download_error::DeserializationSnafu)?;
+
+            Some(EncryptedFileMetadata {
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
+                material_desc,
+            })
+        }
+        None => None,
+    };
+
+    // Bridge async response body → sync Read via a bounded mpsc channel.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<Vec<u8>>>(8);
+    let stream = response.bytes_stream();
+    let _producer = tokio::spawn(async move {
+        let mut stream = stream;
+        while let Some(chunk_result) = stream.next().await {
+            let mapped = chunk_result
+                .map(|b| b.to_vec())
+                .map_err(std::io::Error::other);
+            if tx.send(mapped).is_err() {
+                break;
+            }
+        }
+    });
+
+    Ok(AzureStreamingDownload {
+        cloud_byte_count,
+        file_metadata,
+        digest,
+        reader: AzureStreamReader::new(rx),
+    })
+}
+
+/// Result of `download_from_azure_streaming`.
+pub(super) struct AzureStreamingDownload {
+    /// On-cloud (pre-decryption) byte count from the `Content-Length` header.
+    pub cloud_byte_count: i64,
+    pub file_metadata: Option<EncryptedFileMetadata>,
+    pub digest: Option<String>,
+    pub reader: AzureStreamReader,
+}
+
+/// A sync `Read` adapter that consumes bytes from a `std::sync::mpsc::Receiver`.
+///
+/// Produced by `download_from_azure_streaming`. Mirrors `GcsStreamReader`.
+pub(super) struct AzureStreamReader {
+    rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    buf: Vec<u8>,
+    buf_offset: usize,
+}
+
+impl AzureStreamReader {
+    fn new(rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>) -> Self {
+        Self {
+            rx,
+            buf: Vec::new(),
+            buf_offset: 0,
+        }
+    }
+}
+
+impl std::io::Read for AzureStreamReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if self.buf_offset >= self.buf.len() {
+            match self.rx.recv() {
+                Ok(Ok(chunk)) => {
+                    self.buf = chunk;
+                    self.buf_offset = 0;
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_disconnected) => return Ok(0),
+            }
+        }
+
+        let available = &self.buf[self.buf_offset..];
+        let n = available.len().min(out.len());
+        out[..n].copy_from_slice(&available[..n]);
+        self.buf_offset += n;
+        Ok(n)
+    }
 }
 
 /// Removes SAS token signature values from a string to prevent credential leakage in logs.
