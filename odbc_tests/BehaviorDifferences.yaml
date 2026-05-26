@@ -751,3 +751,15 @@ behavior_differences:
       The new driver sends CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY to the server as a session parameter during login, making it queryable via SHOW PARAMETERS. The value is also used client-side to configure the heartbeat interval.
     impact: |
       Applications that query SHOW PARAMETERS to verify the heartbeat frequency will now see the value they configured in the connection string.
+
+  58:
+    name: "Async SQLCancel does not interrupt in-progress operations on reference driver"
+    status: unknown
+    type: bug
+    reviewed: false
+    old_driver_behavior: |
+      When SQLCancel is called on a statement that has an in-progress async operation (SQL_STILL_EXECUTING), the cancel does not actually interrupt the server-side query. Subsequent polling continues to return SQL_STILL_EXECUTING indefinitely or until the query completes naturally, rather than returning SQL_ERROR with HY008.
+    new_driver_behavior: |
+      SQLCancel on an async statement sends a cancel request to the server, and subsequent polling returns SQL_ERROR with SQLSTATE HY008 ("Operation canceled") once the cancellation is acknowledged.
+    impact: |
+      Applications that rely on SQLCancel to abort long-running async queries will not get timely cancellation on the old driver. The query may run to completion despite the cancel request.
