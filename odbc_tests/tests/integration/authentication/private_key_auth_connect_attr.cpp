@@ -16,12 +16,9 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
-#include "put_get_utils.hpp"
 #include "sf_odbc.h"
 #include "test_setup.hpp"
 #include "utils.hpp"
-
-using pg_utils::TempTestDir;
 
 static std::string get_base_jwt_connection_string_int() {
   std::stringstream ss;
@@ -126,12 +123,9 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
   auto env = setup_environment_integration();
   auto dbc = get_connection_handle_integration(env);
 
-  // Create an encrypted key file to test password forwarding
-  TempTestDir tmp("int_auth_pwd_");
-  std::string test_key_pem = read_test_private_key_content();
-  const auto encrypted_path = tmp.path() / "encrypted.pem";
+  // Use the pre-generated encrypted key file (password: test_password_123)
+  const auto encrypted_path = test_utils::test_data_file_path("invalid_rsa_key_encrypted.p8");
   const std::string test_password = "test_password_123";
-  test_utils::encrypt_pem_key_to_file(test_key_pem, test_password, encrypted_path);
 
   // Set password via SQLSetConnectAttr
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
