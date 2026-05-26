@@ -34,6 +34,7 @@ import net.snowflake.client.internal.api.implementation.statement.SnowflakePrepa
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
@@ -125,8 +126,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
           if (!(key instanceof String)) {
             return;
           }
-          String keyStr = (String) key;
-          ConfigSetting configSetting = toConfigSetting(value);
+          String keyStr = ConfigSettingFactory.normalizeKey((String) key, value);
+          ConfigSetting configSetting = ConfigSettingFactory.from(value);
           if (configSetting != null) {
             optionsMap.put(keyStr, configSetting);
           }
@@ -169,26 +170,6 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
   public String nativeSQL(String sql) throws SQLException {
     checkClosed();
     return sql;
-  }
-
-  static ConfigSetting toConfigSetting(Object value) {
-    if (value instanceof String) {
-      return ConfigSetting.newBuilder().setStringValue((String) value).build();
-    }
-    if (value instanceof Byte
-        || value instanceof Short
-        || value instanceof Integer
-        || value instanceof Long) {
-      return ConfigSetting.newBuilder().setIntValue(((Number) value).longValue()).build();
-    }
-    if (value instanceof Boolean) {
-      return ConfigSetting.newBuilder().setBoolValue((Boolean) value).build();
-    }
-    if (value instanceof Double) {
-      return ConfigSetting.newBuilder().setDoubleValue((Double) value).build();
-    }
-    // TODO(sfc-gh-boler): Support byte[] connection properties via ConfigSetting.bytes_value.
-    return null;
   }
 
   private static void logConnectionOptionWarnings(ConnectionSetOptionsResponse response) {
