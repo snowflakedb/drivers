@@ -311,6 +311,8 @@ TEST_CASE("should execute prepared statement asynchronously", "[query][async]") 
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
+  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 123 AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_STILL_EXECUTING);
   ret = poll_prepare(stmt.getHandle(), "SELECT 123 AS val");
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
@@ -400,7 +402,7 @@ TEST_CASE("should re-execute prepared statement multiple times asynchronously", 
 
 TEST_CASE("should cancel async execution with HY008", "[query][async][cancel]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  SKIP_OLD_DRIVER("BD#34", "Async cancel does not interrupt in-progress operations on reference driver");
+  SKIP_OLD_DRIVER("BD#58", "Async cancel does not interrupt in-progress operations on reference driver");
 
   // Given Snowflake client is logged in with async enabled
   Connection conn;
@@ -525,11 +527,20 @@ TEST_CASE("should clear diagnostic records between async polls", "[query][async]
       SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 
-  // When a query is executing asynchronously
+  // And a prior query has failed, leaving diagnostics populated
+  const char* bad_query = "SELCT INVALID";
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar(bad_query), SQL_NTS);
+  REQUIRE(ret == SQL_STILL_EXECUTING);
+  ret = poll_until_complete(stmt.getHandle(), bad_query);
+  REQUIRE(ret == SQL_ERROR);
+  auto error_records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+  REQUIRE_FALSE(error_records.empty());
+
+  // When a new async query is started
   ret = SQLExecDirect(stmt.getHandle(), sqlchar(kFastQuery), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
-  // Then diagnostic records should be empty during SQL_STILL_EXECUTING
+  // Then diagnostic records should be cleared during SQL_STILL_EXECUTING
   auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
   CHECK(records.empty());
 
@@ -571,4 +582,19 @@ TEST_CASE("should report no limit for SQL_MAX_ASYNC_CONCURRENT_STATEMENTS", "[qu
   // Then the call should succeed and report 0 (no driver-imposed limit)
   REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::Succeeded());
   CHECK(max_stmts == 0);
+}
+
+TEST_CASE("should report SQL_ASYNC_NOTIFICATION_NOT_CAPABLE", "[query][async]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When SQLGetInfo is called for SQL_ASYNC_NOTIFICATION
+  SQLUINTEGER notif = 999;
+  SQLSMALLINT len = 0;
+  SQLRETURN ret = SQLGetInfo(conn.handleWrapper().getHandle(), SQL_ASYNC_NOTIFICATION, &notif, sizeof(notif), &len);
+
+  // Then it should report not capable (polling only, no notification support)
+  REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::Succeeded());
+  CHECK(notif == SQL_ASYNC_NOTIFICATION_NOT_CAPABLE);
 }
