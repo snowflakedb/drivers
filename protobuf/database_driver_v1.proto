@@ -467,6 +467,7 @@ message ConnectionTokenResponse {
 // Heartbeat request to validate that the connection and session are still alive.
 message ConnectionHeartbeatRequest {
   ConnectionHandle conn_handle = 1;
+  optional uint32 timeout_seconds = 2;  // 0 / absent = use default (300s)
 }
 
 message ConnectionHeartbeatResponse {

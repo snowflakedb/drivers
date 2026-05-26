@@ -2,6 +2,7 @@ use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -1813,6 +1814,16 @@ impl DatabaseDriverV1 {
     /// Returns `true` if the session is valid, `false` otherwise.
     /// Automatically attempts one token refresh on 401 (session expired).
     pub async fn connection_heartbeat(&self, conn_handle: Handle) -> Result<bool, ApiError> {
+        self.connection_heartbeat_with_timeout(conn_handle, None)
+            .await
+    }
+
+    /// Like [`Self::connection_heartbeat`] but with an optional HTTP request timeout override.
+    pub async fn connection_heartbeat_with_timeout(
+        &self,
+        conn_handle: Handle,
+        timeout: Option<Duration>,
+    ) -> Result<bool, ApiError> {
         let session_id = self.session_id_for_conn(conn_handle).await;
         async {
             let conn_ptr = self
@@ -1840,11 +1851,12 @@ impl DatabaseDriverV1 {
                     Err(_) => return Ok(false),
                 };
 
-                match heartbeat::send_heartbeat(
+                match heartbeat::send_heartbeat_with_timeout(
                     &ctx.http_client,
                     &server_url,
                     &ctx.client_info,
                     token.reveal(),
+                    timeout,
                 )
                 .await
                 {

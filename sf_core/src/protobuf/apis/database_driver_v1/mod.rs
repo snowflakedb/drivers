@@ -598,9 +598,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: ConnectionHeartbeatRequest,
     ) -> Result<ConnectionHeartbeatResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let timeout = input
+            .timeout_seconds
+            .map(|s| std::time::Duration::from_secs(s as u64));
         let valid = self
             .driver
-            .connection_heartbeat(conn_handle.into())
+            .connection_heartbeat_with_timeout(conn_handle.into(), timeout)
             .await
             .to_protobuf()?;
         Ok(ConnectionHeartbeatResponse { valid })

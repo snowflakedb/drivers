@@ -169,11 +169,14 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.connectionIsClosed(request));
   }
 
-  public ConnectionHeartbeatResponse connectionHeartbeat(ConnectionHandle connHandle)
-      throws SQLException {
-    ConnectionHeartbeatRequest request =
-        ConnectionHeartbeatRequest.newBuilder().setConnHandle(connHandle).build();
-    return invoke(() -> client.connectionHeartbeat(request));
+  public ConnectionHeartbeatResponse connectionHeartbeat(
+      ConnectionHandle connHandle, int timeoutSeconds) throws SQLException {
+    ConnectionHeartbeatRequest.Builder builder =
+        ConnectionHeartbeatRequest.newBuilder().setConnHandle(connHandle);
+    if (timeoutSeconds > 0) {
+      builder.setTimeoutSeconds(timeoutSeconds);
+    }
+    return invoke(() -> client.connectionHeartbeat(builder.build()));
   }
 
   public ConnectionGetInfoResponse connectionGetInfo(

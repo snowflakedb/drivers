@@ -47,9 +47,18 @@ final class ConnectionOptionsResolver {
   }
 
   private static void setIfAbsent(Properties resolved, String key, String value) {
-    if (value != null && !value.isEmpty() && !resolved.containsKey(key)) {
+    if (value != null && !value.isEmpty() && !containsKeyIgnoreCase(resolved, key)) {
       resolved.setProperty(key, value);
     }
+  }
+
+  private static boolean containsKeyIgnoreCase(Properties props, String key) {
+    for (Object k : props.keySet()) {
+      if (k instanceof String && ((String) k).equalsIgnoreCase(key)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static void setIfAbsentInt(Properties resolved, String key, int value) {
