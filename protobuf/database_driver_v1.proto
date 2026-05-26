@@ -762,6 +762,36 @@ message ConfigGetPathsResponse {
 }
 
 // =============================================================================
+// FILE STREAM UPLOAD - Upload bytes from an in-memory stream via a PUT SQL
+// =============================================================================
+
+// Execute a PUT SQL statement using caller-supplied in-memory bytes as the
+// upload source instead of reading from the filesystem path in the SQL.
+//
+// The SQL string must be a valid PUT statement (e.g.
+// "PUT file://data.csv @my_stage AUTO_COMPRESS=FALSE"). Core executes it
+// against Snowflake GS to obtain stage credentials and transfer parameters,
+// then substitutes `data` for the file that would normally be read from disk.
+// The virtual filename for the stage object is taken from the `file://` path
+// in the SQL (basename only, matching reference connector behavior).
+//
+// Returns the same PUT result set shape as a normal StatementExecuteQuery on a
+// PUT statement.
+message ConnectionUploadStreamRequest {
+  ConnectionHandle conn_handle = 1;
+  // The PUT SQL statement. Must contain a `file://` path whose basename is
+  // used as the destination filename in the stage.
+  string sql = 2;
+  // Raw bytes of the file to upload. The caller has already read the stream.
+  bytes data = 3;
+}
+
+message ConnectionUploadStreamResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
+}
+
+// =============================================================================
 // TELEMETRY - In-band telemetry messages sent from wrappers via core
 // =============================================================================
 
@@ -827,6 +857,8 @@ service DatabaseDriver {
   rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
   // Heartbeat to validate connection and session are still alive
   rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
+  // Upload in-memory bytes via a PUT SQL statement (Python file_stream / JDBC uploadStream)
+  rpc ConnectionUploadStream(ConnectionUploadStreamRequest) returns (ConnectionUploadStreamResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
