@@ -161,6 +161,10 @@ name = "logging_query_tests"
 path = "tests/logging_query_tests.rs"
 
 [[test]]
+name = "byte_source_roundtrip"
+path = "tests/byte_source_roundtrip.rs"
+
+[[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 
