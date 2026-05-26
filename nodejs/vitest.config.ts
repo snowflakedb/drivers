@@ -9,6 +9,9 @@ export default defineConfig({
     //   reporter: ["text", "html", "lcov"],
     //   include: ["src/**/*.ts"],
     // },
+    chaiConfig: {
+      truncateThreshold: 0,
+    },
     projects: [
       {
         extends: true,

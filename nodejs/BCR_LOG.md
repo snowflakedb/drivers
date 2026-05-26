@@ -1,4 +1,4 @@
-This document outlines APIs that we should consider _not_ porting to the new driver.
+This document outlines API behavior changes that should be reviewed or addressed in the new driver.
 
 ### snowflake .connectAsync(callback)
 
@@ -13,6 +13,10 @@ This document outlines APIs that we should consider _not_ porting to the new dri
 
 - These methods are publicly exported but not documented. There is no practical use case for end users, as heartbeat is sent automatically by the driver.
 
+### Special values for FLOAT
+
+- In the old driver, querying FLOAT special values (`NaN`, `inf`, `-inf`) does not work as documented; all such values are returned as `NaN`.
+
 ### statement.getColumn() API
 
 - The methods `getRowValue(row: object)` and `getRowValueAsString(row: object)` are publicly documented in `index.d.ts`, but they were never covered by tests and do not work as intended. The `(row: object)` parameter requires a special internal row class that is not exposed to users. The public API returns rows as `externalizeRow`, so calling these methods will result in a runtime error.
@@ -22,3 +26,10 @@ This document outlines APIs that we should consider _not_ porting to the new dri
 ### Statement Buffer Monkey Patching
 
 - Currently, when a query returns a BINARY column, the driver returns a Buffer object monkey-patched methods: `.toStringSf()` and `.getFormat()`. These methods are not part of the documented API. There is no use case for them, as node can convert Buffer to both hex and base64.
+
+## Future Breaking Changes (BCRs)
+
+These are potential improvements to consider after the UD release:
+
+- Remove the `big-number` dependency and use native `BigInt` throughout the codebase for large integers.
+- Reevaluate the `jsTreatIntegerAsBigInt` parameter; consider either always converting all fixed numeric values to `BigInt`, or using `BigInt` only when the value exceeds the safe integer range (using `Number.isSafeInteger()`), and review approaches for handling floating-point numbers in a similar, consistent manner.
