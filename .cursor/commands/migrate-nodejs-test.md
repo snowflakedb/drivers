@@ -98,24 +98,21 @@ Apply these rules — they are the migration spec, follow them literally.
   *not* an "internal API" red flag for migration purposes — `import { ErrorCode } from 'snowflake-sdk'`
   exposes the same values.
 - When you hit a real upstream type gap in `snowflake-sdk`, add the patch to
-  `nodejs/src/types/snowflake-sdk-fixed.d.ts` with a comment explaining the upstream signature, what's
+  `nodejs/types/snowflake-sdk-fixed.d.ts` with a comment explaining the upstream signature, what's
   wrong with it, and what you changed. That file uses `declare module 'snowflake-sdk'` to merge
   fixed members into the upstream interfaces — every existing `from 'snowflake-sdk'` import
   automatically sees the patched types, no alias needed.
 
 #### Connection lifecycle
 
-- Replace `testUtil.createConnection(overrides?)` with `createTestConnection(snowflake, overrides?)` from
-  `tests/e2e/utils`. The first arg is the SDK handle from `getSnowflakeSDK()` (so the same test runs
-  against either the old or the new driver depending on `SNOWFLAKE_NODEJS_E2E_USE_OLD_DRIVER`).
+- Replace `testUtil.createConnection(overrides?)` with `createConnection(overrides?)` from `tests/e2e/utils`.
   Default connection parameters (`SNOWFLAKE_TEST_ACCOUNT`, `SNOWFLAKE_TEST_USER`, `SNOWFLAKE_TEST_PASSWORD`,
   `SNOWFLAKE_TEST_WAREHOUSE`, `SNOWFLAKE_TEST_DATABASE`, `SNOWFLAKE_TEST_SCHEMA`, `SNOWFLAKE_TEST_ROLE`)
-  **should already be built in** — pass only overrides. If a parameter is missing, add it to
-  `createTestConnection` in `tests/e2e/utils/index.ts` rather than wiring it up in the test. Resolution
-  order is defined by `tests/e2e/utils/getTestParameter.ts`: `parameters.json` (`testconnection` section,
-  path from `PARAMETER_PATH` or repo root) first, then `process.env` as fallback.
-- Replace `testUtil.connectAsync(conn)` with `await connection.connectAsync()` directly — there is no
-  helper wrapper in `tests/e2e/utils` and one isn't worth adding for a one-line built-in.
+  **should already be built in** — pass only overrides. If a parameter is missing, add it to `createConnection`
+  in `tests/e2e/utils/index.ts` rather than wiring it up in the test. Resolution order is defined by
+  `tests/e2e/utils/getTestParameter.ts`: `parameters.json` (`testconnection` section, path from `PARAMETER_PATH`
+  or repo root) first, then `process.env` as fallback.
+- Replace `testUtil.connectAsync(conn)` with `connectAsync(conn)` from `tests/e2e/utils`.
 - Replace `testUtil.destroyConnectionAsync(conn)` with `destroyConnectionAsync(conn)` from `tests/e2e/utils`.
 - **Default to a shared connection in `beforeAll` / `afterAll`** (the same shape the legacy Mocha
   tests use, and what the rest of the e2e suite does). Connect/destroy is the slowest part of an
@@ -267,7 +264,5 @@ For style examples, see:
 - `nodejs/tests/e2e/query-execution-async.test.ts` — nested `describe`s grouped by SDK method,
   `executeAsync` reused inside the test body for queryId setup, `beforeEach` to lift duplicated
   setup, `expect(...).rejects.toMatchObject({ code: ErrorCode.... })` for error-path assertions.
-- `nodejs/tests/e2e/utils/index.ts` (helpers — `createTestConnection(snowflake, overrides?)`,
-  `destroyConnectionAsync(conn)`, `executeAsync(conn, sqlText, options?)`, `sleepAsync(ms)`,
-  `getSnowflakeSDK()`, `isRunningForOldDriver()`, `TEST_CONNECTION_OPTIONS`). There is no
-  `connectAsync` helper — call `await connection.connectAsync()` directly.
+- `nodejs/tests/e2e/utils/index.ts` (helpers — `createConnection`, `connectAsync`, `destroyConnectionAsync`,
+  `executeAsync`, `sleepAsync`, `getSnowflakeSDK`).

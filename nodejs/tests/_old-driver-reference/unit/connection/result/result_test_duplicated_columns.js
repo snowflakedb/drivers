@@ -3,8 +3,6 @@ const ResultTestCommon = require('./result_test_common');
 const RowMode = require('./../../../../lib/constants/row_mode');
 const ColumnNamesCreator = require('../../../../lib/connection/result/unique_column_name_creator');
 
-// TODO:
-// Translate this into a smaller set of unit tests when implementing rowMode logic in new driver
 describe('Unique column names', function () {
   describe('result contains renamed columns depend on row mode', function () {
     const columnNames = [
