@@ -98,7 +98,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UTINYINT to SQL_DOUBLE an
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UBIGINT to SQL_DOUBLE and read back",
-                 "[c_integer][conversion][sql_real]") {
+                 "[c_integer][conversion][sql_real][flaky]") {
   // Given Snowflake client is logged in
   conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 

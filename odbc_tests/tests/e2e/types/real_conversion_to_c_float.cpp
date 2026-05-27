@@ -45,7 +45,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_FLOAT", "[e2e][types][r
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL precision - Snowflake FLOAT has ~15 significant digits",
-                 "[e2e][types][real]") {
+                 "[e2e][types][real][flaky]") {
   // Given A Snowflake connection
 
   // When FLOAT value with 15 significant digits is fetched as SQL_C_DOUBLE

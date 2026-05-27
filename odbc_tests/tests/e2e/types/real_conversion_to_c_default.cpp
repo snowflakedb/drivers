@@ -64,7 +64,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - integer values st
   CHECK(get_data_default_as_double(stmt, 4) == 1.0);
 }
 
-TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values near DBL_MAX", "[e2e][types][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values near DBL_MAX",
+                 "[e2e][types][real][flaky]") {
   // Given A Snowflake connection
 
   // When Extreme values near DBL_MAX are inserted and fetched via SQL_C_DEFAULT

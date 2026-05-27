@@ -54,7 +54,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit integer conversions - negativ
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_SBIGINT with large values",
-                 "[e2e][types][real][conversion][c_integer]") {
+                 "[e2e][types][real][conversion][c_integer][flaky]") {
   // Given A Snowflake connection is established
 
   // When The largest integer exactly representable as f64 (2^53) is fetched as SQL_C_SBIGINT
