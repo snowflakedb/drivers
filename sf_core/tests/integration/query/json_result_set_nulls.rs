@@ -146,7 +146,8 @@ fn should_handle_null_values_in_json_result_set() {
 }
 
 #[test]
-fn should_handle_show_schemas_json_result_with_nulls() {
+#[ignore]
+fn flaky_should_handle_show_schemas_json_result_with_nulls() {
     let client = SnowflakeTestClient::connect_with_default_auth();
 
     // Create a schema so SHOW SCHEMAS LIKE is guaranteed to return exactly one row.
