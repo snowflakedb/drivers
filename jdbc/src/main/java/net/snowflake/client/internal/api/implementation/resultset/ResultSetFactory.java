@@ -26,29 +26,36 @@ public class ResultSetFactory {
   private static final SFLogger logger = SFLoggerFactory.getLogger(ResultSetFactory.class);
 
   public static InternalResultSet create(
-      CoreDriverApi coreDriverApi, SnowflakeStatementImpl statement, ResultSetHandle handle)
+      CoreDriverApi coreDriverApi,
+      SnowflakeStatementImpl statement,
+      String queryId,
+      ResultSetHandle handle)
       throws SQLException {
     ResultSetGetStreamResponse response = fetchStreamAndRelease(coreDriverApi, handle);
-    return resultSetFromResponse(statement, response);
+    return resultSetFromResponse(statement, queryId, response);
   }
 
   public static InternalResultSet createIfHasStream(
-      CoreDriverApi coreDriverApi, SnowflakeStatementImpl statement, ResultSetHandle handle)
+      CoreDriverApi coreDriverApi,
+      SnowflakeStatementImpl statement,
+      String queryId,
+      ResultSetHandle handle)
       throws SQLException {
     ResultSetGetStreamResponse response = fetchStreamAndRelease(coreDriverApi, handle);
     if (response.hasStream() && !response.getStream().getValue().isEmpty()) {
-      return resultSetFromResponse(statement, response);
+      return resultSetFromResponse(statement, queryId, response);
     }
     return null;
   }
 
   private static InternalResultSet resultSetFromResponse(
-      SnowflakeStatementImpl statement, ResultSetGetStreamResponse response) throws SQLException {
+      SnowflakeStatementImpl statement, String queryId, ResultSetGetStreamResponse response)
+      throws SQLException {
     ByteString streamPointerBytes = response.getStream().getValue();
     // TODO Check how will this behave on AIX (Big Endian)
     long pointer =
         ByteBuffer.wrap(streamPointerBytes.toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
-    return new SnowflakeResultSetImpl(statement, pointer);
+    return new SnowflakeResultSetImpl(statement, queryId, pointer);
   }
 
   private static ResultSetGetStreamResponse fetchStreamAndRelease(

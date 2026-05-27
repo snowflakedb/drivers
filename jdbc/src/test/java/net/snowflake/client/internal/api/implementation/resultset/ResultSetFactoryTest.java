@@ -23,6 +23,7 @@ class ResultSetFactoryTest {
 
   private static final ResultSetHandle HANDLE =
       ResultSetHandle.newBuilder().setId(42).setMagic(99).build();
+  private static final String QUERY_ID = "01ab-cdef-0000-0000";
 
   private CoreDriverApi mockCoreApi;
   private SnowflakeStatementImpl mockStatement;
@@ -46,7 +47,8 @@ class ResultSetFactoryTest {
 
     SQLException thrown =
         assertThrows(
-            SQLException.class, () -> ResultSetFactory.create(mockCoreApi, mockStatement, HANDLE));
+            SQLException.class,
+            () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, HANDLE));
 
     assertSame(fetchError, thrown);
     verify(mockCoreApi).resultSetRelease(HANDLE);
@@ -60,7 +62,8 @@ class ResultSetFactoryTest {
 
     SQLException thrown =
         assertThrows(
-            SQLException.class, () -> ResultSetFactory.create(mockCoreApi, mockStatement, HANDLE));
+            SQLException.class,
+            () -> ResultSetFactory.create(mockCoreApi, mockStatement, QUERY_ID, HANDLE));
 
     assertSame(
         fetchError, thrown, "Original fetch exception should propagate, not the release one");
@@ -77,7 +80,7 @@ class ResultSetFactoryTest {
         .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
 
     InternalResultSet result =
-        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, HANDLE);
+        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE);
 
     assertNull(result);
     verify(mockCoreApi).resultSetRelease(HANDLE);
@@ -92,7 +95,7 @@ class ResultSetFactoryTest {
     when(mockCoreApi.resultSetGetStream(HANDLE)).thenReturn(emptyStreamResponse);
 
     InternalResultSet result =
-        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, HANDLE);
+        ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE);
 
     assertNull(result);
     verify(mockCoreApi).resultSetRelease(HANDLE);
@@ -110,7 +113,7 @@ class ResultSetFactoryTest {
     SQLException thrown =
         assertThrows(
             SQLException.class,
-            () -> ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, HANDLE));
+            () -> ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE));
 
     assertSame(fetchError, thrown);
     verify(mockCoreApi).resultSetRelease(HANDLE);
@@ -121,7 +124,7 @@ class ResultSetFactoryTest {
     when(mockCoreApi.resultSetGetStream(HANDLE))
         .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
 
-    ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, HANDLE);
+    ResultSetFactory.createIfHasStream(mockCoreApi, mockStatement, QUERY_ID, HANDLE);
 
     verify(mockCoreApi).resultSetGetStream(HANDLE);
     verify(mockCoreApi).resultSetRelease(HANDLE);

@@ -12,10 +12,12 @@ public class SnowflakeResultSetMetaDataImpl
     implements ResultSetMetaData, SnowflakeResultSetMetaData {
   private final String[] columnNames;
   private final int[] columnTypes;
+  private final String queryId;
 
-  public SnowflakeResultSetMetaDataImpl(String[] columnNames, int[] columnTypes) {
+  public SnowflakeResultSetMetaDataImpl(String[] columnNames, int[] columnTypes, String queryId) {
     this.columnNames = columnNames;
     this.columnTypes = columnTypes;
+    this.queryId = queryId;
   }
 
   @Override
@@ -178,7 +180,7 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getQueryID not supported");
+    return queryId;
   }
 
   @Override

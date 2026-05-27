@@ -124,9 +124,27 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     coreDriverApi.statementSetSqlQuery(statementHandle, sql);
     // PreparedStatement callers must wrap this in try-with-resources on the NativeBindings so
     // the embedded native pointer remains valid across the synchronous RPC (JLS §12.6.1).
-    ExecuteQueryResponse response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+    ExecuteQueryResponse response;
+    try {
+      response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+    } catch (SQLException e) {
+      // Mirror snowflake-jdbc: surface the server-side queryId on a failed execute so callers
+      // can correlate the error with a Snowflake history entry.
+      captureQueryIdFromException(e);
+      throw e;
+    }
     logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
     return response;
+  }
+
+  private void captureQueryIdFromException(SQLException e) {
+    // prepareForExecution() already cleared queryId; only overwrite when the server surfaced one.
+    if (e instanceof SnowflakeSQLException) {
+      String exceptionQueryId = ((SnowflakeSQLException) e).getQueryId();
+      if (!StringUtil.isNullOrEmpty(exceptionQueryId)) {
+        this.queryId = exceptionQueryId;
+      }
+    }
   }
 
   private ResultSetResponse fetchResultSetByQueryId(String queryId) throws SQLException {
@@ -165,7 +183,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
     if (StatementTypeClassifier.producesResultSet(descriptor)) {
       currentResultSet =
-          ResultSetFactory.create(coreDriverApi, this, rsResponse.getResultSetHandle());
+          ResultSetFactory.create(coreDriverApi, this, queryId, rsResponse.getResultSetHandle());
       currentUpdateCount = NO_UPDATE_COUNT;
       return true;
     }
@@ -174,7 +192,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       // DML/DDL that returned via executeQuery() — still surface a ResultSet if the server
       // provides a stream (matches old JDBC driver behavior)
       InternalResultSet maybeResultSet =
-          ResultSetFactory.createIfHasStream(coreDriverApi, this, rsResponse.getResultSetHandle());
+          ResultSetFactory.createIfHasStream(
+              coreDriverApi, this, queryId, rsResponse.getResultSetHandle());
       if (maybeResultSet != null) {
         currentResultSet = maybeResultSet;
         currentUpdateCount = NO_UPDATE_COUNT;
@@ -214,7 +233,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
     if (producesResultSet) {
       currentResultSet =
-          ResultSetFactory.create(coreDriverApi, this, rsResponse.getResultSetHandle());
+          ResultSetFactory.create(
+              coreDriverApi, this, childQueryId, rsResponse.getResultSetHandle());
       currentUpdateCount = NO_UPDATE_COUNT;
     } else {
       currentResultSet = null;
