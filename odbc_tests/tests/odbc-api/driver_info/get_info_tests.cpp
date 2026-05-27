@@ -136,8 +136,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_AWARE_POOLING_SUP
 // are implemented by the driver manager alone
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -147,6 +145,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(nameLen > 0);
+
+  // The exact driver name string is not finalized for the new driver yet.
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   REQUIRE(std::string(driverName) == "Snowflake");
 
   SQLDisconnect(dbc_handle());
@@ -170,8 +171,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_ODBC_VER", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -181,6 +180,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api]
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(verLen > 0);
+
+  // The exact driver version format is not finalized for the new driver yet.
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);  // Format: ##.##.####
 
   SQLDisconnect(dbc_handle());
@@ -719,8 +721,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_NAME", "[odbc-api][
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_VER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -730,6 +730,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_VER", "[odbc-api][g
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(verLen > 0);
+
+  // The exact DBMS version format is not finalized for the new driver yet.
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   REQUIRE(std::count(dbmsVer, dbmsVer + verLen, '.') == 2);  // Format: ##.##.####
 
   SQLDisconnect(dbc_handle());
