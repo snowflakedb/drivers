@@ -14,7 +14,18 @@ public interface SnowflakeStatement {
   String getQueryID() throws SQLException;
 
   /**
-   * @return the Snowflake query IDs of the latest executed batch queries
+   * Returns the Snowflake query IDs of the latest executed batch.
+   *
+   * <ul>
+   *   <li>{@link java.sql.Statement} batch: one ID per submitted entry, in order; {@code null} for
+   *       failed entries (preserves positional alignment with {@code executeBatch()} counts).
+   *   <li>{@link java.sql.PreparedStatement} array-bind batch: a single ID covering all rows.
+   * </ul>
+   *
+   * <p>Populated at the start of every {@code executeBatch()}; {@code clearBatch()} does NOT clear
+   * it.
+   *
+   * @return non-null list, possibly containing {@code null} entries for failed iterations
    * @throws SQLException if an error is encountered
    */
   List<String> getBatchQueryIDs() throws SQLException;
