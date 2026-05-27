@@ -1,4 +1,7 @@
-use sf_core::file_manager::{CloudCredentials, LocationType, StageInfo};
+use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
+use sf_core::file_manager::{
+    CloudCredentials, DownloadData, LocationType, StageInfo, download_files,
+};
 use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -82,7 +85,7 @@ async fn gcs_download_401_returns_token_expired() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None).await;
 
     let err = result.unwrap_err();
     let err_str = format!("{err}");
@@ -117,7 +120,7 @@ async fn gcs_download_403_is_retried_then_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None).await;
 
     assert!(result.is_ok(), "403 should be retried and succeed");
     assert_eq!(
@@ -152,7 +155,7 @@ async fn gcs_download_400_with_presigned_url_is_retried() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None).await;
 
     assert!(
         result.is_ok(),
@@ -177,7 +180,7 @@ async fn gcs_download_400_without_presigned_url_is_not_retried() {
         .await;
 
     let stage = gcs_stage_with_token(&server.uri());
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None).await;
 
     assert!(
         result.is_err(),
@@ -210,7 +213,7 @@ async fn gcs_download_404_is_not_retried() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None).await;
 
     assert!(result.is_err(), "404 should be a hard failure");
     assert_eq!(attempt.load(Ordering::SeqCst), 1, "should NOT retry 404");
@@ -241,7 +244,7 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         .await;
 
     let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
-    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv", None).await;
 
     assert!(
         result.is_ok(),
@@ -251,5 +254,126 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         attempt.load(Ordering::SeqCst),
         3,
         "should have retried twice"
+    );
+}
+
+// ---------------------------------------------------------------
+// Server-supplied per-file pre-signed URL list on multi-file GET
+// (gap 2.2 — see `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`)
+// ---------------------------------------------------------------
+
+/// Stage info for presigned-only multi-file GET: no token, no PUT-side
+/// `presigned_url`; the URLs come from `DownloadData.presigned_urls`.
+fn gcs_stage_presigned_only_no_stage_url() -> StageInfo {
+    StageInfo {
+        location_type: LocationType::Gcs,
+        bucket: "test-bucket".to_string(),
+        key_prefix: "prefix/".to_string(),
+        region: "us-central1".to_string(),
+        creds: CloudCredentials::Gcs {
+            gcs_access_token: None,
+        },
+        endpoint: None,
+        presigned_url: None,
+        use_virtual_url: false,
+        use_regional_url: false,
+        use_s3_regional_url: false,
+        storage_account: None,
+    }
+}
+
+/// SSE response template (no encryption metadata headers): the body is
+/// written to disk verbatim, so the test can read it back to verify
+/// per-file routing.
+fn gcs_sse_response(body: &'static [u8]) -> ResponseTemplate {
+    ResponseTemplate::new(200)
+        .set_body_bytes(body.to_vec())
+        .insert_header("x-goog-meta-sfc-digest", "test-digest")
+}
+
+#[tokio::test]
+async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
+    // Pre-2.2 this fails on the first file with `MissingGcsCredentials`
+    // because `DownloadData` carries no per-file URL slot. Post-2.2, GS's
+    // `data.presignedUrls[i]` is preserved through the pipeline and each
+    // file is fetched from its own URL — matching Python connector
+    // (`gcs_storage_client.py:77`), libsfclient (`SnowflakeGCSClient.cpp:144`),
+    // and JDBC (`SnowflakeFileTransferAgent.java:1762`).
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/presigned/a"))
+        .respond_with(gcs_sse_response(b"alpha-bytes"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/presigned/b"))
+        .respond_with(gcs_sse_response(b"beta-bytes"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local_location = tmp.path().to_string_lossy().to_string();
+
+    let url_a = format!("{}/presigned/a", server.uri());
+    let url_b = format!("{}/presigned/b", server.uri());
+
+    let data = DownloadData {
+        src_locations: vec!["a".to_string(), "b".to_string()],
+        local_location: local_location.clone(),
+        stage_info: gcs_stage_presigned_only_no_stage_url(),
+        encryption_materials: vec![None, None],
+        presigned_urls: vec![Some(url_a.clone()), Some(url_b.clone())],
+        flavor: PutGetResultsetFlavor::Python,
+    };
+
+    let results = download_files(data, None)
+        .await
+        .expect("multi-file presigned GET should succeed");
+
+    assert_eq!(results.len(), 2);
+    let dir = std::path::Path::new(&local_location);
+    assert_eq!(
+        std::fs::read(dir.join("a")).expect("read file a"),
+        b"alpha-bytes"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("b")).expect("read file b"),
+        b"beta-bytes"
+    );
+}
+
+#[tokio::test]
+async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_token() {
+    // Pin the post-2.2 failure mode: the only path that still surfaces
+    // `MissingGcsCredentials` is the genuinely degenerate one (no per-file
+    // URL, no `stage_info.presigned_url`, no token). Guards against silent
+    // regressions if a future change accidentally promotes a default URL.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local_location = tmp.path().to_string_lossy().to_string();
+
+    let data = DownloadData {
+        src_locations: vec!["a".to_string()],
+        local_location,
+        stage_info: gcs_stage_presigned_only_no_stage_url(),
+        encryption_materials: vec![None],
+        presigned_urls: vec![None],
+        flavor: PutGetResultsetFlavor::Python,
+    };
+
+    let err = download_files(data, None)
+        .await
+        .expect_err("download must fail when neither URL nor token is available");
+    // Walk the error chain (snafu wraps the leaf `MissingGcsCredentials`
+    // through `GcsDownloadError` → `FileManagerError`).
+    let chain: Vec<String> =
+        std::iter::successors(Some(&err as &dyn std::error::Error), |e| e.source())
+            .map(|e| e.to_string())
+            .collect();
+    assert!(
+        chain.iter().any(|m| m == "Missing GCS credentials"),
+        "expected MissingGcsCredentials in error chain, got: {chain:?}"
     );
 }

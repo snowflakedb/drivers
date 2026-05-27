@@ -62,6 +62,18 @@ pub struct DownloadData {
     pub local_location: String,
     pub stage_info: StageInfo,
     pub encryption_materials: Vec<Option<EncryptionMaterial>>,
+    /// Server-supplied per-file pre-signed URLs, aligned by index against
+    /// `src_locations`. `Some(url)` is the URL GS issued for that file on
+    /// GCS GET in presigned-only mode (no access token); `None` means GS
+    /// did not provide one for this file (PUT path, GET-with-token path,
+    /// S3/Azure stages, or a partial list during stage reconfiguration).
+    ///
+    /// Invariant: `presigned_urls.len() == src_locations.len()`. The
+    /// alignment is established in
+    /// `query_response::Data::to_file_download_data` and preserved by the
+    /// three-way zip in `download_files`. See
+    /// `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`.
+    pub presigned_urls: Vec<Option<String>>,
     /// Wrapper-specific shape of the GET result set. Forwarded into each
     /// `SingleDownloadData` so that `download_single_file` can populate the
     /// `size` column according to the active wrapper's contract (cloud
@@ -76,6 +88,12 @@ pub struct SingleDownloadData {
     pub local_location: String,
     pub stage_info: StageInfo,
     pub encryption_material: Option<EncryptionMaterial>,
+    /// Per-file pre-signed URL chosen by `download_files` from
+    /// `DownloadData.presigned_urls`. `Some(url)` is preferred over
+    /// `stage_info.presigned_url` (the PUT-only single slot) by the GCS
+    /// branch in `download_single_file`. The S3 and Azure branches ignore
+    /// this field — neither cloud uses a per-file URL list on GET.
+    pub presigned_url: Option<String>,
     pub flavor: PutGetResultsetFlavor,
 }
 

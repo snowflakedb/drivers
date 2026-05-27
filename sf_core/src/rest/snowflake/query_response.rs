@@ -113,8 +113,14 @@ pub struct Data {
     _threshold: Option<i64>,
     #[serde(rename = "clientShowEncryptionParameter")]
     _show_encryption_parameter: Option<bool>,
+    /// Per-file pre-signed URLs returned by GS for GCS GET in
+    /// presigned-only mode (no `GCS_ACCESS_TOKEN`). Aligned by index
+    /// against `src_locations`. `None` when GS did not emit the field
+    /// (PUT path, GET-with-token path, S3/Azure stages). Consumed by
+    /// `to_file_download_data` and routed through `DownloadData`. See
+    /// `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`.
     #[serde(rename = "presignedUrls")]
-    _presigned_urls: Option<serde_json::Value>,
+    presigned_urls: Option<Vec<String>>,
     #[serde(rename = "kind")]
     _kind: Option<String>,
     #[serde(rename = "operation")]
@@ -478,6 +484,8 @@ impl Data {
                 None => vec![None; src_locations.len()],
             };
 
+        let presigned_urls = align_presigned_urls(self.presigned_urls.as_deref(), &src_locations);
+
         let local_location: String = self
             .local_location
             .as_ref()
@@ -491,6 +499,7 @@ impl Data {
             local_location,
             stage_info,
             encryption_materials,
+            presigned_urls,
             flavor: flavor.clone(),
         })
     }
@@ -579,6 +588,45 @@ impl Data {
             _ => None,
         }
     }
+}
+
+/// Aligns the optional server-supplied per-file pre-signed URL list to
+/// `src_locations` for routing through `DownloadData`.
+///
+/// GS guarantees `presignedUrls[i]` corresponds to `src_locations[i]` on
+/// GCS GET in presigned-only mode, but rare stage reconfigurations can
+/// emit a partial list. We mirror Python's `idx < len(...)` tolerance:
+/// shorter lists pad with `None`, longer lists are truncated with a
+/// `tracing::warn!`. Cross-driver parity:
+/// - Python connector: `gcs_storage_client.py:77` uses `meta.presigned_url
+///   or stage_info.get("presignedUrl")`, with `meta.presigned_url` set
+///   only when `idx < len(presigned_urls)` in `file_transfer_agent.py`.
+/// - JDBC: `SnowflakeFileTransferAgent.java:994-999` zips the two arrays
+///   and silently skips when sizes differ.
+///
+/// Returns a `Vec<Option<String>>` of length `src_locations.len()`. URLs
+/// are not logged — they carry signed query strings with object-scope
+/// credentials.
+fn align_presigned_urls(
+    presigned_urls: Option<&[String]>,
+    src_locations: &[String],
+) -> Vec<Option<String>> {
+    let target_len = src_locations.len();
+    let Some(urls) = presigned_urls else {
+        return vec![None; target_len];
+    };
+
+    if urls.len() > target_len {
+        tracing::warn!(
+            presigned_url_count = urls.len(),
+            src_location_count = target_len,
+            "GCS presignedUrls[] longer than src_locations[]; truncating extras"
+        );
+    }
+
+    let mut out: Vec<Option<String>> = urls.iter().take(target_len).cloned().map(Some).collect();
+    out.resize(target_len, None);
+    out
 }
 
 #[derive(Debug)]
@@ -1403,6 +1451,142 @@ mod tests {
             .to_file_download_data(&PutGetResultsetFlavor::Odbc, false)
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Odbc);
+    }
+
+    // ---- presignedUrls[] alignment (gap 2.2) ----
+    //
+    // Cross-driver parity: Python uses `idx < len(...)` to gate
+    // `meta.presigned_url`; JDBC zips arrays in
+    // `SnowflakeFileTransferAgent.java:994-999` and silently skips on
+    // length mismatch. Our `align_presigned_urls` matches Python's
+    // tolerance (pad short, truncate long with warn).
+
+    fn make_download_json_multi_with_urls(presigned_urls_field: &str) -> String {
+        format!(
+            r#"{{
+                "src_locations": ["a", "b", "c"],
+                "stageInfo": {{
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "creds": {{}},
+                    "region": "us-central1"
+                }},
+                "localLocation": "/tmp/dl"
+                {presigned_urls_field}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn download_data_copies_presigned_urls_when_aligned() {
+        // GS sent one URL per source file — the common GCS GET case
+        // post-2.2. Each `presigned_urls[i]` must round-trip into
+        // `DownloadData.presigned_urls[i]` exactly.
+        let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1", "u2"]"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .unwrap();
+        assert_eq!(
+            download.presigned_urls,
+            vec![
+                Some("u0".to_string()),
+                Some("u1".to_string()),
+                Some("u2".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn download_data_presigned_urls_none_when_field_absent() {
+        // Pre-2.2 PUT-side / S3 / Azure responses omit `presignedUrls`.
+        // The alignment helper still produces a `Vec<Option<String>>`
+        // matched to `src_locations.len()` so the downstream zip in
+        // `download_files` is well-defined.
+        let json = make_download_json_multi_with_urls("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .unwrap();
+        assert_eq!(download.presigned_urls, vec![None, None, None]);
+    }
+
+    #[test]
+    fn download_data_short_presigned_urls_pads_with_none() {
+        // Stage reconfiguration mid-batch can return a partial list. Match
+        // Python's `idx < len(presigned_urls)` tolerance: pad the tail
+        // with `None` so the un-URL'd files fall back to the token (when
+        // present) or surface `MissingGcsCredentials` per-file.
+        let json = make_download_json_multi_with_urls(r#", "presignedUrls": ["u0", "u1"]"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .unwrap();
+        assert_eq!(
+            download.presigned_urls,
+            vec![Some("u0".to_string()), Some("u1".to_string()), None]
+        );
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn download_data_long_presigned_urls_truncates_with_warn() {
+        // GS occasionally over-emits during stage reconfigurations. Match
+        // Python: silently truncate, but emit a structured warning so the
+        // mismatch is observable in the captured log.
+        let json = make_download_json_multi_with_urls(
+            r#", "presignedUrls": ["u0", "u1", "u2", "u3", "u4"]"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .unwrap();
+        assert_eq!(
+            download.presigned_urls,
+            vec![
+                Some("u0".to_string()),
+                Some("u1".to_string()),
+                Some("u2".to_string())
+            ]
+        );
+        assert!(
+            logs_contain("longer than src_locations"),
+            "expected truncation warning to be logged"
+        );
+        // URLs themselves must never appear in the log — they carry
+        // signed query strings with object-scope credentials.
+        assert!(
+            !logs_contain("u3"),
+            "presigned URL contents must not be logged"
+        );
+        assert!(
+            !logs_contain("u4"),
+            "presigned URL contents must not be logged"
+        );
+    }
+
+    #[test]
+    fn download_data_empty_presigned_urls_pads_to_src_locations_length() {
+        // GS may send `presignedUrls: []` on a non-presigned-only path.
+        // Treat as fully-absent: every slot becomes `None`.
+        let json = make_download_json_multi_with_urls(r#", "presignedUrls": []"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let download = data
+            .to_file_download_data(&PutGetResultsetFlavor::Python, false)
+            .unwrap();
+        assert_eq!(download.presigned_urls, vec![None, None, None]);
+    }
+
+    #[test]
+    fn align_presigned_urls_helper_returns_empty_when_no_src_locations() {
+        // Sanity check on the helper: zero source files means zero slots,
+        // even when GS sent a URL list (degenerate input — should not
+        // panic on the truncation path).
+        let aligned = align_presigned_urls(
+            Some(&["u0".to_string(), "u1".to_string()]),
+            &Vec::<String>::new(),
+        );
+        assert!(aligned.is_empty());
     }
 
     #[test]

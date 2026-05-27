@@ -25,7 +25,8 @@ pub async fn upload_to_gcs_or_skip(
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
-    let (url, token) = resolve_url_and_token(stage_info, &key)?;
+    // PUT path: per-file URL list is GET-only, so we never pass one here.
+    let (url, token) = resolve_url_and_token(stage_info, &key, None)?;
 
     if !overwrite && check_file_exists_gcs(&client, &url, token).await {
         tracing::info!("File already exists in GCS: {key}");
@@ -44,14 +45,28 @@ pub async fn upload_to_gcs_or_skip(
 /// GCS `Content-Length` (i.e. the stored object size) for non-streamed
 /// responses. This is the wire byte count, not the decrypted/decoded
 /// size of the original file.
+///
+/// `per_file_presigned_url` is the URL GS issued for this specific file via
+/// `data.presignedUrls[i]` on GCS GET in presigned-only mode. When `Some`,
+/// it takes precedence over `stage_info.presigned_url` (Strategy 0 in
+/// `resolve_url_and_token`); when `None`, the function falls back to the
+/// existing strategies (PUT-side single presigned URL, then bearer token,
+/// then `MissingGcsCredentials`). See
+/// `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`.
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
+    per_file_presigned_url: Option<&str>,
 ) -> Result<DownloadResponse, GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
-    let (url, token) = resolve_url_and_token(stage_info, &key)?;
-    let using_presigned_url = stage_info.presigned_url.is_some();
+    let (url, token) = resolve_url_and_token(stage_info, &key, per_file_presigned_url)?;
+    // Either presigned-URL source enables the 400-retry policy: the URL
+    // may have expired and reissuing it produces a fresh signature. The
+    // PUT-side single-slot URL and the per-file GET list are both signed
+    // and both subject to the same expiry semantics.
+    let using_presigned_url =
+        per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
 
     let response = gcs_request_with_retry(
         || {
@@ -291,7 +306,13 @@ fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
 /// Constructs the GCS URL and extracts the bearer token from stage info.
 ///
 /// URL strategy priority (matching JDBC/ODBC/Python):
-/// 1. Presigned URL — use directly, no token
+/// 0. Per-file presigned URL (GET, `data.presignedUrls[i]`) — use directly,
+///    no token. Wins over the stage-info single slot to mirror Python's
+///    `meta.presigned_url or stage_info.get("presignedUrl")` order in
+///    `gcs_storage_client.py:77`. Reasoning: GS issues this URL for this
+///    specific object; the token is generic and may have narrower ACLs.
+/// 1. `stage_info.presigned_url` (PUT-side single slot) — use directly,
+///    no token. PUT path is unchanged by step 2.2.
 /// 2. Custom endpoint — `https://{endpoint}/{bucket}/{key}`
 /// 3. Virtual host — `https://{bucket}.storage.googleapis.com/{key}`
 /// 4. Regional — `https://storage.{region}.rep.googleapis.com/{bucket}/{key}`
@@ -299,8 +320,14 @@ fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
 fn resolve_url_and_token<'a>(
     stage_info: &'a StageInfo,
     key: &str,
+    per_file_presigned_url: Option<&str>,
 ) -> Result<(String, Option<&'a str>), GcsRequestError> {
-    // Strategy 1: presigned URL
+    // Strategy 0: per-file presigned URL (GCS GET multi-file path)
+    if let Some(presigned) = per_file_presigned_url {
+        return Ok((presigned.to_string(), None));
+    }
+
+    // Strategy 1: stage-info presigned URL (PUT path)
     if let Some(presigned) = &stage_info.presigned_url {
         return Ok((presigned.clone(), None));
     }
@@ -698,21 +725,81 @@ mod tests {
     fn resolve_with_bearer_token() {
         // Matches ODBC test_simple_get_gcs_with_token
         let stage = make_stage_info(StageInfoOverrides::default());
-        let (url, token) = resolve_url_and_token(&stage, "file.csv.gz").unwrap();
+        let (url, token) = resolve_url_and_token(&stage, "file.csv.gz", None).unwrap();
         assert_eq!(url, "https://storage.googleapis.com/my-bucket/file.csv.gz");
         assert_eq!(token, Some("fake-token"));
     }
 
     #[test]
     fn resolve_with_presigned_url() {
-        // Matches ODBC test_simple_get_gcs_with_presignedurl
+        // Matches ODBC test_simple_get_gcs_with_presignedurl. PUT-side
+        // single presigned URL slot — preserved as Strategy 1 by step 2.2.
         let stage = make_stage_info(StageInfoOverrides {
             presigned_url: Some("https://faked.presigned.url".to_string()),
             ..Default::default()
         });
-        let (url, token) = resolve_url_and_token(&stage, "file.csv.gz").unwrap();
+        let (url, token) = resolve_url_and_token(&stage, "file.csv.gz", None).unwrap();
         assert_eq!(url, "https://faked.presigned.url");
         assert!(token.is_none(), "presigned URL mode should not use a token");
+    }
+
+    #[test]
+    fn resolve_per_file_presigned_url_wins_over_stage_info_presigned_url() {
+        // Strategy 0 must beat Strategy 1: GS issues `data.presignedUrls[i]`
+        // for this specific object on GCS GET, while `stageInfo.presignedUrl`
+        // is the PUT-side single slot. See
+        // `--gcp--/2.2-server_supplied_presigned_url_list_on_download.md`,
+        // §4 "Mixed-mode stages" — matches Python's
+        // `meta.presigned_url or stage_info.get("presignedUrl")` ordering in
+        // `gcs_storage_client.py:77`.
+        let stage = make_stage_info(StageInfoOverrides {
+            presigned_url: Some("https://stage-info.presigned.url/put-slot".to_string()),
+            ..Default::default()
+        });
+        let (url, token) = resolve_url_and_token(
+            &stage,
+            "file.csv.gz",
+            Some("https://per-file.presigned.url/get-slot"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://per-file.presigned.url/get-slot");
+        assert!(
+            token.is_none(),
+            "per-file presigned URL mode must not return a token"
+        );
+    }
+
+    #[test]
+    fn resolve_per_file_presigned_url_wins_over_bearer_token() {
+        // Mixed mode: GS sometimes emits both `presignedUrls[]` and a token
+        // during stage transitions. Per-file URL must still win — the URL is
+        // object-scoped and the token is generic.
+        let stage = make_stage_info(StageInfoOverrides::default());
+        let (url, token) = resolve_url_and_token(
+            &stage,
+            "file.csv.gz",
+            Some("https://per-file.presigned.url/get-slot"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://per-file.presigned.url/get-slot");
+        assert!(
+            token.is_none(),
+            "per-file presigned URL mode must not return a token even when one is available"
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_to_stage_info_presigned_url_when_per_file_is_none() {
+        // PUT path semantics must not regress: when no per-file URL is
+        // supplied, `stage_info.presigned_url` is still honoured (Strategy
+        // 1 — the original PUT-side single-slot path).
+        let stage = make_stage_info(StageInfoOverrides {
+            presigned_url: Some("https://stage-info.presigned.url/put-slot".to_string()),
+            ..Default::default()
+        });
+        let (url, token) = resolve_url_and_token(&stage, "file.csv.gz", None).unwrap();
+        assert_eq!(url, "https://stage-info.presigned.url/put-slot");
+        assert!(token.is_none());
     }
 
     #[test]
@@ -724,7 +811,7 @@ mod tests {
             }),
             ..Default::default()
         });
-        let result = resolve_url_and_token(&stage, "file.csv.gz");
+        let result = resolve_url_and_token(&stage, "file.csv.gz", None);
         assert!(matches!(
             result,
             Err(GcsRequestError::MissingGcsCredentials)
@@ -741,7 +828,7 @@ mod tests {
             }),
             ..Default::default()
         });
-        let result = resolve_url_and_token(&stage, "file.csv.gz");
+        let result = resolve_url_and_token(&stage, "file.csv.gz", None);
         assert!(matches!(
             result,
             Err(GcsRequestError::MissingGcsCredentials)
