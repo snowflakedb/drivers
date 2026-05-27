@@ -4,14 +4,12 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
-
-#include <openssl/bio.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -36,14 +34,22 @@ inline std::string get_query_result_format() {
   return normalized;
 }
 
-/// Base64-encode a string using OpenSSL's EVP_EncodeBlock.
 inline std::string base64_encode(const std::string& input) {
-  // EVP_EncodeBlock output size: 4 * ceil(n/3) + 1 (for NUL)
-  std::string encoded(4 * ((input.size() + 2) / 3) + 1, '\0');
-  int len = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(encoded.data()),
-                            reinterpret_cast<const unsigned char*>(input.data()), static_cast<int>(input.size()));
-  encoded.resize(len);
-  return encoded;
+  static constexpr char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  out.reserve(4 * ((input.size() + 2) / 3));
+  auto* src = reinterpret_cast<const unsigned char*>(input.data());
+  size_t len = input.size();
+  for (size_t i = 0; i < len; i += 3) {
+    uint32_t n = static_cast<uint32_t>(src[i]) << 16;
+    if (i + 1 < len) n |= static_cast<uint32_t>(src[i + 1]) << 8;
+    if (i + 2 < len) n |= static_cast<uint32_t>(src[i + 2]);
+    out.push_back(table[(n >> 18) & 0x3F]);
+    out.push_back(table[(n >> 12) & 0x3F]);
+    out.push_back((i + 1 < len) ? table[(n >> 6) & 0x3F] : '=');
+    out.push_back((i + 2 < len) ? table[n & 0x3F] : '=');
+  }
+  return out;
 }
 
 inline std::filesystem::path repo_root() {
@@ -94,48 +100,47 @@ inline std::filesystem::path test_data_file_path(const std::string& relative_pat
 }
 
 /// Decrypt an encrypted PEM private key and write the unencrypted PEM to a file.
+/// Shells out to the openssl CLI to avoid a compile-time dependency on libcrypto.
 inline void decrypt_pem_key_to_file(const std::string& encrypted_pem, const std::string& password,
                                     const std::filesystem::path& output_path) {
-  auto* bio_in = BIO_new_mem_buf(encrypted_pem.data(), static_cast<int>(encrypted_pem.size()));
-  if (!bio_in) throw std::runtime_error("BIO_new_mem_buf failed");
-
-  EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio_in, nullptr, nullptr, const_cast<char*>(password.c_str()));
-  BIO_free(bio_in);
-  if (!pkey) throw std::runtime_error("PEM_read_bio_PrivateKey failed — wrong password?");
-
-  auto* bio_out = BIO_new_file(output_path.string().c_str(), "wb");
-  if (!bio_out) {
-    EVP_PKEY_free(pkey);
-    throw std::runtime_error("BIO_new_file failed");
+  // Write encrypted PEM to a temp file so openssl can read it
+  auto input_path = output_path;
+  input_path += ".enc";
+  {
+    std::ofstream f(input_path, std::ios::binary);
+    if (!f) throw std::runtime_error("Failed to write temporary encrypted key file");
+    f << encrypted_pem;
   }
 
-  int rc = PEM_write_bio_PrivateKey(bio_out, pkey, nullptr, nullptr, 0, nullptr, nullptr);
-  BIO_free(bio_out);
-  EVP_PKEY_free(pkey);
-  if (rc != 1) throw std::runtime_error("PEM_write_bio_PrivateKey failed");
-}
+  std::string cmd = "openssl pkey -in " + input_path.string() + " -out " + output_path.string() +
+                    " -passin pass:" + password + " 2>&1";
 
-/// Read an unencrypted PEM private key and write an encrypted PEM to a file.
-inline void encrypt_pem_key_to_file(const std::string& unencrypted_pem, const std::string& password,
-                                    const std::filesystem::path& output_path) {
-  auto* bio_in = BIO_new_mem_buf(unencrypted_pem.data(), static_cast<int>(unencrypted_pem.size()));
-  if (!bio_in) throw std::runtime_error("BIO_new_mem_buf failed");
-
-  EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio_in, nullptr, nullptr, nullptr);
-  BIO_free(bio_in);
-  if (!pkey) throw std::runtime_error("PEM_read_bio_PrivateKey failed");
-
-  auto* bio_out = BIO_new_file(output_path.string().c_str(), "wb");
-  if (!bio_out) {
-    EVP_PKEY_free(pkey);
-    throw std::runtime_error("BIO_new_file failed");
+#ifdef _WIN32
+  FILE* pipe = _popen(cmd.c_str(), "r");
+#else
+  FILE* pipe = popen(cmd.c_str(), "r");
+#endif
+  if (!pipe) {
+    std::filesystem::remove(input_path);
+    throw std::runtime_error("Failed to run openssl command");
   }
 
-  int rc = PEM_write_bio_PrivateKey(bio_out, pkey, EVP_aes_256_cbc(), nullptr, 0, nullptr,
-                                    const_cast<char*>(password.c_str()));
-  BIO_free(bio_out);
-  EVP_PKEY_free(pkey);
-  if (rc != 1) throw std::runtime_error("PEM_write_bio_PrivateKey (encrypt) failed");
+  std::string output;
+  std::array<char, 256> buf{};
+  while (fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr) {
+    output.append(buf.data());
+  }
+
+#ifdef _WIN32
+  int rc = _pclose(pipe);
+#else
+  int rc = pclose(pipe);
+#endif
+  std::filesystem::remove(input_path);
+
+  if (rc != 0) {
+    throw std::runtime_error("openssl pkey failed: " + output);
+  }
 }
 
 }  // namespace test_utils
