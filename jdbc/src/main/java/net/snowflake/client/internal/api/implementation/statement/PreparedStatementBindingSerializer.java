@@ -20,12 +20,7 @@ final class PreparedStatementBindingSerializer {
       SFLoggerFactory.getLogger(PreparedStatementBindingSerializer.class);
 
   /** Process-wide; a fresh allocator per execute is measurably expensive in batch scenarios. */
-  private static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
-
-  /** Test-only: outstanding bytes on the shared allocator (for {@code @AfterAll} leak checks). */
-  static long sharedAllocatorAllocatedBytes() {
-    return SHARED_ALLOCATOR.getAllocatedMemory();
-  }
+  static final RootAllocator SHARED_ALLOCATOR = new RootAllocator(Long.MAX_VALUE);
 
   static final class ParameterValue {
     private final String bindType;

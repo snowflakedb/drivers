@@ -25,6 +25,7 @@ import java.sql.Types;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
@@ -507,7 +508,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     }
     // Boxed primitives passed through setObject must be stringified before they reach the
     // serializer (which rejects non-String values).
-    String normalized = java.util.Objects.toString(value, null);
+    String normalized = Objects.toString(value, null);
     parameterValues.put(
         parameterIndex,
         new PreparedStatementBindingSerializer.ParameterValue(bindType, normalized));

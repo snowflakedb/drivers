@@ -31,7 +31,7 @@ public class PreparedStatementBindingSerializerTest {
   public static void assertSharedAllocatorEmpty() {
     assertEquals(
         0L,
-        PreparedStatementBindingSerializer.sharedAllocatorAllocatedBytes(),
+        PreparedStatementBindingSerializer.SHARED_ALLOCATOR.getAllocatedMemory(),
         "ArrowBuf leak: shared allocator still has bytes after binding serializer tests");
   }
 

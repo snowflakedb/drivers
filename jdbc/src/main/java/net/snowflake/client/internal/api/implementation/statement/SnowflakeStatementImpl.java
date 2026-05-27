@@ -81,22 +81,31 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   protected int executeUpdateWithBindings(
       String sql, PreparedStatementBindingSerializer.NativeBindings bindings) throws SQLException {
-    boolean producedResultSet = executeWithBindings(sql, bindings);
-    if (producedResultSet) {
-      throw new SnowflakeSQLException(
-          "executeUpdate() cannot be used for statements that produce a ResultSet");
-    }
+    ensureNoResultSet(executeWithBindings(sql, bindings), "executeUpdate");
     return getCurrentUpdateCountAsInt();
   }
 
   protected long executeLargeUpdateWithBindings(
       String sql, PreparedStatementBindingSerializer.NativeBindings bindings) throws SQLException {
-    boolean producedResultSet = executeWithBindings(sql, bindings);
+    ensureNoResultSet(executeWithBindings(sql, bindings), "executeLargeUpdate");
+    return currentUpdateCount;
+  }
+
+  /**
+   * Enforce the JDBC contract for {@code executeUpdate}/{@code executeLargeUpdate}: the spec
+   * requires throwing when the SQL produced a {@link ResultSet}. The query has already been
+   * executed at this point, but we cannot detect ResultSet-vs-update-count up front — Snowflake's
+   * SQL surface (dynamic SQL, multi-statements) means the server's response is the only authority.
+   * snowflake-jdbc throws here too (see {@code executeUpdateInternal} → {@code
+   * UNSUPPORTED_STATEMENT_TYPE_IN_EXECUTION_API}); silently swallowing would let {@code
+   * executeUpdate("SELECT …")} return 0 and surprise callers.
+   */
+  private static void ensureNoResultSet(boolean producedResultSet, String methodName)
+      throws SQLException {
     if (producedResultSet) {
       throw new SnowflakeSQLException(
-          "executeUpdate() cannot be used for statements that produce a ResultSet");
+          methodName + "() cannot be used for statements that produce a ResultSet");
     }
-    return currentUpdateCount;
   }
 
   protected boolean executeWithBindings(

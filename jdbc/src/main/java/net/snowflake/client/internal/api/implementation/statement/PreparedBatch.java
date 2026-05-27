@@ -8,7 +8,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.implementation.statement.PreparedStatementBindingSerializer.ParameterValue;
 import net.snowflake.client.internal.log.SFLogger;
@@ -24,6 +23,7 @@ final class PreparedBatch {
   private static final SFLogger logger = SFLoggerFactory.getLogger(PreparedBatch.class);
 
   private final Map<Integer, ParameterValue> columns = new HashMap<>();
+  private int rowCount = 0;
 
   /**
    * Append a row built from the per-row {@code currentValues} map. Two-pass: every column is
@@ -37,27 +37,26 @@ final class PreparedBatch {
           "Mixed positional and numeric placeholders are not supported");
     }
     for (int parameterIndex : meta.referencedParameterIndexes()) {
-      validate(parameterIndex, currentValues);
+      BatchColumnValidator.validate(
+          parameterIndex, columns.get(parameterIndex), currentValues.get(parameterIndex));
     }
     for (int parameterIndex : meta.referencedParameterIndexes()) {
       commit(parameterIndex, currentValues);
     }
+    rowCount++;
   }
 
   void clear() {
     columns.clear();
+    rowCount = 0;
   }
 
-  /** Number of accumulated rows; derived from any column's list size (every column same length). */
   int size() {
-    if (columns.isEmpty()) {
-      return 0;
-    }
-    return ((List<?>) columns.values().iterator().next().value()).size();
+    return rowCount;
   }
 
   boolean isEmpty() {
-    return size() == 0;
+    return rowCount == 0;
   }
 
   private Map<Integer, ParameterValue> snapshot() {
@@ -126,45 +125,6 @@ final class PreparedBatch {
     int[] failed = new int[batchSize];
     Arrays.fill(failed, Statement.EXECUTE_FAILED);
     return failed;
-  }
-
-  private void validate(int parameterIndex, Map<Integer, ParameterValue> currentValues)
-      throws SQLException {
-    ParameterValue parameterValue = currentValues.get(parameterIndex);
-    if (parameterValue == null) {
-      throw new SnowflakeSQLException("Missing value for parameter index: " + parameterIndex);
-    }
-    ParameterValue existing = columns.get(parameterIndex);
-    if (existing == null) {
-      return;
-    }
-    String stringValue = (String) parameterValue.value();
-    if (stringValue == null) {
-      return;
-    }
-    String prevType = existing.bindType();
-    String newType = parameterValue.bindType();
-    if ("ANY".equalsIgnoreCase(prevType) || prevType.equalsIgnoreCase(newType)) {
-      return;
-    }
-    @SuppressWarnings("unchecked")
-    List<String> values = (List<String>) existing.value();
-    if (allNullsSoFar(values)) {
-      return;
-    }
-    int prevRow = values.size();
-    throw new SnowflakeSQLException(
-        ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED,
-        "Array binding does not support mixed types: parameter "
-            + parameterIndex
-            + " was bound with type "
-            + prevType
-            + " in row "
-            + prevRow
-            + " and type "
-            + newType
-            + " in row "
-            + (prevRow + 1));
   }
 
   private void commit(int parameterIndex, Map<Integer, ParameterValue> currentValues) {
