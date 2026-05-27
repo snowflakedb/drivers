@@ -1,6 +1,18 @@
-import type { Connection } from 'snowflake-sdk';
-import { describe, it, beforeAll, afterAll } from 'vitest';
-import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK, sleepAsync } from './utils';
+import type { Connection, RowStatement } from 'snowflake-sdk';
+import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import {
+  createTestConnection,
+  destroyConnectionAsync,
+  executeAsync,
+  getSnowflakeSDK,
+  sleepAsync,
+} from './utils';
+
+function cancelStatement(statement: RowStatement) {
+  return new Promise<void>((resolve, reject) => {
+    statement.cancel((err) => (err ? reject(err) : resolve()));
+  });
+}
 
 describe('Query Cancellation', () => {
   const snowflake = getSnowflakeSDK();
@@ -19,9 +31,16 @@ describe('Query Cancellation', () => {
     const statement = connection.execute({
       sqlText: 'select count(*) from table(generator(timeLimit => 3600))',
     });
-    await sleepAsync(2000);
-    await new Promise<void>((resolve, reject) => {
-      statement.cancel((err) => (err ? reject(err) : resolve()));
+    await sleepAsync(1000); // wait for query to start running
+    await cancelStatement(statement);
+  });
+
+  it('throws when failing to cancel a query', async () => {
+    const { statement } = await executeAsync(connection, 'select 1');
+    // Query is completed = nothing to cancel
+    await expect(cancelStatement(statement)).rejects.toMatchObject({
+      code: '000605',
+      sqlState: '01000',
     });
   });
 });

@@ -1,4 +1,4 @@
-// NOTE:
+// TODO:
 // Some error codes may not be required in the new driver, will cleanup later.
 enum ErrorCode {
   ERR_INTERNAL_ASSERT_FAILED = 400001,

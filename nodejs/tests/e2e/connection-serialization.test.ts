@@ -3,7 +3,7 @@ import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import { createTestConnection, destroyConnectionAsync, getSnowflakeSDK } from './utils';
 import getTestParameter from './utils/getTestParameter';
 
-describe('Connection Serialization', () => {
+describe('Connection Serialization & Deserialization', () => {
   const snowflake = getSnowflakeSDK();
   let connection: Connection;
 
@@ -14,6 +14,15 @@ describe('Connection Serialization', () => {
 
   afterAll(async () => {
     await destroyConnectionAsync(connection);
+  });
+
+  it('serialization of a disconnected connection returns empty tokenInfo', () => {
+    const disconnectedConnection = createTestConnection(snowflake);
+    const serialized = disconnectedConnection.serialize();
+    expect(snowflake.serializeConnection(disconnectedConnection)).toEqual(serialized);
+    expect(JSON.parse(serialized)).toEqual({
+      services: { sf: { tokenInfo: {} } },
+    });
   });
 
   it('connection.serialize() returns a JSON string with services.sf.tokenInfo', () => {
@@ -34,20 +43,34 @@ describe('Connection Serialization', () => {
     expect(snowflake.serializeConnection(connection)).toBe(connection.serialize());
   });
 
-  it('snowflake.deserializeConnection() rehydrates into a usable Connection', async () => {
-    const snowflake = getSnowflakeSDK();
-    const connection2 = snowflake.deserializeConnection(
-      {
-        account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
-        host: getTestParameter('SNOWFLAKE_TEST_HOST'),
-      },
-      snowflake.serializeConnection(connection),
-    );
+  describe('snowflake.deserializeConnection()', () => {
+    it('rehydrates into a usable connection', async () => {
+      const snowflake = getSnowflakeSDK();
+      const connectionFromDeserialization = snowflake.deserializeConnection(
+        {
+          account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
+          host: getTestParameter('SNOWFLAKE_TEST_HOST'),
+        },
+        snowflake.serializeConnection(connection),
+      );
 
-    try {
-      expect(connection2.isUp()).toBe(true);
-    } finally {
-      await destroyConnectionAsync(connection2);
-    }
+      try {
+        expect(connectionFromDeserialization.isUp()).toBe(true);
+      } finally {
+        await destroyConnectionAsync(connectionFromDeserialization);
+      }
+    });
+
+    it('rehydrates into a disconnected connection when tokens are missing', () => {
+      const snowflake = getSnowflakeSDK();
+      const connectionFromDeserialization = snowflake.deserializeConnection(
+        {
+          account: getTestParameter('SNOWFLAKE_TEST_ACCOUNT'),
+          host: getTestParameter('SNOWFLAKE_TEST_HOST'),
+        },
+        JSON.stringify({ services: { sf: { tokenInfo: {} } } }),
+      );
+      expect(connectionFromDeserialization.isUp()).toBe(false);
+    });
   });
 });
