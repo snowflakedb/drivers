@@ -264,6 +264,10 @@ fn is_expired_token_error(err: &aws_sdk_s3::Error) -> bool {
 
 /// Issues the S3 `PutObject` call and folds `ExpiredToken` into the
 /// `S3AttemptError::StsExpired` arm so the generic refresh helper can catch it.
+///
+/// `disable_payload_signing()` skips a redundant full pass over the file:
+/// TLS covers transit, and Snowflake verifies the upload via the `sfc-digest`
+/// metadata header rather than the SigV4 body hash.
 async fn put_object(
     prepared: PreparedUpload,
     s3_client: &S3Client,
@@ -290,7 +294,12 @@ async fn put_object(
 
     tracing::trace!("PUT object request: {:?}", put_object_request);
 
-    match put_object_request.send().await {
+    match put_object_request
+        .customize()
+        .disable_payload_signing()
+        .send()
+        .await
+    {
         Ok(res) => {
             tracing::debug!("S3 upload result: {:?}", res);
             Ok(())
@@ -1033,5 +1042,72 @@ mod tests {
         // it as-is. S3StsRefresher must see "no rotation" against AKIA2
         // (not AKIA1).
         assert!(!sts_refresher.refresh().await.unwrap());
+    }
+
+    // The SigV4 payload hash is set inside aws-sigv4 and only appears on the
+    // wire, so wiremock at the HTTP layer is the only place it's observable.
+
+    use wiremock::matchers::{header, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn assert_put_sends_unsigned_payload(prepared: PreparedUpload) {
+        let mock = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage_info = StageInfo {
+            location_type: crate::file_manager::types::LocationType::S3,
+            bucket: "test-bucket".to_string(),
+            key_prefix: "prefix/".to_string(),
+            region: "us-east-1".to_string(),
+            creds: s3_creds("AKIA-TEST"),
+            endpoint: Some(mock.uri()),
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
+        };
+
+        // overwrite=true skips the HEAD probe.
+        upload_to_s3_or_skip(prepared, &stage_info, "f.dat", true, &mut None)
+            .await
+            .expect("upload should succeed against the mock");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn put_object_sends_unsigned_payload_for_unencrypted_upload() {
+        assert_put_sends_unsigned_payload(PreparedUpload {
+            data: b"hello world".to_vec(),
+            digest: "0".repeat(64),
+            encryption_metadata: None,
+        })
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn put_object_sends_unsigned_payload_for_encrypted_upload() {
+        // Most production stage uploads are client-side encrypted, which
+        // attaches three extra metadata headers before signing — confirm
+        // the override still applies on that path.
+        assert_put_sends_unsigned_payload(PreparedUpload {
+            data: b"hello world".to_vec(),
+            digest: "0".repeat(64),
+            encryption_metadata: Some(EncryptedFileMetadata {
+                encrypted_key: "k".to_string(),
+                iv: "i".to_string(),
+                material_desc: MaterialDescription {
+                    query_id: "q".to_string(),
+                    smk_id: "1".to_string(),
+                    key_size: "256".to_string(),
+                },
+            }),
+        })
+        .await;
     }
 }
