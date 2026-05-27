@@ -40,6 +40,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 public class SnowflakeResultSetImpl implements InternalResultSet {
 
   private final SnowflakeStatementImpl statement;
+  private final String queryId;
   private final CursorState cursor = new CursorState();
   private final SchemaState schema;
   private final ArrowResources resources;
@@ -48,9 +49,10 @@ public class SnowflakeResultSetImpl implements InternalResultSet {
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
-  SnowflakeResultSetImpl(SnowflakeStatementImpl statement, long arrowStreamPointer)
+  SnowflakeResultSetImpl(SnowflakeStatementImpl statement, String queryId, long arrowStreamPointer)
       throws SQLException {
     this.statement = statement;
+    this.queryId = queryId;
     ArrowArrayStream stream = ArrowArrayStream.wrap(arrowStreamPointer);
     RootAllocator allocator = new RootAllocator();
     ArrowResources resources =
@@ -278,7 +280,8 @@ public class SnowflakeResultSetImpl implements InternalResultSet {
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
     checkClosed();
-    return new SnowflakeResultSetMetaDataImpl(schema.getColumnNames(), schema.getColumnTypes());
+    return new SnowflakeResultSetMetaDataImpl(
+        schema.getColumnNames(), schema.getColumnTypes(), queryId);
   }
 
   @Override
@@ -1132,7 +1135,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet {
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new NotImplementedException();
+    return queryId;
   }
 
   @Override
