@@ -812,3 +812,19 @@ behavior_differences:
       SQLCancel on an async statement sends a cancel request to the server, and subsequent polling returns SQL_ERROR with SQLSTATE HY008 ("Operation canceled") once the cancellation is acknowledged.
     impact: |
       Applications that rely on SQLCancel to abort long-running async queries will not get timely cancellation on the old driver. The query may run to completion despite the cancel request.
+
+  59:
+    name: "SQLGetInfo driver-info types no longer require an active connection"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    old_driver_behavior: |
+      SQLGetInfo for SQL_DRIVER_NAME, SQL_DRIVER_VER, and SQL_DRIVER_ODBC_VER returns SQLSTATE 08003 ("Connection not open") if called on a connection handle before SQLConnect / SQLDriverConnect succeeds.
+    new_driver_behavior: |
+      SQLGetInfo for SQL_DRIVER_NAME, SQL_DRIVER_VER, and SQL_DRIVER_ODBC_VER returns SQL_SUCCESS with the driver name / version string regardless of connection state. This matches the ODBC specification, which explicitly lists SQL_DRIVER_HENV, SQL_DRIVER_HDBC, SQL_DRIVER_NAME, SQL_DRIVER_ODBC_VER, and SQL_DRIVER_VER as info types that may be queried before a connection is established (see Microsoft "SQLGetInfo Function" docs).
+    impact: |
+      Applications that interrogate the driver name or version before connecting (the typical reason the spec carves these out — e.g. version-gating code paths, telemetry, or Driver Manager probing) now work without first opening a connection. Applications that relied on receiving 08003 from SQL_DRIVER_NAME on an unconnected handle (which is non-spec) will no longer see that error.
+
+      Note: some Driver Managers (notably the Windows DM) may still intercept the call and synthesise 08003 themselves; the difference is therefore visible on iODBC / unixODBC platforms where the call is forwarded to the driver.
+
+      The test `SQLGetInfo: SQL_DRIVER_NAME before active connection` (odbc_tests/tests/odbc-api/driver_info/get_info_tests.cpp) exercises both behaviours via OLD_DRIVER_ONLY/NEW_DRIVER_ONLY branches tagged with BD#59. The new-driver branch further splits on platform (UNIX_ONLY vs WINDOWS_ONLY) because unixODBC/iODBC still synthesise 08003 themselves; Windows DM is expected to forward the call so the driver's spec-compliant SQL_SUCCESS is visible to the application.

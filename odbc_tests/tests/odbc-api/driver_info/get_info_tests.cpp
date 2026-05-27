@@ -3983,13 +3983,27 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY090 - Negative BufferLengt
   SQLDisconnect(dbc_handle());
 }
 
-TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: Requires active connection even for driver info",
-                 "[odbc-api][getinfo][driver_info][error]") {
+TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: SQL_DRIVER_NAME before active connection",
+                 "[odbc-api][getinfo][driver_info]") {
   char driverName[256];
-  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, driverName, sizeof(driverName), nullptr);
+  SQLSMALLINT nameLen = 0;
+  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, driverName, sizeof(driverName), &nameLen);
 
-  // Note: Reference driver requires active connection even for driver info
-  REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_DRIVER_ONLY("BD#59") {
+    // Non-spec: reference driver requires an active connection even for driver-info types.
+    REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  NEW_DRIVER_ONLY("BD#59") {
+    // Per ODBC spec, SQL_DRIVER_NAME may be queried before a connection is established,
+    // and the new driver returns SQL_SUCCESS unconditionally. However, unixODBC/iODBC
+    // intercept the call on an unconnected handle and synthesise 08003 themselves, so
+    // on Unix we still observe the old behaviour at the application level.
+    UNIX_ONLY { REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC); }
+    WINDOWS_ONLY {
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(nameLen > 0);
+    }
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: Returns error before connection for data source info",
