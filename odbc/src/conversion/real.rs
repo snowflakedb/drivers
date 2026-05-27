@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::api::encoding::wchar_byte_size;
 use crate::conversion::error::{
     BindingNumericOutOfRangeSnafu, InvalidNumericLiteralSnafu, JsonBindingError,
     NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
@@ -364,7 +365,7 @@ impl WriteODBCType for SnowflakeReal {
                     .any(|w| matches!(w, Warning::StringDataTruncated))
                 {
                     let whole_len = whole_digits_len(num_str);
-                    let wchar_capacity = (binding.buffer_length / 2) as usize;
+                    let wchar_capacity = (binding.buffer_length as usize) / wchar_byte_size();
                     if whole_len >= wchar_capacity {
                         *get_data_offset = None;
                         return NumericValueOutOfRangeSnafu {

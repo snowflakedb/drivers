@@ -409,6 +409,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid wide-character code point U+{code_point:08X}"))]
+    InvalidWideChar {
+        code_point: u32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Error while creating arrow array stream reader: {source}"))]
     ArrowArrayStreamReaderCreation {
         source: ArrowError,
@@ -603,6 +610,7 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => ErrorSource::DataConversion,
             OdbcError::TextConversionFromUtf16 { .. } => ErrorSource::DataConversion,
             OdbcError::TextConversionUtf8 { .. } => ErrorSource::DataConversion,
+            OdbcError::InvalidWideChar { .. } => ErrorSource::DataConversion,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => ErrorSource::InternalError,
             OdbcError::CoreError { .. } => ErrorSource::Unknown,
             OdbcError::ProtoRequiredFieldMissing { .. } => ErrorSource::InternalError,
@@ -767,6 +775,7 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
+            OdbcError::InvalidWideChar { .. } => SqlState::StringDataRightTruncated,
             OdbcError::JsonBinding { source, .. } => match source {
                 JsonBindingError::NumericMagnitudeOverflow { .. }
                 | JsonBindingError::BindingNumericOutOfRange { .. } => {
