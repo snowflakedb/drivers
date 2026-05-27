@@ -1146,7 +1146,6 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public String getQueryID() throws SQLException {
-    checkClosed();
     return queryId;
   }
 

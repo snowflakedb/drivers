@@ -1,4 +1,4 @@
-package net.snowflake.jdbc.e2e.query;
+package net.snowflake.client.api.statement;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -11,7 +11,6 @@ import java.sql.Statement;
 import java.util.regex.Pattern;
 import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
-import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -22,10 +21,8 @@ public class LastQueryIdTests extends SnowflakeIntegrationTestBase {
 
   @Test
   public void shouldExposeSameLastQueryIdAcrossStatementResultSetAndMetaData() throws Exception {
-    // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When a SELECT is executed
     try (Statement statement = connection.createStatement();
         ResultSet resultSet = statement.executeQuery("SELECT 1")) {
       String statementQueryId = statement.unwrap(SnowflakeStatement.class).getQueryID();
@@ -33,16 +30,28 @@ public class LastQueryIdTests extends SnowflakeIntegrationTestBase {
       ResultSetMetaData metaData = resultSet.getMetaData();
       String metaDataQueryId = metaData.unwrap(SnowflakeResultSetMetaData.class).getQueryID();
 
-      // Then a valid Snowflake query ID is exposed
       assertNotNull(statementQueryId, "Expected a non-null query ID");
       assertTrue(
           QUERY_ID_PATTERN.matcher(statementQueryId).matches(),
           "Expected a Snowflake-shaped query ID, got: " + statementQueryId);
 
-      // And the same ID is reachable through the Statement, the ResultSet, and the
-      // ResultSetMetaData
       assertEquals(statementQueryId, resultSetQueryId);
       assertEquals(statementQueryId, metaDataQueryId);
+    }
+  }
+
+  @Test
+  public void shouldExposeLastQueryIdOnClosedResultSet() throws Exception {
+    Connection connection = getDefaultConnection();
+
+    try (Statement statement = connection.createStatement()) {
+      ResultSet resultSet = statement.executeQuery("SELECT 1");
+      String queryIdBeforeClose = resultSet.unwrap(SnowflakeResultSet.class).getQueryID();
+
+      resultSet.close();
+
+      String queryIdAfterClose = resultSet.unwrap(SnowflakeResultSet.class).getQueryID();
+      assertEquals(queryIdBeforeClose, queryIdAfterClose);
     }
   }
 }
