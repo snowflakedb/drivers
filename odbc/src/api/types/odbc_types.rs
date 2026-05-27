@@ -1439,9 +1439,6 @@ pub struct StatementInner {
     /// Rows returned to the application so far in the current result set.
     /// Reset to 0 on each execution. Used to enforce `max_rows`.
     pub rows_returned: sql::ULen,
-    /// SQL text stored at `SQLPrepare` time. Used in `SQLExecute` to inject
-    /// `LIMIT N` for SELECT queries when `SQL_ATTR_MAX_ROWS` is set.
-    pub sql_text: Option<String>,
     /// `SQL_ATTR_CONCURRENCY` — cursor concurrency (default SQL_CONCUR_READ_ONLY = 1).
     pub concurrency: sql::ULen,
     /// `SQL_ATTR_CURSOR_SCROLLABLE` — cursor scrollability (default SQL_NONSCROLLABLE = 0).
@@ -1454,10 +1451,6 @@ pub struct StatementInner {
     pub simulate_cursor: sql::ULen,
     /// `SQL_ATTR_RETRIEVE_DATA` — whether to retrieve data after positioned update (default SQL_RD_ON = 1).
     pub retrieve_data: sql::ULen,
-    /// The `max_rows` value last sent to the server via `statement_set_sql_query`.
-    /// `None` = never sent. Used to detect when a LIMIT must be added, removed,
-    /// or changed on re-execution of a prepared statement.
-    pub last_sent_max_rows: Option<sql::ULen>,
     /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — query ID from the last successful execution (read-only).
     /// `None` before any execution; `Some("")` if sf_core returned an empty string.
     pub last_query_id: Option<String>,
@@ -1500,14 +1493,12 @@ impl Statement {
                 noscan: SQL_NOSCAN_OFF,
                 max_rows: 0,
                 rows_returned: 0,
-                sql_text: None,
                 concurrency: SQL_CONCUR_READ_ONLY,
                 cursor_scrollable: SQL_NONSCROLLABLE,
                 cursor_sensitivity: SQL_UNSPECIFIED,
                 keyset_size: 0,
                 simulate_cursor: SQL_SC_NON_UNIQUE,
                 retrieve_data: SQL_RD_ON,
-                last_sent_max_rows: None,
                 last_query_id: None,
                 multi_query_ids: Vec::new(),
                 multi_current_idx: 0,

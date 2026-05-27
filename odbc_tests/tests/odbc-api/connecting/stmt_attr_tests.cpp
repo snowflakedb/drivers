@@ -867,6 +867,68 @@ TEST_CASE("should remove row limit when SQL_ATTR_MAX_ROWS is toggled to 0 betwee
   CHECK(ret == SQL_NO_DATA);
 }
 
+TEST_CASE("should enforce SQL_ATTR_MAX_ROWS across multiple block fetches", "[odbc-api][stmt_attr][max_rows]") {
+  // Given A statement with SQL_ATTR_ROW_ARRAY_SIZE=2 and SQL_ATTR_MAX_ROWS=5
+  // returning 10 rows; 5 % 2 = 1 so the limit splits the third rowset, which
+  // exercises both the in-batch quota clamp and the post-quota SQL_NO_DATA path.
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, reinterpret_cast<SQLPOINTER>(2), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_MAX_ROWS, reinterpret_cast<SQLPOINTER>(5), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  constexpr SQLULEN array_size = 2;
+  SQLULEN rows_fetched = 0;
+  SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW, SQL_ROW_NOROW};
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER value[array_size] = {0, 0};
+  SQLLEN value_ind[array_size] = {0, 0};
+  ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, value, sizeof(SQLINTEGER), value_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When A query returning 10 rows is executed
+  ret = SQLExecDirect(stmt.getHandle(),
+                      sqlchar("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 "
+                              "UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL "
+                              "SELECT 10"),
+                      SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The first two fetches return 2 rows each
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(rows_fetched == 2);
+  CHECK(row_status[0] == SQL_ROW_SUCCESS);
+  CHECK(row_status[1] == SQL_ROW_SUCCESS);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(rows_fetched == 2);
+  CHECK(row_status[0] == SQL_ROW_SUCCESS);
+  CHECK(row_status[1] == SQL_ROW_SUCCESS);
+
+  // And The third fetch returns 1 row (clamped by the remaining quota).
+  // Pre-clear row_status because the old driver does not overwrite slots
+  // beyond rows_fetched; the contract is `rows_fetched` rows are valid.
+  row_status[0] = SQL_ROW_NOROW;
+  row_status[1] = SQL_ROW_NOROW;
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(rows_fetched == 1);
+  CHECK(row_status[0] == SQL_ROW_SUCCESS);
+  CHECK(row_status[1] == SQL_ROW_NOROW);
+
+  // And A fourth fetch returns SQL_NO_DATA
+  ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
 // ============================================================================
 // SQL_ATTR_CONCURRENCY — cursor attribute rejected in Done state
 // ============================================================================
