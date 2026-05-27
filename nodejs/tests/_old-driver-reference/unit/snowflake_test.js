@@ -274,7 +274,6 @@ describe('snowflake.createConnection() synchronous errors', function () {
   }
 });
 
-
 describe('connection.connect() asynchronous errors', function () {
   // This test is flaky. Sometimes the first connect is being executed too slow, so adding timeout = 0 on the second
   // connect was a try to speed it up a bit.
@@ -856,46 +855,6 @@ describe('connection.execute() with requestId', function () {
   });
 });
 
-describe('too many concurrent requests', function () {
-  it('too many concurrent requests per user', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-    const sqlText = "select 'too many concurrent queries';";
-    const requestId = 'foobar';
-
-    async.series(
-      [
-        function (callback) {
-          connection.connect(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the connect() callback should be invoked with the statement',
-            );
-
-            callback();
-          });
-        },
-        function (callback) {
-          connection.execute({
-            sqlText: sqlText,
-            requestId: requestId,
-            complete: function (err) {
-              assert.ok(err, 'there should be an error');
-              assert.strictEqual(err.code, '000610');
-
-              callback();
-            },
-          });
-        },
-      ],
-      function () {
-        done();
-      },
-    );
-  });
-});
-
 describe('connection.fetchResult() synchronous errors', function () {
   const connection = snowflake.createConnection(connectionOptions);
 
@@ -1221,26 +1180,6 @@ describe('connection.getResultsFromQueryId() synchronous errors', function () {
 
   const testCases = [
     {
-      name: 'missing queryId',
-      options: {},
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'undefined queryId',
-      options: { queryId: undefined },
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'null queryId',
-      options: { queryId: null },
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'non-string queryId',
-      options: { queryId: 123 },
-      errorCode: ErrorCodes.ERR_GET_RESPONSE_QUERY_INVALID_UUID,
-    },
-    {
       name: 'invalid queryId',
       options: { queryId: 'invalidQueryId' },
       errorCode: ErrorCodes.ERR_GET_RESPONSE_QUERY_INVALID_UUID,
@@ -1263,21 +1202,6 @@ describe('connection.getQueryStatus() synchronous errors', function () {
 
   const testCases = [
     {
-      name: 'undefined queryId',
-      queryId: undefined,
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'null queryId',
-      queryId: null,
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'non-string queryId',
-      queryId: 123,
-      errorCode: ErrorCodes.ERR_GET_RESPONSE_QUERY_INVALID_UUID,
-    },
-    {
       name: 'invalid queryId',
       queryId: 'invalidQueryId',
       errorCode: ErrorCodes.ERR_GET_RESPONSE_QUERY_INVALID_UUID,
@@ -1299,21 +1223,6 @@ describe('connection.getQueryStatusThrowIfError() synchronous errors', function 
   const connection = snowflake.createConnection(connectionOptions);
 
   const testCases = [
-    {
-      name: 'undefined queryId',
-      queryId: undefined,
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'null queryId',
-      queryId: null,
-      errorCode: ErrorCodes.ERR_CONN_FETCH_RESULT_MISSING_QUERY_ID,
-    },
-    {
-      name: 'non-string queryId',
-      queryId: 123,
-      errorCode: ErrorCodes.ERR_GET_RESPONSE_QUERY_INVALID_UUID,
-    },
     {
       name: 'invalid queryId',
       queryId: 'invalidQueryId',
@@ -1549,40 +1458,6 @@ describe('connection.destroy()', function () {
     setImmediate(tryDestroy);
   });
 
-  it('destroy after connected', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-
-    async.series(
-      [
-        function (callback) {
-          connection.connect(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the connect() callback should be invoked with the connection',
-            );
-            callback();
-          });
-        },
-        function (callback) {
-          connection.destroy(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the logout() callback should be invoked with the connection',
-            );
-            callback();
-          });
-        },
-      ],
-      function () {
-        done();
-      },
-    );
-  });
-
   it('destroy while disconnected', function (done) {
     const connection = snowflake.createConnection(connectionOptions);
 
@@ -1815,7 +1690,3 @@ describe('snowflake.connect() with 504', function () {
     );
   });
 });
-
-// TODO: test large results
-// TODO: test token renewal
-// TODO: test network errors

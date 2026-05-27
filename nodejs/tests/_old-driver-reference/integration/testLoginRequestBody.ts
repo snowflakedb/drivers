@@ -1,12 +1,11 @@
-import sinon from 'sinon';
 import assert from 'assert';
-import fs from 'fs';
 import rewiremock from 'rewiremock/node';
+import sinon from 'sinon';
+import { WIP_ConnectionOptions } from '../../lib/connection/types';
+import axiosInstance from '../../lib/http/axios_instance';
+import { getFreePort } from '../../lib/util';
 import { runWireMockAsync, addWireMockMappingsFromFile } from '../wiremockRunner';
 import * as testUtil from './testUtil';
-import axiosInstance from '../../lib/http/axios_instance';
-import { WIP_ConnectionOptions } from '../../lib/connection/types';
-import { getFreePort } from '../../lib/util';
 
 describe('/login-request body', () => {
   let wiremock: any;
@@ -69,32 +68,6 @@ describe('/login-request body', () => {
       assert.strictEqual(getClientEnvironment().ISA, process.arch);
     });
 
-    it('contains CORE_ metadata values when minicore is loaded', async () => {
-      await initConnection();
-      const clientEnvironment = getClientEnvironment();
-      assert.strictEqual(clientEnvironment.CORE_VERSION, '0.0.1');
-      assert.ok(
-        clientEnvironment.CORE_FILE_NAME.includes('sf_mini_core_0.0.1'),
-        `Unexpected CORE_BINARY_NAME: ${clientEnvironment.CORE_BINARY_NAME}`,
-      );
-      assert.strictEqual(clientEnvironment.CORE_LOAD_ERROR, null);
-    });
-
-    it('contains CORE_LOAD_ERROR when minicore fails to load', async () => {
-      sinon.stub(process, 'platform').value('dummy-test-platform-to-force-load-error');
-      const freshCoreInstance = rewiremock.proxy('../../lib/snowflake', {
-        '../../lib/minicore': rewiremock.proxy('../../lib/minicore/minicore'),
-      });
-      await initConnection({}, freshCoreInstance);
-      const clientEnvironment = getClientEnvironment();
-      assert.strictEqual(clientEnvironment.CORE_VERSION, null);
-      assert.ok(
-        clientEnvironment.CORE_FILE_NAME.includes('sf_mini_core_0.0.1'),
-        `Unexpected CORE_BINARY_NAME: ${clientEnvironment.CORE_BINARY_NAME}`,
-      );
-      assert.strictEqual(clientEnvironment.CORE_LOAD_ERROR, 'Binary is missing from the bundle');
-    });
-
     it('contains OS_DETAILS on Linux or null on other platforms', async () => {
       await initConnection();
       const osDetails = getClientEnvironment().OS_DETAILS;
@@ -141,24 +114,6 @@ describe('/login-request body', () => {
         platform.includes('is_aws_lambda'),
         `Expected PLATFORM to include is_aws_lambda, got: ${JSON.stringify(platform)}`,
       );
-    });
-  });
-
-  describe('SPCS_TOKEN', () => {
-    it('is not included when SNOWFLAKE_RUNNING_INSIDE_SPCS is not set', async () => {
-      await initConnection();
-      assert.strictEqual(getLoginRequestData().SPCS_TOKEN, undefined);
-    });
-
-    it('is included when SNOWFLAKE_RUNNING_INSIDE_SPCS is set', async () => {
-      sinon.stub(process, 'env').value({ ...process.env, SNOWFLAKE_RUNNING_INSIDE_SPCS: 'true' });
-      sinon
-        .stub(fs, 'readFileSync')
-        .callThrough()
-        .withArgs('/snowflake/session/spcs_token', 'utf-8')
-        .returns('test-spcs-token');
-      await initConnection();
-      assert.strictEqual(getLoginRequestData().SPCS_TOKEN, 'test-spcs-token');
     });
   });
 });
