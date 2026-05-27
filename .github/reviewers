@@ -40,8 +40,8 @@
 # GitHub's native code-owner request fires once against the whole
 # team. Domain-specific routing lives here.
 
-all @sfc-gh-daniszewski @sfc-gh-boler
-jdbc @sfc-gh-asolarski @sfc-gh-dheyman @sfc-gh-rkowalski
-nodejs @sfc-gh-rsavenok @sfc-gh-rkowalski @sfc-gh-pbulawa
-odbc @sfc-gh-mcepiga @sfc-gh-mhofman @sfc-gh-jszczerbinski @sfc-gh-ddas @sfc-gh-makowalski @sfc-gh-rkowalski @sfc-gh-pbulawa
-python @sfc-gh-asolarski @sfc-gh-fpawlowski @sfc-gh-pczajka @sfc-gh-turbaszek
+all @dariusz-aniszewski_snow @bartosz-oler_snow
+jdbc @antoni-solarski_snow @dawid-heyman_snow @rafal-kowalski_snow
+nodejs @ruslan-savenok_snow @rafal-kowalski_snow @piotr-bulawa_snow
+odbc @michal-cepiga_snow @michal-hofman_snow @jakub-szczerbinski_snow @devansh-das_snow @maxymilina-akowalski_snow @rafal-kowalski_snow @pior-bulawa_snow
+python @antoni-solarski_snow @filip-pawlowski_snow @patryk-czajka_snow @tomasz-urbaszek_snow
