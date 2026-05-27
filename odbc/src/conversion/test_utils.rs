@@ -1,6 +1,7 @@
 #[cfg(test)]
 pub(crate) mod helpers {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar};
     use crate::conversion::traits::Binding;
     use odbc_sys as sql;
 
@@ -34,11 +35,11 @@ pub(crate) mod helpers {
         }
     }
 
-    pub fn binding_for_wchar_buffer(buffer: &mut [u16], str_len: &mut sql::Len) -> Binding {
+    pub fn binding_for_wchar_buffer(buffer: &mut [WideChar], str_len: &mut sql::Len) -> Binding {
         Binding {
             target_type: CDataType::WChar,
             target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-            buffer_length: (buffer.len() * 2) as sql::Len,
+            buffer_length: (buffer.len() * WIDE_CHAR_SIZE) as sql::Len,
             octet_length_ptr: str_len as *mut sql::Len,
             indicator_ptr: str_len as *mut sql::Len,
             ..Default::default()

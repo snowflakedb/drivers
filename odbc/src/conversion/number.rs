@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::api::encoding::wchar_byte_size;
 use crate::conversion::error::{
     BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
     UnsupportedCDataTypeSnafu,
@@ -408,7 +409,7 @@ impl WriteODBCType for SnowflakeNumber {
                 let mut num_buf = [0u8; 48];
                 let num_str = Self::format_decimal_into(snowflake_value, self.scale, &mut num_buf)?;
                 let warnings = binding.write_wchar_string(num_str, get_data_offset);
-                let wchar_capacity = (binding.buffer_length / 2) as usize;
+                let wchar_capacity = (binding.buffer_length as usize) / wchar_byte_size();
                 if warnings
                     .iter()
                     .any(|w| matches!(w, Warning::StringDataTruncated))
