@@ -1,0 +1,105 @@
+id: universal-driver-mirror-privacy
+friendly_name: "Universal Driver Mirror Privacy Check"
+status: enabled
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  # Root-level files (README, CLAUDE.md, changelogs, top-level docs, etc.)
+  - "."
+  # Public directory trees — anything not on the denylist is public
+  - "adr"
+  - "doc"
+  - "sf_core"
+  - "python"
+  - "nodejs"
+  - "odbc"
+  - "odbc_tests"
+  - "jdbc"
+  - "tests"
+  - "error_trace"
+  - "proto_utils"
+  - "proto_generator"
+  - "odbc_trace_tool"
+  - "jdbc_bridge"
+excluded_folders:
+  # Mirrors the EXCLUDED_PATHS denylist in ci/mirroring/copy.bara.sky — these
+  # directories never reach the public mirror, so no review needed.
+  - "_internal"
+  - ".ai"
+  - ".cursor"
+  - ".claude"
+  - ".buildkite"
+  - ".ci"
+  - ".github"
+  - "ci"
+  - "scripts"
+llm_model: "claude-sonnet-4-5"
+allowed_file_extensions:
+  - ".md"
+  - ".mdc"
+  - ".rst"
+  - ".txt"
+  - ".yaml"
+  - ".yml"
+  - ".toml"
+  - ".sh"
+rules:
+  - id: ud-potentially-private-file-placement
+    rule: |
+      **OBJECTIVE**: Catch files added to public (mirrored) directories that contain
+      information belonging in `_internal/` and should not reach the public mirror
+      at snowflakedb/universal-driver.
+
+      **CONTEXT**: This repo is mirrored publicly via Copybara. The
+      authoritative denylist of internal-only paths lives in
+      `ci/mirroring/copy.bara.sky` (`EXCLUDED_PATHS`). Read it before reviewing —
+      anything not listed there is public-by-default and reaches the
+      mirror on the next run. The `_internal/` directory is the
+      designated home for any new internal-only material; see
+      `_internal/mirroring.md` for the full boundary description.
+
+      **REQUIREMENT**: Flag any new or substantially changed file in a public directory
+      when it shows one or more of the following signals:
+
+      1. **Internal org or repo references** — mentions `snowflake-eng/<repo>`,
+         snowflake-eng GitHub URLs, or internal-only Snowflake repositories.
+
+      2. **Internal hostnames or endpoints** — references to
+         `*.snowflakecomputing.internal`, `*.corp.snowflake`, `snowhouse.*`, or
+         other non-public Snowflake infrastructure.
+
+      3. **Internal process documentation** — runbooks, on-call guides, incident
+         postmortems, deployment procedures, or any content describing
+         Snowflake-internal workflows rather than the driver's public API or
+         usage. (Public-style ADRs and design docs in `adr/` and `doc/` are
+         fine — flag only when the content names internal systems or
+         processes.)
+
+      4. **Security-sensitive descriptions** — documents describing internal
+         auth flows, internal token formats, internal key management, or
+         security architecture that has not been publicly disclosed.
+
+      5. **AI assistant configuration referencing internal context** — flag
+         files like `CLAUDE.md`, `AGENTS.md`, or `.cursor/.claude` rule files
+         ONLY when they reference Snowflake-internal infrastructure, internal
+         repos, internal processes, or non-public tooling. A generic
+         `CLAUDE.md` describing public coding conventions, code style, or
+         language-specific guidance is fine in a public repo and should NOT
+         be flagged.
+
+      6. **Name-based signals in a public path** — automatic flag for any file
+         in a public directory whose name contains "internal", "private",
+         "confidential", "security_notes", "security_assessment", or
+         "security_audit". With the denylist no longer carrying name-based
+         catch-alls, this signal is the primary safety net for those file
+         names slipping into a public path.
+
+      **EXCEPTIONS**: Public-facing documentation (README, CHANGELOG, API guides,
+      usage examples), open-source license files, and test fixtures are fine in
+      public directories. Apply the standard: "Would this be appropriate content
+      in a public open-source driver repository?"
+
+      **HOW TO FLAG**: If a file triggers any signal above, comment:
+      "This file may contain Snowflake-internal information. Consider moving it
+      under `_internal/` (which is excluded from the public mirror by
+      `ci/mirroring/copy.bara.sky`). See `_internal/mirroring.md` for how to add internal-only
+      files without touching the denylist."

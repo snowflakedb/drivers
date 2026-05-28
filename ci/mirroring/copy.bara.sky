@@ -1,0 +1,106 @@
+# Copybara config: outbound mirror.
+#
+# `mirror` — outbound: snowflake-eng/universal-driver -> snowflakedb/universal-driver
+#            (ITERATIVE, direct push, denylist filter + internal-marker guards)
+#            Runs daily via .github/workflows/mirror.yml.
+#
+SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
+MIRROR_REPO = "https://github.com/snowflakedb/universal-driver"
+
+# DENYLIST: mirror everything except paths matching these patterns.
+#
+# Safety model
+# ------------
+# A denylist defaults to "public" for new files, which is the opposite of
+# what a mirror config typically wants. Two things compensate:
+#
+#   1. `_internal/` convention. Put any new internal-only material under
+#      `_internal/` and it's covered without touching this file.
+#   2. ArcticOwl reviewer (`universal-driver-mirror-privacy`, status:
+#      enabled) reviews every new file in a public directory and flags
+#      anything that looks internal by content. See
+#      `.ai/review/universal-driver-mirror-privacy.yaml`.
+#
+# Keep this list short. Adding a new entry should be a deliberate act,
+# documented in `_internal/mirroring.md`. The mirror token also blocks
+# `.github/workflows/*` pushes today (no `workflow` PAT scope), which is
+# why `.github/**` is fully excluded.
+EXCLUDED_PATHS = [
+    "_internal/**",
+    ".ai/**",
+    ".cursor/**",
+    ".claude/**",
+    ".buildkite/**",
+    ".ci/**",
+    ".github/**",
+    "ci/**",
+    "scripts/**",
+    "shell.nix",
+]
+
+# Per-path overrides that re-include specific files inside an excluded
+# directory. Empty by default — all internal directories are
+# internal-by-default. Add a path here only when a file inside an
+# otherwise-excluded directory must be published; the file enters the
+# mirror as soon as the entry is committed.
+EXCLUDED_PATH_OVERRIDES = []
+
+
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ OUTBOUND: internal main -> public mirror main                       │
+# └─────────────────────────────────────────────────────────────────────┘
+core.workflow(
+    name = "mirror",
+    # ITERATIVE preserves linear source history — one destination commit
+    # per origin commit, original author and message. Copybara still writes
+    # a `GitOrigin-RevId: <sha>` trailer on each commit for tracking.
+    mode = "ITERATIVE",
+    origin = git.github_origin(
+        url = SOURCE_REPO,
+        ref = "main",
+    ),
+    # Direct push — no PR gate. Safety relies on the denylist + the
+    # verify_match checks below, plus environment approval on dispatch,
+    # plus the `universal-driver-mirror-privacy` ArcticOwl reviewer
+    # which flags new files in public paths whose content looks internal.
+    destination = git.github_destination(
+        url = MIRROR_REPO,
+        push = "main",
+    ),
+    authoring = authoring.pass_thru(
+        "Mirror Bot <mirror-bot@snowflake.com>"
+    ),
+    # Default-deny denylist + explicit per-path overrides. The `+` unions
+    # two globs: the broad denylist filter plus an additive include list
+    # that re-allows specific paths inside otherwise-excluded directories.
+    origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
+    transformations = [
+        # Rewrite the internal org reference to the public one in any mirrored
+        # file. This handles historical commits where the reference was present
+        # before the source was cleaned up, and guards against future slips.
+        # IGNORE_NOOP because most commits don't contain the pattern.
+        core.transform(
+            [
+                core.replace(
+                    before = "snowflake-eng/universal-driver",
+                    after = "snowflakedb/universal-driver",
+                ),
+            ],
+            noop_behavior = "IGNORE_NOOP",
+        ),
+        # Fail the sync if any mirrored file references the internal repo.
+        # The mirror workflow itself is excluded because it legitimately
+        # names the source repository.
+        core.verify_match(
+            regex = "snowflake-eng/universal-driver",
+            paths = glob(["**"], exclude = [".github/workflows/mirror*"]),
+            verify_no_match = True,
+        ),
+        # Fail the sync if any mirrored file references internal hostnames.
+        core.verify_match(
+            regex = "\\.snowflakecomputing\\.internal|\\.corp\\.snowflake",
+            verify_no_match = True,
+        ),
+    ],
+)
+
