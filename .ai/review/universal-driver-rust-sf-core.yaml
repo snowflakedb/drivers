@@ -1,6 +1,6 @@
 id: universal-driver-rust-sf-core
 friendly_name: "Universal Driver Rust & sf_core Guidelines"
-status: shadow
+status: enabled
 percentage_of_prs_reviewed: 100
 allowed_folders:
   - "sf_core/src"
@@ -12,7 +12,7 @@ allowed_folders:
   - "proto_generator/src"
 excluded_folders:
   - "sf_core/src/bin"
-llm_model: "claude-sonnet-4-5"
+llm_model: "claude-sonnet-4-6"
 allowed_file_extensions:
   - ".rs"
 rules:

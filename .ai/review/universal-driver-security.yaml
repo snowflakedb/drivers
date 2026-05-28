@@ -7,7 +7,7 @@ allowed_folders:
   - "odbc/src"
 excluded_folders:
   - "sf_core/src/bin"
-llm_model: "claude-sonnet-4-5"
+llm_model: "claude-sonnet-4-6"
 allowed_file_extensions:
   - ".rs"
   - ".toml"
