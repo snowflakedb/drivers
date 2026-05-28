@@ -50,7 +50,7 @@ def hasPrLabel(String labelName) {
     try {
         def labels = ''
         withCredentials([usernamePassword(
-            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            credentialsId: 'jenkins-snowflake-github-app-3',
             usernameVariable: 'GITHUB_APP',
             passwordVariable: 'GITHUB_TOKEN'
         )]) {
@@ -60,7 +60,7 @@ def hasPrLabel(String labelName) {
                     curl -sf \
                         -H "Authorization: token \${GITHUB_TOKEN}" \
                         -H "Accept: application/vnd.github.v3+json" \
-                        "https://api.github.com/repos/snowflakedb/universal-driver/issues/${env.CHANGE_ID}/labels" \
+                        "https://api.github.com/repos/snowflake-eng/universal-driver/issues/${env.CHANGE_ID}/labels" \
                     | python3 -c "import sys,json; print('\\n'.join(l['name'] for l in json.load(sys.stdin)))"
                 """
             ).trim()
@@ -91,7 +91,7 @@ def postRegressionStatus(String conclusion, String description) {
             script: "git rev-parse refs/remotes/origin/PR-${env.CHANGE_ID}"
         ).trim()
         withCredentials([usernamePassword(
-            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            credentialsId: 'jenkins-snowflake-github-app-3',
             usernameVariable: 'GITHUB_APP',
             passwordVariable: 'GITHUB_TOKEN'
         )]) {
@@ -100,7 +100,7 @@ def postRegressionStatus(String conclusion, String description) {
                     -X POST \
                     -H "Authorization: token \${GITHUB_TOKEN}" \
                     -H "Accept: application/vnd.github.v3+json" \
-                    "https://api.github.com/repos/snowflakedb/universal-driver/statuses/${prHeadSha}" \
+                    "https://api.github.com/repos/snowflake-eng/universal-driver/statuses/${prHeadSha}" \
                     -d '{"state":"${state}","context":"${REGRESSION_STATUS_CONTEXT}","description":"${description}"}'
             """
         }
