@@ -50,7 +50,7 @@ def hasPrLabel(String labelName) {
     try {
         def labels = ''
         withCredentials([usernamePassword(
-            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            credentialsId: 'jenkins-snowflake-github-app-3',
             usernameVariable: 'GITHUB_APP',
             passwordVariable: 'GITHUB_TOKEN'
         )]) {
@@ -91,7 +91,7 @@ def postRegressionStatus(String conclusion, String description) {
             script: "git rev-parse refs/remotes/origin/PR-${env.CHANGE_ID}"
         ).trim()
         withCredentials([usernamePassword(
-            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            credentialsId: 'jenkins-snowflake-github-app-3',
             usernameVariable: 'GITHUB_APP',
             passwordVariable: 'GITHUB_TOKEN'
         )]) {
