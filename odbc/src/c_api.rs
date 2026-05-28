@@ -156,7 +156,7 @@ pub unsafe extern "system" fn SQLCloseCursor(statement_handle: sql::Handle) -> s
 /// This function is called by the ODBC driver manager.
 ///
 /// ODBC allows SQLCancel to be called from a different thread.
-/// Uses a two-path design via `Statement::active_cancel`:
+/// Uses a two-path design via `Statement::cancel_token`:
 /// - Path 1 (RPC in flight): cancels the token without touching the inner
 ///   Mutex. The executing thread observes cancellation via `tokio::select!`
 ///   and returns HY008.

@@ -2,13 +2,13 @@ use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, ConcatNullValueSnafu, CursorAlreadyOpenSnafu,
-    DaeRequiredSnafu, DisconnectedSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
+    ArrowArrayStreamReaderCreationSnafu, AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu,
+    CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu, InvalidAttributeValueSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
     InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
     NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu, OperationCanceledSnafu,
-    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, UnsupportedAttributeSnafu,
-    UnsupportedFeatureSnafu,
+    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, StillExecutingSnafu,
+    UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::query_type::{QueryType, ResultKind};
 use crate::api::runtime::global;
@@ -69,89 +69,113 @@ pub fn exec_direct<E: OdbcEncoding>(
 }
 
 fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
+    use crate::api::ExecDirectOutcome;
+
     let guard = stmt_from_handle(statement_handle)?;
     let dbc = guard.conn()?;
     let mut conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
-    tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
-    // Validate connection before committing to NeedData state.
-    let conn_handle = match &conn.state {
-        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => {
-            tracing::error!("exec_direct: connection is disconnected");
-            return DisconnectedSnafu.fail();
-        }
-    };
-
-    if inner.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
-    }
-
-    if inner.state.as_ref().has_open_cursor() {
-        tracing::error!("exec_direct: cursor is already open");
-        return CursorAlreadyOpenSnafu.fail();
-    }
-
-    inner.prepared_param_count = None;
-
-    let dae_params = find_dae_params(&inner.apd, None);
-    if !dae_params.is_empty() {
-        let pushed_data = dae_params
-            .iter()
-            .map(|&p| (p, ParamValue::Pending))
-            .collect();
-        let dae_context = DaeContext {
-            dae_params,
-            current_index: 0,
-            pushed_data,
-            deferred_query: Some(statement_text.to_string()),
+    let outcome = if let StatementState::AsyncExecDirect { .. } = inner.state.as_ref() {
+        // === ASYNC POLL PATH ===
+        let state = inner.state.take();
+        let StatementState::AsyncExecDirect { join_handle } = state else {
+            unreachable!()
         };
-        inner.state.set(StatementState::AwaitingParamData {
-            dae_context: Box::new(dae_context),
-            origin: ExecutionOrigin::Direct,
-        });
-        return DaeRequiredSnafu.fail();
-    }
+        if !join_handle.is_finished() {
+            inner
+                .state
+                .set(StatementState::AsyncExecDirect { join_handle });
+            return StillExecutingSnafu.fail();
+        }
+        match complete_async_poll(&guard.cancel_token, &mut inner, join_handle) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                tracing::error!("exec_direct: async poll failed: {e}");
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                return Err(e);
+            }
+        }
+    } else {
+        // === SYNC / SPAWN PATH ===
+        tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
-    let (bindings, _json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
-    let stmt_handle = guard.stmt_handle;
-    let query_timeout = inner.query_timeout;
-    let effective_query = statement_text.to_string();
-    let multi_statement_count = inner.multi_statement_count;
+        let conn_handle = match &conn.state {
+            ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+            ConnectionState::Disconnected => {
+                tracing::error!("exec_direct: connection is disconnected");
+                return DisconnectedSnafu.fail();
+            }
+        };
 
-    let token = CancellationToken::new();
-    *guard.active_cancel.lock() = Some(token.clone());
+        if inner.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
 
-    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
-            result = async {
-                if multi_statement_count >= 0 {
-                    let mut options = std::collections::HashMap::new();
-                    options.insert(
-                        "multi_statement_count".to_string(),
-                        ConfigSetting {
-                            value: Some(config_setting::Value::IntValue(
-                                multi_statement_count as i64,
-                            )),
-                        },
-                    );
-                    c.statement_set_options(StatementSetOptionsRequest {
+        if inner.state.as_ref().has_open_cursor() {
+            tracing::error!("exec_direct: cursor is already open");
+            return CursorAlreadyOpenSnafu.fail();
+        }
+
+        inner.prepared_param_count = None;
+
+        let dae_params = find_dae_params(&inner.apd, None);
+        if !dae_params.is_empty() {
+            let pushed_data = dae_params
+                .iter()
+                .map(|&p| (p, ParamValue::Pending))
+                .collect();
+            let dae_context = DaeContext {
+                dae_params,
+                current_index: 0,
+                pushed_data,
+                deferred_query: Some(statement_text.to_string()),
+            };
+            inner.state.set(StatementState::AwaitingParamData {
+                dae_context: Box::new(dae_context),
+                origin: ExecutionOrigin::Direct,
+            });
+            return DaeRequiredSnafu.fail();
+        }
+
+        let (bindings, json_owner) = apply_parameter_bindings(&inner.apd, &inner.ipd, false, None)?;
+        let stmt_handle = guard.stmt_handle;
+        let query_timeout = inner.query_timeout;
+        let effective_query = statement_text.to_string();
+        let multi_statement_count = inner.multi_statement_count;
+        let async_enabled = inner.async_enabled;
+
+        match run_cancellable(&guard, async_enabled, |client| async move {
+            let _json_owner = json_owner;
+            if multi_statement_count >= 0 {
+                let mut options = std::collections::HashMap::new();
+                options.insert(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting {
+                        value: Some(config_setting::Value::IntValue(
+                            multi_statement_count as i64,
+                        )),
+                    },
+                );
+                client
+                    .statement_set_options(StatementSetOptionsRequest {
                         stmt_handle: Some(stmt_handle),
                         options,
                     })
                     .await?;
-                }
+            }
 
-                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+            client
+                .statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     query: effective_query,
                 })
                 .await?;
 
-                c.statement_execute_query(StatementExecuteQueryRequest {
+            let response = client
+                .statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings,
                     timeout_seconds: if query_timeout > 0 {
@@ -160,31 +184,57 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                         None
                     },
                 })
-                .await
-            } => result.map_err(Into::into),
-        }
-    });
-
-    *guard.active_cancel.lock() = None;
-
-    tracing::info!("exec_direct: response={:?}", response);
-    let response = match response {
-        Ok(r) => r,
-        Err(e) => {
-            if let Some(qid) = e.query_id() {
-                inner.last_query_id = Some(qid.to_owned());
+                .await?;
+            Ok(ExecDirectOutcome {
+                response,
+                conn_handle,
+            })
+        }) {
+            Ok(Execution::Completed(outcome)) => outcome,
+            Ok(Execution::Spawned(join_handle)) => {
+                inner
+                    .state
+                    .set(StatementState::AsyncExecDirect { join_handle });
+                return StillExecutingSnafu.fail();
             }
-            return Err(e);
+            Err(e) => {
+                tracing::error!("exec_direct: execution failed: {e}");
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                return Err(e);
+            }
         }
     };
 
-    update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
-    apply_execute_response(&mut inner, conn_handle, response, ExecutionOrigin::Direct)?;
-    inner.rows_returned = 0;
+    // === POST-PROCESSING (shared by poll and sync paths) ===
+    finalize_execute_response(
+        &mut conn,
+        &mut inner,
+        outcome.conn_handle,
+        outcome.response,
+        ExecutionOrigin::Direct,
+    )?;
     Ok(())
 }
 
 use crate::conversion::NumericSettings;
+
+/// Common finalization after a successful execution (ExecDirect, Execute).
+/// Refreshes connection numeric settings from the server, applies the
+/// execution response to statement state, and resets the row counter.
+fn finalize_execute_response(
+    conn: &mut crate::api::Connection,
+    inner: &mut StatementInner,
+    conn_handle: ConnectionHandle,
+    response: ExecuteQueryResponse,
+    origin: ExecutionOrigin,
+) -> OdbcResult<()> {
+    update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
+    apply_execute_response(inner, conn_handle, response, origin)?;
+    inner.rows_returned = 0;
+    Ok(())
+}
 
 fn update_numeric_settings(
     conn_handle: &ConnectionHandle,
@@ -388,6 +438,8 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
 }
 
 fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
+    use crate::api::PrepareOutcome;
+
     if statement_handle.is_null() {
         return InvalidHandleSnafu.fail();
     }
@@ -398,188 +450,250 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     let guard = stmt_from_handle(statement_handle)?;
     let dbc = guard.conn()?;
     let conn = dbc.connection.lock();
-    let _conn_handle = match &conn.state {
-        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
-        ConnectionState::Disconnected => {
-            tracing::error!("prepare: connection is disconnected");
-            return DisconnectedSnafu.fail();
-        }
-    };
     let mut inner = guard.inner.lock();
 
-    if inner.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
-    }
+    let outcome = if let StatementState::AsyncPrepare { .. } = inner.state.as_ref() {
+        // === ASYNC POLL PATH ===
+        let state = inner.state.take();
+        let StatementState::AsyncPrepare { join_handle } = state else {
+            unreachable!()
+        };
+        if !join_handle.is_finished() {
+            inner
+                .state
+                .set(StatementState::AsyncPrepare { join_handle });
+            return StillExecutingSnafu.fail();
+        }
+        complete_async_poll(&guard.cancel_token, &mut inner, join_handle)?
+    } else {
+        // === SYNC / SPAWN PATH ===
+        let _conn_handle = match &conn.state {
+            ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+            ConnectionState::Disconnected => {
+                tracing::error!("prepare: connection is disconnected");
+                return DisconnectedSnafu.fail();
+            }
+        };
 
-    if inner.state.as_ref().has_open_cursor() {
-        tracing::error!("prepare: cursor is already open");
-        return CursorAlreadyOpenSnafu.fail();
-    }
+        if inner.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
 
-    tracing::debug!("prepare: query = {query}");
+        if inner.state.as_ref().has_open_cursor() {
+            tracing::error!("prepare: cursor is already open");
+            return CursorAlreadyOpenSnafu.fail();
+        }
 
-    let stmt_handle = guard.stmt_handle;
+        tracing::debug!("prepare: query = {query}");
 
-    let token = CancellationToken::new();
-    *guard.active_cancel.lock() = Some(token.clone());
+        let stmt_handle = guard.stmt_handle;
+        let async_enabled = inner.async_enabled;
 
-    let prepare_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
-            result = async {
-                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+        let query_owned = query.to_string();
+
+        let execution_outcome = run_cancellable(&guard, async_enabled, |client| async move {
+            client
+                .statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
-                    query: query.to_string(),
+                    query: query_owned,
                 })
                 .await?;
 
-                c.statement_prepare(StatementPrepareRequest {
+            let prepare_response = client
+                .statement_prepare(StatementPrepareRequest {
                     stmt_handle: Some(stmt_handle),
                 })
-                .await
-            } => result.map_err(Into::into),
-        }
-    });
+                .await?;
 
-    *guard.active_cancel.lock() = None;
-    let prepare_result = prepare_result?;
-    let result = prepare_result.result.required("Result is required")?;
-    let stream_ptr = result.stream.required("Stream is required")?;
-    let reader = reader_from_protobuf_stream(stream_ptr)?;
-    let schema = reader.schema();
+            let result = prepare_response.result.required("Result is required")?;
+            let stream_ptr = result.stream.required("Stream is required")?;
+            let reader = reader_from_protobuf_stream(stream_ptr)?;
+            let schema = reader.schema();
+
+            if result.number_of_binds < 0 {
+                tracing::warn!(
+                    "prepare: server reported negative bind count ({}), treating as 0",
+                    result.number_of_binds
+                );
+            }
+            let raw_bind_count = result.number_of_binds.max(0);
+            let param_count = u16::try_from(raw_bind_count).map_err(|_| {
+                crate::api::error::CountFieldIncorrectSnafu {
+                    reason: format!(
+                        "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
+                        u16::MAX
+                    ),
+                }
+                .build()
+            })?;
+
+            Ok(PrepareOutcome {
+                number_of_binds: param_count,
+                schema,
+            })
+        })?;
+        match execution_outcome {
+            Execution::Completed(outcome) => outcome,
+            Execution::Spawned(join_handle) => {
+                inner
+                    .state
+                    .set(StatementState::AsyncPrepare { join_handle });
+                return StillExecutingSnafu.fail();
+            }
+        }
+    };
+
+    apply_prepare_outcome(&mut inner, &conn, outcome);
+    Ok(())
+}
+
+fn apply_prepare_outcome(
+    inner: &mut StatementInner,
+    conn: &crate::api::Connection,
+    outcome: crate::api::PrepareOutcome,
+) {
+    let crate::api::PrepareOutcome {
+        number_of_binds,
+        schema,
+    } = outcome;
     inner.ird.desc_count = schema.fields().len() as sql::SmallInt;
-
-    if result.number_of_binds < 0 {
-        tracing::warn!(
-            "prepare: server reported negative bind count ({}), treating as 0",
-            result.number_of_binds
-        );
-    }
-    let raw_bind_count = result.number_of_binds.max(0);
-    let param_count = u16::try_from(raw_bind_count).map_err(|_| {
-        crate::api::error::CountFieldIncorrectSnafu {
-            reason: format!(
-                "server reported {raw_bind_count} parameter markers, exceeds maximum {}",
-                u16::MAX
-            ),
-        }
-        .build()
-    })?;
-    inner.prepared_param_count = Some(param_count);
+    inner.prepared_param_count = Some(number_of_binds);
     let max_varchar = conn.numeric_settings.max_varchar_size;
-    inner.ipd.records.retain(|&k, _| k <= param_count);
-    for i in 1..=param_count {
+    inner.ipd.records.retain(|&k, _| k <= number_of_binds);
+    for i in 1..=number_of_binds {
         inner
             .ipd
             .records
             .entry(i)
             .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
     }
-    tracing::info!("prepare: auto-IPD populated {param_count} parameter markers (from server)");
-
+    tracing::info!("prepare: auto-IPD populated {number_of_binds} parameter markers (from server)");
     inner.state.set(StatementState::Prepared { schema });
-    tracing::info!("prepare: Successfully prepared statement");
-    Ok(())
 }
 
 /// Execute a prepared statement
 pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
+    use crate::api::ExecuteOutcome;
+
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let guard = stmt_from_handle(statement_handle)?;
+    let dbc = guard.conn()?;
+    let mut conn = dbc.connection.lock();
     let mut inner = guard.inner.lock();
 
-    if inner.state.as_ref().is_need_data() {
-        return InvalidDuringDaeSnafu.fail();
-    }
-
-    if inner.state.as_ref().has_open_cursor() {
-        tracing::error!("execute: cursor is already open");
-        return CursorAlreadyOpenSnafu.fail();
-    }
-
-    let origin = match inner.state.as_ref() {
-        StatementState::Prepared { schema } => ExecutionOrigin::Prepared {
-            schema: schema.clone(),
-        },
-        StatementState::DdlExecuted { origin, .. } | StatementState::DmlExecuted { origin, .. } => {
-            origin.clone()
-        }
-        _ => ExecutionOrigin::Direct,
-    };
-    let is_prepared = origin.is_prepared();
-
-    let dbc = guard.conn()?;
-    if matches!(dbc.connection.lock().state, ConnectionState::Disconnected) {
-        tracing::error!("execute: connection is disconnected");
-        return DisconnectedSnafu.fail();
-    }
-
-    let dae_params = find_dae_params(&inner.apd, inner.prepared_param_count);
-    if !dae_params.is_empty() {
-        let pushed_data = dae_params
-            .iter()
-            .map(|&p| (p, ParamValue::Pending))
-            .collect();
-        let dae_context = DaeContext {
-            dae_params,
-            current_index: 0,
-            pushed_data,
-            deferred_query: None,
-        };
-        inner.state.set(StatementState::AwaitingParamData {
-            dae_context: Box::new(dae_context),
+    let (outcome, origin) = if let StatementState::AsyncExecute { .. } = inner.state.as_ref() {
+        // === ASYNC POLL PATH ===
+        let state = inner.state.take();
+        let StatementState::AsyncExecute {
+            join_handle,
             origin,
-        });
-        return DaeRequiredSnafu.fail();
-    }
+        } = state
+        else {
+            unreachable!()
+        };
+        if !join_handle.is_finished() {
+            inner.state.set(StatementState::AsyncExecute {
+                join_handle,
+                origin,
+            });
+            return StillExecutingSnafu.fail();
+        }
+        let outcome = match complete_async_poll(&guard.cancel_token, &mut inner, join_handle) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                tracing::error!("execute: async poll failed: {e}");
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                return Err(e);
+            }
+        };
+        (outcome, origin)
+    } else {
+        // === SYNC / SPAWN PATH ===
+        if inner.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
 
-    let conn_handle = {
-        let connection = dbc.connection.lock();
-        match &connection.state {
+        if inner.state.as_ref().has_open_cursor() {
+            tracing::error!("execute: cursor is already open");
+            return CursorAlreadyOpenSnafu.fail();
+        }
+
+        let origin = match inner.state.as_ref() {
+            StatementState::Prepared { schema } => ExecutionOrigin::Prepared {
+                schema: schema.clone(),
+            },
+            StatementState::DdlExecuted { origin, .. }
+            | StatementState::DmlExecuted { origin, .. } => origin.clone(),
+            _ => ExecutionOrigin::Direct,
+        };
+        let is_prepared = origin.is_prepared();
+
+        if matches!(conn.state, ConnectionState::Disconnected) {
+            tracing::error!("execute: connection is disconnected");
+            return DisconnectedSnafu.fail();
+        }
+
+        let dae_params = find_dae_params(&inner.apd, inner.prepared_param_count);
+        if !dae_params.is_empty() {
+            let pushed_data = dae_params
+                .iter()
+                .map(|&p| (p, ParamValue::Pending))
+                .collect();
+            let dae_context = DaeContext {
+                dae_params,
+                current_index: 0,
+                pushed_data,
+                deferred_query: None,
+            };
+            inner.state.set(StatementState::AwaitingParamData {
+                dae_context: Box::new(dae_context),
+                origin,
+            });
+            return DaeRequiredSnafu.fail();
+        }
+
+        let conn_handle = match &conn.state {
             ConnectionState::Connected { conn_handle, .. } => *conn_handle,
             ConnectionState::Disconnected => {
                 tracing::error!("execute: connection is disconnected");
                 return DisconnectedSnafu.fail();
             }
-        }
-    };
-    let (bindings, _json_owner) = apply_parameter_bindings(
-        &inner.apd,
-        &inner.ipd,
-        is_prepared,
-        inner.prepared_param_count,
-    )?;
+        };
+        let (bindings, json_owner) = apply_parameter_bindings(
+            &inner.apd,
+            &inner.ipd,
+            is_prepared,
+            inner.prepared_param_count,
+        )?;
 
-    let stmt_handle = guard.stmt_handle;
-    let query_timeout = inner.query_timeout;
-    let multi_statement_count = inner.multi_statement_count;
+        let stmt_handle = guard.stmt_handle;
+        let query_timeout = inner.query_timeout;
+        let multi_statement_count = inner.multi_statement_count;
+        let async_enabled = inner.async_enabled;
 
-    let token = CancellationToken::new();
-    let _cancel_guard = ActiveCancelGuard::arm(&guard.active_cancel, token.clone());
-
-    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-        tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
-            result = async {
-                if multi_statement_count >= 0 {
-                    let mut options = std::collections::HashMap::new();
-                    options.insert(
-                        "multi_statement_count".to_string(),
-                        ConfigSetting {
-                            value: Some(config_setting::Value::IntValue(
-                                multi_statement_count as i64,
-                            )),
-                        },
-                    );
-                    c.statement_set_options(StatementSetOptionsRequest {
+        let outcome = match run_cancellable(&guard, async_enabled, |client| async move {
+            let _json_owner = json_owner;
+            if multi_statement_count >= 0 {
+                let mut options = std::collections::HashMap::new();
+                options.insert(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting {
+                        value: Some(config_setting::Value::IntValue(
+                            multi_statement_count as i64,
+                        )),
+                    },
+                );
+                client
+                    .statement_set_options(StatementSetOptionsRequest {
                         stmt_handle: Some(stmt_handle),
                         options,
                     })
                     .await?;
-                }
-                c.statement_execute_query(StatementExecuteQueryRequest {
+            }
+            let response = client
+                .statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings,
                     timeout_seconds: if query_timeout > 0 {
@@ -588,27 +702,40 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                         None
                     },
                 })
-                .await
-            } => result.map_err(Into::into),
-        }
-    });
-
-    let response = match response {
-        Ok(r) => r,
-        Err(e) => {
-            if let Some(qid) = e.query_id() {
-                inner.last_query_id = Some(qid.to_owned());
+                .await?;
+            Ok(ExecuteOutcome {
+                response,
+                conn_handle,
+            })
+        }) {
+            Ok(Execution::Completed(outcome)) => outcome,
+            Ok(Execution::Spawned(join_handle)) => {
+                inner.state.set(StatementState::AsyncExecute {
+                    join_handle,
+                    origin,
+                });
+                return StillExecutingSnafu.fail();
             }
-            return Err(e);
-        }
+            Err(e) => {
+                tracing::error!("execute: execution failed: {e}");
+                if let Some(qid) = e.query_id() {
+                    inner.last_query_id = Some(qid.to_owned());
+                }
+                return Err(e);
+            }
+        };
+        (outcome, origin)
     };
 
+    // === POST-PROCESSING (shared by poll and sync paths) ===
     tracing::info!("execute: Successfully executed statement");
-    let mut settings = dbc.connection.lock().numeric_settings;
-    update_numeric_settings(&conn_handle, &mut settings)?;
-    dbc.connection.lock().numeric_settings = settings;
-    apply_execute_response(&mut inner, conn_handle, response, origin)?;
-    inner.rows_returned = 0;
+    finalize_execute_response(
+        &mut conn,
+        &mut inner,
+        outcome.conn_handle,
+        outcome.response,
+        origin,
+    )?;
     Ok(())
 }
 
@@ -1500,6 +1627,27 @@ pub fn set_stmt_attr(
             inner.multi_statement_count = val as i16;
             Ok(())
         }
+        StmtAttr::AsyncEnable => {
+            let val = value_ptr as sql::ULen;
+            if inner.state.as_ref().is_async_executing() {
+                return AttributeCannotBeSetNowSnafu { attribute }.fail();
+            }
+            match val {
+                0 => {
+                    inner.async_enabled = false;
+                    Ok(())
+                }
+                1 => {
+                    inner.async_enabled = true;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             UnsupportedAttributeSnafu { attribute }.fail()
@@ -1751,6 +1899,16 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             Ok(())
         }
+        StmtAttr::AsyncEnable => {
+            let val: sql::ULen = if inner.async_enabled { 1 } else { 0 };
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = val };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
         _ => {
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
@@ -1843,7 +2001,7 @@ pub fn param_data(
                     &mut inner,
                     &mut conn,
                     guard.stmt_handle,
-                    &guard.active_cancel,
+                    &guard.cancel_token,
                     *dae_context,
                     origin,
                     restored,
@@ -2037,13 +2195,13 @@ fn accumulate_put_data(
     Ok(())
 }
 
-/// Clears `active_cancel` when dropped so every exit path releases the
-/// in-flight cancellation slot.
-struct ActiveCancelGuard<'a> {
+/// Sets `cancel_token` on creation and clears it on drop, so every exit
+/// path (including early returns and panics) releases the token.
+struct CancelTokenGuard<'a> {
     slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
 }
 
-impl<'a> ActiveCancelGuard<'a> {
+impl<'a> CancelTokenGuard<'a> {
     fn arm(
         slot: &'a parking_lot::Mutex<Option<CancellationToken>>,
         token: CancellationToken,
@@ -2053,10 +2211,102 @@ impl<'a> ActiveCancelGuard<'a> {
     }
 }
 
-impl Drop for ActiveCancelGuard<'_> {
+impl Drop for CancelTokenGuard<'_> {
     fn drop(&mut self) {
         *self.slot.lock() = None;
     }
+}
+
+/// Awaits a finished `JoinHandle` and translates panics into internal errors.
+fn poll_join_handle<T>(join_handle: tokio::task::JoinHandle<OdbcResult<T>>) -> OdbcResult<T> {
+    let outcome = global()
+        .context(OdbcRuntimeSnafu)?
+        .block_on(async |_c| join_handle.await);
+    match outcome {
+        Ok(Ok(o)) => Ok(o),
+        Ok(Err(e)) => Err(e),
+        Err(_join_err) => crate::api::error::InternalSnafu {
+            message: "async task panicked".to_string(),
+        }
+        .fail(),
+    }
+}
+
+/// Completes an in-flight async operation: clears the cancel token, awaits
+/// the join handle, and sets state to `Error` on failure.
+fn complete_async_poll<T>(
+    cancel_token: &parking_lot::Mutex<Option<CancellationToken>>,
+    inner: &mut StatementInner,
+    join_handle: tokio::task::JoinHandle<OdbcResult<T>>,
+) -> OdbcResult<T> {
+    *cancel_token.lock() = None;
+    match poll_join_handle(join_handle) {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            inner.state.set(StatementState::Error);
+            Err(e)
+        }
+    }
+}
+
+/// Result of `run_cancellable`: either the operation completed synchronously,
+/// or a task was spawned and the caller must store the join handle.
+enum Execution<T> {
+    Completed(T),
+    Spawned(tokio::task::JoinHandle<OdbcResult<T>>),
+}
+
+/// Executes an async operation either synchronously (blocking) or by spawning
+/// it as a background task.
+///
+/// - **Sync** (`async_enabled = false`): arms a `CancelTokenGuard`, blocks on
+///   the future, and returns `Execution::Completed(result)`.
+/// - **Async** (`async_enabled = true`): spawns the future, sets
+///   `cancel_token`, and returns `Execution::Spawned(join_handle)`. The
+///   caller is responsible for storing the handle in the appropriate
+///   `StatementState` variant and returning `StillExecuting`.
+///
+/// In both modes, a `CancellationToken` is wired into `tokio::select!` so
+/// that `SQLCancel` can abort the operation.
+fn run_cancellable<T, F>(
+    stmt: &crate::api::Statement,
+    async_enabled: bool,
+    f: impl FnOnce(
+        std::sync::Arc<sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient>,
+    ) -> F,
+) -> OdbcResult<Execution<T>>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = OdbcResult<T>> + Send + 'static,
+{
+    let token = CancellationToken::new();
+    let g = global().context(OdbcRuntimeSnafu)?;
+    let client = g.client();
+
+    if async_enabled {
+        let token_clone = token.clone();
+        let future = f(client);
+        let join_handle = g.spawn(async move {
+            tokio::select! {
+                biased;
+                _ = token_clone.cancelled() => Err(OperationCanceledSnafu.build()),
+                result = future => result,
+            }
+        });
+        *stmt.cancel_token.lock() = Some(token);
+        return Ok(Execution::Spawned(join_handle));
+    }
+
+    let _cancel_guard = CancelTokenGuard::arm(&stmt.cancel_token, token.clone());
+    let future = f(client);
+    let result = g.block_on(async move |_c| {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(OperationCanceledSnafu.build()),
+            result = future => result,
+        }
+    })?;
+    Ok(Execution::Completed(result))
 }
 
 /// Overwrite a DAE parameter's APD record to represent SQL NULL.
@@ -2081,7 +2331,7 @@ fn execute_dae(
     inner: &mut StatementInner,
     conn: &mut Connection,
     stmt_handle: StatementHandle,
-    active_cancel: &parking_lot::Mutex<Option<CancellationToken>>,
+    cancel_token_slot: &parking_lot::Mutex<Option<CancellationToken>>,
     dae_context: DaeContext,
     origin: ExecutionOrigin,
     restored: StatementState,
@@ -2157,7 +2407,7 @@ fn execute_dae(
     let deferred_query = dae_context.deferred_query;
 
     let token = CancellationToken::new();
-    let _cancel_guard = ActiveCancelGuard::arm(active_cancel, token.clone());
+    let _cancel_guard = CancelTokenGuard::arm(cancel_token_slot, token.clone());
 
     let globals = match global().context(OdbcRuntimeSnafu) {
         Err(e) => {
@@ -2215,44 +2465,31 @@ fn execute_dae(
 
 /// Cancel processing on a statement (SQLCancel).
 ///
-/// Two-path design for safe cross-thread cancellation:
-/// - Path 1: If an RPC is in flight (`active_cancel` is `Some`), cancel the
-///   token. The executing thread observes this via `tokio::select!`. Never
-///   touches the inner Mutex.
-/// - Path 2: If no RPC is in flight (`active_cancel` is `None`), check for
-///   NeedData state and restore it. This is a single-threaded scenario.
+/// Checks `Statement::cancel_token` first to signal any in-flight
+/// sync or async operation without touching `inner`. Falls back to
+/// restoring NeedData state (single-threaded DAE scenarios).
 ///
 /// Per ODBC 3.5 spec, cross-thread `SQLCancel` does not clear or post
 /// diagnostic records.
 pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("cancel: statement_handle={:?}", statement_handle);
-
-    // TODO(SNOW-3258918): Cancel async execution.
-    // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
-
-    // TODO(SNOW-3258922): Cancel execution on another thread.
-    // Blocked by: no server-side cancel RPC. When implemented,
-    // cancelling the token resolves the cancelled() future observed
-    // by the executing thread's tokio::select!, aborting the in-flight RPC.
-
     let guard = stmt_from_handle(statement_handle)?;
 
-    // Path 1: cancel in-flight RPC without touching inner.
+    // Fast path: cancel any in-flight execution via the token.
     {
-        let active = guard.active_cancel.lock();
-        if let Some(token) = active.as_ref() {
-            token.cancel();
+        let token = guard.cancel_token.lock();
+        if let Some(ref t) = *token {
+            t.cancel();
             return Ok(());
         }
     }
 
-    // Path 2: no RPC in flight — check NeedData state (single-threaded).
+    // No execution in flight — check NeedData state (single-threaded).
     let mut inner = guard.inner.lock();
     match inner.state.as_ref() {
         StatementState::AwaitingParamData { origin, .. }
         | StatementState::AwaitingPutData { origin, .. }
         | StatementState::PutDataCalled { origin, .. } => {
-            // TODO(SNOW-3258919): Full cancel testing during NeedData.
             let restored = origin.restore_state();
             inner.state.set(restored);
         }
@@ -2327,23 +2564,22 @@ mod tests {
     use crate::api::{ApdDescriptor, IpdDescriptor, SqlState};
 
     #[test]
-    fn active_cancel_guard_clears_slot_on_drop() {
+    fn cancel_token_guard_clears_slot_on_drop() {
         let slot = parking_lot::Mutex::new(None);
         {
             let token = CancellationToken::new();
-            let _guard = ActiveCancelGuard::arm(&slot, token);
+            let _guard = CancelTokenGuard::arm(&slot, token);
             assert!(slot.lock().is_some());
         }
         assert!(slot.lock().is_none());
     }
 
-    /// Mirrors `execute` / `execute_dae`: arm `active_cancel`, fail before `block_on`, slot must clear.
     #[test]
-    fn active_cancel_cleared_after_runtime_unavailable() {
+    fn cancel_token_guard_cleared_after_runtime_unavailable() {
         let slot = parking_lot::Mutex::new(None);
         {
             let token = CancellationToken::new();
-            let _guard = ActiveCancelGuard::arm(&slot, token);
+            let _guard = CancelTokenGuard::arm(&slot, token);
             assert!(global().context(OdbcRuntimeSnafu).is_err());
         }
         assert!(slot.lock().is_none());

@@ -495,8 +495,22 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Asynchronous operation still executing"))]
+    StillExecuting {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Attempt to concatenate a null value"))]
     ConcatNullValue {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "Function sequence error: cannot call this function while async operation is in progress"
+    ))]
+    AsyncInProgress {
         #[snafu(implicit)]
         location: Location,
     },
@@ -623,6 +637,8 @@ impl OdbcError {
             OdbcError::InvalidDuringDae { .. } => ErrorSource::ApiMisuse,
             OdbcError::NonCharBinarySentInPieces { .. } => ErrorSource::ApiMisuse,
             OdbcError::ConcatNullValue { .. } => ErrorSource::ApiMisuse,
+            OdbcError::StillExecuting { .. } => ErrorSource::ApiMisuse,
+            OdbcError::AsyncInProgress { .. } => ErrorSource::ApiMisuse,
         }
     }
 
@@ -892,6 +908,8 @@ impl OdbcError {
                 SqlState::NonCharacterAndNonBinaryDataSentInPieces
             }
             OdbcError::ConcatNullValue { .. } => SqlState::AttemptToConcatenateNullValue,
+            OdbcError::StillExecuting { .. } => SqlState::GeneralError,
+            OdbcError::AsyncInProgress { .. } => SqlState::FunctionSequenceError,
         }
     }
 

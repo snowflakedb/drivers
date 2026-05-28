@@ -45,6 +45,10 @@ pub fn num_result_cols(
     let guard = stmt_from_handle(statement_handle)?;
     let inner = guard.inner.lock();
 
+    if inner.state.as_ref().is_async_executing() {
+        return crate::api::error::AsyncInProgressSnafu.fail();
+    }
+
     if inner.state.as_ref().is_need_data() {
         return crate::api::error::InvalidDuringDaeSnafu.fail();
     }
