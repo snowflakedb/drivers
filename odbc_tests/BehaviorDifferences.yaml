@@ -812,3 +812,15 @@ behavior_differences:
       SQLCancel on an async statement sends a cancel request to the server, and subsequent polling returns SQL_ERROR with SQLSTATE HY008 ("Operation canceled") once the cancellation is acknowledged.
     impact: |
       Applications that rely on SQLCancel to abort long-running async queries will not get timely cancellation on the old driver. The query may run to completion despite the cancel request.
+
+  59:
+    name: "SQLNumResultCols returns column count after async execute + cursor close"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    old_driver_behavior: |
+      After async SQLPrepare + async SQLExecute + SQLCloseCursor, SQLNumResultCols returns 0. The old driver loses the prepared state metadata after async execution completes and the cursor is closed.
+    new_driver_behavior: |
+      After async SQLPrepare + async SQLExecute + SQLCloseCursor, SQLNumResultCols returns the column count from the prepare phase. The statement correctly transitions back to Prepared state (S3) per the ODBC spec state transition table.
+    impact: |
+      Applications that call SQLNumResultCols after closing a cursor on a prepared statement will get the correct column count on the new driver. This matches the ODBC spec: SQLCloseCursor from S5 should return to S3 (Prepared).

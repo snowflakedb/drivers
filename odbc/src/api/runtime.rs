@@ -66,6 +66,18 @@ impl OdbcGlobals {
     pub fn block_on<T>(&self, f: impl AsyncFnOnce(&DatabaseDriverClient) -> T) -> T {
         self.runtime.block_on(f(&self.client))
     }
+
+    pub fn spawn<F>(&self, f: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime.spawn(f)
+    }
+
+    pub fn client(&self) -> Arc<DatabaseDriverClient> {
+        Arc::clone(&self.client)
+    }
 }
 
 struct GlobalState {

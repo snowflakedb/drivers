@@ -9,7 +9,8 @@ use crate::conversion::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
 use arrow::{array::RecordBatch, datatypes::SchemaRef, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
+    ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, ExecuteQueryResponse,
+    StatementHandle,
 };
 use snafu::ResultExt;
 use std::collections::HashMap;
@@ -179,6 +180,14 @@ pub enum InfoType {
     DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_ASYNC_MODE` (10021) — async mode supported by the driver.
+    AsyncMode = 10021,
+    /// `SQL_MAX_ASYNC_CONCURRENT_STATEMENTS` (10022) — max concurrent async statements.
+    MaxAsyncConcurrentStatements = 10022,
+    /// `SQL_ASYNC_DBC_FUNCTIONS` (10023) — whether the driver supports async on connections.
+    AsyncDbcFunctions = 10023,
+    /// `SQL_ASYNC_NOTIFICATION` (10025) — async notification capability.
+    AsyncNotification = 10025,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -191,6 +200,10 @@ impl TryFrom<u16> for InfoType {
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
+            10021 => Ok(InfoType::AsyncMode),
+            10022 => Ok(InfoType::MaxAsyncConcurrentStatements),
+            10023 => Ok(InfoType::AsyncDbcFunctions),
+            10025 => Ok(InfoType::AsyncNotification),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
                 Err(OdbcError::UnknownInfoType {
@@ -307,6 +320,8 @@ pub enum StmtAttr {
     Noscan = 2,
     /// `SQL_ATTR_MAX_LENGTH` (3) — maximum amount of data returned from character/binary columns.
     MaxLength = 3,
+    /// `SQL_ATTR_ASYNC_ENABLE` (4) — enable/disable asynchronous execution.
+    AsyncEnable = 4,
     /// `SQL_ATTR_ROW_BIND_TYPE` (5) — row-wise vs column-wise binding.
     RowBindType = 5,
     /// `SQL_ATTR_CURSOR_TYPE` (6) — type of cursor.
@@ -360,6 +375,7 @@ impl TryFrom<i32> for StmtAttr {
             1 => Ok(StmtAttr::MaxRows),
             2 => Ok(StmtAttr::Noscan),
             3 => Ok(StmtAttr::MaxLength),
+            4 => Ok(StmtAttr::AsyncEnable),
             5 => Ok(StmtAttr::RowBindType),
             6 => Ok(StmtAttr::CursorType),
             7 => Ok(StmtAttr::Concurrency),
@@ -992,6 +1008,7 @@ impl ToSqlReturn for OdbcResult<()> {
             Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA,
             Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE,
             Err(OdbcError::DaeRequired { .. }) => sql::SqlReturn::NEED_DATA,
+            Err(OdbcError::StillExecuting { .. }) => sql::SqlReturn::STILL_EXECUTING,
             Err(_) => sql::SqlReturn::ERROR,
         }
     }
@@ -1261,6 +1278,19 @@ pub enum StatementState {
         dae_context: Box<DaeContext>,
         origin: ExecutionOrigin,
     },
+    /// Async `SQLExecDirect` spawned; polling for completion.
+    AsyncExecDirect {
+        join_handle: tokio::task::JoinHandle<Result<ExecDirectOutcome, OdbcError>>,
+    },
+    /// Async `SQLPrepare` spawned; polling for completion.
+    AsyncPrepare {
+        join_handle: tokio::task::JoinHandle<Result<PrepareOutcome, OdbcError>>,
+    },
+    /// Async `SQLExecute` spawned; polling for completion.
+    AsyncExecute {
+        join_handle: tokio::task::JoinHandle<Result<ExecuteOutcome, OdbcError>>,
+        origin: ExecutionOrigin,
+    },
     Error,
 }
 
@@ -1282,6 +1312,14 @@ impl StatementState {
             StatementState::AwaitingParamData { .. }
                 | StatementState::AwaitingPutData { .. }
                 | StatementState::PutDataCalled { .. }
+        )
+    }
+
+    /// Returns `true` when an async operation has been spawned and is awaiting poll completion.
+    pub fn is_async_executing(&self) -> bool {
+        matches!(
+            self,
+            Self::AsyncExecDirect { .. } | Self::AsyncPrepare { .. } | Self::AsyncExecute { .. }
         )
     }
 }
@@ -1369,7 +1407,7 @@ impl GetDataState {
 /// Outer Statement handle.
 ///
 /// Most mutable state lives inside `inner: Mutex<StatementInner>`.
-/// `active_cancel` is also mutable (interior mutability via its own Mutex)
+/// `cancel_token` is also mutable (interior mutability via its own Mutex)
 /// to allow zero-contention cross-thread cancellation without locking `inner`.
 /// The `HandleManager` stores `Statement` inside `Arc<RwLock<Option<Statement>>>`,
 /// so the outer fields are accessible through `HandleGuard::deref()` without
@@ -1379,10 +1417,25 @@ pub struct Statement {
     pub conn_id: HandleId,
     pub stmt_handle: StatementHandle,
     pub inner: parking_lot::Mutex<StatementInner>,
-    /// Cancellation token for the currently in-flight RPC, if any.
-    /// `Some(token)` while a cancellable operation is running; `None` otherwise.
+    /// Cancellation token for the currently in-flight operation, if any.
+    /// `Some(token)` while a cancellable operation is running (sync or async); `None` otherwise.
     /// SQLCancel checks this without locking `inner` — zero-contention cross-thread cancel.
-    pub active_cancel: parking_lot::Mutex<Option<CancellationToken>>,
+    pub cancel_token: parking_lot::Mutex<Option<CancellationToken>>,
+}
+
+pub struct ExecDirectOutcome {
+    pub response: ExecuteQueryResponse,
+    pub conn_handle: TConnectionHandle,
+}
+
+pub struct PrepareOutcome {
+    pub number_of_binds: u16,
+    pub schema: SchemaRef,
+}
+
+pub struct ExecuteOutcome {
+    pub response: ExecuteQueryResponse,
+    pub conn_handle: TConnectionHandle,
 }
 
 /// All mutable statement state, protected by `Statement::inner`.
@@ -1397,16 +1450,8 @@ pub struct Statement {
 /// Functions that only mutate `inner` (`SQLBindCol`, `SQLBindParameter`,
 /// `SQLPutData`, `SQLSetStmtAttr`, `SQLFreeStmt`, `SQLNumParams`,
 /// `SQLDescribeParam`, the diagnostic helpers) do not lock `Connection`
-/// at all. `SQLCancel` operates only on `Statement::active_cancel` and
+/// at all. `SQLCancel` operates only on `Statement::cancel_token` and
 /// never touches either mutex.
-///
-/// # Known violators
-///
-/// `SQLExecute` (`execute`) and `SQLMoreResults` (`more_results`) still
-/// acquire `inner` before `Connection`. They must be reordered to match
-/// the rule above before they can safely interleave with a concurrent
-/// thread holding `Connection` — e.g. once `SQL_ATTR_ASYNC_ENABLE` lands
-/// and the same connection can be driven from another thread mid-call.
 pub struct StatementInner {
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1461,6 +1506,8 @@ pub struct StatementInner {
     /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — multi-statement execution count.
     /// -1 = auto-detect (default), 0 = single statement, N > 0 = expect exactly N statements.
     pub multi_statement_count: i16,
+    /// `SQL_ATTR_ASYNC_ENABLE` — whether async polling is enabled (default false).
+    pub async_enabled: bool,
 }
 
 // Safety: StatementInner contains raw pointers (descriptor fields like bind_offset_ptr,
@@ -1503,8 +1550,9 @@ impl Statement {
                 multi_query_ids: Vec::new(),
                 multi_current_idx: 0,
                 multi_statement_count: -1,
+                async_enabled: false,
             }),
-            active_cancel: parking_lot::Mutex::new(None),
+            cancel_token: parking_lot::Mutex::new(None),
         }
     }
 
@@ -1513,12 +1561,9 @@ impl Statement {
     /// Callers should take this guard only when they will (a) lock
     /// `dbc.connection`, (b) read the session `conn_handle` from
     /// `ConnectionState::Connected`, or (c) otherwise dereference connection
-    /// state. Functions that only mutate `Statement::inner` (e.g.
-    /// `SQLBindCol`, `SQLBindParameter`, `SQLPutData`, `SQLSetStmtAttr`,
-    /// `SQLCancel`) do not need this — the stmt-registry read guard returned
-    /// by `stmt_from_handle` already keeps the parent `Dbc` alive for the
-    /// duration of the call, because `cleanup_connection` write-locks every
-    /// child statement before tearing down the `Dbc` slot.
+    /// state. Functions that only mutate `Statement::inner` or
+    /// `Statement::cancel_token` (e.g. `SQLBindCol`, `SQLBindParameter`,
+    /// `SQLPutData`, `SQLSetStmtAttr`, `SQLCancel`) do not need this.
     ///
     /// Returns an error if the parent connection has already been freed.
     pub fn conn(&self) -> OdbcResult<HandleGuard<Dbc>> {

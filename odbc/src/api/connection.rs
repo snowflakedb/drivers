@@ -679,6 +679,11 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     let dbc = conn_from_handle(connection_handle)?;
     tracing::debug!("set_connect_attr: attribute={attribute}");
 
+    const SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE: sql::Integer = 117;
+    if attribute == SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE {
+        return UnknownAttributeSnafu { attribute }.fail();
+    }
+
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
         None if ConnectionAttribute::is_snowflake_custom(attribute) => {
@@ -1247,6 +1252,61 @@ pub fn get_info<E: OdbcEncoding>(
             if !info_value_ptr.is_null() {
                 unsafe {
                     *(info_value_ptr as *mut u32) = extensions.bitmask();
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
+        InfoType::AsyncMode => {
+            let sql_am_statement: u32 = 2;
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = sql_am_statement;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
+        InfoType::MaxAsyncConcurrentStatements => {
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = 0;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
+        InfoType::AsyncDbcFunctions => {
+            let sql_async_dbc_capable: u32 = 1;
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = sql_async_dbc_capable;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
+        InfoType::AsyncNotification => {
+            let sql_async_notification_not_capable: u32 = 0;
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = sql_async_notification_not_capable;
                 }
             }
             if !string_length_ptr.is_null() {

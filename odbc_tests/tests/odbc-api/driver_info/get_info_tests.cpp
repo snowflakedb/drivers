@@ -32,7 +32,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ACTIVE_ENVIRONMENTS", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_DBC_FUNCTIONS", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -46,7 +45,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_DBC_FUNCTIONS", "[
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_MODE", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -60,7 +58,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_MODE", "[odbc-api]
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_NOTIFICATION", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -464,7 +461,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_KEYSET_CURSOR_ATTRIBUTES
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_MAX_ASYNC_CONCURRENT_STATEMENTS",
                  "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 

@@ -258,7 +258,10 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
         // but required for exhaustive match.
         | state @ StatementState::AwaitingParamData { .. }
         | state @ StatementState::AwaitingPutData { .. }
-        | state @ StatementState::PutDataCalled { .. } => {
+        | state @ StatementState::PutDataCalled { .. }
+        | state @ StatementState::AsyncExecDirect { .. }
+        | state @ StatementState::AsyncPrepare { .. }
+        | state @ StatementState::AsyncExecute { .. } => {
             StatementNotExecutedSnafu.fail().with_state(state)
         }
     })
@@ -832,7 +835,10 @@ pub fn get_data(
         // but required for exhaustive match.
         | StatementState::AwaitingParamData { .. }
         | StatementState::AwaitingPutData { .. }
-        | StatementState::PutDataCalled { .. } => {
+        | StatementState::PutDataCalled { .. }
+        | StatementState::AsyncExecDirect { .. }
+        | StatementState::AsyncPrepare { .. }
+        | StatementState::AsyncExecute { .. } => {
             tracing::error!("get_data: data not fetched yet");
             DataNotFetchedSnafu.fail()
         }

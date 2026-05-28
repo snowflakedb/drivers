@@ -290,9 +290,29 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
         sql::HandleType::Stmt => {
             tracing::info!("Freeing stmt: SQLFreeHandle: handle_type={:?}", handle_type);
             let guard = crate::api::stmt_from_handle(handle)?;
-            if guard.inner.lock().state.as_ref().is_need_data() {
+            let mut inner = guard.inner.lock();
+            if inner.state.as_ref().is_need_data() {
                 return crate::api::error::InvalidDuringDaeSnafu.fail();
             }
+            if inner.state.as_ref().is_async_executing() {
+                if let Some(ref t) = *guard.cancel_token.lock() {
+                    t.cancel();
+                }
+                match inner.state.take() {
+                    crate::api::StatementState::AsyncExecDirect { join_handle } => {
+                        join_handle.abort();
+                    }
+                    crate::api::StatementState::AsyncPrepare { join_handle } => {
+                        join_handle.abort();
+                    }
+                    crate::api::StatementState::AsyncExecute { join_handle, .. } => {
+                        join_handle.abort();
+                    }
+                    _ => unreachable!(),
+                }
+                inner.state.set(crate::api::StatementState::Error);
+            }
+            drop(inner);
             drop(guard);
             free_statement(handle)
         }
