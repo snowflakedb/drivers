@@ -13,4 +13,4 @@
 # scripts/pr_review_bot.py for the bot's selection logic. The bot
 # ignores team references on purpose so it does not need the read:org
 # scope.
-*  @snowflakedb/snow-drivers-warsaw
+*  @snowflake-eng/snow-drivers-warsaw
