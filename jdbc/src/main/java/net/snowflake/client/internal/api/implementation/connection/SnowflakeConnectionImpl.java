@@ -30,6 +30,8 @@ import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
+import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
+import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
@@ -38,9 +40,11 @@ import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity.Builder;
@@ -551,12 +555,35 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
 
   @Override
   public QueryStatus getQueryStatus(String queryID) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    ConnectionGetQueryStatusResponse response =
+        coreDriverApi.connectionGetQueryStatus(connectionHandle, queryID);
+    return QueryStatusMapper.fromCoreResponse(response);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Returns a {@link net.snowflake.client.api.resultset.SnowflakeAsyncResultSet} that lazily
+   * polls for query completion and materializes results on first data access. This matches the old
+   * JDBC driver behavior, allowing callers to reconnect and retrieve results for queries submitted
+   * by a previous session.
+   */
+  @Override
+  public ResultSet createResultSet(String queryID) throws SQLException {
+    checkClosed();
+    // This statement is owned exclusively by the async result set and will be closed
+    // when the result set is closed.
+    SnowflakeStatementImpl stmt = (SnowflakeStatementImpl) createStatement();
+    return ResultSetFactory.createAsync(queryID, this, stmt, true);
   }
 
   @Override
-  public ResultSet createResultSet(String queryID) throws SQLException {
-    throw new SQLFeatureNotSupportedException("createResultSet not supported");
+  public InternalResultSet createResultSetFromSfqid(
+      String queryID, SnowflakeStatementImpl statement) throws SQLException {
+    ResultSetResponse rsResponse = coreDriverApi.connectionGetResultSet(connectionHandle, queryID);
+    return ResultSetFactory.create(
+        coreDriverApi, statement, queryID, rsResponse.getResultSetHandle());
   }
 
   @Override

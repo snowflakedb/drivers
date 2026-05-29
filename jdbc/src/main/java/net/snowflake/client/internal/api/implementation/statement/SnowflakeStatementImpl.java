@@ -29,6 +29,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Multi
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteAsyncResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.util.StringUtil;
 
@@ -690,7 +691,21 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public ResultSet executeAsyncQuery(String sql) throws SQLException {
-    throw new SQLFeatureNotSupportedException("executeAsyncQuery not supported");
+    checkClosed();
+    return executeAsyncQueryWithBindings(sql, null);
+  }
+
+  protected ResultSet executeAsyncQueryWithBindings(String sql, QueryBindings bindings)
+      throws SQLException {
+    prepareForExecution();
+    coreDriverApi.statementSetSqlQuery(statementHandle, sql);
+    StatementExecuteAsyncResponse response =
+        coreDriverApi.statementExecuteAsync(statementHandle, bindings);
+    String asyncQueryId = response.getQueryId();
+    queryId = asyncQueryId;
+    ResultSet asyncResultSet = ResultSetFactory.createAsync(asyncQueryId, connection, this, false);
+    currentResultSet = asyncResultSet;
+    return asyncResultSet;
   }
 
   @Override
