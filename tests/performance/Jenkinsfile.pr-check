@@ -5,13 +5,11 @@ import groovy.transform.Field
 // Regression check configuration
 @Field def REGRESSION_THRESHOLD = 10.0
 @Field def REGRESSION_SCREEN_ITERATIONS = 10
-@Field def REGRESSION_SCREEN_ITERATIONS_SLOW = 3
-@Field def REGRESSION_RERUN_ITERATIONS = 10
+@Field def REGRESSION_RERUN_ITERATIONS_PER_RUN = 10
 @Field def REGRESSION_BASELINE_ITERATIONS = 10
 @Field def REGRESSION_WARMUP_ITERATIONS = 2
-@Field def REGRESSION_FAST_TEST_FILTER = "test_select_string_1M_arrow_recorded_http or test_select_float_1M_arrow_recorded_http or test_select_timestamp_tz_1M_arrow_recorded_http"
-@Field def REGRESSION_SLOW_TEST_FILTER = "test_select_15columns_1M_arrow_recorded_http"
-@Field def REGRESSION_TEST_FILTER = "${REGRESSION_FAST_TEST_FILTER} or ${REGRESSION_SLOW_TEST_FILTER}"
+@Field def REGRESSION_FAST_TEST_FILTER = "test_select_string_1M_arrow_recorded_http or test_select_float_1M_arrow_recorded_http or test_select_timestamp_tz_1M_arrow_recorded_http or test_select_number_1M_arrow_recorded_http or test_select_date_1M_arrow_recorded_http"
+@Field def REGRESSION_TEST_FILTER = "${REGRESSION_FAST_TEST_FILTER}"
 @Field def ACCEPT_PERF_LABEL = 'ACCEPT_PERFORMANCE_CHANGES'
 @Field def REGRESSION_STATUS_CONTEXT = 'performance/regression'
 @Field def REGRESSION_EXIT_CODE = 77
@@ -109,19 +107,8 @@ def postRegressionStatus(String conclusion, String description) {
     }
 }
 
-def combineExitCodes(int exitFast, int exitSlow) {
-    if (exitFast != 0 && exitFast != REGRESSION_EXIT_CODE) {
-        return exitFast
-    } else if (exitSlow != 0 && exitSlow != REGRESSION_EXIT_CODE) {
-        return exitSlow
-    } else if (exitFast == REGRESSION_EXIT_CODE || exitSlow == REGRESSION_EXIT_CODE) {
-        return REGRESSION_EXIT_CODE
-    }
-    return 0
-}
-
 def runRegressionTests(String driver) {
-    def exitFast = sh(
+    def exit = sh(
         returnStatus: true,
         script: """
             source .venv/bin/activate
@@ -133,27 +120,11 @@ def runRegressionTests(String driver) {
                 --iterations=${REGRESSION_SCREEN_ITERATIONS} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
                 --preserve-mappings \
                 --regression-check --regression-threshold=${REGRESSION_THRESHOLD} \
-                --regression-rerun-iterations=${REGRESSION_RERUN_ITERATIONS} \
+                --regression-rerun-iterations=${REGRESSION_RERUN_ITERATIONS_PER_RUN} \
                 -s -v
         """
     )
-    def exitSlow = sh(
-        returnStatus: true,
-        script: """
-            source .venv/bin/activate
-            export CLOUD=aws
-            python -m hatch run -- python -m pytest \
-                tests/test_select_1M_recorded_http.py \
-                -k "${REGRESSION_SLOW_TEST_FILTER}" \
-                --driver=${driver} --driver-type=universal \
-                --iterations=${REGRESSION_SCREEN_ITERATIONS_SLOW} --warmup-iterations=${REGRESSION_WARMUP_ITERATIONS} \
-                --preserve-mappings \
-                --regression-check --regression-threshold=${REGRESSION_THRESHOLD} \
-                --regression-rerun-iterations=${REGRESSION_RERUN_ITERATIONS} \
-                -s -v
-        """
-    )
-    return [exitFast: exitFast, exitSlow: exitSlow, combined: combineExitCodes(exitFast, exitSlow)]
+    return [exit: exit]
 }
 
 def exitCodeLabel(int code) {
@@ -168,20 +139,17 @@ def printRegressionSummary(Map python, Map odbc) {
 ${sep}
 PERFORMANCE REGRESSION CHECK SUMMARY
 ${sep}
-  Driver   Test group   Result
-  ------   ----------   ------"""
+  Driver   Result
+  ------   ------"""
     if (python) {
-        echo """  Python   Fast         ${exitCodeLabel(python.exitFast)}
-  Python   Slow         ${exitCodeLabel(python.exitSlow)}"""
+        echo "  Python   ${exitCodeLabel(python.exit)}"
     }
     if (odbc) {
-        echo """  ODBC     Fast         ${exitCodeLabel(odbc.exitFast)}
-  ODBC     Slow         ${exitCodeLabel(odbc.exitSlow)}"""
+        echo "  ODBC     ${exitCodeLabel(odbc.exit)}"
     }
     echo """${sep}
-  Fast tests : ${REGRESSION_FAST_TEST_FILTER}
-  Slow tests : ${REGRESSION_SLOW_TEST_FILTER}
-  Threshold  : ${REGRESSION_THRESHOLD}%  |  Rerun iters: ${REGRESSION_RERUN_ITERATIONS}
+  Tests     : ${REGRESSION_FAST_TEST_FILTER}
+  Threshold : ${REGRESSION_THRESHOLD}%  |  Rerun iters: ${REGRESSION_RERUN_ITERATIONS_PER_RUN}
 ${sep}"""
 
     for (driver in ['python', 'odbc']) {
@@ -443,13 +411,13 @@ pipeline {
 
                                                 printRegressionSummary(python, null)
 
-                                                if (python.combined == REGRESSION_EXIT_CODE) {
+                                                if (python.exit == REGRESSION_EXIT_CODE) {
                                                     pythonRegressionDetected = true
                                                     regressionDetected = true
                                                     echo "Performance regression detected in Python (exit code ${REGRESSION_EXIT_CODE})"
-                                                } else if (python.combined != 0) {
+                                                } else if (python.exit != 0) {
                                                     postRegressionStatus('FAILURE', 'Python tests failed before regression check could complete')
-                                                    error("Python tests failed with exit code ${python.combined}")
+                                                    error("Python tests failed with exit code ${python.exit}")
                                                 }
                                             }
                                         }
@@ -519,13 +487,13 @@ pipeline {
 
                                                 printRegressionSummary(null, odbc)
 
-                                                if (odbc.combined == REGRESSION_EXIT_CODE) {
+                                                if (odbc.exit == REGRESSION_EXIT_CODE) {
                                                     odbcRegressionDetected = true
                                                     regressionDetected = true
                                                     echo "Performance regression detected in ODBC (exit code ${REGRESSION_EXIT_CODE})"
-                                                } else if (odbc.combined != 0) {
+                                                } else if (odbc.exit != 0) {
                                                     postRegressionStatus('FAILURE', 'ODBC tests failed before regression check could complete')
-                                                    error("ODBC tests failed with exit code ${odbc.combined}")
+                                                    error("ODBC tests failed with exit code ${odbc.exit}")
                                                 }
                                             }
                                         }

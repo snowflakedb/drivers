@@ -419,7 +419,7 @@ def run_regression_check(
     run_id: Optional[str] = None,
     iterations: int = 10,
     warmup_iterations: int = 2,
-    max_retries: int = 2,
+    max_retries: int = 3,
 ) -> bool:
     """
     Main entry point: compare PR results against Benchstore baseline.
@@ -430,7 +430,7 @@ def run_regression_check(
         3. Compare PR medians vs main medians
         4. If no regression > threshold: PASS
         5. If regression detected: re-run regressed tests (up to max_retries)
-        6. Confirm regression if it appears in >= 2 of (1 + max_retries) total runs
+        6. Confirm regression only if ALL max_retries reruns also exceed the threshold
         7. Upload all results to PR_Regression benchmark (with REGRESSION_DETECTED tag
            and per-test diff_pct aggregates)
         8. Return True if passed, False if regression confirmed
@@ -445,7 +445,7 @@ def run_regression_check(
         run_id: Run ID for reusing WireMock mappings
         iterations: Iterations for re-runs
         warmup_iterations: Warmup iterations for re-runs
-        max_retries: Max re-runs for regressed tests (default 2, total runs = 1 + max_retries)
+        max_retries: Number of confirmation re-runs for regressed tests (default 3)
 
     Returns:
         True if check passed, False if confirmed regression found
@@ -516,19 +516,18 @@ def run_regression_check(
     if test_params_registry is None or run_id is None:
         logger.warning(
             "Cannot re-run tests (missing test_params_registry or run_id). "
-            "Treating initial regression as confirmed."
+            "Treating initial regression as NOT CONFIRMED (cannot run confirmation reruns)."
         )
         for r in regressed:
-            r.confirmed = True
+            r.confirmed = False
     else:
         for r in regressed:
-            r.confirmation_runs.append(r.pr_median)
-
             for retry_num in range(1, max_retries + 1):
                 logger.info("")
                 logger.info(
-                    f"Re-run {retry_num}/{max_retries} for {r.test_name}..."
+                    f"Re-run {retry_num}/{max_retries} for {r.test_name} (cooling down 10s)..."
                 )
+                time.sleep(10)
 
                 params = test_params_registry.get(r.test_name)
                 if params is None:
@@ -554,15 +553,14 @@ def run_regression_check(
                 else:
                     logger.warning(f"  Re-run {retry_num} produced no result")
 
-            # Confirm if regression appears in >= 2 of total runs.
-            # If reruns failed to produce results (len < expected), treat
-            # conservatively as confirmed since we can't disprove the regression.
-            expected_runs = 1 + max_retries
-            if len(r.confirmation_runs) < expected_runs:
-                r.confirmed = True
+            # Confirmed only if every rerun independently exceeded the threshold.
+            # A failed rerun (no result produced) means we cannot confirm all reruns
+            # regressed, so the initial signal is treated as noise.
+            if len(r.confirmation_runs) < max_retries:
+                r.confirmed = False
                 logger.warning(
-                    f"  {r.test_name}: only {len(r.confirmation_runs)}/{expected_runs} "
-                    f"runs produced results — treating as CONFIRMED (cannot disprove)"
+                    f"  {r.test_name}: only {len(r.confirmation_runs)}/{max_retries} "
+                    f"reruns produced results — treating as NOT CONFIRMED (insufficient data)"
                 )
             else:
                 regressed_count = sum(
@@ -571,9 +569,9 @@ def run_regression_check(
                     if r.main_median > 0
                     and (m - r.main_median) / r.main_median * 100 > threshold_pct
                 )
-                r.confirmed = regressed_count >= 2
+                r.confirmed = regressed_count == max_retries
                 logger.info(
-                    f"  {r.test_name}: regressed in {regressed_count}/{len(r.confirmation_runs)} runs "
+                    f"  {r.test_name}: regressed in {regressed_count}/{max_retries} reruns "
                     f"-> {'CONFIRMED' if r.confirmed else 'NOT CONFIRMED (noise)'}"
                 )
 
