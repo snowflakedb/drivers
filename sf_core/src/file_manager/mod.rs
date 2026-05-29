@@ -264,6 +264,8 @@ fn get_source_compression(
         SourceCompressionParam::Zstd => Ok(CompressionType::Zstd),
         SourceCompressionParam::Deflate => Ok(CompressionType::Deflate),
         SourceCompressionParam::RawDeflate => Ok(CompressionType::RawDeflate),
+        SourceCompressionParam::Parquet => Ok(CompressionType::Parquet),
+        SourceCompressionParam::Orc => Ok(CompressionType::Orc),
     }
 }
 
@@ -868,6 +870,42 @@ mod tests {
         }
     }
 
+    // Explicit SOURCE_COMPRESSION=PARQUET / =ORC short-circuits auto-detect:
+    // user-specified compression is trusted, regardless of filename or
+    // magic bytes. Mirrors Python `file_transfer_agent.py:1207`
+    // (`current_file_compression_type = user_specified_source_compression`).
+    #[test]
+    fn get_source_compression_explicit_parquet_skips_autodetect() {
+        for legacy in [false, true] {
+            assert_eq!(
+                get_source_compression(
+                    "actually-not-parquet.csv",
+                    b"some-csv,content",
+                    &SourceCompressionParam::Parquet,
+                    legacy,
+                )
+                .unwrap(),
+                CompressionType::Parquet,
+            );
+        }
+    }
+
+    #[test]
+    fn get_source_compression_explicit_orc_skips_autodetect() {
+        for legacy in [false, true] {
+            assert_eq!(
+                get_source_compression(
+                    "actually-not-orc.csv",
+                    b"some-csv,content",
+                    &SourceCompressionParam::Orc,
+                    legacy,
+                )
+                .unwrap(),
+                CompressionType::Orc,
+            );
+        }
+    }
+
     // Upload-prep passthrough: a `.parquet` source under
     // `auto_compress = true` must NOT be re-wrapped in gzip. The target
     // filename keeps its original `.parquet` suffix (no `.gz` appended)
@@ -894,6 +932,50 @@ mod tests {
     fn preprocess_orc_passthrough_under_auto_compress() {
         let payload = b"ORC\x00\x01\x02some-orc-bytes-go-here".to_vec();
         let data = passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false);
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.orc", "no .gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Orc);
+        assert_eq!(metadata.source_compression, CompressionType::Orc);
+        assert_eq!(
+            prepared.data, payload,
+            "payload must pass through bit-identical"
+        );
+    }
+
+    // Upload-prep passthrough on the explicit-param path: when the user
+    // sets `SOURCE_COMPRESSION=PARQUET` / `=ORC`, the file must NOT be
+    // re-wrapped in gzip even with `auto_compress = true`. Parallels the
+    // auto-detect passthrough tests above; the difference is that the
+    // compression type is taken from the user param rather than sniffed
+    // from filename or magic bytes.
+    #[test]
+    fn preprocess_parquet_passthrough_under_explicit_param() {
+        let payload = b"PAR1\x00\x01\x02\x03some-parquet-bytes-go-here".to_vec();
+        let data = SingleUploadData {
+            source_compression: SourceCompressionParam::Parquet,
+            ..passthrough_upload_data("data.parquet", PutGetResultsetFlavor::Python, false)
+        };
+
+        let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
+
+        assert_eq!(metadata.target, "data.parquet", "no .gz suffix expected");
+        assert_eq!(metadata.target_compression, CompressionType::Parquet);
+        assert_eq!(metadata.source_compression, CompressionType::Parquet);
+        assert_eq!(
+            prepared.data, payload,
+            "payload must pass through bit-identical (no gzip wrap)",
+        );
+    }
+
+    #[test]
+    fn preprocess_orc_passthrough_under_explicit_param() {
+        let payload = b"ORC\x00\x01\x02some-orc-bytes-go-here".to_vec();
+        let data = SingleUploadData {
+            source_compression: SourceCompressionParam::Orc,
+            ..passthrough_upload_data("data.orc", PutGetResultsetFlavor::Python, false)
+        };
 
         let (prepared, metadata) = preprocess_file_before_upload(payload.clone(), &data).unwrap();
 
