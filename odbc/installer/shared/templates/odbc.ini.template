@@ -1,6 +1,6 @@
 [snowflake]
 Description=SnowflakeDB
-Driver=Snowflake ODBC UD
+Driver=__DRIVER_NAME__
 Locale=en-US
 SERVER=__SF_ACCOUNT__.snowflakecomputing.com
 PORT=443
