@@ -412,8 +412,8 @@ TEST_CASE("should preserve prepared state after async execute and cursor close",
   SQLSMALLINT num_cols_after = 0;
   ret = SQLNumResultCols(stmt.getHandle(), &num_cols_after);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-  NEW_DRIVER_ONLY("BD#59") { CHECK(num_cols_after == 2); }
-  OLD_DRIVER_ONLY("BD#59") { CHECK(num_cols_after == 0); }
+  NEW_DRIVER_ONLY("BD#58") { CHECK(num_cols_after == 2); }
+  OLD_DRIVER_ONLY("BD#58") { CHECK(num_cols_after == 0); }
 }
 
 // =============================================================================
@@ -421,7 +421,7 @@ TEST_CASE("should preserve prepared state after async execute and cursor close",
 // =============================================================================
 
 TEST_CASE("should cancel async execution with HY008", "[query][async][cancel]") {
-  SKIP_OLD_DRIVER("BD#58", "Async cancel does not interrupt in-progress operations on reference driver");
+  SKIP_OLD_DRIVER("BD#32", "Async cancel does not interrupt in-progress operations on reference driver");
 
   // Given Snowflake client is logged in with async enabled
   Connection conn;
