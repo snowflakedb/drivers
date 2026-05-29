@@ -12,6 +12,8 @@ Usage:
   python ci/test_matrix/generate_matrix.py --all
   python ci/test_matrix/generate_matrix.py --driver odbc \\
       --event pull_request --emit-active                         # for use in CI workflows
+  python ci/test_matrix/generate_matrix.py --driver odbc \\
+      --event push --level nightly --emit-active                 # release branches: nightly scope
 
 Exit codes:
   0  success
@@ -687,20 +689,34 @@ def run_driver(driver: str) -> bool:
     return True
 
 
-def emit_active(driver: str, event: str | None, labels: list[str] | None = None) -> None:
+def emit_active(
+    driver: str,
+    event: str | None,
+    labels: list[str] | None = None,
+    level_override: str | None = None,
+) -> None:
     """
     Print `matrix=<json>` for the rows active at the level implied by `event`,
     optionally upgraded by scope-up PR labels (see LABEL_TO_LEVEL). Suitable
     for appending to $GITHUB_OUTPUT inside a workflow step.
+
+    When `level_override` is set it is used directly, bypassing event→level
+    mapping and label escalation. Useful for release branches that should
+    always run at nightly scope regardless of the triggering event.
     """
     model_path = MODELS_DIR / f"{driver}.py"
     gha_rows = generate(model_path, driver)
-    level = level_for_event_and_labels(event, labels)
+    level = level_override if level_override else level_for_event_and_labels(event, labels)
     active = filter_active(gha_rows, level)
     print(f"matrix={json.dumps(active)}")
 
 
-def build_targets(driver: str, event: str | None, labels: list[str] | None = None) -> dict[str, list[str]]:
+def build_targets(
+    driver: str,
+    event: str | None,
+    labels: list[str] | None = None,
+    level_override: str | None = None,
+) -> dict[str, list[str]]:
     """
     Return the wheel-build targets for `driver` at the trigger level implied
     by `event`, in the JSON shape consumed by _build-python-wheels.yml's
@@ -717,6 +733,9 @@ def build_targets(driver: str, event: str | None, labels: list[str] | None = Non
     a wheel from it; py versions within a platform are deduplicated and
     sorted. Sdist-only py versions (SDIST_PY) are naturally excluded
     because their rows carry no `wheel_artifact`.
+
+    When `level_override` is set it is used directly, bypassing event→level
+    mapping and label escalation.
     """
     if driver != "python":
         raise ValueError(
@@ -724,7 +743,7 @@ def build_targets(driver: str, event: str | None, labels: list[str] | None = Non
         )
     model_path = MODELS_DIR / f"{driver}.py"
     gha_rows = generate(model_path, driver)
-    level = level_for_event_and_labels(event, labels)
+    level = level_override if level_override else level_for_event_and_labels(event, labels)
     active = filter_active(gha_rows, level)
 
     # Reverse-lookup wheel_artifact -> (os, arch) so we can fetch cibw_key.
@@ -746,17 +765,30 @@ def build_targets(driver: str, event: str | None, labels: list[str] | None = Non
     return {key: sorted(versions) for key, versions in sorted(targets.items())}
 
 
-def emit_build_targets(driver: str, event: str | None, labels: list[str] | None = None) -> None:
+def emit_build_targets(
+    driver: str,
+    event: str | None,
+    labels: list[str] | None = None,
+    level_override: str | None = None,
+) -> None:
     """
     Print `targets=<json>` for the wheel-build targets active at the level
     implied by `event`, optionally upgraded by scope-up PR labels (see
     LABEL_TO_LEVEL). Suitable for appending to $GITHUB_OUTPUT inside a
     workflow step. Currently only supported for the python driver.
+
+    When `level_override` is set it is used directly, bypassing event→level
+    mapping and label escalation.
     """
-    print(f"targets={json.dumps(build_targets(driver, event, labels))}")
+    print(f"targets={json.dumps(build_targets(driver, event, labels, level_override))}")
 
 
-def build_matrix(driver: str, event: str | None, labels: list[str] | None = None) -> list[dict]:
+def build_matrix(
+    driver: str,
+    event: str | None,
+    labels: list[str] | None = None,
+    level_override: str | None = None,
+) -> list[dict]:
     """
     Return the GHA `include:` array for the driver-build job at the trigger
     level implied by `event`. Currently only supported for the odbc driver.
@@ -780,6 +812,9 @@ def build_matrix(driver: str, event: str | None, labels: list[str] | None = None
     A platform appears at most once per call: lanes are deduplicated by
     (OS, Arch). The same lane is included regardless of how many active
     test rows reference its driver — one build per lane covers all rows.
+
+    When `level_override` is set it is used directly, bypassing event→level
+    mapping and label escalation.
     """
     if driver != "odbc":
         raise ValueError(
@@ -787,7 +822,7 @@ def build_matrix(driver: str, event: str | None, labels: list[str] | None = None
         )
     model_path = MODELS_DIR / f"{driver}.py"
     gha_rows = generate(model_path, driver)
-    level = level_for_event_and_labels(event, labels)
+    level = level_override if level_override else level_for_event_and_labels(event, labels)
     active = filter_active(gha_rows, level)
 
     # Reverse-lookup driver_artifact -> (os, arch) so we can fetch full
@@ -829,14 +864,22 @@ def build_matrix(driver: str, event: str | None, labels: list[str] | None = None
     return matrix
 
 
-def emit_build_matrix(driver: str, event: str | None, labels: list[str] | None = None) -> None:
+def emit_build_matrix(
+    driver: str,
+    event: str | None,
+    labels: list[str] | None = None,
+    level_override: str | None = None,
+) -> None:
     """
     Print `matrix=<json>` for the driver-build matrix active at the level
     implied by `event`, optionally upgraded by scope-up PR labels (see
     LABEL_TO_LEVEL). Suitable for appending to $GITHUB_OUTPUT inside a
     workflow step. Currently only supported for the odbc driver.
+
+    When `level_override` is set it is used directly, bypassing event→level
+    mapping and label escalation.
     """
-    print(f"matrix={json.dumps(build_matrix(driver, event, labels))}")
+    print(f"matrix={json.dumps(build_matrix(driver, event, labels, level_override))}")
 
 
 def main() -> None:
@@ -848,6 +891,14 @@ def main() -> None:
         "--event",
         help="GitHub Actions event name (e.g. pull_request, merge_group, schedule). "
              "Used with --emit-active to pick the trigger level.",
+    )
+    parser.add_argument(
+        "--level",
+        choices=TRIGGER_LEVELS,
+        help="Trigger level to use directly, bypassing event→level mapping and label "
+             "escalation. Takes precedence over --event when both are provided. "
+             "Useful for release branches that should always run at a fixed scope "
+             "(e.g. --level nightly on release/* branches).",
     )
     parser.add_argument(
         "--labels",
@@ -886,7 +937,7 @@ def main() -> None:
         if args.emit_build_targets or args.emit_build_matrix:
             parser.error("--emit-active is mutually exclusive with --emit-build-targets and --emit-build-matrix")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
-        emit_active(args.driver, args.event, labels)
+        emit_active(args.driver, args.event, labels, level_override=args.level)
         return
 
     if args.emit_build_targets:
@@ -895,14 +946,14 @@ def main() -> None:
         if args.emit_build_matrix:
             parser.error("--emit-build-targets and --emit-build-matrix are mutually exclusive")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
-        emit_build_targets(args.driver, args.event, labels)
+        emit_build_targets(args.driver, args.event, labels, level_override=args.level)
         return
 
     if args.emit_build_matrix:
         if args.all or not args.driver:
             parser.error("--emit-build-matrix requires --driver and is incompatible with --all")
         labels = [l.strip() for l in args.labels.split(",") if l.strip()]
-        emit_build_matrix(args.driver, args.event, labels)
+        emit_build_matrix(args.driver, args.event, labels, level_override=args.level)
         return
 
     drivers = ["odbc", "python", "core"] if args.all else [args.driver]

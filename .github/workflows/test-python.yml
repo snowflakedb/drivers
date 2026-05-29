@@ -1,6 +1,8 @@
 name: Python CI
 
 on:
+  push:
+    branches: [main, 'release/python-**']
   pull_request:
     # `labeled` is included so applying ci:scope-merge / ci:scope-nightly to
     # a PR re-runs the workflow at the upgraded scope without needing a new
@@ -11,8 +13,9 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs; fall back to run ID for merge_group runs
-  # (each run is unique so they won't cancel each other).
+  # Group by PR number for PRs; fall back to run ID for push-to-main,
+  # push-to-release, and merge_group runs (each run is unique so they
+  # won't cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   # Don't cancel an in-flight run when an unrelated label is added/removed —
   # only scope-up labels (ci:scope-merge, ci:scope-nightly) and normal
@@ -53,15 +56,26 @@ jobs:
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
+          # Use nightly scope on release branches so every platform × cloud
+          # combination is validated before a release. Main pushes stay at
+          # merge (pairwise) scope.
+          LEVEL_ARG=""
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+            LEVEL_ARG="--level nightly"
+          fi
           python ci/test_matrix/generate_matrix.py \
-            --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
+            --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active $LEVEL_ARG \
             >> "$GITHUB_OUTPUT"
       - id: targets
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
+          LEVEL_ARG=""
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+            LEVEL_ARG="--level nightly"
+          fi
           python ci/test_matrix/generate_matrix.py \
-            --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-targets \
+            --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-build-targets $LEVEL_ARG \
             >> "$GITHUB_OUTPUT"
 
   # ── Build all wheels via shared reusable workflow ────────────────────

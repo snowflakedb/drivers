@@ -1,8 +1,10 @@
 name: Python Release Build
 
+# DISABLED: superseded by test-python.yml which now runs on push to main
+# (merge scope) and release branches (nightly scope). Kept for reference
+# until test-python.yml is confirmed stable on those triggers.
+# To re-enable, restore the `on:` triggers below.
 on:
-  push:
-    branches: [main, 'release/python-**']
   workflow_dispatch:
 
 env:

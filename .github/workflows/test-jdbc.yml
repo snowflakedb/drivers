@@ -1,13 +1,15 @@
 name: JDBC CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
   merge_group:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs; fall back to run ID for merge_group runs
-  # (each run is unique so they won't cancel each other).
+  # Group by PR number for PRs; fall back to run ID for push-to-main and
+  # merge_group runs (each run is unique so they won't cancel each other).
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 

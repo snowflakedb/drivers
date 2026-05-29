@@ -25,11 +25,11 @@ SDIST_PY is a set of Python versions that always install from sdist
 """
 
 PYTHON_PLATFORM: dict[tuple[str, str], dict] = {
-    ("ubuntu",  "x64"): {"cibw_key": "linux_x86",   "wheel_artifact": "manylinux_x86_64", "wheels": {"3.13"}},
-    ("ubuntu",  "arm"): {"cibw_key": "linux_aarch", "wheel_artifact": "manylinux_aarch64", "wheels": {"3.11", "3.14"}},
-    ("macos",   "arm"): {"cibw_key": "macos_arm",   "wheel_artifact": "macosx_arm64",     "wheels": {"3.12", "3.14"}},
+    ("ubuntu",  "x64"): {"cibw_key": "linux_x86",   "wheel_artifact": "manylinux_x86_64", "wheels": {"3.11", "3.12", "3.13", "3.14"}},
+    ("ubuntu",  "arm"): {"cibw_key": "linux_aarch", "wheel_artifact": "manylinux_aarch64", "wheels": {"3.11", "3.12", "3.13", "3.14"}},
+    ("macos",   "arm"): {"cibw_key": "macos_arm",   "wheel_artifact": "macosx_arm64",     "wheels": {"3.11", "3.12", "3.13", "3.14"}},
     ("macos",   "x64"): {"cibw_key": "macos_x86",   "wheel_artifact": "macosx_x86_64",    "wheels": {"3.11", "3.12", "3.13", "3.14"}},
-    ("windows", "x64"): {"cibw_key": "windows_x86", "wheel_artifact": "win_amd64",        "wheels": {"3.11", "3.12", "3.14"}},
+    ("windows", "x64"): {"cibw_key": "windows_x86", "wheel_artifact": "win_amd64",        "wheels": {"3.11", "3.12", "3.13", "3.14"}},
     ("windows", "arm"): {"cibw_key": "windows_arm", "wheel_artifact": "win_arm64",        "wheels": {"3.11", "3.12"}},
 }
 

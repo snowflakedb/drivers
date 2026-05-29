@@ -9,6 +9,18 @@ PARAMS = {
 }
 
 
+# Cloud rotation: each Python version maps to one cloud. Applied via
+# CONSTRAINTS so it reduces both the merge pairwise pool and the nightly
+# cartesian product. All clouds are covered across Python versions.
+_CLOUD_FOR_PY = {
+    "3.10": "aws",
+    "3.11": "gcp",
+    "3.12": "azure",
+    "3.13": "aws",
+    "3.14": "gcp",
+}
+
+
 def is_valid(c):
     """Block-list: return False to forbid a combo, fall through to allow."""
     if c["OS"] == "windows" and c["Arch"] == "arm":
@@ -17,6 +29,10 @@ def is_valid(c):
         # No pyarrow win_arm64 wheel; source-build fails on GHA windows-11-arm
         # runner (no Arrow C++ libs).
         if c["HatchEnv"] == "test-pandas": return False
+
+    # Cloud rotation: each Python version is tested against one cloud.
+    if c["Cloud"] != _CLOUD_FOR_PY[c["PyVersion"]]:
+        return False
 
     return True
 
@@ -29,24 +45,21 @@ def merge_valid(c):
 
     macOS runner availability is the binding constraint on merge-queue
     throughput. There is no macOS PR cell — all macOS coverage is deferred
-    to the merge queue. To keep MQ macOS load capped at one Intel + one ARM
-    job, pin each arch to a single representative combo via pairwise:
+    to the merge queue. macos-15-intel (x64) runs via Rosetta 2 on GitHub
+    workers and is very slow, so x64 is deferred entirely to nightly. Only
+    one macOS ARM job runs at merge:
 
-      * macos-arm:  gcp + py3.10 + test-pandas
-      * macos-x64 (macos-15-intel): aws + py3.13 + test
+      * macos-arm: gcp + py3.11 + test-pandas  (gcp is the cloud for 3.11)
 
-    Every other macOS combo runs at nightly via the unfiltered cartesian
-    product.
+    Every other macOS combo (including all x64) runs at nightly via the
+    unfiltered cartesian product.
     """
     if c["OS"] == "macos":
-        if c["Arch"] == "arm":
-            if c["Cloud"] != "gcp":             return False
-            if c["PyVersion"] != "3.10":        return False
-            if c["HatchEnv"] != "test-pandas":  return False
         if c["Arch"] == "x64":
-            if c["Cloud"] != "aws":             return False
-            if c["PyVersion"] != "3.13":        return False
-            if c["HatchEnv"] != "test":         return False
+            return False  # Rosetta 2 simulation on GHA workers — deferred to nightly
+        if c["Arch"] == "arm":
+            if c["PyVersion"] != "3.11":        return False
+            if c["HatchEnv"] != "test-pandas":  return False
 
     return True
 
@@ -54,8 +67,8 @@ def merge_valid(c):
 MERGE_VALID = [merge_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "PyVersion": "3.13", "HatchEnv": "test"},
-    {"OS": "windows", "Arch": "x64", "Cloud": "azure", "PyVersion": "3.14", "HatchEnv": "test"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.13", "HatchEnv": "test"},
+    {"OS": "windows", "Arch": "x64", "Cloud": "gcp", "PyVersion": "3.14", "HatchEnv": "test"},
 ]
 
 MERGE_QUEUE_CELLS = [

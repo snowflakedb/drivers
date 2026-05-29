@@ -1121,9 +1121,8 @@ class PythonMatrixTests(unittest.TestCase):
         # Regression test for the python.py MERGE_VALID/PR_CELLS sync invariant.
         # macOS rows come from pairwise (trigger_level="merge") and appear at
         # push-to-main scope (filter_active("merge") is cumulative).
-        # The merge_valid() predicate pins macos-arm to one combo and macos-x64
-        # to another. This test verifies exactly one cell per macOS arch appears
-        # at push-to-main scope (pr + merge_queue + merge).
+        # merge_valid() pins macos-arm to one combo; macos-x64 (macos-15-intel)
+        # is deferred entirely to nightly (Rosetta 2 simulation is slow).
         push_scope = ("pr", "merge_queue", "merge")
         push_macos_arm = [
             r for r in self.gha
@@ -1140,8 +1139,8 @@ class PythonMatrixTests(unittest.TestCase):
             if r["os"] == "macos-15-intel" and r["trigger_level"] in push_scope
         ]
         self.assertEqual(
-            len(push_intel), 1,
-            f"expected exactly one macos-x64 row at push-to-main scope; "
+            len(push_intel), 0,
+            f"expected no macos-x64 rows at push-to-main scope (deferred to nightly); "
             f"got {[r['name'] for r in push_intel]}",
         )
 
@@ -1496,16 +1495,19 @@ class BuildTargetsTests(unittest.TestCase):
                 )
 
     def test_nightly_targets_match_legacy_hardcoded_json(self) -> None:
-        # Regression guard: at nightly scope the generator output must match
-        # the JSON literal previously hardcoded in test-python.yml. Pins the
-        # migration so a future PR can't silently shrink wheel coverage at
-        # nightly without a corresponding model edit.
+        # Regression guard: pins nightly build_targets so a future PR can't
+        # silently shrink wheel coverage without a corresponding model edit.
+        # Updated after cloud rotation was moved into CONSTRAINTS (models/python.py):
+        # each PyVersion maps to exactly one cloud, so all versions now appear at
+        # nightly for every platform (each runs once against its assigned cloud).
+        # Windows-arm excludes 3.13/3.14 (no CPython win-arm wheel above 3.12).
+        # 3.10 is sdist-only (no wheel built for any platform).
         legacy = {
-            "linux_x86":   {"3.13"},
-            "linux_aarch": {"3.11", "3.14"},
-            "macos_arm":   {"3.12", "3.14"},
+            "linux_x86":   {"3.11", "3.12", "3.13", "3.14"},
+            "linux_aarch": {"3.11", "3.12", "3.13", "3.14"},
+            "macos_arm":   {"3.11", "3.12", "3.13", "3.14"},
             "macos_x86":   {"3.11", "3.12", "3.13", "3.14"},
-            "windows_x86": {"3.11", "3.12", "3.14"},
+            "windows_x86": {"3.11", "3.12", "3.13", "3.14"},
             "windows_arm": {"3.11", "3.12"},
         }
         actual = {k: set(v) for k, v in self.targets_nightly.items()}
