@@ -1,12 +1,16 @@
 # Automate PR review pings.
 #
 # On a new (or freshly-undrafted) PR, pick a random reviewer from
-# .github/reviewers, request review + add as assignee via the GitHub
-# REST API, and ping #drivers-review via slackapi/slack-github-action.
-# On the schedule below, post a digest of open non-draft PRs that have
-# no APPROVED / CHANGES_REQUESTED review yet; the digest pass also
-# re-assigns PRs whose every requested reviewer is OOO (Slack status)
-# to a non-OOO substitute drawn from the same label pool.
+# .github/reviewers.yml, request review + add as assignee via the
+# GitHub REST API, and ping #drivers-review via
+# slackapi/slack-github-action. On the schedule below, post a digest
+# of open non-draft PRs that have no APPROVED / CHANGES_REQUESTED
+# review yet; the digest pass also re-assigns PRs whose every
+# requested reviewer is OOO (Slack status) to a non-OOO substitute
+# drawn from the same label pool.
+#
+# .github/reviewers.yml also encodes per-reviewer opt-out flags
+# (`assign`, `remind`); see that file for details.
 #
 # All GitHub I/O goes through the `gh` CLI (with GITHUB_TOKEN) and all
 # Slack writes go through slackapi/slack-github-action. The Python
@@ -96,6 +100,14 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install Python dependencies
+        # PyYAML is the only third-party Python dependency the bot
+        # needs (to parse .github/reviewers.yml); everything else is
+        # subprocess-based (gh CLI + curl). Pinning to a major version
+        # keeps the workflow reproducible without requiring a Renovate
+        # bump for every PyYAML patch release.
+        run: pip install "pyyaml>=6,<7"
+
       - name: Assign reviewer and prepare Slack payload
         id: build
         env:
@@ -133,6 +145,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
+      - name: Install Python dependencies
+        # PyYAML is the only third-party Python dependency the bot
+        # needs (to parse .github/reviewers.yml); see the assign job
+        # for the rationale on the version pin.
+        run: pip install "pyyaml>=6,<7"
 
       - name: Build reminder digest payload
         id: build

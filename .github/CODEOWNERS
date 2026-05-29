@@ -7,9 +7,9 @@
 # of pinging every individual reviewer.
 #
 # Domain-specific review routing for the PR review bot lives in
-# .github/reviewers and is keyed by *PR label* (e.g. `python`, `odbc`),
-# not by file path — so trying to mirror it here would be apples-to-
-# oranges. See .github/workflows/pr-review-bot.yml and
+# .github/reviewers.yml and is keyed by *PR label* (e.g. `python`,
+# `odbc`), not by file path — so trying to mirror it here would be
+# apples-to-oranges. See .github/workflows/pr-review-bot.yml and
 # scripts/pr_review_bot.py for the bot's selection logic. The bot
 # ignores team references on purpose so it does not need the read:org
 # scope.
