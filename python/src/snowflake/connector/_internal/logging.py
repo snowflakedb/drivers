@@ -132,3 +132,29 @@ def get_sf_core_logger() -> logging.Logger:
         The logger instance for sf_core.
     """
     return _sf_core_logger
+
+
+def safe_log(
+    logger: logging.Logger,
+    level: int,
+    msg: str,
+    *args: object,
+    exc_info: bool = False,
+) -> None:
+    """Best-effort log call — never raises.
+
+    Use this on cleanup paths that run during interpreter shutdown
+    (``atexit`` handlers, ``__del__``) where the ``logging`` module
+    itself may be partially torn down — stream handlers closed, module
+    globals being collected — so an ordinary ``logger.debug(...)`` call
+    can raise. Swallowing the failure is the desired behaviour: the
+    caller is already in a best-effort path and has nothing useful to
+    do with a logging error.
+
+    For all other call sites, prefer the standard ``logger.<level>(...)``
+    methods so genuine logging misconfiguration is not silently hidden.
+    """
+    try:
+        logger.log(level, msg, *args, exc_info=exc_info)
+    except Exception:
+        pass

@@ -18,7 +18,7 @@ from functools import cached_property
 from io import StringIO
 from typing import Any, TypeVar, cast
 
-from ._internal.api_client.client_api import core_driver
+from ._internal.api_client.client_api import core_driver, try_sync_close
 from ._internal.binding_converters import ParamStyle
 from ._internal.config_utils import create_config_settings_from_dict
 from ._internal.decorators import api_telemetry, backward_compatibility, internal_api, pep249
@@ -27,6 +27,7 @@ from ._internal.errorhandler import ErrorHandlerMixin
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.freezable_proxy import ConnectionInfoProxy, SessionParametersProxy
+from ._internal.logging import safe_log
 from ._internal.logout_config_mapping import (
     LogoutOptionKeys,
     logout_config_options_modifier,
@@ -269,15 +270,52 @@ class Connection(ErrorHandlerMixin):
                 self._release_database_handle(db_handle)
 
     def _try_close(self) -> None:
-        """Best-effort close for __del__ and atexit — never raises."""
+        """Best-effort cleanup for ``__del__`` and ``atexit`` — never raises.
+
+        Uses :func:`try_sync_close` (a direct sync FFI call) instead of
+        :meth:`close`. The async path is unsafe during interpreter shutdown
+        — the background loop thread or its ``asyncio.to_thread`` executor
+        may already be torn down — so it can hang or raise. Every step is
+        guarded so a failure here never propagates to the GC or atexit
+        machinery.
+
+        Emits a one-time ``FutureWarning`` only when there is actually an
+        unclosed handle to clean up. This avoids spurious warnings when
+        ``__del__`` fires after an explicit :meth:`close` (handles already
+        nulled) or after the ``atexit`` handler already ran for the same
+        connection.
+        """
         try:
-            if not self.is_closed():
-                self.close(retry=False)
+            atexit.unregister(self._close_at_process_exit)
         except Exception:
+            pass
+        try:
+            with self._close_lock:
+                conn_handle, self.conn_handle = self.conn_handle, None
+                db_handle, self.db_handle = self.db_handle, None
+            if conn_handle is None:
+                return
             try:
-                logger.debug("close() failed during cleanup")
+                warnings.warn(
+                    "Connection was not explicitly closed before process exit. "
+                    "Auto-cleanup at exit will be disabled by default in a future version. "
+                    "Please explicitly call connection.close() or use context manager.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
             except Exception:
                 pass
+            try_sync_close(conn_handle, db_handle)
+        except Exception:
+            safe_log(logger, logging.DEBUG, "_try_close failed during cleanup", exc_info=True)
+
+    def _close_at_process_exit(self) -> None:
+        """Atexit handler — thin wrapper around :meth:`_try_close`.
+
+        Kept as a distinctly-named symbol so the ``atexit`` registration site
+        reads clearly. All actual cleanup logic lives in :meth:`_try_close`.
+        """
+        self._try_close()
 
     def _should_auto_cleanup(self) -> bool:
         """Whether this connection should auto-close on GC/exit.
@@ -306,45 +344,6 @@ class Connection(ErrorHandlerMixin):
             core_driver.database_release(db_handle=db_handle)
         except Exception:
             logger.warning("Failed to release database handle", exc_info=True)
-
-    def _close_at_process_exit(self) -> None:
-        """
-        Cleanup handler called by atexit when process exits.
-
-        If close() was called successfully, this handler should have been unregistered
-        and should NOT run. If it runs for an already-closed connection, that indicates
-        a potential bug (unregister failed, race condition, or multiple registrations).
-
-        The entire body is wrapped in try/except because during interpreter shutdown,
-        any call (FFI, logging, warnings) may fail due to torn-down module state.
-        """
-        try:
-            if self.is_closed():
-                logger.debug(
-                    "atexit handler ran for already-closed connection. "
-                    "This may indicate atexit.unregister() failed or a race condition occurred."
-                )
-                return
-
-            # Connection is leaked (not explicitly closed) — emit FutureWarning.
-            # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
-            try:
-                warnings.warn(
-                    "Connection was not explicitly closed before process exit. "
-                    "Auto-cleanup at exit will be disabled by default in a future version. "
-                    "Please explicitly call connection.close() or use context manager.",
-                    FutureWarning,
-                    stacklevel=2,
-                )
-            except Exception:
-                pass  # Interpreter shutting down; warning emission is best-effort
-
-            self._try_close()
-        except Exception:
-            try:
-                logger.warning("_close_at_process_exit failed during interpreter shutdown")
-            except Exception:
-                pass  # logger itself may be torn down
 
     @property
     @pep249
