@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import ctypes
+import asyncio
+import logging
 import threading
 
-from ctypes import c_char_p
 from typing import Any
 
 from snowflake.connector._internal.status_codes import (
@@ -14,6 +14,9 @@ from snowflake.connector._internal.status_codes import (
 )
 from snowflake.connector.errors import DatabaseError, Error, OperationalError
 
+from ..config_utils import create_config_settings_from_dict
+from ..logging import safe_log
+from ..logout_config_mapping import LogoutOptionKeys
 from ..protobuf_gen.database_driver_v1_pb2 import (
     AuthenticationError as ProtoAuthenticationError,
 )
@@ -106,12 +109,15 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
 from ..protobuf_gen.database_driver_v1_pb2 import (
     MissingParameter as ProtoMissingParameter,
 )
-from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
+from ..protobuf_gen.database_driver_v1_services import (
+    BlockingDatabaseDriverClient,
+    DatabaseDriverClient,
+)
 from ..protobuf_gen.proto_exception import (
     ProtoApplicationException,
     ProtoTransportException,
 )
-from .c_api import sf_core_api_call_proto, sf_core_free_buffer
+from .bridge import ProtoTransport
 
 
 # ---------------------------------------------------------------------------
@@ -263,32 +269,8 @@ def _derive_sqlstate(driver_exception: Any) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Transport + singleton
+# CoreDriver singleton
 # ---------------------------------------------------------------------------
-
-
-class ProtoTransport:
-    def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
-        response = ctypes.POINTER(ctypes.c_ubyte)()
-        response_len = ctypes.c_size_t()
-        api_bytes: c_char_p = ctypes.c_char_p(api.encode("utf-8"))
-        method_bytes: c_char_p = ctypes.c_char_p(method.encode("utf-8"))
-        message_buf = (ctypes.c_ubyte * len(message))()
-        message_buf[:] = message  # type: ignore
-        code = sf_core_api_call_proto(
-            api_bytes,
-            method_bytes,
-            ctypes.cast(message_buf, ctypes.POINTER(ctypes.c_ubyte)),
-            len(message),
-            ctypes.byref(response),
-            ctypes.byref(response_len),
-        )
-        if code == 0 or code == 1 or code == 2:
-            result = bytes(response[: response_len.value])
-            sf_core_free_buffer(response, response_len.value)
-            return (code, result)
-
-        raise ProtoTransportException(f"Unknown error code: {code}")
 
 
 class CoreDriver:
@@ -298,25 +280,47 @@ class CoreDriver:
     (thread-safe, double-checked lock) and exposes domain-level methods that
     encapsulate all protobuf request construction so that callers never touch
     ``*Request`` objects directly.
+
+    The held client is a :class:`BlockingDatabaseDriverClient` that wraps the
+    async-first :class:`DatabaseDriverClient`. This keeps every CoreDriver
+    method synchronous for existing callers while the underlying transport
+    runs the FFI call off-loop via ``asyncio.to_thread``.
     """
 
     def __init__(self) -> None:
-        self._client: DatabaseDriverClient | None = None
+        self._client: BlockingDatabaseDriverClient | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._transport = ProtoTransport()
         self._lock = threading.Lock()
 
+    def _init_loop(self) -> asyncio.AbstractEventLoop:
+        loop = self._event_loop
+        if loop is None:
+            loop = asyncio.new_event_loop()
+            t = threading.Thread(
+                target=loop.run_forever,
+                name="snowflake-python-driver-rpc-loop",
+                daemon=True,
+            )
+            t.start()
+            self._event_loop = loop
+        return loop
+
     @property
-    def client(self) -> DatabaseDriverClient:
+    def client(self) -> BlockingDatabaseDriverClient:
+        """Return the blocking client, creating it lazily if needed."""
         if self._client is not None:
             return self._client
 
         with self._lock:
             if self._client is None:
-                self._client = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
+                async_client = DatabaseDriverClient(self._transport, error_handler=_proto_to_public_error)
+                self._client = BlockingDatabaseDriverClient(async_client, self._init_loop())
 
         return self._client
 
     @client.setter
-    def client(self, client: DatabaseDriverClient | None) -> None:
+    def client(self, client: BlockingDatabaseDriverClient | None) -> None:
         self._client = client
 
     # =====================================================================
@@ -554,3 +558,68 @@ class CoreDriver:
 
 
 core_driver = CoreDriver()
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_sync_ffi(method: str, request_bytes: bytes) -> tuple[int, bytes] | None:
+    """Best-effort sync FFI call — never raises.
+
+    Wraps :meth:`ProtoTransport.handle_message_sync` for the GC/atexit cleanup
+    path: any exception (including interpreter-shutdown fallout) is swallowed
+    and logged at debug level. Returns ``None`` if the call raised, otherwise
+    the ``(status_code, response_bytes)`` tuple.
+    """
+    try:
+        return core_driver._transport.handle_message_sync("DatabaseDriver", method, request_bytes)
+    except Exception:
+        safe_log(logger, logging.DEBUG, "sync FFI %s failed during cleanup", method, exc_info=True)
+        return None
+
+
+def try_sync_close(
+    conn_handle: ConnectionHandle,
+    db_handle: DatabaseHandle | None,
+) -> None:
+    """Best-effort synchronous close — bypasses the async event loop.
+
+    Used by :meth:`Connection._try_close` (called from ``__del__`` and the
+    ``atexit`` handler). The async path via the background event loop and
+    ``asyncio.to_thread`` is unsafe during interpreter shutdown because the
+    loop's default thread-pool executor may already be torn down, causing
+    the close to hang. This function calls ``sf_core_api_call_proto``
+    directly and never raises — failures are logged at debug level.
+    """
+    is_closed_result = _safe_sync_ffi(
+        "connection_is_closed",
+        ConnectionIsClosedRequest(conn_handle=conn_handle).SerializeToString(),
+    )
+    if is_closed_result is not None:
+        code, resp_bytes = is_closed_result
+        if code == 0 and resp_bytes:
+            resp = ConnectionIsClosedResponse()
+            resp.ParseFromString(resp_bytes)
+            if resp.is_closed:
+                return
+
+    _safe_sync_ffi(
+        "connection_set_options",
+        ConnectionSetOptionsRequest(
+            conn_handle=conn_handle,
+            options=create_config_settings_from_dict({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: 1}),
+        ).SerializeToString(),
+    )
+    _safe_sync_ffi(
+        "connection_close",
+        ConnectionCloseRequest(conn_handle=conn_handle).SerializeToString(),
+    )
+    _safe_sync_ffi(
+        "connection_release",
+        ConnectionReleaseRequest(conn_handle=conn_handle).SerializeToString(),
+    )
+    if db_handle is not None:
+        _safe_sync_ffi(
+            "database_release",
+            DatabaseReleaseRequest(db_handle=db_handle).SerializeToString(),
+        )

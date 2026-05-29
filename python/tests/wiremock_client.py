@@ -39,6 +39,10 @@ class WiremockClient:
 
         self.http_port = self._find_free_port()
 
+        # Discard JVM stdout/stderr — nothing reads these pipes, and Windows pipe
+        # buffers are small (4–8 KB), so a chatty Wiremock log can fill the buffer
+        # and stall the JVM's logging thread (and via it, the HTTP server thread).
+        # See investigation note in SNOW-3487070.
         self.process = subprocess.Popen(
             [
                 "java",
@@ -52,8 +56,8 @@ class WiremockClient:
                 "--port",
                 str(self.http_port),
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
 
         self._wait_for_health()
