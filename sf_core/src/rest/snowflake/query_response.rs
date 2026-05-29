@@ -397,6 +397,8 @@ impl Data {
             "ZSTD" => SourceCompressionParam::Zstd,
             "DEFLATE" => SourceCompressionParam::Deflate,
             "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
+            "PARQUET" => SourceCompressionParam::Parquet,
+            "ORC" => SourceCompressionParam::Orc,
             "NONE" => SourceCompressionParam::None,
             _ => InvalidFormatSnafu {
                 message: format!("Unknown source compression type: {source_compression_string}"),
@@ -1371,6 +1373,57 @@ mod tests {
             .unwrap();
         assert_eq!(upload.flavor, PutGetResultsetFlavor::Odbc);
         assert!(upload.legacy_odbc_compression_autodetect);
+    }
+
+    // Explicit `SOURCE_COMPRESSION=PARQUET` / `=ORC` parses to the matching
+    // `SourceCompressionParam` variant. Mirrors Python's
+    // `file_compression_type.py` which lists both with `is_supported=True`.
+    fn upload_json_with_source_compression(value: &str) -> String {
+        serde_json::json!({
+            "src_locations": ["path/to/file.csv"],
+            "stageInfo": {
+                "locationType": "GCS",
+                "location": "bucket/prefix/",
+                "creds": { "GCS_ACCESS_TOKEN": "fake" },
+                "region": "us-central1"
+            },
+            "autoCompress": false,
+            "sourceCompression": value,
+            "overwrite": false
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn upload_data_parses_explicit_source_compression_parquet() {
+        for value in ["PARQUET", "parquet", "Parquet"] {
+            let json = upload_json_with_source_compression(value);
+            let data: Data = serde_json::from_str(&json).unwrap();
+            let upload = data
+                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
+                .unwrap();
+            assert!(
+                matches!(upload.source_compression, SourceCompressionParam::Parquet),
+                "value={value:?} must parse to SourceCompressionParam::Parquet, got: {:?}",
+                upload.source_compression,
+            );
+        }
+    }
+
+    #[test]
+    fn upload_data_parses_explicit_source_compression_orc() {
+        for value in ["ORC", "orc", "Orc"] {
+            let json = upload_json_with_source_compression(value);
+            let data: Data = serde_json::from_str(&json).unwrap();
+            let upload = data
+                .to_file_upload_data(PutGetResultsetFlavor::Python, false, false)
+                .unwrap();
+            assert!(
+                matches!(upload.source_compression, SourceCompressionParam::Orc),
+                "value={value:?} must parse to SourceCompressionParam::Orc, got: {:?}",
+                upload.source_compression,
+            );
+        }
     }
 
     fn make_download_json() -> String {
