@@ -562,7 +562,11 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public ResultSet executeAsyncQuery() throws SQLException {
-    throw new SQLFeatureNotSupportedException("executeAsyncQuery not supported");
+    checkClosed();
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
+      return executeAsyncQueryWithBindings(sql, nativeBindings.bindings());
+    }
   }
 
   @Override
