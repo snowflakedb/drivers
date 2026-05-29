@@ -1,0 +1,76 @@
+name: Changelog Check
+
+permissions:
+  contents: read
+  pull-requests: read
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+    branches:
+      - main
+
+jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yml
+
+  detect-changelogs:
+    name: Detect changelog updates
+    runs-on: ubuntu-latest
+    outputs:
+      sf_core: ${{ steps.changes.outputs.sf_core }}
+      odbc: ${{ steps.changes.outputs.odbc }}
+      jdbc: ${{ steps.changes.outputs.jdbc }}
+      python: ${{ steps.changes.outputs.python }}
+      nodejs: ${{ steps.changes.outputs.nodejs }}
+    steps:
+      - id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            sf_core:
+              - 'sf_core/CHANGELOG.md'
+            odbc:
+              - 'odbc/CHANGELOG.md'
+            jdbc:
+              - 'jdbc/CHANGELOG.md'
+            python:
+              - 'python/CHANGELOG.md'
+            nodejs:
+              - 'nodejs/CHANGELOG.md'
+
+  check:
+    name: ${{ matrix.component }}/CHANGELOG.md
+    needs: [detect-changes, detect-changelogs]
+    runs-on: ubuntu-latest
+    # Bypass label is checked at job level (no matrix context needed).
+    # The per-component gate lives on the step's `if:` below, since the
+    # matrix context isn't available in job-level `if:` (it's evaluated
+    # before matrix expansion).
+    if: "!contains(github.event.pull_request.labels.*.name, 'NO-CHANGELOG-UPDATES')"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `detect_key` is the matching `detect-changes` output. For
+          # sf_core the source-tree filter is named `core`; the others
+          # map 1:1 to their component name.
+          - component: sf_core
+            detect_key: core
+          - component: odbc
+            detect_key: odbc
+          - component: jdbc
+            detect_key: jdbc
+          - component: python
+            detect_key: python
+          - component: nodejs
+            detect_key: nodejs
+    steps:
+
+      - name: Verify ${{ matrix.component }}/CHANGELOG.md was modified
+        if: >-
+          needs.detect-changes.outputs[matrix.detect_key] == 'true' &&
+          needs.detect-changelogs.outputs[matrix.component] != 'true'
+        run: |
+          echo "::error::${{ matrix.component }}/ was modified but ${{ matrix.component }}/CHANGELOG.md was not. Add an entry, or apply the 'NO-CHANGELOG-UPDATES' label to bypass."
+          exit 1

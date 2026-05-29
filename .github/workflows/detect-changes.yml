@@ -100,6 +100,11 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          # `list-files: json` makes each filter expose `<filter>_files` as
+          # a JSON array of matching paths. The computed step below uses
+          # `all_files` (from the catch-all `all` filter) to verify every
+          # changed path against the documentation patterns explicitly.
+          list-files: 'json'
           # Each language filter explicitly includes:
           #   1. its source directories, and
           #   2. the GHA workflows + composite actions it actually consumes.
@@ -225,33 +230,28 @@ jobs:
               - 'ci/test_matrix/mappings/__init__.py'
               - 'ci/test_matrix/mappings/shared.py'
               - 'ci/test_matrix/models/__init__.py'
-            # Negation patterns are NOT used here for the same reason as in
-            # `shared`: under `predicate-quantifier: some` (the default), a
-            # `!path` rule matches every file *except* `path`, which would
-            # flip `docs_only=true` for every non-doc change. List positive
-            # docs patterns only and rely on the AND-of-everything-else-false
-            # guard in the `Compute combined conditions` step below to avoid
-            # treating mixed PRs as docs-only.
-            docs_only:
-              - '**/*.md'
-              - 'LICENSE'
-              - '.github/CODEOWNERS'
+            # Catch-all used by the docs_only computation.
+            all:
+              - '**'
 
       - name: Compute combined conditions
         id: computed
         run: |
-          # Docs only: true only if docs changed AND nothing else changed
-          if [[ "${{ steps.filter.outputs.docs_only }}" == "true" ]] && \
-             [[ "${{ steps.filter.outputs.core }}" == "false" ]] && \
-             [[ "${{ steps.filter.outputs.jdbc }}" == "false" ]] && \
-             [[ "${{ steps.filter.outputs.odbc }}" == "false" ]] && \
-             [[ "${{ steps.filter.outputs.python }}" == "false" ]] && \
-             [[ "${{ steps.filter.outputs.nodejs }}" == "false" ]] && \
-             [[ "${{ steps.filter.outputs.shared }}" == "false" ]]; then
-            echo "docs_only=true" >> $GITHUB_OUTPUT
-          else
-            echo "docs_only=false" >> $GITHUB_OUTPUT
-          fi
+          # docs_only is true if every modified file is a documentation
+          # file (path matches `**/*.md`, equals `LICENSE`, or equals
+          # `.github/CODEOWNERS`).
+          #
+          # Iterate the full changed-file list and verify
+          # each path explicitly against the documentation patterns.
+          DOCS_ONLY=$(jq -r '
+            (length > 0)
+            and all(.[];
+              test("\\.md$")
+              or . == "LICENSE"
+              or . == ".github/CODEOWNERS"
+            )
+          ' <<<'${{ steps.filter.outputs.all_files }}')
+          echo "docs_only=$DOCS_ONLY" >> $GITHUB_OUTPUT
 
           # JDBC should run if: jdbc OR core OR shared changed
           if [[ "${{ steps.filter.outputs.jdbc }}" == "true" ]] || \
@@ -339,6 +339,15 @@ jobs:
             echo "run_odbc_packaging=true" >> $GITHUB_OUTPUT
           else
             echo "run_odbc_packaging=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ "$DOCS_ONLY" == "true" ]]; then
+            for v in run_jdbc run_odbc run_python run_python_packaging \
+                     run_rust_core run_nodejs run_jdbc_reference \
+                     run_odbc_reference run_python_reference \
+                     run_nodejs_reference run_odbc_packaging; do
+              echo "$v=false" >> $GITHUB_OUTPUT
+            done
           fi
 
       - name: Output summary
