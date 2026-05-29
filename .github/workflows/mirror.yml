@@ -5,47 +5,6 @@ name: Mirror to public repo
 #
 # Scope: main + every release/* branch.
 
-# Reusable step definitions — GitHub Actions ignores unknown top-level keys.
-_shared_steps:
-  - &setup-buildx
-    name: Set up Docker Buildx
-    uses: docker/setup-buildx-action@v3
-
-  - &build-copybara
-    name: Build Copybara image
-    uses: docker/build-push-action@v5
-    with:
-      context: ci/mirroring
-      file: ci/mirroring/Dockerfile.copybara
-      push: false
-      load: true
-      tags: copybara:local
-      build-args: |
-        COPYBARA_RELEASE=${{ env.COPYBARA_RELEASE }}
-      cache-from: type=gha
-      cache-to: type=gha,mode=max
-
-  - &configure-git
-    name: Configure git for Copybara
-    env:
-      DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
-    run: |
-      set -euo pipefail
-      git config --global user.name  "Mirror Bot"
-      git config --global user.email "mirror-bot@snowflake.com"
-      # Authenticate origin fetches against snowflake-eng by injecting a
-      # URL-scoped global http.<url>.extraHeader. This is more reliable
-      # than credential.helper=store because Copybara invokes git from
-      # its own working directory; a global config option applies
-      # unconditionally regardless of cwd.
-      #
-      # The URL prefix is snowflake-eng/ so the header does NOT leak
-      # onto the destination push to snowflakedb/universal-driver, which
-      # authenticates with DRIVER_MIRROR_TOKEN_SNOWFLAKEDB inlined into
-      # the destination URL on the next step.
-      B64=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
-      git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64}"
-
 on:
   schedule:
     # 09:00 and 14:00 Warsaw time (CEST = UTC+2, active late-Mar – late-Oct).
@@ -91,11 +50,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - *setup-buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - *build-copybara
+      - name: Build Copybara image
+        uses: docker/build-push-action@v5
+        with:
+          context: ci/mirroring
+          file: ci/mirroring/Dockerfile.copybara
+          push: false
+          load: true
+          tags: copybara:local
+          build-args: |
+            COPYBARA_RELEASE=${{ env.COPYBARA_RELEASE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - *configure-git
+      - name: Configure git for Copybara
+        env:
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Mirror Bot"
+          git config --global user.email "mirror-bot@snowflake.com"
+          # Authenticate origin fetches against snowflake-eng by injecting a
+          # URL-scoped global http.<url>.extraHeader. This is more reliable
+          # than credential.helper=store because Copybara invokes git from
+          # its own working directory; a global config option applies
+          # unconditionally regardless of cwd.
+          #
+          # The URL prefix is snowflake-eng/ so the header does NOT leak
+          # onto the destination push to snowflakedb/universal-driver, which
+          # authenticates with DRIVER_MIRROR_TOKEN_SNOWFLAKEDB inlined into
+          # the destination URL on the next step.
+          B64=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
+          git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64}"
 
       - name: Run Copybara (main)
         if: ${{ github.event.inputs.ref == '' || github.event.inputs.ref == 'main' }}
@@ -143,11 +132,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - *setup-buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - *build-copybara
+      - name: Build Copybara image
+        uses: docker/build-push-action@v5
+        with:
+          context: ci/mirroring
+          file: ci/mirroring/Dockerfile.copybara
+          push: false
+          load: true
+          tags: copybara:local
+          build-args: |
+            COPYBARA_RELEASE=${{ env.COPYBARA_RELEASE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - *configure-git
+      - name: Configure git for Copybara
+        env:
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Mirror Bot"
+          git config --global user.email "mirror-bot@snowflake.com"
+          # Authenticate origin fetches against snowflake-eng by injecting a
+          # URL-scoped global http.<url>.extraHeader. This is more reliable
+          # than credential.helper=store because Copybara invokes git from
+          # its own working directory; a global config option applies
+          # unconditionally regardless of cwd.
+          #
+          # The URL prefix is snowflake-eng/ so the header does NOT leak
+          # onto the destination push to snowflakedb/universal-driver, which
+          # authenticates with DRIVER_MIRROR_TOKEN_SNOWFLAKEDB inlined into
+          # the destination URL on the next step.
+          B64=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
+          git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64}"
 
       - name: Enumerate release branches
         id: branches
