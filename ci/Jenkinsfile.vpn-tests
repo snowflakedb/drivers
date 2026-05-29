@@ -4,10 +4,75 @@ The cross-platform build matrix lives in a separate job: ci/Jenkinsfile.build-ma
 */
 
 @Library('pipeline-utils') _
+import groovy.transform.Field
 import com.snowflake.DevEnvUtils
 
 def isMergeQueue() {
   return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
+
+@Field def runCore       = false
+@Field def runOdbc       = false
+@Field def runPython     = false
+@Field def runRevocation = false
+
+def detectChanges() {
+  // For main branch builds (and cron), run everything.
+  if (env.CHANGE_ID == null) {
+    runCore       = true
+    runOdbc       = true
+    runPython     = true
+    runRevocation = true
+    return
+  }
+
+  def changedFiles = sh(
+    returnStdout: true,
+    script: "git diff --name-only origin/${env.CHANGE_TARGET}...HEAD"
+  ).trim().split('\n').toList()
+
+  echo "Changed files (${changedFiles.size()}):"
+  changedFiles.each { echo "  ${it}" }
+
+  // Shared Rust core — affects all stages.
+  // Include workspace-level deps of sf_core (proto_utils, error_trace, proto_generator)
+  // which are listed in test-matrix.yml shared_fallback_paths and affect sf_core compilation.
+  def corePatterns = [
+    'sf_core/', 'proto_utils/', 'error_trace/', 'error_trace_derive/', 'proto_generator/',
+    'Cargo.lock', 'rust-toolchain.toml',
+  ]
+
+  for (file in changedFiles) {
+    if (corePatterns.any { file.startsWith(it) || file == it }) {
+      runCore       = true
+      runOdbc       = true
+      runPython     = true
+      runRevocation = true
+      break
+    }
+    if (file == 'ci/Jenkinsfile.vpn-tests') {
+      runCore       = true
+      runOdbc       = true
+      runPython     = true
+      runRevocation = true
+      break
+    }
+    if (file.startsWith('odbc/') || file.startsWith('odbc_tests/')) {
+      runOdbc = true
+    }
+    if (file.startsWith('python/') || file.startsWith('pep249_dbapi/')) {
+      runPython = true
+    }
+    if (file == 'ci/test_revocation.sh') {
+      runRevocation = true
+    }
+  }
+
+  echo "=== VPN Tests Change Detection ==="
+  echo "  Run Core VPN:       ${runCore}"
+  echo "  Run ODBC VPN:       ${runOdbc}"
+  echo "  Run Python VPN:     ${runPython}"
+  echo "  Run Revocation:     ${runRevocation}"
 }
 
 def e2eDockerSetup(String image) {
@@ -30,12 +95,23 @@ pipeline {
   }
   stages {
 
+        stage('Detect Changes') {
+          agent { label 'build-node-extra-large' }
+          steps {
+            checkout scm
+            script { detectChanges() }
+          }
+        }
+
         stage('Tests') {
           when {
             expression { !isMergeQueue() }
           }
           parallel {
             stage('Rust Core VPN E2E Tests') {
+              when {
+                expression { runCore }
+              }
               agent { label 'build-node-extra-large' }
               environment {
                 E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
@@ -82,6 +158,9 @@ pipeline {
             }
 
             stage('ODBC VPN E2E Tests') {
+              when {
+                expression { runOdbc }
+              }
               agent { label 'build-node-extra-large' }
               environment {
                 E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
@@ -135,6 +214,9 @@ pipeline {
             }
 
             stage('Python VPN E2E Tests') {
+              when {
+                expression { runPython }
+              }
               agent { label 'build-node-extra-large' }
               environment {
                 E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
@@ -220,6 +302,9 @@ pipeline {
             }
 
             stage('Revocation Validation') {
+              when {
+                expression { runRevocation }
+              }
               agent { label 'build-node-extra-large' }
               environment {
                 E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'

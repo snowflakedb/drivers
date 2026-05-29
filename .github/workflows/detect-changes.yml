@@ -220,7 +220,6 @@ jobs:
               # {models,mappings}/<driver>.py` belong in each language's
               # filter above; they are intentionally not listed here.
               - 'ci/Dockerfile.*'
-              - 'ci/Jenkinsfile.*'
               - 'ci/select_tests.py'
               - 'ci/test-matrix.yml'
               - 'ci/test_revocation.sh'

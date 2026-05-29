@@ -1,12 +1,51 @@
 /*
-Jenkinsfile for the cross-platform build matrix.
+ Jenkinsfile for the cross-platform build matrix.
 Runs independently from the VPN E2E / revocation tests defined in ci/Jenkinsfile.vpn-tests.
 */
 
 @Library('pipeline-utils') _
+import groovy.transform.Field
 
 def isMergeQueue() {
   return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
+
+@Field def skipAll = false
+
+def detectChanges() {
+  // For main branch builds (and cron), run everything.
+  if (env.CHANGE_ID == null) {
+    return
+  }
+
+  def changedFiles = sh(
+    returnStdout: true,
+    script: "git diff --name-only origin/${env.CHANGE_TARGET}...HEAD"
+  ).trim().split('\n').toList()
+
+  echo "Changed files (${changedFiles.size()}):"
+  changedFiles.each { echo "  ${it}" }
+
+  def relevant = changedFiles.any { f ->
+    f.startsWith('sf_mini_core/') ||
+    f.startsWith('sf_mini_core_static/') ||
+    f.startsWith('ci/Dockerfile') ||
+    f.startsWith('scripts/package_minicore') ||
+    f.startsWith('scripts/upload_minicore') ||
+    f.startsWith('scripts/version') ||
+    f == 'ci/Jenkinsfile.build-matrix' ||
+    f == 'Cargo.toml' ||
+    f == 'Cargo.lock' ||
+    f == 'rust-toolchain.toml'
+  }
+
+  skipAll = !relevant
+
+  echo "=== Build Matrix Change Detection ==="
+  echo "  Skip all: ${skipAll}"
+  if (skipAll) {
+    echo "  No sf_mini_core-relevant changes detected — skipping build matrix."
+  }
 }
 
 def getAgentLabel(platform) {
@@ -249,9 +288,17 @@ pipeline {
     cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
   }
   stages {
+        stage('Detect Changes') {
+          agent { label 'small-node-c7' }
+          steps {
+            checkout scm
+            script { detectChanges() }
+          }
+        }
+
         stage('Build Matrix') {
           when {
-            expression { !isMergeQueue() }
+            expression { !isMergeQueue() && !skipAll }
           }
           matrix {
             axes {
