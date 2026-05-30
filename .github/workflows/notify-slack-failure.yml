@@ -27,7 +27,6 @@ on:
       - "JDBC CI"
       - "Python CI"
       - "Rust Core CI"
-      - "Node.js CI"
       - "Pre-commit"
       - "Validate generated data"
       - "ODBC CI"
