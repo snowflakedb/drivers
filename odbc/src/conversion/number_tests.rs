@@ -3,7 +3,9 @@ mod tests {
     use crate::api::CDataType;
     use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
-    use crate::conversion::number::{NumericSettings, NumericSqlType, SnowflakeNumber};
+    use crate::conversion::number::{
+        NumericSettings, NumericSqlType, SnowflakeNumber, TzOffsetFormatCache,
+    };
     use crate::conversion::test_utils::helpers::{
         binding_for_char_buffer, binding_for_interval, binding_for_value, binding_for_wchar_buffer,
         zero_interval,
@@ -15,28 +17,28 @@ mod tests {
         treat_decimal_as_int: false,
         treat_big_number_as_string: false,
         max_varchar_size: 16_777_216,
-        tz_offset_format: None,
+        tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
     };
 
     const SETTINGS_DECIMAL_AS_INT: NumericSettings = NumericSettings {
         treat_decimal_as_int: true,
         treat_big_number_as_string: false,
         max_varchar_size: 16_777_216,
-        tz_offset_format: None,
+        tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
     };
 
     const SETTINGS_BOTH: NumericSettings = NumericSettings {
         treat_decimal_as_int: true,
         treat_big_number_as_string: true,
         max_varchar_size: 16_777_216,
-        tz_offset_format: None,
+        tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
     };
 
     const SETTINGS_BIG_NUMBER_AS_STRING: NumericSettings = NumericSettings {
         treat_decimal_as_int: false,
         treat_big_number_as_string: true,
         max_varchar_size: 16_777_216,
-        tz_offset_format: None,
+        tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
     };
 
     fn make_decimal(scale: u32, precision: u32) -> SnowflakeNumber {

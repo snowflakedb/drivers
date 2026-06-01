@@ -214,6 +214,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         outcome.conn_handle,
         outcome.response,
         ExecutionOrigin::Direct,
+        Some(statement_text),
     )?;
     Ok(())
 }
@@ -229,16 +230,27 @@ fn finalize_execute_response(
     conn_handle: ConnectionHandle,
     response: ExecuteQueryResponse,
     origin: ExecutionOrigin,
+    last_sql: Option<&str>,
 ) -> OdbcResult<()> {
-    update_numeric_settings(&conn_handle, &mut conn.numeric_settings)?;
+    update_numeric_settings(&conn_handle, &mut conn.numeric_settings, last_sql)?;
     apply_execute_response(inner, conn_handle, response, origin)?;
     inner.rows_returned = 0;
     Ok(())
 }
 
+/// Refresh the cached connection-level numeric settings after an execute.
+///
+/// `last_sql` is the SQL text that was just executed, when available
+/// (it always is for `SQLExecDirect`; it's `None` for prepared
+/// `SQLExecute` since the prepared statement's text isn't kept on the
+/// client). It is consulted only by [`tz_format_needs_refresh`] to
+/// decide whether to issue the `TIMESTAMP_TZ_OUTPUT_FORMAT` RPC for
+/// this call -- see that function and PR #1068 follow-up for the
+/// rationale.
 fn update_numeric_settings(
     conn_handle: &ConnectionHandle,
     settings: &mut NumericSettings,
+    last_sql: Option<&str>,
 ) -> OdbcResult<()> {
     let g = global().context(OdbcRuntimeSnafu)?;
     g.block_on(async |c| {
@@ -281,38 +293,160 @@ fn update_numeric_settings(
             tracing::info!("Server parameter VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT = {size}");
         }
 
-        // TIMESTAMP_TZ_OUTPUT_FORMAT: read on every execute so an in-flight
-        // `ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = ...` takes effect
-        // for the next statement. Empty / unset / no-TZ-token formats keep
-        // the legacy UTC-only fetch behaviour (see
-        // `crate::conversion::timestamp::parse_tz_offset_format`).
+        // TIMESTAMP_TZ_OUTPUT_FORMAT: lazy + invalidate-on-DDL.
         //
-        // Update semantics differ from the other settings in this
-        // function: those have meaningful server-side defaults so
-        // resetting to default on a transient RPC failure is harmless.
-        // `tz_offset_format` does NOT -- the customer set it
+        // Snowflake session parameters can only be mutated by SQL run on
+        // the same connection (`ALTER SESSION SET/UNSET ...`), so we
+        // don't have to re-read the server cache on every execute. We
+        // refresh only when:
+        //   - the cache has never been populated (first execute), OR
+        //   - the SQL we just ran could have mutated it (`ALTER SESSION`
+        //     prefix, see `tz_format_needs_refresh`).
+        //
+        // Skipping this RPC removes the per-execute regression measured
+        // in `select_timestamp_tz_1M_arrow_recorded_http` (#1068) for
+        // every workload that doesn't issue ALTER SESSION mid-stream.
+        //
+        // Update semantics for an actual refresh differ from the other
+        // settings in this function: those have meaningful server-side
+        // defaults so resetting to default on a transient RPC failure is
+        // harmless. The TZ offset format does NOT -- the customer set it
         // deliberately via `ALTER SESSION` and a transient blip silently
         // flipping the next fetch from `+HH:MM` rendering back to bare
         // UTC is a wire-format regression with no diagnostic the
-        // application can correlate. So:
-        //   - On `Ok(resp)` with a non-empty value -> overwrite cache
+        // application can correlate. So `apply_tz_offset_format_update`:
+        //   - On `Ok(resp)` with a non-empty value -> `Loaded(token)`
         //     (parse_tz_offset_format collapses unrecognised values to
         //     None, which is the spec-correct fall-through to bare UTC).
         //   - On `Ok(resp)` with `None` or empty value -> the user
-        //     explicitly UNSET the parameter, so clear the cache.
-        //   - On `Err(_)` -> leave the cache untouched and warn.
+        //     explicitly UNSET the parameter, so `Loaded(None)`.
+        //   - On `Err(_)` -> leave the cache state untouched and warn. A
+        //     failure on the *first* execute therefore leaves the cache
+        //     `Unloaded`, so the next execute retries instead of locking
+        //     in a wrong bare-UTC value. A failure after a successful
+        //     load keeps the customer's `Loaded(_)` value.
         // See PR #1068 review on `statement.rs:209`.
-        let rpc_result = c
-            .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
-                key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
-            })
-            .await
-            .map(|resp| resp.value)
-            .map_err(|e| format!("{e:?}"));
-        apply_tz_offset_format_update(&mut settings.tz_offset_format, rpc_result);
+        if tz_format_needs_refresh(settings.tz_offset_format_cache, last_sql) {
+            let rpc_result = c
+                .connection_get_parameter(ConnectionGetParameterRequest {
+                    conn_handle: Some(*conn_handle),
+                    key: "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
+                })
+                .await
+                .map(|resp| resp.value)
+                .map_err(|e| format!("{e:?}"));
+            apply_tz_offset_format_update(&mut settings.tz_offset_format_cache, rpc_result);
+        }
     });
     Ok(())
+}
+
+/// Decide whether to re-read `TIMESTAMP_TZ_OUTPUT_FORMAT` from the
+/// server after the just-executed statement.
+///
+/// Pure function so the truth table can be unit-tested without an RPC
+/// mock. Returns `true` when:
+/// - the cache has never been populated (`Unloaded`), OR
+/// - the SQL we just ran starts with `ALTER SESSION` (case-insensitive,
+///   leading whitespace and SQL comments stripped).
+///
+/// `last_sql == None` is the prepared `SQLExecute` path -- a prepared
+/// statement that holds an `ALTER SESSION` is pathological enough that
+/// we trade exactness for the perf win.
+///
+/// Known blind spots (all accepted -- they only ever cause a *stale*
+/// cache, never a crash, and none are reachable by the documented
+/// `ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = ...` flow):
+/// - Multi-statement submissions (`SELECT 1; ALTER SESSION SET ...`):
+///   only the leading keyword is inspected, so a trailing `ALTER
+///   SESSION` in the same batch is missed.
+/// - A stored procedure / `EXECUTE IMMEDIATE` body that runs `ALTER
+///   SESSION` internally: the outer `CALL` / `EXECUTE IMMEDIATE` text
+///   doesn't start with `ALTER SESSION`, so the mutation is invisible
+///   here.
+///
+/// In both cases the customer can still force a refresh by issuing a
+/// top-level `ALTER SESSION` (or opening a new connection); we
+/// deliberately don't pay the per-execute RPC to cover them.
+pub(crate) fn tz_format_needs_refresh(
+    cache: crate::conversion::TzOffsetFormatCache,
+    last_sql: Option<&str>,
+) -> bool {
+    if matches!(cache, crate::conversion::TzOffsetFormatCache::Unloaded) {
+        return true;
+    }
+    let Some(sql) = last_sql else {
+        return false;
+    };
+    sql_starts_with_alter_session(sql)
+}
+
+/// `true` if `sql`, after stripping leading whitespace and `--` /
+/// `/* ... */` comments, begins with `ALTER SESSION` (case-insensitive).
+///
+/// Conservative on purpose: we'd rather over-refresh than miss a real
+/// `ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = ...`. Anything else
+/// (including `ALTER USER`, `USE ROLE`, plain `SELECT`, etc.) skips the
+/// refresh -- those statements cannot change session parameters.
+///
+/// Whitespace *and* comments are tolerated both before `ALTER` and
+/// between the `ALTER` and `SESSION` keywords, so
+/// `ALTER /* x */ SESSION ...` and `ALTER SESSION/* x */ SET ...` are
+/// both detected.
+fn sql_starts_with_alter_session(sql: &str) -> bool {
+    let head = strip_leading_whitespace_and_comments(sql);
+    let Some(after_alter) = strip_keyword(head, "ALTER") else {
+        return false;
+    };
+    // `ALTER` and `SESSION` must be separated by at least one whitespace
+    // char or a comment, otherwise we'd match `ALTERSESSION`. The strip
+    // must consume something.
+    let after_sep = strip_leading_whitespace_and_comments(after_alter);
+    if after_sep.len() == after_alter.len() {
+        return false;
+    }
+    let Some(after_session) = strip_keyword(after_sep, "SESSION") else {
+        return false;
+    };
+    // `SESSION` must end at a token boundary: end of statement, or
+    // followed by whitespace or a comment. (`ALTER SESSION` is never
+    // followed by `(` in the grammar, so there's no paren case to
+    // special-case.)
+    after_session.is_empty()
+        || after_session.starts_with(|c: char| c.is_whitespace())
+        || after_session.starts_with("--")
+        || after_session.starts_with("/*")
+}
+
+/// Case-insensitively strip a leading ASCII `keyword` from `s`, returning
+/// the remainder, or `None` if `s` doesn't start with it. `keyword` is
+/// assumed ASCII, so its byte length is also its char length.
+fn strip_keyword<'a>(s: &'a str, keyword: &str) -> Option<&'a str> {
+    let prefix = s.get(..keyword.len())?;
+    prefix
+        .eq_ignore_ascii_case(keyword)
+        .then(|| &s[keyword.len()..])
+}
+
+fn strip_leading_whitespace_and_comments(mut s: &str) -> &str {
+    loop {
+        let before = s;
+        s = s.trim_start();
+        if let Some(rest) = s.strip_prefix("--") {
+            s = match rest.find('\n') {
+                Some(idx) => &rest[idx + 1..],
+                None => "",
+            };
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = match rest.find("*/") {
+                Some(idx) => &rest[idx + 2..],
+                None => "",
+            };
+        }
+        if s.len() == before.len() {
+            return s;
+        }
+    }
 }
 
 /// Cache-update decision logic for `TIMESTAMP_TZ_OUTPUT_FORMAT`. Pure
@@ -320,35 +454,40 @@ fn update_numeric_settings(
 /// Err) can be unit-tested without standing up an RPC mock.
 ///
 /// Semantics (see PR #1068 review on `statement.rs:209`):
-/// - `Ok(Some(non_empty))` -> overwrite cache with parsed token (which
-///   may itself be `None` if the format string carries no recognised
-///   TZ token, the spec-correct fall-through to bare UTC).
+/// - `Ok(Some(non_empty))` -> `Loaded(token)` with the parsed token
+///   (which may itself be `None` if the format string carries no
+///   recognised TZ token, the spec-correct fall-through to bare UTC).
 /// - `Ok(Some(""))` / `Ok(None)` -> the user explicitly UNSET the
-///   parameter, clear the cache.
-/// - `Err(_)` -> a transient RPC blip; leave the cache untouched and
-///   warn so a customer-configured wire format isn't silently lost.
+///   parameter, so `Loaded(None)` (bare UTC).
+/// - `Err(_)` -> a transient RPC blip; leave the cache *state* untouched
+///   and warn. Because the `Unloaded` -> `Loaded` transition only ever
+///   happens in the `Ok(_)` arm, a failure on the first execute leaves
+///   the cache `Unloaded` so the next execute retries, and a failure
+///   after a successful load keeps the customer-configured wire format.
 pub(crate) fn apply_tz_offset_format_update(
-    cached: &mut Option<crate::conversion::timestamp::TzOffsetFormat>,
+    cache: &mut crate::conversion::TzOffsetFormatCache,
     rpc_result: Result<Option<String>, String>,
 ) {
+    use crate::conversion::TzOffsetFormatCache;
     match rpc_result {
         Ok(value) => {
             let new_format = match value.as_deref() {
                 Some(v) if !v.is_empty() => crate::conversion::timestamp::parse_tz_offset_format(v),
                 _ => None,
             };
-            if *cached != new_format {
+            let changed = !matches!(*cache, TzOffsetFormatCache::Loaded(f) if f == new_format);
+            if changed {
                 tracing::info!(
                     "Server parameter TIMESTAMP_TZ_OUTPUT_FORMAT offset token = {new_format:?}"
                 );
             }
-            *cached = new_format;
+            *cache = TzOffsetFormatCache::Loaded(new_format);
         }
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                "failed to refresh TIMESTAMP_TZ_OUTPUT_FORMAT; keeping cached value {:?}",
-                cached
+                "failed to refresh TIMESTAMP_TZ_OUTPUT_FORMAT; keeping cached state {:?}",
+                cache
             );
         }
     }
@@ -357,65 +496,207 @@ pub(crate) fn apply_tz_offset_format_update(
 #[cfg(test)]
 mod apply_tz_offset_format_update_tests {
     use super::apply_tz_offset_format_update;
+    use crate::conversion::TzOffsetFormatCache;
     use crate::conversion::timestamp::TzOffsetFormat;
 
     #[test]
-    fn ok_with_recognised_format_overwrites_cache() {
-        let mut cached = None;
+    fn ok_with_recognised_format_loads_token() {
+        let mut cache = TzOffsetFormatCache::Unloaded;
         apply_tz_offset_format_update(
-            &mut cached,
+            &mut cache,
             Ok(Some("YYYY-MM-DD HH24:MI:SS.FF TZH:TZM".to_string())),
         );
-        assert_eq!(cached, Some(TzOffsetFormat::Colon));
+        assert_eq!(
+            cache,
+            TzOffsetFormatCache::Loaded(Some(TzOffsetFormat::Colon))
+        );
     }
 
     #[test]
-    fn ok_with_unrecognised_format_clears_cache() {
+    fn ok_with_unrecognised_format_loads_none() {
         // A non-empty format string with no recognised TZ token is the
         // spec-correct fall-through to bare UTC -- the user is asking
         // for a custom format the driver doesn't render an offset for,
         // so we mustn't keep an old offset rendering active.
-        let mut cached = Some(TzOffsetFormat::Colon);
-        apply_tz_offset_format_update(&mut cached, Ok(Some("YYYY-MM-DD HH24:MI:SS".to_string())));
-        assert_eq!(cached, None);
+        let mut cache = TzOffsetFormatCache::Loaded(Some(TzOffsetFormat::Colon));
+        apply_tz_offset_format_update(&mut cache, Ok(Some("YYYY-MM-DD HH24:MI:SS".to_string())));
+        assert_eq!(cache, TzOffsetFormatCache::Loaded(None));
     }
 
     #[test]
-    fn ok_with_empty_string_clears_cache() {
+    fn ok_with_empty_string_loads_none() {
         // Server returns an explicit empty string for an unset parameter
         // on some configurations; treat it as UNSET and revert to bare
         // UTC.
-        let mut cached = Some(TzOffsetFormat::NoColon);
-        apply_tz_offset_format_update(&mut cached, Ok(Some(String::new())));
-        assert_eq!(cached, None);
+        let mut cache = TzOffsetFormatCache::Loaded(Some(TzOffsetFormat::NoColon));
+        apply_tz_offset_format_update(&mut cache, Ok(Some(String::new())));
+        assert_eq!(cache, TzOffsetFormatCache::Loaded(None));
     }
 
     #[test]
-    fn ok_with_none_clears_cache() {
-        let mut cached = Some(TzOffsetFormat::HourOnly);
-        apply_tz_offset_format_update(&mut cached, Ok(None));
-        assert_eq!(cached, None);
+    fn ok_with_none_loads_none() {
+        let mut cache = TzOffsetFormatCache::Loaded(Some(TzOffsetFormat::HourOnly));
+        apply_tz_offset_format_update(&mut cache, Ok(None));
+        assert_eq!(cache, TzOffsetFormatCache::Loaded(None));
     }
 
-    /// The load-bearing assertion: a transient RPC failure must NOT
-    /// silently flip a customer-configured `+HH:MM` rendering back to
-    /// bare UTC. Pre-fix, the closure overwrote the cache with `None`
-    /// on `Err(_)`, breaking the next fetch with no diagnostic. See PR
-    /// #1068 review on `statement.rs:209`.
+    /// rkowalski #1 (the load-bearing regression): a transient RPC
+    /// failure on the *first* execute must leave the cache `Unloaded`,
+    /// NOT flip it to `Loaded(None)`. Pre-fix, `tz_format_loaded` was
+    /// set unconditionally, locking the connection into bare-UTC
+    /// rendering until an `ALTER SESSION` happened by. Leaving it
+    /// `Unloaded` makes the next execute retry the load. See PR #1068
+    /// review on `statement.rs:209`.
     #[test]
-    fn err_keeps_existing_cached_value() {
-        let mut cached = Some(TzOffsetFormat::Colon);
-        apply_tz_offset_format_update(&mut cached, Err("transient transport error".to_string()));
-        assert_eq!(cached, Some(TzOffsetFormat::Colon));
+    fn err_on_first_execute_stays_unloaded() {
+        let mut cache = TzOffsetFormatCache::Unloaded;
+        apply_tz_offset_format_update(&mut cache, Err("transient transport error".to_string()));
+        assert_eq!(cache, TzOffsetFormatCache::Unloaded);
     }
 
-    /// Symmetric: an `Err` against an already-empty cache must remain
-    /// empty (i.e. we don't accidentally synthesise a value).
+    /// A transient failure *after* a successful load must NOT silently
+    /// flip a customer-configured `+HH:MM` rendering back to bare UTC --
+    /// the loaded value is kept.
     #[test]
-    fn err_leaves_empty_cache_empty() {
-        let mut cached: Option<TzOffsetFormat> = None;
-        apply_tz_offset_format_update(&mut cached, Err("transient transport error".to_string()));
-        assert_eq!(cached, None);
+    fn err_keeps_existing_loaded_value() {
+        let mut cache = TzOffsetFormatCache::Loaded(Some(TzOffsetFormat::Colon));
+        apply_tz_offset_format_update(&mut cache, Err("transient transport error".to_string()));
+        assert_eq!(
+            cache,
+            TzOffsetFormatCache::Loaded(Some(TzOffsetFormat::Colon))
+        );
+    }
+
+    /// Symmetric: an `Err` against an already-`Loaded(None)` cache must
+    /// remain `Loaded(None)` (we don't accidentally synthesise a value
+    /// or regress to `Unloaded`).
+    #[test]
+    fn err_keeps_existing_loaded_none() {
+        let mut cache = TzOffsetFormatCache::Loaded(None);
+        apply_tz_offset_format_update(&mut cache, Err("transient transport error".to_string()));
+        assert_eq!(cache, TzOffsetFormatCache::Loaded(None));
+    }
+}
+
+#[cfg(test)]
+mod tz_format_needs_refresh_tests {
+    use super::tz_format_needs_refresh;
+    use crate::conversion::TzOffsetFormatCache;
+
+    const UNLOADED: TzOffsetFormatCache = TzOffsetFormatCache::Unloaded;
+    const LOADED: TzOffsetFormatCache = TzOffsetFormatCache::Loaded(None);
+
+    #[test]
+    fn first_load_always_refreshes() {
+        // `Unloaded` -> refresh regardless of SQL (or absence).
+        assert!(tz_format_needs_refresh(UNLOADED, None));
+        assert!(tz_format_needs_refresh(UNLOADED, Some("SELECT 1")));
+    }
+
+    #[test]
+    fn loaded_with_no_sql_skips_refresh() {
+        // Prepared `SQLExecute` path -- we never refresh just from a
+        // bare execute. A prepared `ALTER SESSION` is the documented
+        // edge case (see call site comment in `execute`).
+        assert!(!tz_format_needs_refresh(LOADED, None));
+    }
+
+    #[test]
+    fn loaded_with_select_skips_refresh() {
+        for sql in [
+            "SELECT 1",
+            "SELECT * FROM tbl WHERE TS::TIMESTAMP_TZ > CURRENT_TIMESTAMP()",
+            "  \t\n SELECT 1",
+            "/* hi */ SELECT 1",
+            "-- comment\nSELECT 1",
+            "INSERT INTO t VALUES (1)",
+            "USE ROLE analyst",
+            "USE WAREHOUSE wh",
+            "ALTER USER me SET RSA_PUBLIC_KEY = '...'",
+            "ALTER WAREHOUSE wh SUSPEND",
+            "SET myvar = 1",
+        ] {
+            assert!(
+                !tz_format_needs_refresh(LOADED, Some(sql)),
+                "should NOT refresh for: {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loaded_with_alter_session_refreshes() {
+        for sql in [
+            "ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS TZH:TZM'",
+            "alter session set timestamp_tz_output_format = 'YYYY-MM-DD'",
+            "ALTER SESSION UNSET TIMESTAMP_TZ_OUTPUT_FORMAT",
+            "AlTeR  SeSsIoN  SET FOO = 1",
+            "  \t\nALTER SESSION SET FOO = 1",
+            "/* warm-up */ ALTER SESSION SET FOO = 1",
+            "-- toggle\nALTER SESSION SET FOO = 1",
+            "/* a */ -- b\n /* c */ ALTER SESSION SET FOO = 1",
+            "ALTER\tSESSION\tSET FOO = 1",
+        ] {
+            assert!(
+                tz_format_needs_refresh(LOADED, Some(sql)),
+                "should refresh for: {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loaded_with_inter_keyword_comment_refreshes() {
+        // rkowalski #3: comments *between* the ALTER and SESSION keywords
+        // (and immediately after SESSION) must still be detected, not just
+        // leading comments.
+        for sql in [
+            "ALTER /* x */ SESSION SET FOO = 1",
+            "ALTER/* x */SESSION SET FOO = 1",
+            "ALTER -- inline\n SESSION SET FOO = 1",
+            "ALTER SESSION/* x */ SET FOO = 1",
+            "ALTER SESSION-- c\nSET FOO = 1",
+            "/* a */ ALTER /* b */ SESSION /* c */ SET FOO = 1",
+        ] {
+            assert!(
+                tz_format_needs_refresh(LOADED, Some(sql)),
+                "should refresh for: {sql:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn alter_session_substring_does_not_refresh() {
+        // We anchor at the start of the (stripped) statement text.
+        // A SELECT that mentions ALTER SESSION in a literal must not
+        // trigger the refresh -- otherwise an app fetching audit logs
+        // pays the per-execute cost on every row.
+        assert!(!tz_format_needs_refresh(
+            LOADED,
+            Some("SELECT 'ALTER SESSION SET ...' AS sql")
+        ));
+        assert!(!tz_format_needs_refresh(LOADED, Some("ALTERED")));
+        assert!(!tz_format_needs_refresh(
+            LOADED,
+            Some("ALTER USER me UNSET FOO")
+        ));
+        assert!(!tz_format_needs_refresh(LOADED, Some("ALTER")));
+        assert!(!tz_format_needs_refresh(
+            LOADED,
+            Some("ALTERSESSION SET FOO=1")
+        ));
+        // `SESSION` immediately followed by a non-boundary char is not a
+        // keyword match.
+        assert!(!tz_format_needs_refresh(
+            LOADED,
+            Some("ALTER SESSIONX SET FOO=1")
+        ));
+    }
+
+    #[test]
+    fn empty_or_whitespace_sql_skips_refresh() {
+        assert!(!tz_format_needs_refresh(LOADED, Some("")));
+        assert!(!tz_format_needs_refresh(LOADED, Some("   \n\t  ")));
+        assert!(!tz_format_needs_refresh(LOADED, Some("-- comment only\n")));
+        assert!(!tz_format_needs_refresh(LOADED, Some("/* comment only */")));
     }
 }
 
@@ -729,12 +1010,19 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
     // === POST-PROCESSING (shared by poll and sync paths) ===
     tracing::info!("execute: Successfully executed statement");
+    // Prepared statement: text isn't kept on the client. We pass `None`
+    // and rely on the first-execute path to populate the
+    // `tz_offset_format` cache; subsequent prepared executes skip the
+    // RPC. An `ALTER SESSION` issued via prepare/execute (very rare) is
+    // the documented edge case where the new format won't take effect
+    // until the next `SQLExecDirect` runs.
     finalize_execute_response(
         &mut conn,
         &mut inner,
         outcome.conn_handle,
         outcome.response,
         origin,
+        None,
     )?;
     Ok(())
 }
@@ -2405,6 +2693,10 @@ fn execute_dae(
 
     let query_timeout = inner.query_timeout;
     let deferred_query = dae_context.deferred_query;
+    // Capture the SQL (if any) before `deferred_query` is moved into the
+    // async block, so the post-execute refresh can detect `ALTER SESSION`.
+    // `None` for prepared DAE executes, matching the `execute` path.
+    let last_sql = deferred_query.clone();
 
     let token = CancellationToken::new();
     let _cancel_guard = CancelTokenGuard::arm(cancel_token_slot, token.clone());
@@ -2454,7 +2746,11 @@ fn execute_dae(
     };
 
     tracing::info!("execute_dae: Successfully executed deferred statement");
-    if let Err(e) = update_numeric_settings(&conn_handle, &mut conn.numeric_settings) {
+    if let Err(e) = update_numeric_settings(
+        &conn_handle,
+        &mut conn.numeric_settings,
+        last_sql.as_deref(),
+    ) {
         inner.state.set(restored);
         return Err(e);
     }
