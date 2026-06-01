@@ -86,7 +86,7 @@ reviewers:
   michal-hofman_snow:
   jakub-szczerbinski_snow:
   devansh-das_snow:
-  maxymilina-akowalski_snow:
+  maxymilian-kowalski_snow:
   antoni-solarski_snow:
   filip-pawlowski_snow:
   patryk-czajka_snow:
@@ -109,7 +109,7 @@ rules:
     - michal-hofman_snow
     - jakub-szczerbinski_snow
     - devansh-das_snow
-    - maxymilina-akowalski_snow
+    - maxymilian-kowalski_snow
     - rafal-kowalski_snow
     - piotr-bulawa_snow
   python:
