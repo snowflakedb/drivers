@@ -45,13 +45,43 @@ pub struct NumericSettings {
     /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Used as the default
     /// `column_size` in auto-populated IPD records for untyped `?` markers.
     pub max_varchar_size: u64,
-    /// Parsed `TIMESTAMP_TZ_OUTPUT_FORMAT` for the current session. `None`
-    /// means "not set, or set to a value without a TZH/TZM/TZHTZM token";
-    /// the TZ -> CHAR/WCHAR fetch path keeps its legacy UTC-only behaviour.
-    /// `Some(_)` means the customer asked for the offset to be preserved
-    /// in CHAR/WCHAR output (mirrors what the legacy 3.16.0 driver does
-    /// when handed the same format).
-    pub tz_offset_format: Option<crate::conversion::timestamp::TzOffsetFormat>,
+    /// Cached `TIMESTAMP_TZ_OUTPUT_FORMAT` for the current session. See
+    /// [`TzOffsetFormatCache`] -- the enum keeps the "not yet loaded",
+    /// "loaded but unset (bare UTC)", and "loaded with an offset token"
+    /// states distinct, and makes the illegal "have a format but marked
+    /// not-loaded" combination unrepresentable. Read it via
+    /// [`NumericSettings::tz_offset_format`].
+    pub tz_offset_format_cache: TzOffsetFormatCache,
+}
+
+/// Cache state for the session's `TIMESTAMP_TZ_OUTPUT_FORMAT` offset token.
+///
+/// Encoded as an enum (rather than `Option<TzOffsetFormat>` plus a
+/// separate `loaded` flag) so the illegal "we have a format but it's
+/// marked not loaded" state is unrepresentable:
+/// - `Unloaded` -- never read from the server on this connection; the
+///   next execute must refresh.
+/// - `Loaded(None)` -- read, and the parameter is unset / carries no
+///   recognised TZ token, so TZ -> CHAR/WCHAR rendering falls through to
+///   bare UTC.
+/// - `Loaded(Some(f))` -- read, and the customer asked for the offset to
+///   be preserved (mirrors what the legacy 3.16.0 driver does).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TzOffsetFormatCache {
+    Unloaded,
+    Loaded(Option<crate::conversion::timestamp::TzOffsetFormat>),
+}
+
+impl NumericSettings {
+    /// The cached offset token to use for TZ -> CHAR/WCHAR rendering.
+    /// `None` until the first successful load and whenever the parameter
+    /// is unset; this is what the fetch path consumes.
+    pub fn tz_offset_format(&self) -> Option<crate::conversion::timestamp::TzOffsetFormat> {
+        match self.tz_offset_format_cache {
+            TzOffsetFormatCache::Loaded(format) => format,
+            TzOffsetFormatCache::Unloaded => None,
+        }
+    }
 }
 
 /// Snowflake default max VARCHAR size (16 MB). Overridden by the server's
@@ -64,7 +94,7 @@ impl Default for NumericSettings {
             treat_decimal_as_int: false,
             treat_big_number_as_string: false,
             max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
-            tz_offset_format: None,
+            tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
         }
     }
 }

@@ -56,7 +56,7 @@ pub use traits::{
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
 };
-pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
+pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN, TzOffsetFormatCache};
 
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,
@@ -389,7 +389,7 @@ impl SnowflakeFieldType {
             })),
             "TIMESTAMP_TZ" => Ok(Self::TimestampTz(timestamp::SnowflakeTimestampTz {
                 scale: timestamp_scale(field)?,
-                tz_offset_format: numeric_settings.tz_offset_format,
+                tz_offset_format: numeric_settings.tz_offset_format(),
             })),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => {
