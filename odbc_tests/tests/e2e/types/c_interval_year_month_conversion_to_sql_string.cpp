@@ -16,6 +16,9 @@
 // the parameter — the struct's `interval_type` field is intentionally
 // ignored (Appendix D requires conformance to the bound C type).
 
+#include <sql.h>
+#include <sqlext.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"

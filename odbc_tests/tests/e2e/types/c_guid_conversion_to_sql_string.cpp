@@ -8,6 +8,9 @@
 // byte order, `Data4` is a fixed byte sequence) — see the `CDataType::Guid`
 // arm in `varchar.rs::ReadODBC for SnowflakeVarchar` for the format string.
 
+#include <sql.h>
+#include <sqlext.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"

@@ -852,3 +852,17 @@ behavior_differences:
       After async SQLPrepare + async SQLExecute + SQLCloseCursor, SQLNumResultCols returns the column count from the prepare phase. The statement correctly transitions back to Prepared state (S3) per the ODBC spec state transition table.
     impact: |
       Applications that call SQLNumResultCols after closing a cursor on a prepared statement will get the correct column count on the new driver. This matches the ODBC spec: SQLCloseCursor from S5 should return to S3 (Prepared).
+
+  60:
+    name: "SQLBindParameter SQL_C_INTERVAL_SECOND with fractional seconds bound to exact-numeric SQL targets truncates the fraction instead of overflowing"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      When a SQL_C_INTERVAL_SECOND value carrying a non-zero fractional-seconds component is bound (SQLBindParameter) to a variable-precision exact-numeric SQL target (SQL_DECIMAL / SQL_NUMERIC) with a declared column size, the reference driver rejects the bind at SQLExecute with SQL_ERROR and SQLSTATE 22015 (NativeError 40530, "Interval field overflow") rather than storing the integral seconds magnitude.
+    new_driver_behavior: |
+      Per ODBC Appendix D ("Converting Data from C to SQL Data Types" — truncation of interval values), the fractional-seconds component is truncated when the target is an exact-numeric type and the integral seconds magnitude is stored. The bind succeeds (SQL_SUCCESS). The same truncate-and-store contract holds for the integer SQL targets (SQL_TINYINT / SQL_SMALLINT / SQL_INTEGER / SQL_BIGINT).
+    impact: |
+      Applications binding fractional SQL_C_INTERVAL_SECOND values to DECIMAL/NUMERIC parameters get the spec-compliant truncate-and-store behavior on the new driver instead of a 22015 rejection.
+    description: |
+      Spec reference: ODBC Appendix D, "Converting Data from C to SQL Data Types" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types). A single-field interval bound to an exact-numeric target carries the magnitude of its single datetime field; fractional seconds carried by SQL_C_INTERVAL_SECOND are truncated when the target is an exact integer type.

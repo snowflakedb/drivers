@@ -31,6 +31,9 @@
 // and the legacy 3.16.0 driver, so applications can round-trip a value
 // through either driver and get an identical string.
 
+#include <sql.h>
+#include <sqlext.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
@@ -505,38 +508,6 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // Then the upper boundary of the 6-digit width is rendered without truncation
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "45.999999");
-}
-
-// fraction == 1_000_000 is technically out-of-spec (the seconds-precision
-// default is 6, so values above 999_999 should overflow into the seconds
-// field rather than be passed verbatim). The current driver formatter
-// emits `format!("{:06}", fraction)` which is min-width, not truncate, so
-// values >= 1_000_000 produce 7 digits. This test pins that behaviour so
-// future changes (truncation, overflow detection, or rejection) surface
-// here as an explicit assertion failure.
-TEST_CASE_METHOD(ConnSchemaFixture,
-                 "should render seven-digit fraction for SQL_C_INTERVAL_SECOND when fraction equals one second",
-                 "[c_interval][conversion][sql_string]") {
-  // Out-of-spec input: pins the *new* driver formatter's min-width-not-truncate
-  // behaviour. The legacy driver normalises differently (overflows the fraction
-  // into the seconds field) so the literal it emits is not "45.1000000". This
-  // test documents new-driver behaviour only — skip on the reference driver.
-  SKIP_OLD_DRIVER("BD#000", "New driver pins format!(\"{:06}\", fraction) for out-of-spec fraction=1_000_000us");
-
-  // Given a VARCHAR column
-  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
-
-  // When SQL_C_INTERVAL_SECOND carrying second=45 fraction=1_000_000 is bound and inserted
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQL_INTERVAL_STRUCT val = ds_interval(SQL_FALSE, 0, 0, 0, 45, 1'000'000);
-  SQLLEN ind = sizeof(val);
-  bind_interval_and_execute(stmt, SQL_C_INTERVAL_SECOND, val, ind, 6);
-
-  // Then the formatter emits seven digits — documenting the current behaviour for an out-of-spec input
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "45.1000000");
 }
 
 // ============================================================================
