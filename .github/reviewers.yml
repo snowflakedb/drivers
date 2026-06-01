@@ -110,7 +110,6 @@ rules:
     - jakub-szczerbinski_snow
     - devansh-das_snow
     - maxymilian-kowalski_snow
-    - rafal-kowalski_snow
     - piotr-bulawa_snow
   python:
     - antoni-solarski_snow
