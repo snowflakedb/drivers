@@ -38,32 +38,39 @@ static std::string read_all_files_in(const fs::path& dir) {
 
 TEST_CASE("should create log file when sf.odbc.ini configures file logging", "[logging]") {
   SKIP_OLD_DRIVER("BD#000", "Old driver does not support file logging setup via sf.odbc.ini");
-  // Given a temp directory for logs and an sf.odbc.ini pointing there
+
+  // Given a temp directory for logs and an sf.odbc.ini pointing at it.
+  // Under iODBC the driver requires DriverManagerEncoding=UTF-32 to match
+  // the DM's 4-byte SQLWCHARs; without it the first wide-string call from
+  // iODBC mis-decodes. The other lookup-chain candidates are bypassed
+  // because the test sets SF_ODBC_INI explicitly, so we MUST add the
+  // encoding entry to the per-test INI itself.
   auto log_dir = create_temp_log_dir();
   auto ini_path = log_dir / "sf.odbc.ini";
-
   {
     std::ofstream ini(ini_path);
+    if (is_iodbc_test_suite()) {
+      ini << "DriverManagerEncoding=UTF-32\n";
+    }
     ini << "LogLevel=DEBUG\n";
     ini << "LogPath=" << log_dir.string() << "\n";
     ini << "LogFile=odbc_e2e_test.log\n";
   }
-
   EnvOverride env_override("SF_ODBC_INI", ini_path.string());
 
-  // When a connection is established and a query is executed
+  // When the driver connects (picking up the custom INI) and executes SELECT 1
   Connection conn;
   auto stmt = conn.execute_fetch("SELECT 1");
   auto value = get_data<SQL_C_CHAR>(stmt, 1);
   CHECK(value == "1");
 
-  // Then the log directory should contain a log file with connection-related output
+  // Then a log file is produced in the configured directory with the expected
+  //   startup and connect markers
   auto log_contents = read_all_files_in(log_dir);
   CHECK(!log_contents.empty());
   CHECK(log_contents.find("ODBC driver starting v") != std::string::npos);
   CHECK(log_contents.find("connect_with_params") != std::string::npos);
 
-  // Cleanup
   std::error_code ec;
   fs::remove_all(log_dir, ec);
 }

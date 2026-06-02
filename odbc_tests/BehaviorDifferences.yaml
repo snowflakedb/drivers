@@ -853,6 +853,20 @@ behavior_differences:
     impact: |
       Applications that call SQLNumResultCols after closing a cursor on a prepared statement will get the correct column count on the new driver. This matches the ODBC spec: SQLCloseCursor from S5 should return to S3 (Prepared).
 
+  59:
+    name: "SQLFreeHandle / SQLDisconnect / SQLCopyDesc do not abort or SegFault inside iODBC's handle-dispatch path"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The crashes are inside the old driver's per-handle cleanup hooks. The new driver coordinates with iODBC's alloc table correctly. The old driver path is not safely usable under iODBC for these calls because the process aborts before the caller can recover.
+    old_driver_behavior: |
+      Under iODBC, calls into the old driver's handle hierarchy (SQLFreeHandle on an environment/connection with active children, double-free of statement/connection, complete-hierarchy cleanup, SQLDisconnect with multiple live statements, SQLCopyDesc with a NULL target) crash with "Subprocess aborted" or SIGSEGV inside the driver's per-handle cleanup callbacks. The same calls succeed under unixODBC (which uses a different dispatch model) and on Windows.
+    new_driver_behavior: |
+      The new driver participates correctly in iODBC's alloc table and either succeeds or surfaces the spec-mandated diagnostic. There is no process abort.
+    impact: |
+      Applications that call into these paths through iODBC on the old driver lose the entire process to a SIGSEGV / abort before any diagnostic surfaces; the call site has no opportunity to react or clean up. The new driver completes the call or returns the spec diagnostic without crashing.
+
   60:
     name: "SQLBindParameter SQL_C_INTERVAL_SECOND with fractional seconds bound to exact-numeric SQL targets truncates the fraction instead of overflowing"
     status: unknown
@@ -866,3 +880,166 @@ behavior_differences:
       Applications binding fractional SQL_C_INTERVAL_SECOND values to DECIMAL/NUMERIC parameters get the spec-compliant truncate-and-store behavior on the new driver instead of a 22015 rejection.
     description: |
       Spec reference: ODBC Appendix D, "Converting Data from C to SQL Data Types" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types). A single-field interval bound to an exact-numeric target carries the magnitude of its single datetime field; fractional seconds carried by SQL_C_INTERVAL_SECOND are truncated when the target is an exact integer type.
+
+  61:
+    name: "Returns spec-correct success codes and diagnostics under iODBC (SQL_NO_DATA for zero-row DML, SQL_SUCCESS for length-only queries, posts the SUCCESS_WITH_INFO / HY012 diag record, reports untruncated StringLength, honors explicit TextLength), instead of old-driver iODBC-only deviations"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under iODBC the old driver takes a handful of shortcuts on return codes, diagnostic posting, string-length reporting, and explicit-length handling. The new driver follows the spec.
+    old_driver_behavior: |
+      Under iODBC the old driver deviates from the spec in the following ways:
+        - Zero-row DML returns SQL_SUCCESS instead of the spec-mandated SQL_NO_DATA. SQLExecDirect / SQLExecute for a searched DELETE or UPDATE that matches zero rows returns SQL_SUCCESS; SQLRowCount correctly returns 0. Under unixODBC the old driver returns SQL_NO_DATA per the spec.
+        - Length-only queries (NULL output / BufferLength=0) return SQL_SUCCESS_WITH_INFO (implicit truncation flag) instead of plain SQL_SUCCESS. Affected calls: SQLGetDescRec with all-NULL output pointers + BufferLength=0, SQLGetDescRec with a NULL name pointer but other fields requested, SQLGetCursorName with a NULL CursorName buffer, SQLNativeSql with a NULL OutStatementText buffer, SQLGetInfo with a NULL InfoValuePtr.
+        - SUCCESS_WITH_INFO / HY012 leaves the diagnostic stack empty (the old driver's diag-record allocation is gated on the return code being SQL_ERROR / SQL_NO_DATA). SQLDriverConnect with a too-small OutConnectionString buffer returns SQL_SUCCESS_WITH_INFO but posts no 01004 record; SQLDriverConnect with an unrecognised attribute returns SQL_SUCCESS_WITH_INFO but posts no 01S00 record; SQLEndTran with an invalid completion type returns SQL_ERROR but posts no HY012 record.
+        - StringLength on SUCCESS_WITH_INFO + 01004 truncations reports the *truncated* length (ODBC 2.x convention) instead of the *untruncated* length the caller needs to size a retry buffer (ODBC 3.x). Affected calls: SQLGetDescField (string truncation), SQLGetDescRec (Name truncation), SQLGetInfo (e.g. SQL_DRIVER_NAME with a small buffer). Additionally, SQLGetInfo's length-only query (NULL InfoValuePtr) reports the wide-byte count (sizeof(SQLWCHAR) * char_count, i.e. 4x on iODBC's UTF-32) while the with-buffer call reports the narrow-byte write count, so the two values disagree by the SQLWCHAR width factor.
+        - SQLNativeSql ignores an explicit TextLength1=0 and treats the input as NUL-terminated, copying the input string verbatim into the output (so a "SELECT 1" input with TextLength1=0 produces "SELECT 1" / outLen=8 instead of "" / outLen=0). The new driver honours the explicit zero length.
+    new_driver_behavior: |
+      On both DMs: SQLExecDirect / SQLExecute return SQL_NO_DATA for zero-row DML; length-only queries return plain SQL_SUCCESS; SUCCESS_WITH_INFO / HY012 paths post the spec-mandated 01004 / 01S00 / HY012 diagnostic record; truncated SQLGetInfo / SQLGetDescField / SQLGetDescRec calls report the untruncated StringLength; SQLNativeSql honours explicit TextLength1.
+    impact: |
+      Applications running against the old driver under iODBC see SQL_SUCCESS where the spec mandates SQL_NO_DATA on zero-row DML, SQL_SUCCESS_WITH_INFO where the spec mandates SQL_SUCCESS on length-only queries, an empty diagnostic stack on SUCCESS_WITH_INFO / HY012 returns, a truncated StringLength that cannot be used to size a retry buffer, and ignored explicit zero-length SQLNativeSql inputs. The new driver returns spec values.
+
+  62:
+    name: "iODBC's DM dispatches the new driver and the old driver along different paths (driver-cap dependent), so identical calls return different return codes / SQLSTATEs under iODBC"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      iODBC's DM consults each driver's claimed ODBC version and reported function bitmap to decide whether to short-circuit a call from its own static tables, intercept a parameter validation up-front, or forward the call to the driver. Because the old driver and the new driver advertise different capabilities, iODBC takes different paths for identical calls and the surfaced return code / SQLSTATE differs accordingly. This is intrinsic to iODBC's dispatch model and not addressable from the driver side.
+    old_driver_behavior: |
+      Under iODBC the DM takes the following paths for the old driver:
+        - SQLColumnPrivileges with a NULL TableName is forwarded to the old driver, which submits the call to the backend and surfaces SQL_ERROR from the backend diagnostic.
+        - SQLGetInfo(SQL_DATA_SOURCE_NAME) is answered by the old driver with an empty string + SQL_SUCCESS (nameLen=0).
+        - SQLGetFunctions(FunctionId=<out-of-range>) is answered by the old driver from its static function table with SQL_SUCCESS + supported=SQL_FALSE (no range check).
+        - SQLGetInfo with an invalid InfoType returns HY096 (the spec-correct "information type out of range") from the old driver.
+        - SQLGetData on a cursor positioned past the end of the result set surfaces SQL_ERROR with SQLSTATE 24000 (matching the unixODBC contract) because the old driver bypasses the iODBC DM's cursor-past-end short-circuit.
+    new_driver_behavior: |
+      Under iODBC the DM takes the following paths for the new driver:
+        - SQLColumnPrivileges with a NULL TableName is rejected up-front by the DM with SQL_INVALID_HANDLE (NULL-pointer check fires before the driver is reached).
+        - SQLGetInfo(SQL_DATA_SOURCE_NAME) is rejected by the DM with SQL_ERROR (the InfoType is on the DM's blocklist).
+        - SQLGetFunctions(FunctionId=<out-of-range>) is rejected by the DM with SQL_INVALID_HANDLE (FunctionId is range-checked at dispatch).
+        - SQLGetInfo with an invalid InfoType returns HY000 (the new driver follows the unixODBC reference-driver convention of mapping the invalid InfoType to the generic SQLSTATE rather than HY096).
+        - SQLGetData on a cursor positioned past the end of the result set returns SQL_NO_DATA without consulting the driver layer (iODBC DM short-circuits the post-end fetch per its own convention).
+    impact: |
+      Applications receive different return codes / SQLSTATEs for identical calls depending on driver, even though the underlying state of the connection / statement / cursor is the same. The new driver follows what iODBC's DM mandates; the old driver bypasses several of the DM intercepts.
+
+  63:
+    name: "SQLBrowseConnect short-circuits with SQL_ERROR under iODBC instead of returning SQL_NEED_DATA for the iterative protocol"
+    status: todo
+    type: bug
+    reviewed: false
+    status_rationale: |
+      The Snowflake connection model expects a complete connection string up front; the new driver therefore rejects partial input with SQL_ERROR. The old driver under iODBC happens to implement the iterative SQLBrowseConnect protocol and returns SQL_NEED_DATA with a prompt for the next required attribute.
+    old_driver_behavior: |
+      Under iODBC, SQLBrowseConnect("DRIVER={Snowflake}") returns SQL_NEED_DATA and writes the prompt for the next required attribute into the output buffer. Under unixODBC the old driver short-circuits with SQL_ERROR like the new driver.
+    new_driver_behavior: |
+      Returns SQL_ERROR.
+
+  64:
+    name: "Connection-attribute state flips synchronously after SQLDisconnect under iODBC: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_TRUE and reads of other attrs surface SQL_ERROR, instead of stale cached values"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver's connection-attribute cache outlives SQLDisconnect under iODBC: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_FALSE (stale "alive") until the next failed round-trip, and SQLGetConnectAttr for other attrs (e.g. SQL_ATTR_CONNECTION_TIMEOUT) still returns SQL_SUCCESS from the DM-side cache. The new driver invalidates the cache on disconnect so the spec-mandated SQL_CD_TRUE / SQL_ERROR surfaces immediately.
+    old_driver_behavior: |
+      Under iODBC, SQLGetConnectAttr(SQL_ATTR_CONNECTION_DEAD) after SQLDisconnect returns SQL_CD_FALSE (stale "connection is alive") instead of the spec-mandated SQL_CD_TRUE. SQLGetConnectAttr(SQL_ATTR_CONNECTION_TIMEOUT) after SQLDisconnect returns SQL_SUCCESS from the DM-side cache instead of the spec SQL_ERROR. Under unixODBC the old driver flips state synchronously.
+    new_driver_behavior: |
+      Invalidates the connection-attribute cache on SQLDisconnect on both DMs: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_TRUE; SQLGetConnectAttr for cached attrs (e.g. SQL_ATTR_CONNECTION_TIMEOUT) returns SQL_ERROR.
+    impact: |
+      Applications that poll SQL_ATTR_CONNECTION_DEAD on the old driver under iODBC see a stale SQL_CD_FALSE indefinitely after SQLDisconnect (until the next failed round-trip exposes the dead connection), and reads of other connection attributes succeed against stale cached values. The new driver invalidates the cache on disconnect so the spec-mandated SQL_CD_TRUE / SQL_ERROR surfaces immediately and disconnect is detectable through either attribute.
+
+  65:
+    name: "SQLGetFunctions reports SQL_API_SQLSETSCROLLOPTIONS / SQL_API_SQLPARAMOPTIONS as supported under iODBC instead of omitting them from the bitmap"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      The old driver's ODBC 2.x function bitmap loses two entry points (SQLSetScrollOptions, SQLParamOptions) when running through iODBC because the underlying functions are not exported through iODBC's dispatch. The new driver reports both as supported on both DMs (matching the Windows DM exclusion of SetScrollOptions already documented for the bitmap).
+    old_driver_behavior: |
+      Under iODBC, SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) and SQLGetFunctions(SQL_API_ALL_FUNCTIONS) omit SQL_API_SQLSETSCROLLOPTIONS and SQL_API_SQLPARAMOPTIONS bits from the returned bitmap. The per-function inventory also omits SQL_API_SQLSETSCROLLOPTIONS.
+    new_driver_behavior: |
+      Reports both entry points as supported on both DMs.
+    impact: |
+      Applications that probe SQLGetFunctions to feature-gate scroll-option calls will see broader api coverage.
+
+  66:
+    name: "SQLGetCursorName synthesizes the SQL_CUR-prefixed auto cursor name and persists user-supplied names across SQLCloseCursor under iODBC instead of returning SQL_ERROR"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver under iODBC doesn't synthesize auto cursor names (returns SQL_ERROR on unprepared statements) and drops user-supplied cursor names after SQLCloseCursor (returns SQL_ERROR on a previously-named cursor that's been closed). The new driver follows the spec on both DMs (SQL_CUR-prefixed auto name; user-supplied name persists across SQLCloseCursor).
+    old_driver_behavior: |
+      Under iODBC, SQLGetCursorName on a fresh statement returns SQL_ERROR (no synthesized SQL_CUR-prefixed name); SQLGetCursorName after SQLCloseCursor on a previously-named cursor returns SQL_ERROR (name dropped). Under unixODBC the old driver synthesizes and persists the cursor name like the new driver.
+    new_driver_behavior: |
+      Synthesizes and persists cursor names on both DMs.
+    impact: |
+      Applications that call SQLGetCursorName on a fresh statement, or after SQLCloseCursor on a previously-named cursor, receive SQL_ERROR from the old driver under iODBC. The new driver synthesizes the SQL_CUR-prefixed auto name and preserves user-supplied names across SQLCloseCursor.
+
+  67:
+    name: "SQLGetData converts DECFLOAT to SQL_C_WCHAR under iODBC instead of returning SQL_SUCCESS with SQL_NULL_DATA indicator and an untouched buffer"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The DECFLOAT -> SQL_C_WCHAR conversion path is not wired up in the old driver's iODBC build. The driver returns SQL_SUCCESS but writes SQL_NULL_DATA (-1) into the length indicator and leaves the output buffer untouched, so no scalar value can be observed by the application. The new driver implements the conversion on both DMs.
+    old_driver_behavior: |
+      Under iODBC, SQLGetData on a DECFLOAT column with TargetType=SQL_C_WCHAR returns SQL_SUCCESS but the indicator buffer is set to SQL_NULL_DATA and the value buffer is unmodified. Buffer-truncation paths (SQL_SUCCESS_WITH_INFO + 01004) cannot fire either.
+    new_driver_behavior: |
+      Converts DECFLOAT to SQL_C_WCHAR correctly.
+    impact: |
+      Applications that call SQLGetData on a DECFLOAT column with TargetType=SQL_C_WCHAR against the old driver under iODBC receive SQL_SUCCESS with the indicator set to SQL_NULL_DATA and the output buffer untouched, so no value is observable. The new driver produces the spec-correct wide-string conversion.
+
+  68:
+    name: "Child statement handles are invalidated through iODBC's alloc table on SQLDisconnect / SQLFreeStmt(SQL_DROP), so a subsequent SQLFreeHandle on the orphaned handle returns the spec SQL_INVALID_HANDLE instead of leaking as SQL_SUCCESS"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Under iODBC the old driver does not coordinate with the DM's per-handle alloc table when it releases child statements: SQLDisconnect (with or without active statements) and SQLFreeStmt(SQL_DROP) report SQL_SUCCESS to the caller but leave the statement entry in iODBC's alloc table, so a subsequent SQLFreeHandle(SQL_HANDLE_STMT) still returns SQL_SUCCESS instead of the spec-mandated SQL_INVALID_HANDLE. The handle remains addressable for the rest of the process. The new driver participates correctly in iODBC's alloc table; the same calls invalidate the child statement entries and the follow-up SQLFreeHandle surfaces SQL_INVALID_HANDLE on both DMs.
+    old_driver_behavior: |
+      Under iODBC the old driver leaves statement handles in iODBC's alloc table after release in three scenarios:
+        - SQLDisconnect with a child statement still attached -> SQLFreeHandle(SQL_HANDLE_STMT) on the child after disconnect returns SQL_SUCCESS instead of SQL_INVALID_HANDLE.
+        - SQLDisconnect while an active result set is still open on a child statement -> same outcome: SQLFreeHandle on the child returns SQL_SUCCESS.
+        - SQLFreeStmt(SQL_DROP) on a statement handle -> SQLFreeHandle(SQL_HANDLE_STMT) afterwards returns SQL_SUCCESS instead of SQL_INVALID_HANDLE; the handle leaks for the rest of the test/session.
+      Under unixODBC the old driver returns SQL_INVALID_HANDLE on the follow-up SQLFreeHandle in each of the three scenarios.
+    new_driver_behavior: |
+      The new driver invalidates child statement entries in iODBC's alloc table when SQLDisconnect or SQLFreeStmt(SQL_DROP) releases them, so the follow-up SQLFreeHandle on the orphaned handle returns SQL_INVALID_HANDLE on both DMs.
+    impact: |
+      Applications that release child statements via SQLDisconnect or SQLFreeStmt(SQL_DROP) on the old driver under iODBC cannot detect the release through SQLFreeHandle's return code; the handle keeps reporting as valid and leaks until process exit. The new driver returns the spec-mandated SQL_INVALID_HANDLE so callers can detect the release and reuse / abandon the handle correctly.
+
+  69:
+    name: "SQLGetDescField / SQLSetDescField return SQL_ERROR + HY010 during SQL_NEED_DATA under iODBC instead of silently succeeding"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The ODBC spec requires SQL_ERROR + HY010 when SQLGetDescField / SQLSetDescField is called on an ARD/IRD whose parent statement is in SQL_NEED_DATA. The new driver enforces the state check on every DM and posts the HY010 diagnostic record on the descriptor handle, so SQLGetDiagRec(SQL_HANDLE_DESC, ...) returns the spec-mandated record. The old driver bypasses this state check under iODBC and silently returns SQL_SUCCESS (under unixODBC and Windows DM the old driver enforces it correctly). The spec-compliant new behavior is accepted.
+    old_driver_behavior: |
+      Under iODBC the SQL_NEED_DATA state check is not applied to descriptor entry points reached through the implicit ARD/IRD of the statement: SQLGetDescField and SQLSetDescField return SQL_SUCCESS while the statement is in SQL_NEED_DATA. Under unixODBC and Windows DM the old driver enforces the check and returns SQL_ERROR + HY010.
+    new_driver_behavior: |
+      Enforces the SQL_NEED_DATA state check for descriptor entry points and posts the HY010 diagnostic record on the descriptor handle on every DM (unixODBC, iODBC, Windows). SQLGetDescField / SQLSetDescField return SQL_ERROR and SQLGetDiagRec(SQL_HANDLE_DESC, ...) returns the spec-mandated record.
+    impact: |
+      Applications that issue descriptor calls while a statement is in SQL_NEED_DATA now receive the spec-mandated SQL_ERROR + HY010 from the new driver under iODBC instead of an apparent SQL_SUCCESS. Callers can detect the invalid state and recover (e.g. by cancelling and re-driving the DAE sequence). SQLCopyDesc is not implemented by the new driver (the affected test skips via SKIP_NEW_DRIVER_NOT_IMPLEMENTED) and is not in scope for this BD.
+
+  70:
+    name: "Returns spec-correct ODBC 3.x SQLSTATEs (HY090 / HY010 / HY017 / HY092 / 07009 / HY008) under iODBC via driver-side pre-validation, instead of vendor HY000 / ODBC 2.x aliases / bare SQL_INVALID_HANDLE / extra diagnostic record"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      iODBC's DM pre-processes string-length parameters, tracks per-statement state (prepared / executed / NEED_DATA / async-busy), and validates handle types at the dispatch layer. For the old driver, that pre-processing either reshapes args into a form the driver's spec-SQLSTATE validator no longer recognises (so the driver falls through to vendor HY000), or rejects the call with an ODBC 2.x SQLSTATE alias (S1010 / S1090 / S1093) / a bare SQL_INVALID_HANDLE / SQL_ERROR (no diagnostic record posted) before forwarding, or appends an extra S1010 record alongside the driver's spec record. The new driver validates the same conditions inside the driver before any iODBC re-shaping or dispatch-time check can fire, so the spec-mandated ODBC 3.x SQLSTATE surfaces as the sole diagnostic record on both DMs.
+    old_driver_behavior: |
+      Under iODBC the old driver surfaces non-spec SQLSTATEs in the following buckets:
+        - Negative-length / empty-string arguments -> vendor HY000 ("Snowflake][Support] (30020) Invalid argument") instead of HY090. Affected calls: SQLPrepare (zero / negative TextLength, empty SQL string), SQLExecDirect (zero / negative TextLength), SQLBindParameter (negative BufferLength), SQLNativeSql (negative BufferLength), SQLGetDescField / SQLSetDescField (negative BufferLength), and the SQLColumns / SQLPrimaryKeys / SQLForeignKeys / SQLProcedureColumns / SQLProcedures family (negative name-length args).
+        - Function-sequence / parameter-number errors -> ODBC 2.x aliases instead of HY010 / HY090 / 07009 / HY008. Affected calls: SQLFetch / SQLEndTran after commit/rollback closes cursor (S1010), SQLEndTran during SQL_NEED_DATA (S1010), SQLGetCursorName / SQLSetCursorName during SQL_NEED_DATA (S1010), SQLDescribeParam on unprepared statement and ParameterNumber=0 (S1010 / S1093), SQLNumParams on unprepared statement (S1010), SQLExecute on unprepared statement (S1010), cross-thread SQLCancel on async-busy statement (S1010), SQLGetCursorName / SQLSetCursorName / SQLNativeSql with negative length (S1090), SQLBrowseConnect with negative length (S1090).
+        - Handle-validation errors -> bare SQL_INVALID_HANDLE / SQL_ERROR with no diagnostic record. Affected calls: SQLEndTran called with SQL_HANDLE_STMT (spec: HY092), SQLFreeHandle on an implicit auto-allocated descriptor (spec: HY017), SQLFreeHandle called with a completely bogus HandleType (e.g. 999) (spec: SQL_INVALID_HANDLE).
+        - Descriptor reads / mutations during SQL_NEED_DATA -> SQL_SUCCESS / SQL_NO_DATA instead of HY010. SQLGetDescRec on the ARD during SQL_NEED_DATA returns SQL_NO_DATA (it walks the ARD past the bound parameter, which actually lives on the IPD); SQLGetDescRec on the IRD returns the pre-execution IRD shape as SQL_SUCCESS; SQLSetDescRec on either descriptor returns SQL_SUCCESS silently; SQLCopyDesc into / out of either descriptor returns SQL_SUCCESS silently.
+        - Diagnostic record stacking -> extra ODBC 2.x record appended alongside the driver's spec record. Cross-thread SQLCancel that collides with an in-flight SQLExecDirect leaves two diagnostic records on the statement handle ([0] iODBC's own S1010 from the function-sequence collision, [1] the driver's HY008 for the canceled exec) instead of the spec-mandated single HY008 record.
+      Under unixODBC the same calls already surface the spec ODBC 3.x SQLSTATE as the sole record.
+    new_driver_behavior: |
+      Returns the spec ODBC 3.x SQLSTATE / return code as the sole diagnostic record on both DMs by validating the condition inside the driver before any iODBC re-shaping or dispatch-time check can fire.
+    impact: |
+      Applications receive a proper state from the driver and a single spec-correct diagnostic record they can inspect for SQLSTATE / native code / message without having to scan past iODBC-side function-sequence artefacts.

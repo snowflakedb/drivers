@@ -50,7 +50,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL to SQL_C_WCHAR", "[e2e][types][real]")
     const std::string query = "SELECT 3.125::FLOAT";
     auto char_str = check_char_success(conn.execute_fetch(query), 1);
     auto wchar_str = check_wchar_success(conn.execute_fetch(query), 1);
-    std::u16string expected_wchar(char_str.begin(), char_str.end());
+    std::u32string expected_wchar(char_str.begin(), char_str.end());
     CHECK(wchar_str == expected_wchar);
   }
 }
@@ -118,7 +118,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_WCHAR buffer handling", "[e2e][t
 
     auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
 
-    char16_t small_buffer[4];
+    SQLWCHAR small_buffer[4];
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, small_buffer, sizeof(small_buffer), &indicator);
 
@@ -131,7 +131,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_WCHAR buffer handling", "[e2e][t
     WINDOWS_ONLY { SKIP("Windows manager binds to longer SQL_C_CHAR buffer and performs the conversion"); }
     auto stmt = conn.execute_fetch("SELECT 123456.789::FLOAT");
 
-    char16_t small_buffer[4];
+    SQLWCHAR small_buffer[4];
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, small_buffer, sizeof(small_buffer), &indicator);
 

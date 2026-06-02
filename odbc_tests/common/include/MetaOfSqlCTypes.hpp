@@ -108,7 +108,7 @@ class MetaOfSqlCType<SQL_C_CHAR> {
 template <>
 class MetaOfSqlCType<SQL_C_WCHAR> {
  public:
-  using type = std::u16string;
+  using type = std::u32string;
   static constexpr SQLSMALLINT sql_c_type = SQL_C_WCHAR;
   std::string name() { return "SQL_C_WCHAR"; }
 };

@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
@@ -145,7 +146,7 @@ TEST_CASE("ARRAY to SQL_C_WCHAR truncation", "[array][conversion][c_char][01004]
 
   // When An ARRAY value is fetched into a WCHAR buffer smaller than the JSON string
   auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3,4,5,6,7,8,9,10)");
-  char16_t buffer[6] = {};
+  SQLWCHAR buffer[6] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 

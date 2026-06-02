@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -37,8 +38,8 @@ TEST_CASE("should convert boolean to SQL_C_WCHAR", "[datatype][boolean][conversi
   const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
 
   // Then SQL_C_WCHAR should return "1" for TRUE and "0" for FALSE
-  REQUIRE(check_wchar_success(stmt, 1) == u"1");
-  REQUIRE(check_wchar_success(stmt, 2) == u"0");
+  REQUIRE(check_wchar_success(stmt, 1) == U"1");
+  REQUIRE(check_wchar_success(stmt, 2) == U"0");
 }
 
 // ============================================================================

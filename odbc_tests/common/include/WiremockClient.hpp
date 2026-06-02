@@ -12,7 +12,9 @@
 #include <vector>
 
 #include "Subprocess.hpp"
+#include "compatibility.hpp"
 #include "platform.hpp"
+#include "test_setup.hpp"
 #include "utils.hpp"
 
 /// Cross-platform wrapper around the WireMock standalone JAR.
@@ -22,6 +24,7 @@
 class WiremockClient {
  public:
   WiremockClient() {
+    ensure_driver_installed();
     port_ = platform::find_free_port();
     start_process();
     wait_for_health();
@@ -211,12 +214,8 @@ class WiremockClient {
 
 /// Build an ODBC connection string pointing to a running WireMock instance.
 inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
-  const char* driver_path_env = std::getenv("DRIVER_PATH");
-  if (driver_path_env == nullptr || driver_path_env[0] == '\0') {
-    throw std::runtime_error("DRIVER_PATH not set — cannot locate ODBC driver library");
-  }
   std::ostringstream ss;
-  ss << "DRIVER={" << driver_path_env << "};";
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "PORT=" << wm.port() << ";";
   ss << "ACCOUNT=testaccount;";

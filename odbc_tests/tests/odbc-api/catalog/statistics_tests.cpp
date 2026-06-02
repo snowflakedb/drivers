@@ -135,9 +135,20 @@ TEST_CASE("SQLStatistics: SQL_INVALID_HANDLE for null statement handle", "[odbc-
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: HY090 - Negative TableName length",
                  "[odbc-api][catalog][statistics][error]") {
+  // Given an active statement on the default DSN
+  // When SQLStatistics is called with a negative TableName length (-999)
   const SQLRETURN ret =
       SQLStatistics(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, SQL_INDEX_ALL, SQL_QUICK);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length up front with
+    //   SQLSTATE HY090 (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR before
+    //   the call reaches the driver
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: 24000 - Cursor already open",

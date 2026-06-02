@@ -21,6 +21,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 
@@ -197,10 +198,13 @@ static SampleValue make_sample_value(SQLSMALLINT c_type) {
       break;
     }
     case SQL_C_WCHAR: {
-      const char16_t text[] = u"42";
-      std::memcpy(sv.raw, text, sizeof(text));
+      // Encode `"42"` (always ASCII) into the DM-side SQLWCHAR width.
+      // Under UTF-16 the buffer holds 3 char16_t; under UTF-32 3 char32_t.
+      const auto text = sf::wide::encode_wide(U"42");
+      const auto bytes = text.size() * sizeof(SQLWCHAR);
+      std::memcpy(sv.raw, text.data(), bytes);
       sv.indicator = SQL_NTS;
-      sv.buffer_length = static_cast<SQLLEN>(sizeof(text));
+      sv.buffer_length = static_cast<SQLLEN>(bytes);
       break;
     }
     case SQL_C_BIT: {

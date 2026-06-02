@@ -71,14 +71,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-16 to ASCII with 0x1a su
 
   // When Query selecting strings with non-ASCII Unicode characters is executed
   auto stmt = conn.executew_fetch(
-      u"SELECT "
-      u"'\u65e5\u672c\u8a9e' AS japanese, "
-      u"'Hello\u65e5World' AS mixed, "
-      u"'\u26c4\U0001F680\U0001F389' AS emojis, "
-      u"'\u03b1\u03b2\u03b3\u03b4' AS greek, "
-      u"'Hello' AS ascii_only, "
-      u"'y\u0306es' AS combined, "
-      u"'\U0001D11E' AS surrogate_pair");
+      U"SELECT "
+      U"'\u65e5\u672c\u8a9e' AS japanese, "
+      U"'Hello\u65e5World' AS mixed, "
+      U"'\u26c4\U0001F680\U0001F389' AS emojis, "
+      U"'\u03b1\u03b2\u03b3\u03b4' AS greek, "
+      U"'Hello' AS ascii_only, "
+      U"'y\u0306es' AS combined, "
+      U"'\U0001D11E' AS surrogate_pair");
   // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "\x1a\x1a\x1a");
 

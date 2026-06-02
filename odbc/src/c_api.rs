@@ -538,6 +538,65 @@ pub unsafe extern "system" fn SQLGetConnectAttrW(
     result.to_sql_code_with_warnings(&warnings)
 }
 
+/// Legacy ODBC 2.x entry point exported ONLY for iODBC on UNIX compatibility.
+/// `SQLSetConnectAttr` with `SQL_NTS` so the encoding layer can run its
+/// null-terminator scan.
+///
+/// Exporting this matters specifically for iODBC: when a caller invokes
+/// `SQLSetConnectAttr` on an *unconnected* handle iODBC queues the call and
+/// replays it after `SQLDriverConnect` succeeds. The replay code path
+/// prefers `SQLSetConnectOption*` over `SQLSetConnectAttr*` when both are
+/// available and - crucially - never drops the string length, because the
+/// 2.x API doesn't take one in the first place. Without this shim iODBC
+/// replays driver-defined string attributes (e.g.
+/// `SQL_SF_CONN_ATTR_PRIV_KEY_BASE64`) via `SQLSetConnectAttrW` with
+/// `strLength = 0`, the driver reads an empty payload, and JWT connects
+/// fail with "Missing required parameter: private_key".
+///
+/// For numeric attributes `value` is the immediate `SQLULEN`; the
+/// downstream dispatch in `set_connect_attr` keys on `attribute` and
+/// ignores the length, so passing `SQL_NTS` here is harmless.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetConnectOption(
+    connection_handle: sql::Handle,
+    option: sql::USmallInt,
+    value: sql::ULen,
+) -> sql::RetCode {
+    unsafe {
+        SQLSetConnectAttr(
+            connection_handle,
+            sql::Integer::from(option),
+            value as sql::Pointer,
+            sql::NTS as sql::Integer,
+        )
+    }
+}
+
+/// Legacy ODBC 2.x entry point exported ONLY for iODBC on UNIX compatibility.
+/// Wide-string counterpart of [`SQLSetConnectOption`]. See that function
+/// for the iODBC attribute-replay rationale.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetConnectOptionW(
+    connection_handle: sql::Handle,
+    option: sql::USmallInt,
+    value: sql::ULen,
+) -> sql::RetCode {
+    unsafe {
+        SQLSetConnectAttrW(
+            connection_handle,
+            sql::Integer::from(option),
+            value as sql::Pointer,
+            sql::NTS as sql::Integer,
+        )
+    }
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -1150,6 +1209,8 @@ pub unsafe extern "system" fn SQLBindCol(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLBindCol");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let result = api::statement::bind_col(
         statement_handle,
         column_number,
@@ -1158,6 +1219,7 @@ pub unsafe extern "system" fn SQLBindCol(
         buffer_length,
         str_len_or_ind_ptr,
     );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     record_err!(sql::HandleType::Stmt, statement_handle, result);
     result.to_sql_code()
 }
@@ -1218,6 +1280,54 @@ pub unsafe extern "system" fn SQLSetStmtAttrW(
     );
     record_err!(sql::HandleType::Stmt, statement_handle, result);
     result.to_sql_code_with_warnings(&warnings)
+}
+
+/// Legacy ODBC 2.x entry point. Kept as a shim that delegates to
+/// `SQLSetStmtAttr` with `SQL_NTS`.
+///
+/// Companion to [`SQLSetConnectOption`]: exporting it advertises full
+/// ODBC 2.x compatibility to iODBC, whose driver-loader probes for
+/// `SQLSetStmtOption` alongside `SQLSetStmtAttr`. The driver's
+/// `set_stmt_attr` dispatch ignores `string_length` for numeric attributes
+/// (which is what every standard `SQL_ATTR_*` stmt attribute is), so the
+/// `SQL_NTS` passed below is a no-op there.
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetStmtOption(
+    statement_handle: sql::Handle,
+    option: sql::USmallInt,
+    value: sql::ULen,
+) -> sql::RetCode {
+    unsafe {
+        SQLSetStmtAttr(
+            statement_handle,
+            sql::Integer::from(option),
+            value as sql::Pointer,
+            sql::NTS as sql::Integer,
+        )
+    }
+}
+
+/// Wide-string counterpart of [`SQLSetStmtOption`].
+///
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLSetStmtOptionW(
+    statement_handle: sql::Handle,
+    option: sql::USmallInt,
+    value: sql::ULen,
+) -> sql::RetCode {
+    unsafe {
+        SQLSetStmtAttrW(
+            statement_handle,
+            sql::Integer::from(option),
+            value as sql::Pointer,
+            sql::NTS as sql::Integer,
+        )
+    }
 }
 
 /// # Safety
@@ -1386,6 +1496,8 @@ pub unsafe extern "system" fn SQLGetDescField(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescField");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::get_desc_field(
         descriptor_handle,
         rec_number,
@@ -1394,6 +1506,7 @@ pub unsafe extern "system" fn SQLGetDescField(
         buffer_length,
         string_length_ptr,
     );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
     record_err!(sql::HandleType::Desc, descriptor_handle, result);
     result.to_sql_code()
 }
@@ -1408,6 +1521,8 @@ pub unsafe extern "system" fn SQLGetDescFieldW(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLGetDescFieldW");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::get_desc_field(
         descriptor_handle,
         rec_number,
@@ -1416,6 +1531,7 @@ pub unsafe extern "system" fn SQLGetDescFieldW(
         buffer_length,
         string_length_ptr,
     );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
     record_err!(sql::HandleType::Desc, descriptor_handle, result);
     result.to_sql_code()
 }
@@ -1430,6 +1546,8 @@ pub unsafe extern "system" fn SQLSetDescField(
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
 ) -> sql::RetCode {
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescField");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::set_desc_field(
         descriptor_handle,
         rec_number,
@@ -1437,6 +1555,7 @@ pub unsafe extern "system" fn SQLSetDescField(
         value_ptr,
         buffer_length,
     );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
     record_err!(sql::HandleType::Desc, descriptor_handle, result);
     result.to_sql_code()
 }
@@ -1451,6 +1570,8 @@ pub unsafe extern "system" fn SQLSetDescFieldW(
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
 ) -> sql::RetCode {
+    record_api!(sql::HandleType::Desc, descriptor_handle, "SQLSetDescFieldW");
+    api::diagnostic::clear_diag_info(sql::HandleType::Desc, descriptor_handle);
     let result = api::descriptor::set_desc_field(
         descriptor_handle,
         rec_number,
@@ -1458,6 +1579,7 @@ pub unsafe extern "system" fn SQLSetDescFieldW(
         value_ptr,
         buffer_length,
     );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Desc, descriptor_handle, &result);
     record_err!(sql::HandleType::Desc, descriptor_handle, result);
     result.to_sql_code()
 }

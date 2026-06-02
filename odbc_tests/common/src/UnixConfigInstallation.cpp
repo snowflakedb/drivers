@@ -29,6 +29,17 @@ UnixConfigInstallation::UnixConfigInstallation(const std::vector<DataSourceConfi
   write_odbc_ini();
   env_overrides_.emplace_back("ODBCSYSINI", config_dir_);
   env_overrides_.emplace_back("ODBCINI", (std::filesystem::path(config_dir_) / "odbc.ini").string());
+  if (is_iodbc_test_suite()) {
+    // iODBC's `_iodbcadm_getinifile` resolves `odbcinst.ini` via `$ODBCINSTINI`
+    // (a file path, not a directory) and ignores `$ODBCSYSINI` entirely - the
+    // opposite of unixODBC, which keys off `$ODBCSYSINI` as a directory hint
+    // and ignores `$ODBCINSTINI`. Without this export iODBC would fall back to
+    // `~/Library/ODBC/odbcinst.ini` (macOS) or `/etc/odbcinst.ini`, miss our
+    // per-test driver alias, and `_iodbcdm_driverload` would `dlopen` the
+    // alias name literally and fail. Gate on the runtime iODBC flag so
+    // unixODBC test runs are unaffected.
+    env_overrides_.emplace_back("ODBCINSTINI", (std::filesystem::path(config_dir_) / "odbcinst.ini").string());
+  }
 }
 
 UnixConfigInstallation::~UnixConfigInstallation() {

@@ -56,12 +56,12 @@ void bind_interval_and_execute(StatementHandleWrapper& stmt, SQLSMALLINT c_type,
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR to exact-numeric SQL targets and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [sql_type, column_size, years] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER>({
-      {SQL_TINYINT, SQLULEN{0}, SQLUINTEGER{5}},
-      {SQL_SMALLINT, SQLULEN{0}, SQLUINTEGER{200}},
-      {SQL_INTEGER, SQLULEN{0}, SQLUINTEGER{12345}},
-      {SQL_BIGINT, SQLULEN{0}, SQLUINTEGER{1000000}},
-      {SQL_DECIMAL, SQLULEN{10}, SQLUINTEGER{1000000}},
-      {SQL_NUMERIC, SQLULEN{10}, SQLUINTEGER{1000000}},
+      {SQL_TINYINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(5)},
+      {SQL_SMALLINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(200)},
+      {SQL_INTEGER, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(12345)},
+      {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(1000000)},
+      {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1000000)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1000000)},
   }));
   CAPTURE(sql_type, column_size, years);
 
@@ -88,12 +88,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_YEAR to exact-nu
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MONTH to exact-numeric SQL targets and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [sql_type, column_size, months] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER>({
-      {SQL_TINYINT, SQLULEN{0}, SQLUINTEGER{11}},
-      {SQL_SMALLINT, SQLULEN{0}, SQLUINTEGER{240}},
-      {SQL_INTEGER, SQLULEN{0}, SQLUINTEGER{9999}},
-      {SQL_BIGINT, SQLULEN{0}, SQLUINTEGER{123456}},
-      {SQL_DECIMAL, SQLULEN{10}, SQLUINTEGER{123456}},
-      {SQL_NUMERIC, SQLULEN{10}, SQLUINTEGER{123456}},
+      {SQL_TINYINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(11)},
+      {SQL_SMALLINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(240)},
+      {SQL_INTEGER, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(9999)},
+      {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(123456)},
+      {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(123456)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(123456)},
   }));
   CAPTURE(sql_type, column_size, months);
 
@@ -123,8 +123,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MONTH to exact-n
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative year-month interval to SQL_INTEGER and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [c_type, magnitude] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLUINTEGER>({
-      {SQL_C_INTERVAL_YEAR, SQLUINTEGER{7}},
-      {SQL_C_INTERVAL_MONTH, SQLUINTEGER{8}},
+      {SQL_C_INTERVAL_YEAR, static_cast<SQLUINTEGER>(7)},
+      {SQL_C_INTERVAL_MONTH, static_cast<SQLUINTEGER>(8)},
   }));
   CAPTURE(c_type, magnitude);
 

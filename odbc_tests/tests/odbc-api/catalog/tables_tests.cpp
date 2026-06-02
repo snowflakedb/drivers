@@ -259,20 +259,63 @@ TEST_CASE("SQLTables: SQL_INVALID_HANDLE for null statement handle", "[odbc-api]
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][tables][error]") {
+  // Given an active statement on the default DSN
+  // When SQLTables is called with a negative CatalogName length (-999)
   const SQLRETURN ret = SQLTables(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("T"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length up front with
+    //   SQLSTATE HY090 (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM-side length validator rejects the negative length
+    //   with the ODBC 2.x form of HY090 ("S1090") before the call reaches
+    //   the driver. Exactly one record is posted on the statement handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][tables][error]") {
+  // Given an active statement on the default DSN
+  // When SQLTables is called with a negative SchemaName length (-999)
   const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, sqlchar("S"), -999, sqlchar("T"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM-side length validator rejects the negative length
+    //   with "S1090" (ODBC 2.x form of HY090) on the statement handle
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative TableName length",
                  "[odbc-api][catalog][tables][error]") {
+  // Given an active statement on the default DSN
+  // When SQLTables is called with a negative TableName length (-999)
   const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("T"), -999, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM-side length validator rejects the negative length
+    //   with "S1090" (ODBC 2.x form of HY090) on the statement handle
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: 24000 - Cursor already open",

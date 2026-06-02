@@ -89,8 +89,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-8 string literals to SQL
 
   // When Query selecting UTF-8 string literals is executed
   auto stmt = conn.executew_fetch(
-      u"SELECT '日本語' AS japanese, 'Привет' AS russian, '你好' AS chinese, "
-      u"'émoji: 😀' AS emoji, 'café' AS french, 'Ñoño' AS spanish, '𝄞' AS clef");
+      U"SELECT '日本語' AS japanese, 'Привет' AS russian, '你好' AS chinese, "
+      U"'émoji: 😀' AS emoji, 'café' AS french, 'Ñoño' AS spanish, '𝄞' AS clef");
 
   // Then Japanese '日本語' should convert to raw bytes
   {

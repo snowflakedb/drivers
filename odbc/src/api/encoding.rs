@@ -623,10 +623,13 @@ impl OdbcEncoding for Wide {
 // Input helpers
 // ---------------------------------------------------------------------------
 
-/// Read a string from an `sql::Pointer` where `string_length` is in **bytes**.
+/// Read a string from an `sql::Pointer`. `string_length` is in **bytes**
+/// for the narrow path, in **DM-side code units** for the wide path, or
+/// `SQL_NTS` to request null-terminated decoding.
+///
 /// Returns an empty string if the pointer is null.
 ///
-/// Used by: `SQLSetConnectAttr`.
+/// Used by: `SQLSetConnectAttr` / `SQLSetConnectAttrW`.
 pub(crate) fn read_string_from_pointer<E: OdbcEncoding>(
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
@@ -634,9 +637,77 @@ pub(crate) fn read_string_from_pointer<E: OdbcEncoding>(
     if value_ptr.is_null() {
         return Ok(String::new());
     }
+    // SQL_NTS must propagate through to `E::read_string` so it can run its
+    // null-terminator scan. The byte→unit conversion below would otherwise
+    // map `SQL_NTS = -3` to `0` (UTF-32) or `-1` (UTF-16) and produce an
+    // empty string / an `InvalidBufferLength` error.
+    if string_length == sql::NTS as sql::Integer {
+        return E::read_string(value_ptr as *const E::Char, string_length);
+    }
     let char_size = E::effective_char_size() as sql::Integer;
     let length_in_chars = string_length / char_size;
     E::read_string(value_ptr as *const E::Char, length_in_chars)
+}
+
+/// Read a Snowflake-custom string-valued connect attribute (e.g.
+/// `SQL_SF_CONN_ATTR_PRIV_KEY_BASE64`), tolerating iODBC's quirk of
+/// forwarding narrow buffers to `SQLSetConnectAttrW` for unknown
+/// attribute IDs.
+///
+/// iODBC only transcodes narrow→wide on `SQLSetConnectAttr` for the
+/// attribute IDs it recognises (`SQL_ATTR_CURRENT_CATALOG`,
+/// `SQL_ATTR_TRACEFILE`, …). For anything else it forwards the narrow
+/// pointer and the narrow byte count to the driver's W variant as-is.
+/// A driver that blindly decodes the buffer as UTF-32 then sees garbage
+/// (or `InvalidWideChar`) and the user's payload is lost.
+///
+/// We sniff the leading bytes to tell the two layouts apart:
+///
+///   * non-empty narrow ASCII : `XX YY ZZ …`     (byte 1 non-zero)
+///   * UTF-16 wide ASCII      : `XX 00 YY 00 …`  (byte 1 zero, byte 2 non-zero)
+///   * UTF-32 wide ASCII      : `XX 00 00 00 …`  (bytes 1-3 zero, byte 4 non-zero)
+///
+/// The Snowflake-custom string attributes only ever carry printable
+/// ASCII (base64, PEM, app names, passphrases), so the byte pattern is
+/// unambiguous in practice.
+pub(crate) fn read_pre_connection_string_attr<E: OdbcEncoding>(
+    value_ptr: sql::Pointer,
+    string_length: sql::Integer,
+) -> OdbcResult<String> {
+    if value_ptr.is_null() {
+        return Ok(String::new());
+    }
+    if looks_like_narrow_buffer(value_ptr, string_length) {
+        return Narrow::read_string(value_ptr as *const sql::Char, string_length);
+    }
+    read_string_from_pointer::<E>(value_ptr, string_length)
+}
+
+/// Return `true` when the leading bytes of `value_ptr` match a non-empty
+/// narrow ASCII string rather than a UTF-16 / UTF-32 wide buffer. Used
+/// only by [`read_pre_connection_string_attr`].
+fn looks_like_narrow_buffer(value_ptr: sql::Pointer, string_length: sql::Integer) -> bool {
+    if value_ptr.is_null() {
+        return false;
+    }
+    // We need at least 2 bytes of data to distinguish narrow from wide.
+    // SQL_NTS is `-3`; treat it like "unknown length" and assume the
+    // caller has at least 2 bytes of payload before the terminator.
+    if string_length != sql::NTS as sql::Integer && string_length < 2 {
+        return false;
+    }
+    // Safety: caller-owned buffer at least 2 bytes long under the
+    // conditions above.
+    let bytes = unsafe { std::slice::from_raw_parts(value_ptr as *const u8, 2) };
+    // A leading zero byte is unusual for any of our payloads (base64,
+    // PEM, ASCII passwords / app names) — bail out and let the declared
+    // encoding handle it.
+    if bytes[0] == 0 {
+        return false;
+    }
+    // Narrow ASCII keeps every byte non-zero; UTF-16/UTF-32 ASCII has a
+    // zero high byte right after the leading ASCII char.
+    bytes[1] != 0
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,5 +1111,133 @@ mod tests {
         let buf = [0u8; 1];
         let res = Narrow::read_string(buf.as_ptr(), 0).unwrap();
         assert_eq!(res, "");
+    }
+
+    // ---------- read_string_from_pointer (SQL_NTS handling) ----------
+
+    /// When iODBC forwards a narrow
+    /// `SQLSetConnectAttr(SQL_ATTR_CURRENT_CATALOG, "MYDB", SQL_NTS)` call
+    /// into `SQLSetConnectAttrW`, the wide entry point receives a wide LE
+    /// buffer with `string_length == SQL_NTS = -3`. The reader must
+    /// propagate `SQL_NTS` through to the encoded null-terminator scan
+    /// instead of converting `-3` to a unit count via `-3 / char_size`
+    /// (which previously produced `0` under UTF-32 and `-1` under UTF-16,
+    /// silently dropping the value or returning `InvalidBufferLength`).
+    #[test]
+    fn read_string_from_pointer_wide_sql_nts_round_trips() {
+        let s = "MYDB";
+        let mut buf: Vec<u16> = s.encode_utf16().collect();
+        buf.push(0);
+        let recovered = read_string_from_pointer::<Wide>(
+            buf.as_ptr() as sql::Pointer,
+            sql::NTS as sql::Integer,
+        )
+        .unwrap();
+        assert_eq!(recovered, s);
+    }
+
+    /// `SQL_NTS` must also work for the narrow path
+    #[test]
+    fn read_string_from_pointer_narrow_sql_nts_round_trips() {
+        let s = "MYDB\0";
+        let recovered = read_string_from_pointer::<Narrow>(
+            s.as_ptr() as sql::Pointer,
+            sql::NTS as sql::Integer,
+        )
+        .unwrap();
+        assert_eq!(recovered, "MYDB");
+    }
+
+    // ---------- read_pre_connection_string_attr (iODBC-tolerant) ----------
+
+    /// Simulates the iODBC quirk: the application calls narrow
+    /// `SQLSetConnectAttr` with a base64 ASCII string and iODBC forwards
+    /// the narrow pointer + narrow byte count to the driver's W variant
+    /// (no transcoding for unknown attribute IDs). The reader must
+    /// recover the original ASCII string instead of mis-decoding it as
+    /// UTF-32.
+    #[test]
+    fn read_pre_connection_string_attr_recovers_narrow_buffer_in_wide_path() {
+        let s = "LS0tLS1CRUdJTi0tLS0t"; // base64-style ASCII payload
+        let buf = s.as_bytes();
+        let recovered = read_pre_connection_string_attr::<Wide>(
+            buf.as_ptr() as sql::Pointer,
+            buf.len() as sql::Integer,
+        )
+        .unwrap();
+        assert_eq!(recovered, s);
+    }
+
+    // Note: end-to-end UTF-16 / UTF-32 decoding through the W path is
+    // covered by the `read_wide_string_in_*` tests (which exercise the
+    // full `Wide` decoder with an explicit `WCharEncoding`) together
+    // with the `looks_like_narrow_buffer_rejects_utf{16,32}_pair`
+    // tests below (which prove the heuristic in
+    // `read_pre_connection_string_attr` does not false-positive on
+    // legitimate wide buffers).
+
+    /// Narrow path (Narrow::read_string) must keep working unchanged.
+    #[test]
+    fn read_pre_connection_string_attr_narrow_path_unchanged() {
+        let s = "plain-ascii";
+        let recovered = read_pre_connection_string_attr::<Narrow>(
+            s.as_ptr() as sql::Pointer,
+            s.len() as sql::Integer,
+        )
+        .unwrap();
+        assert_eq!(recovered, s);
+    }
+
+    /// Null pointer is treated as the empty string (same contract as
+    /// [`read_string_from_pointer`]).
+    #[test]
+    fn read_pre_connection_string_attr_null_pointer_is_empty() {
+        let recovered = read_pre_connection_string_attr::<Wide>(std::ptr::null_mut(), 0).unwrap();
+        assert_eq!(recovered, "");
+    }
+
+    #[test]
+    fn looks_like_narrow_buffer_recognises_ascii_pair() {
+        let buf = [b'A', b'B'];
+        assert!(looks_like_narrow_buffer(
+            buf.as_ptr() as sql::Pointer,
+            buf.len() as sql::Integer,
+        ));
+    }
+
+    #[test]
+    fn looks_like_narrow_buffer_rejects_utf16_pair() {
+        let buf = [b'A', 0u8];
+        assert!(!looks_like_narrow_buffer(
+            buf.as_ptr() as sql::Pointer,
+            buf.len() as sql::Integer,
+        ));
+    }
+
+    #[test]
+    fn looks_like_narrow_buffer_rejects_utf32_pair() {
+        let buf = [b'A', 0u8, 0u8, 0u8];
+        assert!(!looks_like_narrow_buffer(
+            buf.as_ptr() as sql::Pointer,
+            buf.len() as sql::Integer,
+        ));
+    }
+
+    #[test]
+    fn looks_like_narrow_buffer_rejects_leading_zero_byte() {
+        let buf = [0u8, b'A'];
+        assert!(!looks_like_narrow_buffer(
+            buf.as_ptr() as sql::Pointer,
+            buf.len() as sql::Integer,
+        ));
+    }
+
+    #[test]
+    fn looks_like_narrow_buffer_handles_short_input() {
+        let buf = [b'A'];
+        assert!(!looks_like_narrow_buffer(
+            buf.as_ptr() as sql::Pointer,
+            buf.len() as sql::Integer,
+        ));
     }
 }

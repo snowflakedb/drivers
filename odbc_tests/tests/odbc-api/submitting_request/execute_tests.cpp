@@ -226,8 +226,17 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(rowCount == 0);
+    OLD_IODBC_ONLY("BD#61") {
+      // Under iODBC the old driver does not advance the statement state into a
+      //   form SQLRowCount can read after SQL_NO_DATA, so the call surfaces
+      //   SQL_ERROR. Under unixODBC the same call returns SQL_SUCCESS with
+      //   rowCount=0.
+      REQUIRE(ret == SQL_ERROR);
+    }
+    else {
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(rowCount == 0);
+    }
   }
 
   {
@@ -245,8 +254,15 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(rowCount == 0);
+    OLD_IODBC_ONLY("BD#61") {
+      // See "DELETE" case above: SQLRowCount after SQL_NO_DATA on the old
+      //   driver under iODBC returns SQL_ERROR rather than 0.
+      REQUIRE(ret == SQL_ERROR);
+    }
+    else {
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(rowCount == 0);
+    }
   }
 }
 
@@ -504,11 +520,22 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 when statement not pr
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecute(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM tracks per-statement prepare state and catches SQLExecute on
+    //   an unprepared statement as ODBC 2.x "S1010" function sequence error
+    //   before the old driver gets a chance to map it; the new driver
+    //   short-circuits with "HY010" inside the driver instead.
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 during SQL_NEED_DATA",
                  "[odbc-api][execute][submitting_request][error]") {
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose first SQLExecute
+  // has entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -520,9 +547,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 during SQL_NEED_DATA"
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLExecute is called again while the statement is still in SQL_NEED_DATA
   ret = SQLExecute(stmt_handle());
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }
 

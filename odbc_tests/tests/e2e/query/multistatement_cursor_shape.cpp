@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "sf_odbc.h"
@@ -34,12 +35,25 @@ CursorShape captureShape(StatementHandleWrapper& stmt) {
 
 TEST_CASE("should report correct cursor shape for each result set in a DDL + DML + DDL batch",
           "[query][multistatement]") {
+  // SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT reaches the driver under iODBC
+  // via the SetStmtOption shim
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
 
   // When Multistatement query with CREATE TABLE, INSERT, and DROP is executed
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(),
@@ -78,12 +92,25 @@ TEST_CASE("should report correct cursor shape for each result set in a DDL + DML
 }
 
 TEST_CASE("should not open a cursor for any statement in a TCL-only batch", "[query][multistatement]") {
+  // SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT reaches the driver under iODBC
+  // via the SetStmtOption shim.
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
 
   // When Multistatement query with BEGIN, ALTER SESSION, and COMMIT is executed
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(),

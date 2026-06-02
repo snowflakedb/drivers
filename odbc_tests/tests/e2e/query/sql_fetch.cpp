@@ -1014,16 +1014,25 @@ TEST_CASE("SQLFetch returns SQL_NO_DATA when result set is empty.", "[query]") {
 }
 
 TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[query]") {
-  // Given Snowflake client is logged in
+  // Given a fresh statement handle on an active connection (no execute yet)
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLFetch is called without executing any statement first
+  // When SQLFetch is called without first executing a statement
   SQLRETURN ret = SQLFetch(stmt.getHandle());
 
-  // Then SQLFetch should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLFetch returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]") {
@@ -1360,11 +1369,20 @@ TEST_CASE("SQLFetchScroll returns HY010 when called without executing statement.
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLFetchScroll is called without executing any statement first
+  // When SQLFetchScroll is called without first executing a statement
   SQLRETURN ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
 
-  // Then SQLFetchScroll should return SQL_ERROR with SQLSTATE HY010
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+  // Then SQLFetchScroll returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1010"));
+  }
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetchScroll returns 24000 when no result set exists after DDL.", "[query]") {

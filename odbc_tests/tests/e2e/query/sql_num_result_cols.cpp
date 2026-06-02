@@ -148,13 +148,22 @@ TEST_CASE("SQLNumResultCols returns HY010 when called on freshly allocated state
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLNumResultCols is called without any prepare or execute
+  // When SQLNumResultCols is called without prior SQLPrepare or SQLExecDirect
   SQLSMALLINT num_cols = 0;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
 
-  // Then it should return SQL_ERROR with SQLSTATE HY010
+  // Then SQLNumResultCols returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 // =============================================================================

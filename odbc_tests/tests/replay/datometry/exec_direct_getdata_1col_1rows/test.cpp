@@ -3,23 +3,27 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
+#include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: exec_direct_getdata_1col_1rows", "[dtm]") {
+  SKIP_IODBC("Datometry replays use unixODBC, so replay is not exercised under iODBC");
+  // Given a Snowflake DSN
   auto config = DataSourceConfig::Snowflake().install();
 
+  // And a freshly allocated environment handle
   SQLHENV env0 = SQL_NULL_HENV;
-  // SQLAllocHandle - SQLHENV
   {
     SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env0);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(env0 != SQL_NULL_HENV);
   }
 
-  // SQLSetEnvAttr - SQL_ATTR_ODBC_VERSION
   {
+    // When the environment opts into ODBC 3.8 under unixODBC / Windows DM
     SQLRETURN ret = SQLSetEnvAttr(env0, SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3_80, 0);
+    // Then the DM accepts the opt-in and the replay continues
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_ENV, env0), OdbcMatchers::IsSuccess());
   }
 

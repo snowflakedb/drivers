@@ -159,7 +159,7 @@ inline std::string get_or_create_private_key_file(const picojson::object& params
   return shared_path;
 }
 
-inline void configure_driver_string(std::stringstream& ss) {
+inline void configure_driver_string(std::ostream& ss) {
   static std::shared_ptr<DriverConfig> driver_config = DriverConfig::Default();
   static ConfigInstallation config_installation = ConfigInstallation::install_driver(driver_config);
 #ifdef _WIN32

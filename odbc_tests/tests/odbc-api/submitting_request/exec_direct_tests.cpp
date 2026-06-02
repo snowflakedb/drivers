@@ -209,8 +209,17 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: SQL_NO_DATA for DML a
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(rowCount == 0);
+    OLD_IODBC_ONLY("BD#61") {
+      // Under iODBC the old driver does not advance the statement state into a
+      //   form SQLRowCount can read after SQL_NO_DATA, so the call surfaces
+      //   SQL_ERROR. Under unixODBC the same call returns SQL_SUCCESS with
+      //   rowCount=0.
+      REQUIRE(ret == SQL_ERROR);
+    }
+    else {
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(rowCount == 0);
+    }
   }
 
   {
@@ -225,8 +234,15 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: SQL_NO_DATA for DML a
 
     SQLLEN rowCount = -1;
     ret = SQLRowCount(stmt_handle(), &rowCount);
-    REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(rowCount == 0);
+    OLD_IODBC_ONLY("BD#61") {
+      // See "DELETE" case above: SQLRowCount after SQL_NO_DATA on the old
+      //   driver under iODBC returns SQL_ERROR rather than 0.
+      REQUIRE(ret == SQL_ERROR);
+    }
+    else {
+      REQUIRE(ret == SQL_SUCCESS);
+      REQUIRE(rowCount == 0);
+    }
   }
 }
 
@@ -377,7 +393,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for negative TextL
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), -99);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for TextLength zero",
@@ -385,11 +412,22 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY090 for TextLength zer
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM mangles negative-length / empty-string parameters before
+    //   forwarding them to the old driver, which then surfaces HY000
+    //   instead of the spec-mandated HY090. unixODBC passes the arg through
+    //   unchanged, so the driver's HY090 validation fires.
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY010 during SQL_NEED_DATA",
                  "[odbc-api][execdirect][submitting_request][error]") {
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -401,9 +439,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY010 during SQL_NEED_DA
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLExecDirect is called on the same statement while it is in SQL_NEED_DATA
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }
 

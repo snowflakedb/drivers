@@ -14,6 +14,7 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -23,9 +24,9 @@
 static constexpr SQLULEN kExpectedSemiStructuredColumnSize = 134217728;
 
 static picojson::value parse_json_text(const std::string& json_text);
-static picojson::value parse_json_text(const std::u16string& json_text);
+static picojson::value parse_json_text(const std::u32string& json_text);
 static void check_json_equals(const std::string& actual_json_text, const std::string& expected_json_text);
-static void check_json_equals(const std::u16string& actual_json_text, const std::string& expected_json_text);
+static void check_json_equals(const std::u32string& actual_json_text, const std::string& expected_json_text);
 
 // ============================================================================
 // TYPE CASTING (ODBC-specific)
@@ -173,7 +174,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate variant data as SQL_C_WCHAR
   auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"long_key\":\"long_value_string\"}')");
 
   // And Attempt to get data with a wide-char buffer smaller than the JSON string
-  char16_t buffer[6] = {};
+  SQLWCHAR buffer[6] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
@@ -184,7 +185,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate variant data as SQL_C_WCHAR
   CHECK(records[0].sqlState == "01004");
 
   // And The buffer should contain a null-terminated truncated wide string
-  CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == u'\0');
+  CHECK(buffer[sizeof(buffer) / sizeof(SQLWCHAR) - 1] == 0);
 
   // And The indicator should report SQL_NO_TOTAL or the full untruncated byte length
   const bool indicator_reports_compatible_length =
@@ -304,26 +305,8 @@ static picojson::value parse_json_text(const std::string& json_text) {
   return json;
 }
 
-static std::string utf16_to_utf8(const std::u16string& src) {
-  std::string utf8;
-  utf8.reserve(src.size() * 3);
-  for (char16_t c : src) {
-    if (c < 0x80) {
-      utf8.push_back(static_cast<char>(c));
-    } else if (c < 0x800) {
-      utf8.push_back(static_cast<char>(0xC0 | (c >> 6)));
-      utf8.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    } else {
-      utf8.push_back(static_cast<char>(0xE0 | (c >> 12)));
-      utf8.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
-      utf8.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    }
-  }
-  return utf8;
-}
-
-static picojson::value parse_json_text(const std::u16string& json_text) {
-  return parse_json_text(utf16_to_utf8(json_text));
+static picojson::value parse_json_text(const std::u32string& json_text) {
+  return parse_json_text(sf::wide::utf32_to_utf8(json_text));
 }
 
 static void check_json_equals(const std::string& actual_json_text, const std::string& expected_json_text) {
@@ -332,6 +315,6 @@ static void check_json_equals(const std::string& actual_json_text, const std::st
   REQUIRE(actual_json.serialize() == expected_json.serialize());
 }
 
-static void check_json_equals(const std::u16string& actual_json_text, const std::string& expected_json_text) {
-  check_json_equals(utf16_to_utf8(actual_json_text), expected_json_text);
+static void check_json_equals(const std::u32string& actual_json_text, const std::string& expected_json_text) {
+  check_json_equals(sf::wide::utf32_to_utf8(actual_json_text), expected_json_text);
 }

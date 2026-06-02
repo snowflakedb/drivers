@@ -80,13 +80,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE preserves prepar
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: Fetch after SQL_CLOSE",
                  "[odbc-api][freestmt][terminating_statement]") {
+  // Given an executed statement whose cursor has been closed via SQLFreeStmt(SQL_CLOSE)
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQLFetch is called after the cursor is closed
   ret = SQLFetch(stmt_handle());
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -687,14 +690,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: Re-prepare with different 
 TEST_CASE_METHOD(StmtDefaultDSNFixture,
                  "SQLFreeStmt: SQLRowCount returns HY010 after SQL_CLOSE on exec_direct statement",
                  "[odbc-api][freestmt][terminating_statement]") {
+  // Given an executed statement whose cursor has been closed via SQLFreeStmt(SQL_CLOSE)
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQLRowCount is called after the cursor is closed
   SQLLEN row_count = 0;
   ret = SQLRowCount(stmt_handle(), &row_count);
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -881,10 +887,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND followed by re-
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: invalid option returns error with HY092",
                  "[odbc-api][freestmt][terminating_statement][error]") {
-  // The Driver Manager may intercept invalid option values before they reach
-  // the driver. Both the DM (HY092) and driver (HY092) map to the same SQLSTATE.
+  // Given a default statement handle on an active connection
+  // When SQLFreeStmt is called with an out-of-range Option value (99)
   const SQLRETURN ret = SQLFreeStmt(stmt_handle(), 99);
-  REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM intercepts the call and surfaces HY092
+    //   (Invalid attribute identifier)
+    REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM also validates the Option value but rejects it with
+    //   SQL_ERROR before the call reaches the driver
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 // ============================================================================
@@ -905,7 +920,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeStmt: SQL_DROP frees statement ha
   ret = SQLFreeStmt(stmt, SQL_DROP);
   REQUIRE(ret == SQL_SUCCESS);
 
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  OLD_IODBC_ONLY("BD#68") {
+    // The old driver under iODBC reports SQL_FreeStmt(SQL_DROP) as
+    //   successful but iODBC keeps the statement handle in its alloc table:
+    //   a subsequent SQLFreeHandle(SQL_HANDLE_STMT, stmt) still returns
+    //   SQL_SUCCESS instead of the spec-mandated SQL_INVALID_HANDLE the new
+    //   driver triggers. The handle leaks for the rest of the test.
+    SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  }
+  else {
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -973,6 +998,8 @@ TEST_CASE("SQLFreeStmt: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: HY010 during SQL_NEED_DATA",
                  "[odbc-api][freestmt][terminating_statement][error]") {
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -984,7 +1011,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: HY010 during SQL_NEED_DATA
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLFreeStmt is called with SQL_CLOSE / SQL_UNBIND / SQL_RESET_PARAMS while the
+  //   statement is in the SQL_NEED_DATA state
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+
+  // Then DM surface HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_UNBIND);
@@ -993,5 +1024,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: HY010 during SQL_NEED_DATA
   ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }

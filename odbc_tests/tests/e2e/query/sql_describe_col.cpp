@@ -496,9 +496,18 @@ TEST_CASE("SQLDescribeCol returns 07009 for column number 0 without bookmarks.",
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 0, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
 
-  // Then SQLDescribeCol should return SQL_ERROR with SQLSTATE 07009
+  // Then SQLDescribeCol returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "07009");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE 07009
+    //   (invalid descriptor index)
+    CHECK(get_sqlstate(stmt) == "07009");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1002 (invalid column
+    //   number) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1002");
+  }
 }
 
 TEST_CASE("SQLDescribeCol returns 07009 for out-of-range column number.", "[query]") {
@@ -549,9 +558,18 @@ TEST_CASE("SQLDescribeCol returns HY090 when BufferLength is less than 0.", "[qu
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, -1, &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
 
-  // Then SQLDescribeCol should return SQL_ERROR with SQLSTATE HY090
+  // Then SQLDescribeCol returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY090");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY090
+    //   (invalid string or buffer length)
+    CHECK(get_sqlstate(stmt) == "HY090");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1090 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1090");
+  }
 }
 
 // =============================================================================

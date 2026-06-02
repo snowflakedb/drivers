@@ -133,15 +133,36 @@ TEST_CASE("SQLTablePrivileges: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: HY090 - Negative TableName length",
                  "[odbc-api][catalog][tableprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLTablePrivileges is called with a negative TableName length (-999)
   const SQLRETURN ret = SQLTablePrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length up front with
+    //   SQLSTATE HY090 (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR before
+    //   the call reaches the driver
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][tableprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLTablePrivileges is called with a negative SchemaName length (-999)
   const SQLRETURN ret =
       SQLTablePrivileges(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative TableName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: 24000 - Cursor already open",

@@ -28,11 +28,7 @@ using Catch::Matchers::ContainsSubstring;
 
 static std::string get_external_browser_connection_string(const WiremockClient& wm) {
   std::ostringstream ss;
-  const char* driver_path_env = std::getenv("DRIVER_PATH");
-  if (driver_path_env == nullptr || driver_path_env[0] == '\0') {
-    throw std::runtime_error("DRIVER_PATH not set");
-  }
-  ss << "DRIVER={" << driver_path_env << "};";
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "PORT=" << wm.port() << ";";
   ss << "ACCOUNT=testaccount;";

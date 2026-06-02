@@ -116,13 +116,28 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM002 - Non-existent DSN", "[odbc-api]
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative server name length",
                  "[odbc-api][connect][connecting][error]") {
+  // Given an allocated but unconnected DBC handle and a real server name
   const auto params = get_test_parameters("testconnection");
   const std::string server = params.at("SNOWFLAKE_TEST_HOST").get<std::string>();
 
-  // Use negative length (invalid, should be >= 0 or SQL_NTS)
+  // When SQLConnect is called with a negative server-name length (-5)
   const SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(server.c_str()), -5, nullptr, 0, nullptr, 0);
 
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  NON_IODBC {
+    // And the DM rejects the negative length up front with
+    //   SQLSTATE HY090 (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM-side length validator rejects the negative length
+    //   with the ODBC 2.x form of HY090 ("S1090") on the connection
+    //   handle. Exactly one record is posted; the call never reaches the
+    //   driver.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative username length", "[odbc-api][connect][connecting][error]") {
@@ -135,8 +150,17 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative username length", "[o
 
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  // DM-dependent: unixODBC may validate lengths first (HY090) or check DSN first (IM002)
-  REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  NON_IODBC {
+    // And under unixODBC/Windows the DM may validate lengths first (HY090) or
+    //   check DSN first (IM002)
+    REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  }
+  IODBC_ONLY {
+    // And under iODBC the DM either emits the ODBC 2.x driver-resolution
+    //   SQLSTATE "S1090" or the ODBC 3.x "IM002", depending on which
+    //   argument validation path the DM takes first
+    REQUIRE((records[0].sqlState == "S1090" || records[0].sqlState == "IM002"));
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-api][connect][connecting][error]") {
@@ -151,8 +175,17 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-a
 
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  // DM-dependent: unixODBC may validate lengths first (HY090) or check DSN first (IM002)
-  REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  NON_IODBC {
+    // And under unixODBC/Windows the DM may validate the length first
+    //   (HY090) or check DSN first (IM002)
+    REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  }
+  IODBC_ONLY {
+    // And under iODBC the DM proceeds with driver resolution and emits
+    //   either "S1090" (ODBC 2.x driver-not-found) or "IM002" (ODBC 3.x
+    //   data-source-not-found), depending on which lookup path runs first
+    REQUIRE((records[0].sqlState == "S1090" || records[0].sqlState == "IM002"));
+  }
 }
 
 // ============================================================================
@@ -161,18 +194,29 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-a
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM010/HY090 - Data source name too long",
                  "[odbc-api][connect][connecting][error]") {
-  // Create a very long data source name (> SQL_MAX_DSN_LENGTH which is typically 32)
+  // Given an allocated but unconnected DBC handle and a DSN 300 characters long
+  //   (well above SQL_MAX_DSN_LENGTH which is typically 32)
   // Per ODBC spec: IM010 = "*ServerName was longer than SQL_MAX_DSN_LENGTH characters"
   const std::string long_dsn(300, 'A');
 
+  // When SQLConnect is called with the oversized DSN
   const SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(long_dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
 
   REQUIRE(ret == SQL_ERROR);
 
+  // Then a diagnostic record is produced
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  // DM-dependent: IM010 (DSN too long per ODBC spec) or HY090 (generic invalid length)
-  REQUIRE((records[0].sqlState == "IM010" || records[0].sqlState == "HY090"));
+  NON_IODBC {
+    // And the DM enforces SQL_MAX_DSN_LENGTH and reports
+    //   IM010 (DSN too long) or HY090 (generic invalid length)
+    REQUIRE((records[0].sqlState == "IM010" || records[0].sqlState == "HY090"));
+  }
+  IODBC_ONLY {
+    // And the DM does not enforce the limit and treats the long DSN as a
+    //   lookup miss, reporting IM002 (data source name not found)
+    REQUIRE(records[0].sqlState == "IM002");
+  }
 }
 
 // ============================================================================

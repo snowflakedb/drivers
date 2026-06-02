@@ -22,6 +22,7 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
@@ -36,19 +37,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should cast string values to appropriate ty
   // Given Snowflake client is logged in
 
   // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
-  std::vector<std::u16string> string_types = {u"VARCHAR",   u"CHAR",         u"CHARACTER",    u"NCHAR",
-                                              u"STRING",    u"TEXT",         u"VARCHAR2",     u"NVARCHAR",
-                                              u"NVARCHAR2", u"CHAR VARYING", u"NCHAR VARYING"};
+  std::vector<std::u32string> string_types = {U"VARCHAR",   U"CHAR",         U"CHARACTER",    U"NCHAR",
+                                              U"STRING",    U"TEXT",         U"VARCHAR2",     U"NVARCHAR",
+                                              U"NVARCHAR2", U"CHAR VARYING", U"NCHAR VARYING"};
 
   for (const auto& type : string_types) {
-    std::u16string sql =
-        u"SELECT 'hello'::" + type + u"(32), 'Hello World'::" + type + u"(32), '日本語テスト'::" + type + u"(32)";
+    std::u32string sql =
+        U"SELECT 'hello'::" + type + U"(32), 'Hello World'::" + type + U"(32), '日本語テスト'::" + type + U"(32)";
     auto stmt = conn.executew_fetch(sql);
 
     // Then All values should be returned as appropriate type
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
     CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "Hello World");
-    CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
+    CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == U"日本語テスト");
   }
 }
 
@@ -74,19 +75,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals with corner c
 
   // When Query selecting corner case string literals is executed
   auto stmt = conn.executew_fetch(
-      u"SELECT "
-      u"'' AS empty_str, "
-      u"'X' AS single_char, "
-      u"'   ' AS whitespace, "
-      u"'\\t' AS tab_literal, "
-      u"'\\n' AS newline_literal, "
-      u"'⛄' AS unicode_snowman, "
-      u"'日本語テスト' AS japanese, "
-      u"'''' AS escaped_quote, "
-      u"'\\\\' AS escaped_backslash, "
-      u"NULL AS null_value, "
-      u"'y̆es' AS combined, "
-      u"'𝄞' AS surrogate_pair");
+      U"SELECT "
+      U"'' AS empty_str, "
+      U"'X' AS single_char, "
+      U"'   ' AS whitespace, "
+      U"'\\t' AS tab_literal, "
+      U"'\\n' AS newline_literal, "
+      U"'⛄' AS unicode_snowman, "
+      U"'日本語テスト' AS japanese, "
+      U"'''' AS escaped_quote, "
+      U"'\\\\' AS escaped_backslash, "
+      U"NULL AS null_value, "
+      U"'y̆es' AS combined, "
+      U"'𝄞' AS surrogate_pair");
 
   // Then the result should contain expected corner case string values
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "");
@@ -94,13 +95,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals with corner c
   CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "   ");
   CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "\t");
   CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "\n");
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 6) == u"⛄");
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 7) == u"日本語テスト");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 6) == U"⛄");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 7) == U"日本語テスト");
   CHECK(get_data<SQL_C_CHAR>(stmt, 8) == "'");
   CHECK(get_data<SQL_C_CHAR>(stmt, 9) == "\\");
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 10) == std::nullopt);
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 11) == u"y̆es");
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 12) == u"𝄞");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 11) == U"y̆es");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 12) == U"𝄞");
 }
 
 // ============================================================================
@@ -150,13 +151,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values fro
   conn.execute("INSERT INTO str_corner_cases VALUES (3, '   ')");             // whitespace
   conn.execute("INSERT INTO str_corner_cases VALUES (4, '\\t')");             // tab character
   conn.execute("INSERT INTO str_corner_cases VALUES (5, '\\n')");             // newline character
-  conn.executew(u"INSERT INTO str_corner_cases VALUES (6, '⛄')");            // unicode snowman
-  conn.executew(u"INSERT INTO str_corner_cases VALUES (7, '日本語テスト')");  // Japanese
+  conn.executew(U"INSERT INTO str_corner_cases VALUES (6, '⛄')");            // unicode snowman
+  conn.executew(U"INSERT INTO str_corner_cases VALUES (7, '日本語テスト')");  // Japanese
   conn.execute("INSERT INTO str_corner_cases VALUES (8, '''')");              // escaped quote
   conn.execute("INSERT INTO str_corner_cases VALUES (9, '\\\\')");            // escaped backslash
   conn.execute("INSERT INTO str_corner_cases VALUES (10, NULL)");             // NULL
-  conn.executew(u"INSERT INTO str_corner_cases VALUES (11, 'y̆es')");  // combined character (y + combining breve + es)
-  conn.executew(u"INSERT INTO str_corner_cases VALUES (12, '𝄞')");    // surrogate pair (musical G clef)
+  conn.executew(U"INSERT INTO str_corner_cases VALUES (11, 'y̆es')");  // combined character (y + combining breve + es)
+  conn.executew(U"INSERT INTO str_corner_cases VALUES (12, '𝄞')");    // surrogate pair (musical G clef)
 
   // When Query "SELECT * FROM {table}" is executed
   auto stmt = conn.createStatement();
@@ -164,19 +165,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values fro
   REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain the inserted corner case string values
-  std::vector<std::optional<std::u16string>> expected = {
-      u"",              // empty string
-      u"X",             // single char
-      u"   ",           // whitespace
-      u"\t",            // tab character
-      u"\n",            // newline character
-      u"⛄",            // unicode snowman
-      u"日本語テスト",  // Japanese
-      u"'",             // escaped quote
-      u"\\",            // escaped backslash
+  std::vector<std::optional<std::u32string>> expected = {
+      U"",              // empty string
+      U"X",             // single char
+      U"   ",           // whitespace
+      U"\t",            // tab character
+      U"\n",            // newline character
+      U"⛄",            // unicode snowman
+      U"日本語テスト",  // Japanese
+      U"'",             // escaped quote
+      U"\\",            // escaped backslash
       std::nullopt,     // NULL
-      u"y̆es",           // combined character
-      u"𝄞"              // surrogate pair
+      U"y̆es",           // combined character
+      U"𝄞"              // surrogate pair
   };
 
   int row = 0;
@@ -225,7 +226,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert and select back hardcoded str
   auto stmt = conn.execute_fetch("SELECT val FROM str_bind_insert");
 
   // Then the result should contain the bound string value 'Test binding value 日本語'
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == u"Test binding value 日本語");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == U"Test binding value 日本語");
 }
 
 // ============================================================================
@@ -267,7 +268,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals using paramet
   // Then the result should contain:
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "Hello World");
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == U"日本語テスト");
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values using parameter binding",
@@ -295,15 +296,23 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values usi
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected);
   };
 
-  // Helper lambda to test a single bound wide value
-  auto test_bound_wvalue = [&](const std::u16string& value, const std::u16string& expected) {
+  // Helper lambda to test a single bound wide value. The input is given
+  // as Unicode code points and re-encoded into DM-side `SQLWCHAR` units
+  // before being passed to `SQLBindParameter`, so the same test body
+  // exercises both UTF-16 (unixODBC) and UTF-32 (iODBC).
+  auto test_bound_wvalue = [&](const std::u32string& value, const std::u32string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
-    SQLLEN len = value.size() * sizeof(char16_t);
+    auto wide = sf::wide::encode_wide(value);
+    // `wide.size()` includes the trailing NUL; strip it for both the
+    // code-unit count and the indicator (driver expects payload length
+    // in bytes, NUL excluded).
+    const auto payload_units = wide.size() - 1;
+    SQLLEN len = static_cast<SQLLEN>(payload_units * sizeof(SQLWCHAR));
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_WVARCHAR,
-                           value.size() > 0 ? value.size() : 1, 0, (SQLWCHAR*)value.c_str(), len, &len);
+                           payload_units > 0 ? payload_units : 1, 0, wide.data(), len, &len);
     REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
@@ -337,16 +346,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values usi
   test_bound_value("\\", "\\");
 
   // Test unicode snowman (using wide binding)
-  test_bound_wvalue(u"⛄", u"⛄");
+  test_bound_wvalue(U"⛄", U"⛄");
 
   // Test Japanese characters (using wide binding)
-  test_bound_wvalue(u"日本語テスト", u"日本語テスト");
+  test_bound_wvalue(U"日本語テスト", U"日本語テスト");
 
   // Test combined character (using wide binding)
-  test_bound_wvalue(u"y̆es", u"y̆es");
+  test_bound_wvalue(U"y̆es", U"y̆es");
 
   // Test surrogate pair (using wide binding)
-  test_bound_wvalue(u"𝄞", u"𝄞");
+  test_bound_wvalue(U"𝄞", U"𝄞");
 
   // Test NULL value
   {
