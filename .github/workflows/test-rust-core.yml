@@ -109,6 +109,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Reclaim ~25 GB on ubuntu-latest before cache extract / compile.
+      # See .github/actions/free-disk-space-linux/action.yml for rationale.
+      # External free-disk-space actions are blocked by the org allowlist;
+      # this is an inline replacement.
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
       - name: Restore Rust cache
         id: rust-cache
         # Cache restore failures never fail the job — fall back to clean build.
@@ -161,6 +168,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Reclaim ~25 GB on ubuntu-latest before cache extract / compile.
+      # See .github/actions/free-disk-space-linux/action.yml for rationale.
+      # cargo-llvm-cov builds coverage-instrumented integration test binaries
+      # that statically link the full dep tree — `target/debug/deps/` routinely
+      # exceeds the ~14 GB free on `/` and hits ENOSPC at link time without
+      # this cleanup. macOS lanes are skipped: ample disk, no equivalent bloat.
+      - name: Free runner disk space
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/free-disk-space-linux
 
       - name: Install Go (required by aws-lc-fips-sys)
         uses: actions/setup-go@v5
