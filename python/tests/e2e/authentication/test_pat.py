@@ -36,6 +36,8 @@ def pat_token(connection_factory):
         pat_token.cleanup()
 
 
+# TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+@pytest.mark.skip(reason="Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
 class TestPATAuthentication:
     def test_should_authenticate_using_pat_as_password(self, connection_factory, pat_token):
         # Given Authentication is set to password and valid PAT token is provided
