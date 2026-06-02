@@ -75,6 +75,11 @@ core.workflow(
     # that re-allows specific paths inside otherwise-excluded directories.
     origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
     transformations = [
+        # Strip GitHub-appended PR numbers (e.g. " (#123)") from commit messages.
+        metadata.scrubber(
+            regex = "\\s*\\(#\\d+\\)",
+            replacement = "",
+        ),
         # Rewrite the internal org reference to the public one in any mirrored
         # file. This handles historical commits where the reference was present
         # before the source was cleaned up, and guards against future slips.
