@@ -10,8 +10,11 @@ import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
+// TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+@Disabled("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
 class PatTests extends SnowflakeIntegrationTestBase {
 
   private final PatTokenHelper patHelper = new PatTokenHelper();
