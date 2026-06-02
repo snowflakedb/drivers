@@ -208,6 +208,21 @@ publishing {
 // ====================
 // Test tasks
 // ====================
+testlogger {
+    theme 'standard'
+    showExceptions true
+    showStackTraces true
+    // Strip JUnit/Gradle/JDK frames from "Caused by" chains so the
+    // application stack frame is the first thing you see.
+    showFullStackTraces false
+    showCauses true
+    showStandardStreams false
+    showFailedStandardStreams true
+    // Flag tests slower than 30s
+    slowThreshold 30_000
+    showSummary true
+}
+
 def configureCommonTestTask = { t ->
     t.useJUnitPlatform()
     t.minHeapSize = '1g'
@@ -248,6 +263,24 @@ def configureCommonTestTask = { t ->
         t.retry {
             maxRetries = parsedRetryCount
             maxFailures = 10
+        }
+    }
+
+    // Collect failed tests and reprint them at the end of the run so they're
+    // not buried in 500+ lines of pass output. test-logger has no end-of-run
+    // failure block; this hooks Gradle's TestListener directly.
+    def failures = [] as List<String>
+    t.afterTest { desc, result ->
+        if (result.resultType.toString() == 'FAILURE') {
+            def msg = result.exceptions ? result.exceptions[0].toString().readLines()[0] : 'no message'
+            failures << "  ${desc.className} > ${desc.name}\n      ${msg}"
+        }
+    }
+    t.afterSuite { desc, result ->
+        if (desc.parent == null && failures) {
+            t.logger.lifecycle("\nFAILED TESTS (${failures.size()}):")
+            failures.each { t.logger.lifecycle(it) }
+            t.logger.lifecycle("")
         }
     }
 }
