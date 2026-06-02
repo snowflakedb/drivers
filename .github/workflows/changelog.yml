@@ -16,7 +16,7 @@ jobs:
 
   detect-changelogs:
     name: Detect changelog updates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     outputs:
       sf_core: ${{ steps.changes.outputs.sf_core }}
       odbc: ${{ steps.changes.outputs.odbc }}
@@ -42,7 +42,7 @@ jobs:
   check:
     name: ${{ matrix.component }}/CHANGELOG.md
     needs: [detect-changes, detect-changelogs]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     # Bypass label is checked at job level (no matrix context needed).
     # The per-component gate lives on the step's `if:` below, since the
     # matrix context isn't available in job-level `if:` (it's evaluated

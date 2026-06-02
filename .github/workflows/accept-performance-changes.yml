@@ -7,7 +7,7 @@ on:
 jobs:
   accept-performance-changes:
     if: github.event.label.name == 'ACCEPT_PERFORMANCE_CHANGES'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       statuses: write
     steps:
@@ -29,7 +29,7 @@ jobs:
 
   remove-label-on-push:
     if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       pull-requests: write
       issues: write
