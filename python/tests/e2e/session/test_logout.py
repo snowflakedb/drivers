@@ -31,7 +31,12 @@ class TestLogoutTokenCleanup:
         wiremock.add_mapping("session/logout_success.json")
 
         # Given Snowflake client is logged in
-        kwargs = {"server_url": wiremock.http_url()}
+        kwargs = {
+            "server_url": wiremock.http_url(),
+            # Disable auto-detection so close() doesn't send an async-query-check
+            # request that isn't mapped in wiremock and would hang for 120s.
+            "enable_server_session_keep_alive_auto_detection": False,
+        }
 
         # And server_session_keep_alive is set to <server_session_keep_alive>
         if server_session_keep_alive is not None:

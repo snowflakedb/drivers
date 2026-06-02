@@ -26,14 +26,16 @@ def _ci_build_tag() -> str:
     return "LOCAL_0"
 
 
+# TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
 @pytest.fixture(scope="session")
 def pat_token(connection_factory):
-    pat_token = PAT(connection_factory)
-    try:
-        token = pat_token.acquire_token()
-        yield token
-    finally:
-        pat_token.cleanup()
+    pytest.skip("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
+    # pat_token = PAT(connection_factory)
+    # try:
+    #     token = pat_token.acquire_token()
+    #     yield token
+    # finally:
+    #     pat_token.cleanup()
 
 
 # TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
