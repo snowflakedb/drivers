@@ -1,0 +1,113 @@
+name: Import mirror PR
+
+# Imports a labeled PR from snowflakedb/universal-driver back
+# into the internal repo as an internal PR so it can run against internal
+# CI before merge.
+#
+# Flow:
+#   1. Maintainer reviews the mirror PR and adds the `ok-to-import` label.
+#   2. Dispatch this workflow with the mirror PR number.
+#   3. Copybara opens a matching PR on this repo; reviewer merges it
+#      after internal CI passes.
+#   4. Outbound mirror (mirror.yml) pushes the merge back to the mirror
+#      on its next scheduled run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Mirror PR number to import (must carry the `ok-to-import` label)."
+        required: true
+
+concurrency:
+  # Per-PR concurrency so two dispatches for the same PR can't race.
+  group: mirror-inbound-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  COPYBARA_RELEASE: v20260504
+
+jobs:
+  import-pr:
+    name: Import mirror PR #${{ github.event.inputs.pr_number }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout config
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Copybara image
+        uses: docker/build-push-action@v5
+        with:
+          context: ci/mirroring
+          file: ci/mirroring/Dockerfile.copybara
+          push: false
+          load: true
+          tags: copybara:local
+          build-args: |
+            COPYBARA_RELEASE=${{ env.COPYBARA_RELEASE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Configure git for Copybara
+        env:
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+          DRIVER_MIRROR_TOKEN_SNOWFLAKEDB: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+        run: |
+          set -euo pipefail
+          git config --global user.name  "Mirror Bot"
+          git config --global user.email "mirror-bot@snowflake.com"
+          # Two URL-scoped auth headers: origin fetches read from snowflakedb/
+          # (the public mirror), destination push goes to snowflake-eng/ (internal).
+          B64_ENG=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN}" | base64 -w0)
+          B64_SDB=$(printf 'x-access-token:%s' "${DRIVER_MIRROR_TOKEN_SNOWFLAKEDB}" | base64 -w0)
+          git config --global "http.https://github.com/snowflake-eng/.extraHeader" "Authorization: Basic ${B64_ENG}"
+          git config --global "http.https://github.com/snowflakedb/.extraHeader"   "Authorization: Basic ${B64_SDB}"
+
+      - name: Run Copybara (import)
+        env:
+          # Copybara reads GITHUB_TOKEN to call the mirror's API for the
+          # PR metadata (labels, title, body, author) — that's a read
+          # against the mirror, so use the mirror token here.
+          GITHUB_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN_SNOWFLAKEDB }}
+          DRIVER_MIRROR_TOKEN: ${{ secrets.DRIVER_MIRROR_TOKEN }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # --nogit-destination-rebase: the mirror is a strict subset of
+          # the internal repo (no copy.bara.sky, _internal/, adr/,
+          # .github/, …). Rebasing the mirror PR branch onto internal main
+          # fails with modify/delete conflicts on those internal-only
+          # files. Skipping the rebase applies the PR diff as-is on top
+          # of internal main — safe because the PR only touches files
+          # inside MIRRORED_PATHS.
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workdir" \
+            -v "${HOME}/.gitconfig:/root/.gitconfig:ro" \
+            -e GITHUB_TOKEN \
+            copybara:local migrate ci/mirroring/copy.bara.sky import "${PR_NUMBER}" \
+            --git-destination-url="https://x-access-token:${DRIVER_MIRROR_TOKEN}@github.com/snowflake-eng/universal-driver.git" \
+            --nogit-destination-rebase \
+            --force
+
+      - name: Write run summary
+        if: always()
+        env:
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          {
+            echo "## Import PR #${PR_NUMBER}"
+            echo ""
+            echo "- **Dispatched by:** ${{ github.actor }}"
+            echo "- **Source PR:** https://github.com/snowflakedb/universal-driver/pull/${PR_NUMBER}"
+            echo "- **Result:** ${{ job.status }}"
+            echo ""
+            echo "If successful, a matching \`import-mirror-pr-${PR_NUMBER}\` PR now exists on the internal repo. Review, run internal CI, and merge — the outbound mirror will push the change back to the public repo on its next run."
+          } >> "$GITHUB_STEP_SUMMARY"

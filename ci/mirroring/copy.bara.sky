@@ -1,8 +1,13 @@
-# Copybara config: outbound mirror.
+# Copybara config: two workflows.
 #
-# `mirror` — outbound: snowflake-eng/universal-driver -> snowflakedb/universal-driver
-#            (ITERATIVE, direct push, denylist filter + internal-marker guards)
-#            Runs daily via .github/workflows/mirror.yml.
+# 1. `mirror`  — outbound: snowflake-eng/universal-driver -> snowflakedb/universal-driver
+#                (ITERATIVE, direct push, denylist filter + internal-marker guards)
+#                Runs daily via .github/workflows/mirror.yml.
+#
+# 2. `import`  — inbound: mirror PRs with the `ok-to-import` label become PRs
+#                on the internal repo so they can run against internal CI
+#                before merge. Runs on demand via
+#                .github/workflows/mirror-inbound.yml.
 #
 SOURCE_REPO = "https://github.com/snowflake-eng/universal-driver"
 MIRROR_REPO = "https://github.com/snowflakedb/universal-driver"
@@ -43,7 +48,11 @@ EXCLUDED_PATHS = [
 # internal-by-default. Add a path here only when a file inside an
 # otherwise-excluded directory must be published; the file enters the
 # mirror as soon as the entry is committed.
-EXCLUDED_PATH_OVERRIDES = []
+#
+# `close-imported-pr.yml` is the mirror-side half of the inbound loop: it
+# ships with a `github.repository ==` guard so the copy left on the
+# internal repo is a no-op.
+EXCLUDED_PATH_OVERRIDES = [".github/workflows/close-imported-pr.yml"]
 
 
 # ┌─────────────────────────────────────────────────────────────────────┐
@@ -109,3 +118,95 @@ core.workflow(
     ],
 )
 
+
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ INBOUND: labeled mirror PR -> PR on internal repo                   │
+# ├─────────────────────────────────────────────────────────────────────┤
+# │ Gate: required_labels = ["ok-to-import"]. External code never       │
+# │ enters the internal repo without a maintainer explicitly labeling   │
+# │ the mirror PR. Invocation:                                          │
+# │                                                                     │
+# │   copybara migrate ci/mirroring/copy.bara.sky import <PR_NUMBER>   │
+# │                                                                     │
+# │ Contributor authorship is preserved on the imported commits         │
+# │ (authoring.pass_thru). The resulting internal PR runs against full  │
+# │ internal CI before merge; when merged to main the outbound `mirror` │
+# │ workflow pushes the change back to the mirror on its next run,      │
+# │ closing the loop.                                                   │
+# └─────────────────────────────────────────────────────────────────────┘
+core.workflow(
+    name = "import",
+    mode = "CHANGE_REQUEST",
+    origin = git.github_pr_origin(
+        url = MIRROR_REPO,
+        required_labels = ["ok-to-import"],
+        # Pull only open PRs — merged or closed PRs don't need importing.
+        state = "OPEN",
+        branch = "main",
+    ),
+    # Create a PR on the internal repo so internal CI and reviewers see it.
+    #
+    # NOTE: pr_branch is intentionally omitted — Copybara's `pr_branch`
+    # field does NOT interpolate ${LABEL} placeholders. Without it,
+    # github_pr_destination derives a unique per-PR branch automatically.
+    #
+    # Only labels that git.github_pr_origin actually exposes may appear
+    # in title/body: GITHUB_PR_NUMBER, GITHUB_PR_TITLE, GITHUB_PR_BODY,
+    # GITHUB_PR_URL, GITHUB_PR_HEAD_SHA. Author login is NOT available
+    # as a label — Copybara carries it on the imported commit's author
+    # metadata instead (via authoring.pass_thru below).
+    destination = git.github_pr_destination(
+        url = SOURCE_REPO,
+        destination_ref = "main",
+        title = "Import mirror PR #${GITHUB_PR_NUMBER}: ${GITHUB_PR_TITLE}",
+        body = "Imported from ${GITHUB_PR_URL}.\n\n"
+               + "Original PR body:\n\n"
+               + "${GITHUB_PR_BODY}\n\n"
+               + "---\n"
+               + "Internal CI validates this change before merge. "
+               + "On merge to main the outbound mirror will push the commit "
+               + "back to the public repo; close the original mirror PR "
+               + "with a link to the mirrored commit.",
+        integrates = [],
+    ),
+    # pass_thru preserves the external contributor's authorship on
+    # imported commits. The string argument is the fallback identity used
+    # only when the origin commit has no author metadata.
+    authoring = authoring.pass_thru(
+        "Mirror Bot <mirror-bot@snowflake.com>"
+    ),
+    # Same denylist + overrides as outbound — anything matching
+    # EXCLUDED_PATHS is silently dropped from the imported PR unless it
+    # is explicitly re-included via EXCLUDED_PATH_OVERRIDES. Intentional:
+    # external contributors cannot add files to .github/, adr/, _internal/,
+    # etc. even if they try.
+    origin_files = glob(["**"], exclude = EXCLUDED_PATHS) + glob(EXCLUDED_PATH_OVERRIDES),
+    transformations = [
+        # Defensive: internal hostnames should never appear in a mirror PR,
+        # but fail loudly if they somehow do.
+        core.verify_match(
+            regex = "\\.snowflakecomputing\\.internal|\\.corp\\.snowflake",
+            verify_no_match = True,
+        ),
+
+        # Stamp the imported commit message with trailers identifying the
+        # mirror PR and the exact source SHA that was imported. The
+        # mirror-side close-imported-pr.yml workflow (shipped to the mirror
+        # via Copybara — see .github/workflows/close-imported-pr.yml)
+        # reads these trailers after the outbound mirror replays the
+        # squash-merge back to the mirror, auto-closes the original PR,
+        # and comments with a link to the mirrored commit.
+        metadata.expose_label(
+            name = "GITHUB_PR_NUMBER",
+            new_name = "Imported-From-Mirror-PR",
+            separator = ": ",
+            ignore_label_not_found = False,
+        ),
+        metadata.expose_label(
+            name = "GITHUB_PR_HEAD_SHA",
+            new_name = "Imported-From-Mirror-SHA",
+            separator = ": ",
+            ignore_label_not_found = False,
+        ),
+    ],
+)
