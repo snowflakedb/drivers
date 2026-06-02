@@ -1,0 +1,432 @@
+name: temporary put get
+
+# TEMPORARY workflow. Remove this file once the AWS / GCP / Azure put-get
+# changes are delivered and the standard CI matrix exercises put/get against
+# all three clouds on every PR — at that point this label-gated runner has
+# no remaining purpose.
+#
+# Until then: spawned only when the `run_full_put_get_tests` label is added
+# to a PR. Runs the put/get test subset across python, sf_core, and odbc on
+# Linux x64, fanned out across aws/gcp/azure (3 jobs per driver). Cargo + uv
+# cache shared-keys mirror the main test pipelines so when this workflow
+# fires after the regular CI runs, the registry/target/uv caches are already
+# warm and rebuild cost is near-zero.
+#
+# Build-once / test-many pattern (mirrors main pipelines):
+#   build_python_wheel  → uploads wheel, downloaded by the 3 cloud entries
+#   build_odbc_driver   → uploads libsfodbc.so, downloaded by the 3 cloud
+#                         entries (each still builds the C++ test harness)
+#   core_put_get        → matrix entries each build sf_core test binaries;
+#                         distributing those as artifacts is fragile, so we
+#                         rely on the shared `core-test` cargo cache instead
+#                         of a separate build job.
+#
+# JDBC has no put/get tests in the test tree today, so it is intentionally
+# omitted; add a JDBC job here when those tests land.
+
+on:
+  pull_request:
+    # `labeled` lets the run trigger when the label is first applied;
+    # synchronize/opened/reopened re-run it on subsequent pushes provided
+    # the label is still on the PR (the `gate` job below filters).
+    types: [opened, synchronize, reopened, labeled]
+
+concurrency:
+  # One temporary run per PR; re-applying the run-full-put-get-tests label
+  # replaces any in-flight run, as does a new push (synchronize) while the
+  # label is on the PR. Other label events still enter this workflow but
+  # are filtered to a no-op by `gate`, and we don't want those no-op runs
+  # to cancel a real put/get run that's already executing.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'run_full_put_get_tests' }}
+
+jobs:
+  # Single label gate — every downstream job depends on it (directly or via
+  # a build job). Two acceptance paths:
+  #   - the triggering event is the matching label being added
+  #   - the triggering event is something else (synchronize/opened/...)
+  #     and the matching label is currently on the PR
+  gate:
+    if: |
+      (github.event.action == 'labeled' && github.event.label.name == 'run_full_put_get_tests')
+      || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run_full_put_get_tests'))
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+
+  # Build a single Linux x86_64 wheel on ubuntu-latest (not via the
+  # cibuildwheel/manylinux Docker pipeline — that's overkill when the only
+  # consumer is the matrix below, also on ubuntu-latest). The wheel embeds
+  # sf_core compiled in release mode; the 3 cloud test entries download it
+  # and `pip install` in seconds, instead of each one rebuilding sf_core
+  # via an sdist install.
+  #
+  # Cargo shared-key matches test-python.yml's py3.10 sdist-install lane
+  # (same compile path: hatch_build invokes `cargo build --release
+  # --package sf_core`).
+  build_python_wheel:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: sdist-test
+
+      - name: Restore proto-target cache
+        id: proto-target-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-proto-target-
+
+      - name: Build wheel
+        working-directory: python
+        run: >
+          uv run --python 3.13
+          --with hatch --with cython --with setuptools --with "virtualenv<21.0.0"
+          hatch build --target wheel
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-temporary
+          path: python/dist/*.whl
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: sdist-test
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+      - name: Save proto-target cache
+        if: always() && steps.proto-target-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('proto_generator/Cargo.lock') }}
+
+  # Single ODBC driver build, shared across the 3 cloud test entries below.
+  # Mirrors the build_odbc_driver job in _test-odbc.yml for the Linux x64
+  # lane — same shared cargo-cache key (`odbc`) so warm caches from main CI
+  # apply here too.
+  build_odbc_driver:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: odbc
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Build ODBC driver
+        # Workaround for the Rust 1.89+ linker bug (rust-lang/rust#131292),
+        # mirroring odbc_unit_tests in test-odbc.yml.
+        run: cargo build --package odbc
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Upload driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: odbc-driver-temporary
+          path: target/debug/libsfodbc.so
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: odbc
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  python_put_get:
+    needs: build_python_wheel
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    name: python_put_get (linux x64, py3.13, ${{ matrix.cloud_provider }})
+    env:
+      MATRIX_KEY: putget-ubuntu-latest-3.13-${{ matrix.cloud_provider }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set UV cache dir
+        run: echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      # Restore-only: shares the `uv-ubuntu-latest-3.13-test-...` key family
+      # with test-python.yml. Cache key intentionally omits cloud_provider —
+      # uv installs the same deps regardless of which cloud the suite hits.
+      - name: Restore uv cache
+        continue-on-error: true
+        uses: actions/cache/restore@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-ubuntu-latest-3.13-test-
+            uv-ubuntu-latest-3.13-
+            uv-ubuntu-latest-
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-temporary
+          path: python/dist
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Install snowflake ud driver from wheel
+        working-directory: python
+        run: |
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
+          hatch run test.py3.13:install-wheel
+
+      # `hatch run env:<cmd>` falls through to executing <cmd> in the env when
+      # <cmd> is not a defined script. pytest is installed as a test feature,
+      # so we invoke it with the put/get paths directly — bypassing the broad
+      # `cov` script (which collects all of tests/) avoids running unrelated
+      # suites just to filter them out.
+      - name: Run python put/get tests
+        working-directory: python
+        run: |
+          mkdir -p reports
+          hatch run test.py3.13:pytest \
+            tests/e2e/put_get tests/integ/put_get \
+            --json-report --json-report-file=reports/${MATRIX_KEY}.json \
+            --junitxml=reports/${MATRIX_KEY}.xml
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ env.MATRIX_KEY }}
+          path: python/reports/${{ env.MATRIX_KEY }}.*
+
+      - name: Prune uv cache
+        if: always()
+        run: uv cache prune --ci
+
+  # No separate build job for sf_core: cargo test binaries depend on
+  # target/debug/deps/ internal layout, so distributing them as a portable
+  # artifact between jobs is fragile. The shared `core-test` cargo cache
+  # makes the per-entry compile incremental — first run after a Cargo.lock
+  # change pays the full cost on each entry in parallel; later runs are
+  # fast.
+  core_put_get:
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    name: core_put_get (linux x64, ${{ matrix.cloud_provider }})
+    env:
+      E2E_TLS_SERVER: https://snowflakecomputing.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Install Go (required by aws-lc-fips-sys)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: core-test
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      # `put_get` is the module name under tests/e2e and tests/integration in
+      # sf_core, so the test-name filter selects only those suites.
+      - name: Run sf_core put/get tests
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo test --package sf_core --all-features --test e2e_tests put_get -- --nocapture
+          cargo test --package sf_core --all-features --test integration_tests put_get -- --nocapture
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: core-test
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  odbc_put_get:
+    needs: build_odbc_driver
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    name: odbc_put_get (linux x64, ${{ matrix.cloud_provider }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup ODBC build environment
+        uses: ./.github/actions/setup-odbc-build-env
+
+      - name: Download ODBC driver
+        uses: actions/download-artifact@v4
+        with:
+          name: odbc-driver-temporary
+          path: target/debug
+
+      - name: Make driver executable
+        run: chmod +x target/debug/libsfodbc.so
+
+      - name: Restore test dependencies cache
+        id: test-deps-cache
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: test-deps
+          key-suffix: default
+
+      - name: Restore ccache
+        id: ccache
+        uses: ./.github/actions/build-cache
+        with:
+          mode: restore
+          kind: ccache
+          key-suffix: default
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache ninja-build
+          # odbc_tests/CMakeLists.txt requires CMake >= 4.0; ubuntu-latest ships ~3.30.
+          python3 -m pip install 'cmake>=4.0.3'
+          cmake --version
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      # run_tests_unix.sh honours `CTEST_FILTER` by appending `-R` to ctest;
+      # all put/get test executables are named `e2e_put_get_*`, so anchoring
+      # to that prefix selects the suite exactly. `-LE flaky` is supplied by
+      # the script itself.
+      - name: Build and run ODBC put/get tests
+        run: |
+          export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          export DRIVER_TYPE=NEW
+          export CTEST_FILTER='^e2e_put_get_'
+          ./scripts/odbc/run_tests_unix.sh \
+            --output-junit "${{ github.workspace }}/odbc-junit.xml"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-putget-odbc-linux-x64-${{ matrix.cloud_provider }}
+          path: odbc-junit.xml
+          if-no-files-found: warn
+
+      - name: Save test dependencies cache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: test-deps
+          key-suffix: default
+          cache-hit: ${{ steps.test-deps-cache.outputs.cache-hit }}
+
+      - name: Save ccache
+        if: always()
+        timeout-minutes: 10
+        uses: ./.github/actions/build-cache
+        with:
+          mode: save
+          kind: ccache
+          key-suffix: default
+          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
