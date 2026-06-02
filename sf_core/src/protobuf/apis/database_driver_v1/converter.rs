@@ -447,6 +447,17 @@ impl From<crate::rest::snowflake::QueryStatusResult> for ConnectionGetQueryStatu
             status_name: result.status_name,
             error_code: result.error_code,
             error_message: result.error_message,
+            end_time: result.end_time,
+            start_time: result.start_time,
+            total_duration: result.total_duration,
+            query_id: result.query_id,
+            session_id: result.session_id,
+            sql_text: result.sql_text,
+            warehouse_id: result.warehouse_id,
+            warehouse_name: result.warehouse_name,
+            warehouse_external_size: result.warehouse_external_size,
+            warehouse_server_type: result.warehouse_server_type,
+            state: result.state,
         }
     }
 }

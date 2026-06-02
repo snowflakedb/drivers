@@ -749,8 +749,19 @@ message ConnectionGetQueryStatusRequest {
 message ConnectionGetQueryStatusResponse {
   // Status name as returned by the server (e.g. "RUNNING", "SUCCESS", "FAILED_WITH_ERROR")
   string status_name = 1;
-  optional int32 error_code = 2;
-  optional string error_message = 3;
+  int64 end_time = 2;
+  optional int32 error_code = 3;
+  optional string error_message = 4;
+  string query_id = 5;
+  int64 session_id = 6;
+  string sql_text = 7;
+  int64 start_time = 8;
+  string state = 9;
+  int32 total_duration = 10;
+  optional string warehouse_external_size = 11;
+  int64 warehouse_id = 12;
+  optional string warehouse_name = 13;
+  optional string warehouse_server_type = 14;
 }
 
 message ConfigGetPathsRequest {

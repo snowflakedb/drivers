@@ -11,18 +11,39 @@ import org.junit.jupiter.api.Test;
 class QueryStatusMapperTest {
 
   @Test
-  void shouldMapSuccessStatus() {
+  void shouldMapSuccessStatusWithAllFields() {
     ConnectionGetQueryStatusResponse response =
-        ConnectionGetQueryStatusResponse.newBuilder().setStatusName("SUCCESS").build();
+        ConnectionGetQueryStatusResponse.newBuilder()
+            .setStatusName("SUCCESS")
+            .setState("running")
+            .setEndTime(1700000000L)
+            .setStartTime(1699999990L)
+            .setTotalDuration(10000)
+            .setQueryId("01abc-query-id")
+            .setSessionId(42L)
+            .setSqlText("SELECT 1")
+            .setWarehouseId(100)
+            .setWarehouseName("COMPUTE_WH")
+            .setWarehouseExternalSize("X-Small")
+            .setWarehouseServerType("STANDARD")
+            .build();
 
     QueryStatus status = QueryStatusMapper.fromCoreResponse(response);
 
     assertEquals("SUCCESS", status.getName());
+    assertEquals("running", status.getState());
     assertTrue(status.isSuccess());
     assertFalse(status.isStillRunning());
-    assertFalse(status.isAnError());
-    assertEquals(0, status.getErrorCode());
-    assertEquals("", status.getErrorMessage());
+    assertEquals(1700000000L, status.getEndTime());
+    assertEquals(1699999990L, status.getStartTime());
+    assertEquals(10000, status.getTotalDuration());
+    assertEquals("01abc-query-id", status.getId());
+    assertEquals(42L, status.getSessionId());
+    assertEquals("SELECT 1", status.getSqlText());
+    assertEquals(100, status.getWarehouseId());
+    assertEquals("COMPUTE_WH", status.getWarehouseName());
+    assertEquals("X-Small", status.getWarehouseExternalSize());
+    assertEquals("STANDARD", status.getWarehouseServerType());
   }
 
   @Test
@@ -89,17 +110,16 @@ class QueryStatusMapperTest {
 
     assertEquals(0, status.getErrorCode());
     assertEquals("", status.getErrorMessage());
-  }
-
-  @Test
-  void shouldUseStatusNameForBothNameAndState() {
-    ConnectionGetQueryStatusResponse response =
-        ConnectionGetQueryStatusResponse.newBuilder().setStatusName("RESUMING_WAREHOUSE").build();
-
-    QueryStatus status = QueryStatusMapper.fromCoreResponse(response);
-
-    assertEquals("RESUMING_WAREHOUSE", status.getName());
-    assertEquals("RESUMING_WAREHOUSE", status.getState());
-    assertEquals("RESUMING_WAREHOUSE", status.getDescription());
+    assertEquals(0L, status.getEndTime());
+    assertEquals(0L, status.getStartTime());
+    assertEquals(0, status.getTotalDuration());
+    assertEquals("", status.getId());
+    assertEquals(0L, status.getSessionId());
+    assertEquals("", status.getSqlText());
+    assertEquals(0, status.getWarehouseId());
+    assertEquals("", status.getWarehouseName());
+    assertEquals("", status.getWarehouseExternalSize());
+    assertEquals("", status.getWarehouseServerType());
+    assertEquals("", status.getState());
   }
 }

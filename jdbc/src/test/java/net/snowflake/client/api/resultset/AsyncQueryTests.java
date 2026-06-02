@@ -38,13 +38,13 @@ class AsyncQueryTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void shouldGetQueryStatusViaConnection() throws Exception {
+  void shouldGetQueryStatusViaConnectionWhenSuccess() throws Exception {
     Connection connection = getDefaultConnection();
+    String sql = "SELECT 1";
 
     String queryId;
     try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet =
-          statement.unwrap(SnowflakeStatement.class).executeAsyncQuery("SELECT 1");
+      ResultSet resultSet = statement.unwrap(SnowflakeStatement.class).executeAsyncQuery(sql);
       queryId = resultSet.unwrap(SnowflakeResultSet.class).getQueryID();
 
       assertTrue(resultSet.next());
@@ -53,6 +53,39 @@ class AsyncQueryTests extends SnowflakeIntegrationTestBase {
 
     QueryStatus status = connection.unwrap(SnowflakeConnection.class).getQueryStatus(queryId);
     assertTrue(status.isSuccess(), "Expected SUCCESS for completed query");
+    assertEquals(queryId, status.getId());
+    assertEquals(sql, status.getSqlText());
+    assertTrue(status.getStartTime() > 0, "Expected startTime to be populated");
+    assertTrue(status.getEndTime() >= status.getStartTime(), "endTime should be >= startTime");
+    assertTrue(status.getTotalDuration() >= 0, "totalDuration should be non-negative");
+    assertTrue(status.getSessionId() > 0, "Expected sessionId to be populated");
+    assertNotNull(status.getWarehouseName(), "Expected warehouseName to be populated");
+    assertFalse(status.getWarehouseName().isEmpty(), "warehouseName should not be empty");
+  }
+
+  @Test
+  void shouldGetQueryStatusViaConnectionWhenRunning() throws Exception {
+    Connection connection = getDefaultConnection();
+    String sql = "SELECT SYSTEM$WAIT(5)";
+
+    String queryId;
+    try (Statement statement = connection.createStatement()) {
+      ResultSet resultSet = statement.unwrap(SnowflakeStatement.class).executeAsyncQuery(sql);
+      queryId = resultSet.unwrap(SnowflakeResultSet.class).getQueryID();
+
+      QueryStatus status = connection.unwrap(SnowflakeConnection.class).getQueryStatus(queryId);
+
+      assertTrue(status.isStillRunning(), "Expected query to still be running");
+      assertFalse(status.isSuccess(), "Query should not be SUCCESS yet");
+      assertEquals(queryId, status.getId());
+      assertEquals(sql, status.getSqlText());
+      assertTrue(status.getStartTime() > 0, "Expected startTime to be populated");
+      assertTrue(status.getSessionId() > 0, "Expected sessionId to be populated");
+      assertNotNull(status.getWarehouseName(), "Expected warehouseName to be populated");
+
+      assertTrue(resultSet.next(), "Expected result after waiting");
+      resultSet.close();
+    }
   }
 
   @Test
