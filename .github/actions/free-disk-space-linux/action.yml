@@ -3,10 +3,11 @@ description: >
   Reclaim disk space on GitHub-hosted ubuntu-latest runners by removing
   pre-installed tooling we don't use. Inline replacement for
   jlumbroso/free-disk-space, which is blocked by the org's actions allowlist
-  (external repos require enterprise approval). Targets ~25 GB recovered in
-  ~25 s — enough to unblock coverage-instrumented Rust builds that link
-  AWS SDK + rustls + aws-lc-fips + arrow + hyper into many integration test
-  binaries and otherwise hit ENOSPC during link with only ~14 GB free on `/`.
+  (external repos require enterprise approval). Targets ~21 GB recovered in
+  ~25 s while preserving swap — enough to unblock coverage-instrumented Rust
+  builds that link AWS SDK + rustls + aws-lc-fips + arrow + hyper into many
+  integration test binaries and otherwise hit ENOSPC during link with only
+  ~14 GB free on `/`.
 #
 # WHY pre-installed software exists in the first place:
 #   GitHub's ubuntu-latest image (actions/runner-images) bakes in Android
@@ -50,15 +51,6 @@ runs:
       run: |
         sudo rm -rf /opt/ghc || true
         sudo rm -rf /usr/local/.ghcup || true
-
-    # Disable + delete the 4 GB swapfile mounted at /mnt/swapfile.
-    # swapoff is required before rm so the kernel releases the backing store;
-    # otherwise the file rm'd while in use leaves the space reserved.
-    - name: Disable swap and remove swapfile
-      shell: bash
-      run: |
-        sudo swapoff -a || true
-        sudo rm -f /mnt/swapfile || true
 
     # Pre-pulled images (ubuntu, alpine, node, …) baked into the runner.
     # `docker image prune` is safe — we don't run any docker workloads in
