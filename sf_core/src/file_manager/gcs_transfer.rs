@@ -284,6 +284,18 @@ fn map_http_error(e: HttpError) -> GcsRequestError {
 fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        // Disable reqwest's auto-gzip path so a GCS response carrying
+        // `Content-Encoding: gzip` (typically set by external loaders such
+        // as `gsutil cp -Z` or BigQuery exports) is handed to the caller
+        // verbatim. The driver is moving opaque, possibly CSE-encrypted
+        // bytes, and downstream SHA-256 digest / Content-Length checks
+        // assume wire bytes == body bytes. Mirrors JDBC's
+        // `HttpUtil.disableContentCompression()`
+        // (`SnowflakeGCSClient.java:237,:432` via `HttpUtil.java:420`) and
+        // the intent of Python's `remove_content_encoding` urllib3 hook
+        // (`storage_client.py:54-59`); the upload-side `content-encoding`
+        // strip in `upload_to_gcs` is the matching PUT-side defense.
+        .no_gzip()
         .build()
         .map_err(|source| GcsRequestError::Http { source })
 }
