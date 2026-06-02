@@ -2,6 +2,8 @@ use super::super::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
+// TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+#[ignore = "Temporarily disabled due to SNOW-3595092: SQL execution internal error 603"]
 fn should_authenticate_using_pat_as_password() {
     //Given Authentication is set to password and valid PAT token is provided
     let pat = Pat::acquire();
@@ -17,6 +19,8 @@ fn should_authenticate_using_pat_as_password() {
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
+// TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+#[ignore = "Temporarily disabled due to SNOW-3595092: SQL execution internal error 603"]
 fn flaky_should_authenticate_using_pat_as_token() {
     //Given Authentication is set to Programmatic Access Token and valid PAT token is provided
     let pat = Pat::acquire();
@@ -33,6 +37,8 @@ fn flaky_should_authenticate_using_pat_as_token() {
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
+// TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+#[ignore = "Temporarily disabled due to SNOW-3595092: SQL execution internal error 603"]
 fn flaky_should_authenticate_using_pat_as_token_with_lowercase_authenticator() {
     //Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
     let pat = Pat::acquire();
