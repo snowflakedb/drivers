@@ -866,3 +866,17 @@ behavior_differences:
       Applications binding fractional SQL_C_INTERVAL_SECOND values to DECIMAL/NUMERIC parameters get the spec-compliant truncate-and-store behavior on the new driver instead of a 22015 rejection.
     description: |
       Spec reference: ODBC Appendix D, "Converting Data from C to SQL Data Types" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types). A single-field interval bound to an exact-numeric target carries the magnitude of its single datetime field; fractional seconds carried by SQL_C_INTERVAL_SECOND are truncated when the target is an exact integer type.
+
+  62:
+    name: "SQLBindParameter SQL_C_INTERVAL_* bound to a SQL_INTERVAL_* parameter forwards the leading-field literal instead of being rejected"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      Binding any interval C source (SQL_C_INTERVAL_YEAR / _MONTH / _DAY / _HOUR / _MINUTE / _SECOND) with ParameterType set to a SQL_INTERVAL_* type fails: the reference driver does not implement binding the SQL_INTERVAL_* parameter types, so there is no path to bind a SQL_C_INTERVAL_* value to a SQL_INTERVAL_* parameter.
+    new_driver_behavior: |
+      Per ODBC Appendix D ("Converting Data from C to SQL Data Types", "Converting Interval C Data"), an interval C source is legal for an interval SQL target of the same family — a year-month source (SQL_C_INTERVAL_YEAR / _MONTH) to a year-month target (SQL_INTERVAL_YEAR / _MONTH), and a day-time source (SQL_C_INTERVAL_DAY / _HOUR / _MINUTE / _SECOND) to a day-time target (SQL_INTERVAL_DAY / _HOUR / _MINUTE / _SECOND). The driver forwards the source interval's leading datetime field as the rendered literal (e.g. SQL_C_INTERVAL_YEAR carrying 5 renders "5", SQL_C_INTERVAL_SECOND carrying 45s renders "45.000000"), with the leading sign applied, so the bind succeeds (SQL_SUCCESS) and the literal round-trips through a VARCHAR column verbatim. Cross-family binds (year-month source to day-time target or vice versa) are rejected with SQLSTATE 07006.
+    impact: |
+      Applications binding SQL_C_INTERVAL_* values to same-family SQL_INTERVAL_* parameters now succeed on the new driver instead of failing. Cross-family interval binds receive a spec-compliant 07006 rejection.
+    description: |
+      Spec reference: ODBC Appendix D, "Converting Data from C to SQL Data Types" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types). The interval C to interval SQL conversion is keyed by the bound SQL_INTERVAL_* parameter type; the rendered literal carries the source interval's leading field and is stored verbatim in a VARCHAR column.
