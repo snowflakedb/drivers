@@ -4,6 +4,7 @@ PARAMS = {
     "OS":    ["ubuntu", "macos", "windows"],
     "Arch":  ["x64", "x86", "arm"],
     "Cloud": ["aws", "gcp", "azure"],
+    "DM":    ["unixodbc", "iodbc"],
 }
 
 
@@ -18,6 +19,9 @@ def is_valid(c):
         # macos ODBC builds only arm.
         if c["Arch"] == "x64": return False
         if c["Arch"] == "x86": return False
+
+    if c["DM"] == "iodbc":
+        if c["OS"] != "macos": return False
 
     return True
 
@@ -42,20 +46,21 @@ def merge_valid(c):
 MERGE_VALID = [merge_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws"},
-    {"OS": "macos",   "Arch": "arm", "Cloud": "gcp"},
-    {"OS": "windows", "Arch": "x64", "Cloud": "azure"},
-    {"OS": "windows", "Arch": "x86", "Cloud": "aws"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws",   "DM": "unixodbc"},
+    {"OS": "macos",   "Arch": "arm", "Cloud": "gcp",   "DM": "unixodbc"},
+    {"OS": "windows", "Arch": "x64", "Cloud": "azure", "DM": "unixodbc"},
+    {"OS": "windows", "Arch": "x86", "Cloud": "aws",   "DM": "unixodbc"},
+    {"OS": "macos",   "Arch": "arm", "Cloud": "aws",   "DM": "iodbc"},
 ]
 
 MERGE_QUEUE_CELLS = [
-    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws"},
+    {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "DM": "unixodbc"},
 ]
 
 JSON_CELLS = {
     "pr": [],
     "merge": [
-        {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws"},
+        {"OS": "ubuntu", "Arch": "x64", "Cloud": "aws", "DM": "unixodbc"},
     ],
     "nightly": [],
 }

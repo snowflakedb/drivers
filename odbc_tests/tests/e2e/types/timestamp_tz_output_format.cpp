@@ -20,6 +20,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -86,16 +87,19 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_WCHAR honors TIMESTAMP_TZ_OUTPUT_FORMAT with TZ
   // When the session opts into the verbose Snowflake offset token, fetched as wide chars
   conn.execute("ALTER SESSION SET TIMESTAMP_TZ_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'");
 
-  // Then a positive-offset TIMESTAMP_TZ round-trips as the same UTF-16 string with `+05:30`
+  // Then a positive-offset TIMESTAMP_TZ round-trips as the expected wall-clock + offset string.
+  // Assertions are made on the *decoded* code-point sequence and on the indicator expressed
+  // in DM-side SQLWCHAR units, so the test is portable across UTF-16 (unixODBC) and UTF-32
+  // (iODBC) without touching the driver path.
   auto stmt = conn.execute_fetch("SELECT '2024-01-15 14:30:45 +05:30'::TIMESTAMP_TZ");
   SQLWCHAR buffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
   CHECK(ret == SQL_SUCCESS);
-  // 26 ASCII chars * 2 bytes = 52 bytes (excluding NUL).
-  CHECK(indicator == 52);
-  std::u16string expected = u"2024-01-15 14:30:45 +05:30";
-  std::u16string actual(reinterpret_cast<const char16_t*>(buffer), expected.size());
+  std::u32string expected = U"2024-01-15 14:30:45 +05:30";
+  // 26 ASCII chars * sizeof(SQLWCHAR) bytes (excluding NUL).
+  CHECK(indicator == static_cast<SQLLEN>(expected.size() * sf::wide::wchar_byte_size()));
+  auto actual = sf::wide::decode_wide(buffer, expected.size());
   CHECK(actual == expected);
 }
 

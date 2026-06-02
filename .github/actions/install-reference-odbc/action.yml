@@ -25,6 +25,16 @@ inputs:
       installer. Ignored on Windows (signature check is used there instead).
     required: false
     default: ci/reference-odbc-checksums
+  driver-manager:
+    description: >
+      Driver Manager the installed reference driver should be wired to:
+      `unixodbc` (default) or `iodbc`. Only consumed by the macOS branch;
+      Linux uses unixODBC and Windows uses its built-in DM regardless.
+      On macOS+iodbc the shipped `DriverManagerEncoding=UTF-32` is left
+      intact (the Simba .pkg sets it) and `ODBCInstLib` is pointed at
+      Homebrew's libiodbc installer dylib.
+    required: false
+    default: unixodbc
 
 runs:
   using: composite
@@ -67,6 +77,7 @@ runs:
         REF_CACHE_DIR: ${{ inputs.cache-dir }}
         REF_VERSION_FILE: ${{ inputs.version-file }}
         REF_CHECKSUMS_FILE: ${{ inputs.checksums-file }}
+        REF_DRIVER_MANAGER: ${{ inputs.driver-manager }}
       run: |
         set -euxo pipefail
         REFERENCE_ODBC_VERSION=$(tr -d '[:space:]' < "$REF_VERSION_FILE")
@@ -104,13 +115,35 @@ runs:
         sudo installer -pkg "$PKG" -target /
 
         SIMBA_INI="/opt/snowflake/snowflakeodbc/lib/universal/simba.snowflake.ini"
-        ODBC_INST_LIB="$(brew --prefix unixodbc)/lib/libodbcinst.dylib"
-        if [[ ! -f "$ODBC_INST_LIB" ]]; then
-          echo "Expected unixODBC libodbcinst.dylib not found at $ODBC_INST_LIB"
-          exit 1
-        fi
-        echo "ODBCInstLib=${ODBC_INST_LIB}" | sudo tee -a "$SIMBA_INI" >/dev/null
-        echo "DriverManagerEncoding=UTF-16" | sudo tee -a "$SIMBA_INI" >/dev/null
+        case "$REF_DRIVER_MANAGER" in
+          unixodbc)
+            # Override the .pkg's UTF-32 default to UTF-16 + brew unixODBC's
+            # libodbcinst, matching how the reference rows ran historically.
+            ODBC_INST_LIB="$(brew --prefix unixodbc)/lib/libodbcinst.dylib"
+            if [[ ! -f "$ODBC_INST_LIB" ]]; then
+              echo "Expected unixODBC libodbcinst.dylib not found at $ODBC_INST_LIB"
+              exit 1
+            fi
+            echo "ODBCInstLib=${ODBC_INST_LIB}" | sudo tee -a "$SIMBA_INI" >/dev/null
+            echo "DriverManagerEncoding=UTF-16" | sudo tee -a "$SIMBA_INI" >/dev/null
+            ;;
+          iodbc)
+            # The .pkg already ships `DriverManagerEncoding=UTF-32`; leave it
+            # alone. Point ODBCInstLib at Homebrew's libiodbc (installed in the
+            # macOS dependency-install step alongside unixodbc) so the running
+            # old driver picks up the iODBC installer dylib.
+            ODBC_INST_LIB="$(brew --prefix libiodbc)/lib/libiodbcinst.dylib"
+            if [[ ! -f "$ODBC_INST_LIB" ]]; then
+              echo "Expected libiodbc libiodbcinst.dylib not found at $ODBC_INST_LIB"
+              exit 1
+            fi
+            echo "ODBCInstLib=${ODBC_INST_LIB}" | sudo tee -a "$SIMBA_INI" >/dev/null
+            ;;
+          *)
+            echo "Unknown driver-manager input: ${REF_DRIVER_MANAGER}" >&2
+            exit 1
+            ;;
+        esac
 
     - name: Install reference ODBC driver (Windows)
       if: runner.os == 'Windows'

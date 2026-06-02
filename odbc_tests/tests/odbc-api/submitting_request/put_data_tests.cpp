@@ -205,7 +205,15 @@ TEST_CASE("SQLPutData: SQL_INVALID_HANDLE for null statement handle",
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: HY010 without prior SQL_NEED_DATA",
                  "[odbc-api][putdata][submitting_request][error]") {
   SQLRETURN ret = SQLPutData(stmt_handle(), const_cast<char*>("x"), 1);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM forwards the call; the driver rejects it
+    //   with HY010 (function sequence error)
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the call before it reaches the driver
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsError());
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: HY009 for null DataPtr with SQL_NTS",

@@ -13,6 +13,7 @@
 
 #include "HandleWrapper.hpp"
 #include "MetaOfSqlCTypes.hpp"
+#include "WideString.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 
@@ -160,13 +161,17 @@ inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSM
   return std::string(buffer, indicator);
 }
 
-inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
-  char16_t buffer[8192];
+inline std::u32string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  // Buffer is sized in DM-side `SQLWCHAR` units (2 bytes under UTF-16,
+  // 4 under UTF-32). The result is decoded to a Unicode code-point
+  // sequence so callers can compare against `U"..."` literals
+  // regardless of the loaded driver manager.
+  SQLWCHAR buffer[8192];
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(indicator >= 0);
-  return std::u16string(buffer, indicator / sizeof(char16_t));
+  return sf::wide::decode_wide(buffer, static_cast<std::size_t>(indicator) / sf::wide::wchar_byte_size());
 }
 
 // Verifies that a SQLGetData conversion fails with an incompatible-conversion SQLSTATE.

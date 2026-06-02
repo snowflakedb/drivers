@@ -242,7 +242,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
 
   SQLRETURN ret =
       SQLProcedureColumns(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("PROC"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative SchemaName length",
@@ -251,7 +262,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative S
 
   SQLRETURN ret =
       SQLProcedureColumns(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("PROC"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ProcName length",
@@ -259,7 +281,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative P
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLProcedureColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("PROC"), -999, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ColumnName length",
@@ -268,7 +301,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
 
   SQLRETURN ret =
       SQLProcedureColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("PROC"), SQL_NTS, sqlchar("COL"), -999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: 24000 - Cursor already open",

@@ -240,7 +240,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit closes open cursors"
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM catches the post-commit SQLFetch as a function-sequence
+    //   error and surfaces it as the ODBC 2.x "S1010" before the call reaches
+    //   the driver; the old driver doesn't synthesise ODBC 3.x "HY010" ahead
+    //   of the DM check the way the new driver does.
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
   REQUIRE(ret == SQL_SUCCESS);
@@ -263,7 +272,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback closes open cursor
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC DM catches the post-rollback SQLFetch as a function-sequence
+    //   error (see "Commit closes open cursors" above for details).
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
   REQUIRE(ret == SQL_SUCCESS);
@@ -472,7 +488,20 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY012 - Invalid completion 
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), 999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY012", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver under iODBC rejects the invalid completion type with
+    //   SQL_ERROR but does not post any diagnostic record (the diag-record
+    //   allocation is gated on the iODBC dispatch path's own validation
+    //   firing first), so SQLGetDiagRec returns SQL_NO_DATA and a SQLSTATE
+    //   check has nothing to compare. The new driver posts the spec-mandated
+    //   HY012 record itself before the iODBC dispatch path executes.
+    REQUIRE(ret == SQL_ERROR);
+    const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
+    REQUIRE(records.empty());
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY012", dbc_handle(), SQL_HANDLE_DBC);
+  }
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_ROLLBACK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -494,7 +523,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY092 - Invalid handle type
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const SQLRETURN ret = SQLEndTran(SQL_HANDLE_STMT, stmt_handle(), SQL_COMMIT);
-  REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM validates the HandleType enum before dispatching and rejects
+    //   SQL_HANDLE_STMT for SQLEndTran with SQL_INVALID_HANDLE (no diagnostic
+    //   records); the new driver does the HY092 mapping itself.
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY010 - Called during SQL_NEED_DATA",
@@ -517,7 +554,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: HY010 - Called during SQL_N
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_COMMIT);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM tracks per-statement SQL_NEED_DATA across the connection and
+    //   surfaces the SQLEndTran-during-DAE as ODBC 2.x "S1010" function
+    //   sequence error before the old driver sees it; the new driver maps the
+    //   same condition to "HY010" itself.
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", dbc_handle(), SQL_HANDLE_DBC);
+  }
 
   SQLCancel(stmt_handle());
   SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_ROLLBACK);

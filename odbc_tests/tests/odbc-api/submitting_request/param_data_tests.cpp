@@ -151,6 +151,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLParamData: Succeeds with NULL ValueP
 TEST_CASE_METHOD(StmtSessionSchemaFixture,
                  "SQLParamData: zero-row DAE DML leaves DmlExecuted state and SQLRowCount returns 0",
                  "[odbc-api][paramdata][submitting_request]") {
+  // iODBC's DM rejects the second SQLParamData (the one that drives the
+  //   DAE handshake to completion) with SQL_INVALID_HANDLE instead of
+  //   threading SQL_NEED_DATA / SQL_NO_DATA through, so the full DAE
+  //   protocol cannot be exercised here.
+  SKIP_IODBC("iODBC DM does not thread the DAE SQL_NEED_DATA -> SQL_NO_DATA sequence through SQLParamData");
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE dae_zero_dml_t(c1 INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -228,11 +233,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLParamData: HY010 without prior SQL_N
                  "[odbc-api][paramdata][submitting_request][error]") {
   SQLPOINTER vp = nullptr;
   const SQLRETURN ret = SQLParamData(stmt_handle(), &vp);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM forwards the call; the driver rejects it
+    //   with HY010 (function sequence error)
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the call before it reaches the driver
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsError());
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLParamData: HY010 when called consecutively without SQLPutData",
                  "[odbc-api][paramdata][submitting_request][error]") {
+  // iODBC's DM rejects the very first SQLParamData call after SQL_NEED_DATA
+  //   with SQL_INVALID_HANDLE, so the SQL_NEED_DATA -> consecutive call
+  //   transition cannot be exercised
+  SKIP_IODBC("iODBC DM rejects SQLParamData after SQL_NEED_DATA with SQL_INVALID_HANDLE");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 

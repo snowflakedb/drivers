@@ -174,35 +174,95 @@ TEST_CASE("SQLColumnPrivileges: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY009 - NULL TableName pointer",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a NULL TableName pointer (which is required)
   const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM null-checks TableName and reports HY009
+    //   (invalid use of null pointer)
+    REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#62") {
+      // The old driver forwards the NULL TableName to the server and the
+      //   resulting backend error is surfaced as SQL_ERROR; iODBC's DM does
+      //   not intercept NULL pointers the way it does for the new driver.
+      REQUIRE(ret == SQL_ERROR);
+    }
+    NEW_IODBC_ONLY("BD#62") {
+      // For the new driver iODBC's DM null-checks TableName and rejects the
+      //   call with SQL_INVALID_HANDLE before it reaches the driver.
+      REQUIRE(ret == SQL_INVALID_HANDLE);
+    }
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative CatalogName length (-999)
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length up front with
+    //   HY090 (invalid string or buffer length)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR before
+    //   the call reaches the driver
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative SchemaName length (-999)
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative TableName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative TableName length (-999)
   const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative ColumnName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
+  // Given an active statement on the default DSN
+  // When SQLColumnPrivileges is called with a negative ColumnName length (-999)
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("COLUMN"), -999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the negative length with HY090
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM rejects the negative length itself with SQL_ERROR
+    //   (see "Negative CatalogName length" above for the same iODBC vs unixODBC delta)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: 24000 - Cursor already open",

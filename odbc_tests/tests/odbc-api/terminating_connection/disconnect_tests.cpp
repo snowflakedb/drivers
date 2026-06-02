@@ -96,7 +96,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  OLD_IODBC_ONLY("BD#68") {
+    // iODBC keeps the statement entry in its DM-side alloc table after the
+    //   old driver's SQLDisconnect, so a follow-up SQLFreeHandle does NOT
+    //   return SQL_INVALID_HANDLE - the handle is still addressable through
+    //   iODBC's alloc table. The new driver coordinates with iODBC to invalidate
+    //   child statements on disconnect, so the else branch checks for the
+    //   spec-mandated SQL_INVALID_HANDLE.
+    ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+    REQUIRE(ret != SQL_INVALID_HANDLE);
+  }
+  else {
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  }
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactions",
@@ -152,7 +164,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  OLD_IODBC_ONLY("BD#68") {
+    // See "Closes open statements automatically": iODBC's statement-alloc
+    //   table outlives the old driver's SQLDisconnect, so the handle stays
+    //   addressable through iODBC and SQLFreeHandle does NOT return
+    //   SQL_INVALID_HANDLE. The exact return value (SQL_SUCCESS / SQL_ERROR).
+    ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+    REQUIRE(ret != SQL_INVALID_HANDLE);
+  }
+  else {
+    REQUIRE_INVALID_HANDLE(SQL_HANDLE_STMT, stmt);
+  }
 }
 
 // ============================================================================
@@ -205,6 +227,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: After failed connection a
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement handles",
                  "[odbc-api][disconnect][terminating_connection]") {
+  SKIP_OLD_IODBC("BD#59",
+                 "old driver SQLDisconnect leaves per-statement entries valid in iODBC's alloc table; "
+                 "freeing them afterwards SIGSEGVs inside the driver's per-statement cleanup path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
@@ -239,10 +264,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection hand
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Reference driver Get fails but Set succeeds on disconnected handle
   SQLUINTEGER timeout = 0;
   ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_CONNECTION_TIMEOUT, &timeout, 0, nullptr);
-  REQUIRE(ret == SQL_ERROR);
+  OLD_IODBC_ONLY("BD#64") {
+    // iODBC + old driver keeps connection-attribute reads working after
+    //   SQLDisconnect (it serves them from the cached DM-side state) instead
+    //   of failing with SQL_ERROR the way unixODBC + old and the new driver
+    //   under iODBC both do.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    // Note: Reference driver Get fails but Set succeeds on disconnected handle
+    REQUIRE(ret == SQL_ERROR);
+  }
 
   ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_CONNECTION_TIMEOUT, reinterpret_cast<SQLPOINTER>(30), 0);
   REQUIRE(ret == SQL_SUCCESS);

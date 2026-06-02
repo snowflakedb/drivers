@@ -7,6 +7,7 @@
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -43,8 +44,17 @@ TEST_CASE("should return 07009 when ParameterNumber is zero.", "[query][bind_par
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 0, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE 07009 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07009"));
+  // Then SQLBindParameter returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE 07009
+    //   (invalid descriptor index)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07009"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1093 (invalid parameter
+    //   number) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1093"));
+  }
 }
 
 TEST_CASE("should return HY003 for invalid C data type.", "[query][bind_parameter][error]") {
@@ -58,8 +68,17 @@ TEST_CASE("should return HY003 for invalid C data type.", "[query][bind_paramete
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, 9999, SQL_INTEGER, 0, 0, &param, 0, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY003 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY003"));
+  // Then SQLBindParameter returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY003
+    //   (invalid application buffer type)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY003"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1003 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1003"));
+  }
 }
 
 TEST_CASE("should return HY004 for invalid SQL data type.", "[query][bind_parameter][error]") {
@@ -87,8 +106,17 @@ TEST_CASE("should return HY105 for invalid InputOutputType.", "[query][bind_para
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, 999, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY105 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY105"));
+  // Then SQLBindParameter returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY105
+    //   (invalid parameter type)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY105"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1105 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1105"));
+  }
 }
 
 TEST_CASE("should return HY009 when both value and indicator pointers are null.", "[query][bind_parameter][error]") {
@@ -115,8 +143,34 @@ TEST_CASE("should return HY090 for negative BufferLength.", "[query][bind_parame
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 4, 0, param, -1, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY090 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY090"));
+  // Then SQL_ERROR with SQLSTATE HY090. The new driver advertises ODBC 3.x and
+  //   iODBC forwards the call so the driver's own HY090 surfaces.
+  //
+  // For the old driver under iODBC, BufferLength validation is
+  //   libiodbc-version-dependent (see BD#62 - iODBC's per-driver dispatch
+  //   paths). Both observed outcomes are valid for this BD; we assert each
+  //   one precisely:
+  //
+  //   (a) The libiodbc DM-side length validator rejects the negative
+  //       BufferLength up-front with SQL_ERROR + a single "S1090" record
+  //       ([iODBC][Driver Manager]Invalid string or buffer length); the
+  //       call never reaches the driver.
+  //   (b) The libiodbc DM forwards the call to the old driver, which
+  //       silently accepts the negative BufferLength as SQL_NTS-like and
+  //       returns SQL_SUCCESS with no diagnostic records posted.
+  OLD_IODBC_ONLY("BD#62") {
+    REQUIRE((ret == SQL_ERROR || ret == SQL_SUCCESS));
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+    if (ret == SQL_ERROR) {
+      REQUIRE(records.size() == 1);
+      REQUIRE(records[0].sqlState == "S1090");
+    } else {
+      REQUIRE(records.empty());
+    }
+  }
+  else {
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY090"));
+  }
 }
 
 TEST_CASE("should return HY104 for invalid precision or scale.", "[query][bind_parameter][error]") {

@@ -201,6 +201,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL default conversion - large prec
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conversion][c_wchar]") {
+  // The old driver under iODBC writes UTF-16 code units into the 4-byte SQLWCHAR
+  //   slots that iODBC's UTF-32 SQLWCHAR layout expects, so the decoded buffer is
+  //   garbled (two 16-bit halves of "42" appear as one U+00320034 code point).
+  SKIP_OLD_IODBC("BD#67",
+                 "old driver emits UTF-16 SQLWCHAR units regardless of "
+                 "DriverManagerEncoding=UTF-32, producing garbled output under iODBC");
+
   // Given A Snowflake connection is established
 
   {
@@ -211,11 +218,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conve
         "123.45::NUMBER(10,2), -0.05::NUMBER(10,2)");
 
     // Then SQL_C_WCHAR returns matching wide strings
-    CHECK(check_wchar_success(stmt, 1) == u"42");
-    CHECK(check_wchar_success(stmt, 2) == u"-7");
-    CHECK(check_wchar_success(stmt, 3) == u"0");
-    CHECK(check_wchar_success(stmt, 4) == u"123.45");
-    CHECK(check_wchar_success(stmt, 5) == u"-0.05");
+    CHECK(check_wchar_success(stmt, 1) == U"42");
+    CHECK(check_wchar_success(stmt, 2) == U"-7");
+    CHECK(check_wchar_success(stmt, 3) == U"0");
+    CHECK(check_wchar_success(stmt, 4) == U"123.45");
+    CHECK(check_wchar_success(stmt, 5) == U"-0.05");
   }
 
   {
@@ -224,7 +231,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conve
     auto stmt = conn.execute_fetch("SELECT 99999999999999999999999999999999999999::NUMBER(38,0)");
 
     // Then SQL_C_WCHAR preserves full precision
-    CHECK(check_wchar_success(stmt, 1) == u"99999999999999999999999999999999999999");
+    CHECK(check_wchar_success(stmt, 1) == U"99999999999999999999999999999999999999");
   }
 
   {
@@ -235,7 +242,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_WCHAR", "[fixed][conve
     auto wchar_str = check_wchar_success(conn.execute_fetch(query), 1);
 
     // Then SQL_C_WCHAR matches SQL_C_CHAR
-    std::u16string expected_wchar(char_str.begin(), char_str.end());
+    std::u32string expected_wchar(char_str.begin(), char_str.end());
     CHECK(wchar_str == expected_wchar);
   }
 }

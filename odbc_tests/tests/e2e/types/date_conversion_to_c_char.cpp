@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -155,28 +156,28 @@ TEST_CASE("DATE to SQL_C_WCHAR", "[date][conversion][c_wchar]") {
     // When basic DATE is fetched as SQL_C_WCHAR
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2024-01-15'::DATE"), 1);
     // Then Wide string representation matches "yyyy-mm-dd" format
-    CHECK(result == u"2024-01-15");
+    CHECK(result == U"2024-01-15");
   }
 
   {
     // When pre-epoch DATE is fetched as SQL_C_WCHAR
     auto result = check_wchar_success(conn.execute_fetch("SELECT '1960-06-15'::DATE"), 1);
     // Then Wide string representation matches "yyyy-mm-dd" format
-    CHECK(result == u"1960-06-15");
+    CHECK(result == U"1960-06-15");
   }
 
   {
     // When leap day DATE is fetched as SQL_C_WCHAR
     auto result = check_wchar_success(conn.execute_fetch("SELECT '2000-02-29'::DATE"), 1);
     // Then Wide string representation matches "yyyy-mm-dd" format
-    CHECK(result == u"2000-02-29");
+    CHECK(result == U"2000-02-29");
   }
 
   {
     // When epoch DATE is fetched as SQL_C_WCHAR
     auto result = check_wchar_success(conn.execute_fetch("SELECT '1970-01-01'::DATE"), 1);
     // Then Wide string representation matches "yyyy-mm-dd" format
-    CHECK(result == u"1970-01-01");
+    CHECK(result == U"1970-01-01");
   }
 }
 
@@ -186,13 +187,13 @@ TEST_CASE("DATE to SQL_C_WCHAR exact buffer fit", "[date][conversion][c_wchar]")
 
   // When A DATE value is fetched into a WCHAR buffer of exactly 11 characters
   auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
-  char16_t buffer[11] = {};
+  SQLWCHAR buffer[11] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
   // Then SQL_SUCCESS is returned with the correct wide string
   CHECK(ret == SQL_SUCCESS);
-  CHECK(std::u16string(buffer) == u"2024-01-15");
+  CHECK(sf::wide::decode_wide_cstr(buffer) == U"2024-01-15");
 }
 
 TEST_CASE("DATE to SQL_C_WCHAR buffer too small", "[date][conversion][c_wchar][22003]") {
@@ -200,9 +201,12 @@ TEST_CASE("DATE to SQL_C_WCHAR buffer too small", "[date][conversion][c_wchar][2
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A DATE value is fetched into a WCHAR buffer smaller than 11 characters
+  // When A DATE value is fetched into a WCHAR buffer that cannot hold a
+  // single character plus a NUL terminator. A 1-unit buffer is too small
+  // under both UTF-16 (2 bytes) and UTF-32 (4 bytes), so the driver's
+  // "buffer too small" branch fires regardless of `sizeof(SQLWCHAR)`.
   auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
-  char16_t buffer[6] = {};
+  SQLWCHAR buffer[1] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 

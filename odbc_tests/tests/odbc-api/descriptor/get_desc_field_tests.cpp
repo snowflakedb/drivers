@@ -219,7 +219,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 01004 - String truncat
     // Windows DM reports the Unicode byte length (6 chars * 2 bytes = 12)
     REQUIRE(full_len == 12);
   }
-  UNIX_ONLY { REQUIRE(full_len == 6); }
+  UNIX_ONLY {
+    OLD_IODBC_ONLY("BD#61") {
+      // The old driver reports the *truncated* StringLength (matches the
+      //   bytes actually written) following the ODBC 2.x convention; the new
+      //   driver reports the *untruncated* StringLength as required by ODBC
+      //   3.x so callers can size the buffer for a retry.
+      REQUIRE(full_len == 2);
+    }
+    else {
+      REQUIRE(full_len == 6);
+    }
+  }
 }
 
 // ============================================================================
@@ -326,7 +337,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY090 - Negative Buffe
   char buf[32] = {};
   SQLINTEGER slen = 0;
   ret = SQLGetDescField(ird, 1, SQL_DESC_NAME, buf, -1, &slen);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", ird, SQL_HANDLE_DESC);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM mangles negative-length / empty-string parameters before
+    //   forwarding them to the old driver, which then surfaces HY000
+    //   instead of the spec-mandated HY090. unixODBC passes the arg through
+    //   unchanged, so the driver's HY090 validation fires.
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", ird, SQL_HANDLE_DESC);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", ird, SQL_HANDLE_DESC);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Undefined field for ARD",
@@ -345,6 +365,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY091 - Undefined fiel
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][getdescfield][descriptor][error]") {
+  // Given the implicit ARD of a statement driven into SQL_NEED_DATA via a
+  // SQL_DATA_AT_EXEC bind
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -358,15 +380,29 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - Called during 
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLGetDescField is called on the ARD while the parent statement is in
+  // SQL_NEED_DATA
   SQLSMALLINT count = -1;
   ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &count, 0, nullptr);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
 
+  OLD_IODBC_ONLY("BD#69") {
+    // Then driver bypasses the SQL_NEED_DATA state-check for the
+    //   descriptor entry point and silently returns SQL_SUCCESS.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    // Then DM surfaces HY010
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  }
+
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - IRD access during SQL_NEED_DATA",
                  "[odbc-api][getdescfield][descriptor][error]") {
+  // Given the implicit IRD of a statement driven into SQL_NEED_DATA via a
+  // SQL_DATA_AT_EXEC bind
   const SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -380,9 +416,21 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: HY010 - IRD access dur
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLGetDescField is called on the IRD while the parent statement is in
+  // SQL_NEED_DATA
   SQLSMALLINT count = -1;
   ret = SQLGetDescField(ird, 0, SQL_DESC_COUNT, &count, 0, nullptr);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", ird, SQL_HANDLE_DESC);
 
+  OLD_IODBC_ONLY("BD#69") {
+    // Then driver bypasses the SQL_NEED_DATA state-check for the
+    //   descriptor entry point and silently returns SQL_SUCCESS.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    // Then DM surface HY010
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ird, SQL_HANDLE_DESC);
+  }
+
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }

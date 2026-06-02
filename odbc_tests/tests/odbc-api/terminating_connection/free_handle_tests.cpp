@@ -44,6 +44,7 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for null environment handle",
 
 TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: HY010 - Cannot free environment with active connections",
                  "[odbc-api][freehandle][terminating_connection][error]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Allocate connection on environment
@@ -74,6 +75,12 @@ TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: HY010 - Cannot free environment wit
 
 TEST_CASE("SQLFreeHandle: Double free environment handle", "[odbc-api][freehandle][terminating_connection][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Under iODBC the second SQLFreeHandle on a freed env handle aborts inside the
+  //   old driver's per-handle cleanup callback (Subprocess aborted), and the
+  //   subsequent probe-invalid-handle path observes a stale-but-still-addressable
+  //   env slot returned as SQL_SUCCESS instead of SQL_INVALID_HANDLE. The new
+  //   driver coordinates with iODBC's alloc table correctly (see BD#59).
+  SKIP_OLD_IODBC("BD#59", "old driver aborts on double-free of env handle inside iODBC's handle-dispatch path");
 
   // Allocate and free environment
   SQLHENV env = SQL_NULL_HENV;
@@ -118,6 +125,7 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for null connection handle",
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY010 - Cannot free connected connection handle",
                  "[odbc-api][freehandle][terminating_connection][error]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
@@ -135,6 +143,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY010 - Cannot free conne
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected connection handle",
                  "[odbc-api][freehandle][terminating_connection]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect and disconnect
@@ -155,6 +164,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected con
 TEST_CASE_METHOD(DbcDefaultDSNFixture,
                  "SQLFreeHandle: Frees dependent statement handles when connection handle is freed",
                  "[odbc-api][freehandle][terminating_connection]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
@@ -176,6 +186,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free connection handle",
                  "[odbc-api][freehandle][terminating_connection][error]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
@@ -317,6 +328,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with b
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement handle",
                  "[odbc-api][freehandle][terminating_connection][error]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
@@ -391,7 +403,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY017 - Cannot free impli
   // Try to free implicit descriptor
   // HY017: Invalid use of an automatically allocated descriptor handle
   ret = SQLFreeHandle(SQL_HANDLE_DESC, ard);
-  REQUIRE_EXPECTED_ERROR(ret, "HY017", ard, SQL_HANDLE_DESC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver under iODBC rejects the free of an implicit descriptor
+    //   with a plain SQL_INVALID_HANDLE (no diagnostic record posted) instead
+    //   of the spec-mandated HY017 the new driver synthesizes inside.
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY017", ard, SQL_HANDLE_DESC);
+  }
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   SQLDisconnect(dbc_handle());
@@ -451,7 +471,15 @@ TEST_CASE("SQLFreeHandle: SQL_INVALID_HANDLE for completely invalid handle type 
 
   // Try to free with invalid handle type (999)
   ret = SQLFreeHandle(999, env);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver attempts to dispatch on the bogus handle type, fails the
+    //   per-type lookup and surfaces SQL_ERROR; the new driver rejects the
+    //   call up-front with SQL_INVALID_HANDLE.
+    REQUIRE(ret == SQL_ERROR);
+  }
+  else {
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
 
   // Clean up properly
   SQLFreeHandle(SQL_HANDLE_ENV, env);
@@ -491,6 +519,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free multiple stateme
 
 TEST_CASE("SQLFreeHandle: Complete handle hierarchy cleanup in correct order",
           "[odbc-api][freehandle][terminating_connection]") {
+  SKIP_OLD_IODBC("BD#59", "old driver aborts (Subprocess aborted) inside iODBC's handle-dispatch path");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Create hierarchy: ENV -> DBC
@@ -565,6 +594,8 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLFreeHandle: Freeing handle clears att
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeHandle: HY010 during SQL_NEED_DATA",
                  "[odbc-api][freehandle][terminating_connection][error]") {
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -576,8 +607,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeHandle: HY010 during SQL_NEED_DA
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLFreeHandle is called on the statement handle while it is in SQL_NEED_DATA
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  IODBC_ONLY {
+    // Then DM return SQL_ERROR with an empty diag chain
+    REQUIRE(ret == SQL_ERROR);
+  }
+  else {
+    // Then DM surfaces HY010
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 
   SQLCancel(stmt_handle());
 }

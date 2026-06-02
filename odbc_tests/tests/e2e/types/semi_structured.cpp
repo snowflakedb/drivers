@@ -17,6 +17,8 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
+#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -26,7 +28,7 @@
 static constexpr SQLULEN kExpectedSemiStructuredColumnSize = 134217728;
 
 static picojson::value parse_json_text(const std::string& json_text);
-static picojson::value parse_json_text(const std::u16string& json_text);
+static picojson::value parse_json_text(const std::u32string& json_text);
 static void check_json_equals(const std::string& actual_json_text, const std::string& expected_json_text);
 
 // ============================================================================
@@ -410,28 +412,12 @@ static picojson::value parse_json_text(const std::string& json_text) {
   return json;
 }
 
-// picojson only accepts std::string (UTF-8). ODBC SQL_C_WCHAR returns UTF-16
-// (char16_t on Linux/macOS), so we need manual conversion before parsing.
-static std::string utf16_to_utf8(const std::u16string& src) {
-  std::string utf8;
-  utf8.reserve(src.size() * 3);
-  for (char16_t c : src) {
-    if (c < 0x80) {
-      utf8.push_back(static_cast<char>(c));
-    } else if (c < 0x800) {
-      utf8.push_back(static_cast<char>(0xC0 | (c >> 6)));
-      utf8.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    } else {
-      utf8.push_back(static_cast<char>(0xE0 | (c >> 12)));
-      utf8.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
-      utf8.push_back(static_cast<char>(0x80 | (c & 0x3F)));
-    }
-  }
-  return utf8;
-}
-
-static picojson::value parse_json_text(const std::u16string& json_text) {
-  return parse_json_text(utf16_to_utf8(json_text));
+// picojson only accepts std::string (UTF-8). `check_wchar_success` returns
+// the wide payload as a `std::u32string` of Unicode code points (decoded
+// from the DM-side `SQLWCHAR` buffer), so transcoding to UTF-8 is a
+// single call.
+static picojson::value parse_json_text(const std::u32string& json_text) {
+  return parse_json_text(sf::wide::utf32_to_utf8(json_text));
 }
 
 static void check_json_equals(const std::string& actual_json_text, const std::string& expected_json_text) {

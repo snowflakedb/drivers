@@ -67,6 +67,9 @@ echo "=== Staging additional files ==="
 mkdir -p "$STAGE_DIR$INSTALL_DIR/include"
 cp odbc/include/sf_odbc.h "$STAGE_DIR$INSTALL_DIR/include/"
 
+# Ship a default sf.odbc.ini next to the dylib
+cp odbc/installer/mac/sf.odbc.ini "$STAGE_DIR$INSTALL_DIR/sf.odbc.ini"
+
 # pkgbuild --scripts packages everything in the directory it points at, so
 # stage the postinstall alongside the iODBC ini templates the postinstall
 # renders at install time. __ODBC_API_VERSION__ is baked into the odbcinst

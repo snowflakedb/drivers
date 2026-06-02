@@ -40,42 +40,72 @@ TEST_CASE("SQLDriverConnect: SQL_INVALID_HANDLE - NULL connection handle",
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative string length",
                  "[odbc-api][driverconnect][connecting][error]") {
-  // Negative StringLength1 (not SQL_NTS) should return HY090
-  // Note: DM-dependent - some DMs validate length first (HY090), others pass to DSN lookup (IM002)
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"),
-                                         -5,  // Invalid negative length
-                                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  // Given an allocated but unconnected DBC handle
+  // When SQLDriverConnect is called with a negative StringLength1 (-5, not SQL_NTS)
+  const SQLRETURN ret =
+      SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"), -5, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
+
+  // Then a diagnostic record is produced
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  // DM-dependent: unixODBC may return HY090 (validates length) or IM002 (passes to DSN lookup)
-  REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  NON_IODBC {
+    // And the DM validates StringLength1 first and reports
+    //   HY090 (invalid string or buffer length), or passes through to DSN lookup with IM002
+    REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  }
+  IODBC_ONLY {
+    // And the iODBC DM forwards to driver resolution, which fails with the
+    //   ODBC 2.x driver-not-found SQLSTATE "S1090" rather than the
+    //   ODBC 3.x IM003/IM002
+    REQUIRE(records[0].sqlState == "S1090");
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative buffer length",
                  "[odbc-api][driverconnect][connecting][error]") {
+  // Given an allocated but unconnected DBC handle and an output buffer
   SQLCHAR outConnStr[256];
   SQLSMALLINT outConnStrLen = 0;
 
-  // Negative BufferLength - DM-dependent validation
-  // Most DMs will fail with HY090, but some may pass through to DSN lookup (IM002)
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=NonExistentDSN"), SQL_NTS, outConnStr,
-                                         -1,  // Invalid negative buffer length
+  // When SQLDriverConnect is called with a negative output BufferLength (-1)
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=NonExistentDSN"), SQL_NTS, outConnStr, -1,
                                          &outConnStrLen, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
+
+  // Then a diagnostic record is produced
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  // DM-dependent: HY090 (invalid buffer length) or IM002 (if passed to DSN lookup)
-  REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  NON_IODBC {
+    // And the DM validates the buffer length first and reports
+    //   HY090, or passes through to DSN lookup with IM002
+    REQUIRE((records[0].sqlState == "HY090" || records[0].sqlState == "IM002"));
+  }
+  IODBC_ONLY {
+    // And the iODBC DM forwards to DSN/driver lookup, which reports the
+    //   ODBC 2.x driver-not-found SQLSTATE "S1090" (not IM002)
+    REQUIRE(records[0].sqlState == "S1090");
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY110 - Invalid DriverCompletion value",
                  "[odbc-api][driverconnect][connecting][error]") {
-  // Invalid DriverCompletion value (not one of the valid constants)
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"), SQL_NTS, nullptr, 0, nullptr, 999);  // Invalid value
-  // Should return HY110 (Invalid driver completion)
-  REQUIRE_EXPECTED_ERROR(ret, "HY110", dbc_handle(), SQL_HANDLE_DBC);
+  // Given an allocated but unconnected DBC handle
+  // When SQLDriverConnect is called with an out-of-range DriverCompletion value (999)
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"), SQL_NTS, nullptr, 0, nullptr, 999);
+
+  NON_IODBC {
+    // And the DM validates DriverCompletion and reports
+    //   HY110 (invalid driver completion)
+    REQUIRE_EXPECTED_ERROR(ret, "HY110", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  IODBC_ONLY {
+    // And the iODBC DM does not validate DriverCompletion against the
+    //   ODBC 3.x range; it forwards to DSN/driver lookup, which fails with
+    //   the ODBC 2.x driver-not-found SQLSTATE "S1090". Only the return code
+    //   is asserted because the exact failure path depends on environment.
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: IM002 - Data source not found (non-existent DSN)",
@@ -107,10 +137,18 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Empty connection string",
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: NULL connection string",
                  "[odbc-api][driverconnect][connecting][error]") {
-  // NULL InConnectionString should be an error
+  // iODBC dereferences InConnectionString without a NULL check and segfaults
+  // instead of returning an error; the scenario is unrunnable under iODBC.
+  SKIP_IODBC(
+      "iODBC DM dereferences InConnectionString without a null check and segfaults instead of returning SQL_ERROR");
+
+  // Given an allocated but unconnected DBC handle
+  // When SQLDriverConnect is called with a NULL InConnectionString
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, nullptr, SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
-  // Driver Manager behavior varies, but should always fail (not crash)
+
+  // Then the DM null-checks InConnectionString and reports SQL_ERROR rather than
+  //   dereferencing it (iODBC is skipped above because it segfaults instead)
   REQUIRE(ret == SQL_ERROR);
 }
 
@@ -231,20 +269,29 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE_REQ
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_PROMPT mode always requires window handle",
                  "[odbc-api][driverconnect][dsn][integration][drivercompletion][error]") {
-  // SQL_DRIVER_PROMPT: Always display dialog, even with complete DSN
-  // Per ODBC spec, with NULL window handle should return HY092 or fail
-  // Even though DSN is complete, PROMPT mode MUST show dialog
+  // Given an allocated DBC handle and a complete DSN connection string
   std::string connStr = "DSN=" + dsn_name();
+
+  // When SQLDriverConnect is called with SQL_DRIVER_PROMPT and a NULL window handle
+  //   (per ODBC spec, PROMPT must show a dialog, so a non-null hwnd is required)
   const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                          SQL_DRIVER_PROMPT);
 
   WINDOWS_ONLY {
-    // Windows DM returns HY024 (Invalid argument value) for SQL_DRIVER_PROMPT with NULL hwnd
+    // Then the DM rejects the call with HY024 (invalid argument value)
     REQUIRE_EXPECTED_ERROR(ret, "HY024", dbc_handle(), SQL_HANDLE_DBC);
   }
   UNIX_ONLY {
-    // unixODBC follows spec and returns HY092
-    REQUIRE_EXPECTED_ERROR(ret, "HY092", dbc_handle(), SQL_HANDLE_DBC);
+    NON_IODBC {
+      // Then the DM follows spec and rejects with HY092 (invalid attribute id)
+      REQUIRE_EXPECTED_ERROR(ret, "HY092", dbc_handle(), SQL_HANDLE_DBC);
+    }
+    IODBC_ONLY {
+      // Then the iODBC DM also rejects SQL_DRIVER_PROMPT with a null window
+      //   handle, but uses a DM-side error path that does not surface as
+      //   HY092; only the return code (SQL_ERROR) is asserted here
+      REQUIRE(ret == SQL_ERROR);
+    }
   }
 }
 
@@ -318,9 +365,18 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString tr
   // outConnStrLen should indicate the full length needed
   if (ret == SQL_SUCCESS_WITH_INFO) {
     auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-    // May have 01004 (string truncated) or other info
-    const bool found_truncation_or_other = !records.empty();
-    REQUIRE(found_truncation_or_other);
+    OLD_IODBC_ONLY("BD#61") {
+      // The old driver under iODBC reports SQL_SUCCESS_WITH_INFO for the
+      //   truncation but doesn't post a diagnostic record - the truncation
+      //   signal lives only in the return code. The new driver posts the
+      //   01004 record.
+      (void)records;
+    }
+    else {
+      // May have 01004 (string truncated) or other info
+      const bool found_truncation_or_other = !records.empty();
+      REQUIRE(found_truncation_or_other);
+    }
   }
 
   ret = SQLDisconnect(dbc_handle());
@@ -485,8 +541,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
 
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
-  REQUIRE(!records.empty());
-  REQUIRE(records[0].sqlState == "01S00");
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver under iODBC reports SQL_SUCCESS_WITH_INFO for the
+    //   unrecognized keyword but doesn't post the 01S00 diagnostic record
+    //   on the DBC handle the way the new driver does.
+    (void)records;
+  }
+  else {
+    REQUIRE(!records.empty());
+    REQUIRE(records[0].sqlState == "01S00");
+  }
 
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);

@@ -9,6 +9,7 @@
 
 #include "HandleWrapper.hpp"
 #include "MetaOfSqlCTypes.hpp"
+#include "WideString.hpp"
 #include "odbc_matchers.hpp"
 
 template <int SQL_C_TYPE>
@@ -38,16 +39,20 @@ inline std::optional<std::string> get_data_optional<SQL_C_CHAR>(const StatementH
 }
 
 template <>
-inline std::optional<std::u16string> get_data_optional<SQL_C_WCHAR>(const StatementHandleWrapper& stmt,
+inline std::optional<std::u32string> get_data_optional<SQL_C_WCHAR>(const StatementHandleWrapper& stmt,
                                                                     SQLUSMALLINT col) {
-  char16_t buffer[8192];
+  // Buffer is sized in DM-side `SQLWCHAR` units (2 bytes under UTF-16,
+  // 4 under UTF-32). Decoding to `std::u32string` via `decode_wide`
+  // recombines UTF-16 surrogate pairs so the returned value is always
+  // a Unicode code-point sequence.
+  SQLWCHAR buffer[8192];
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
   REQUIRE_ODBC(ret, stmt);
   if (indicator == SQL_NULL_DATA) {
     return std::nullopt;
   }
-  return {std::u16string(buffer, indicator / sizeof(char16_t))};
+  return {sf::wide::decode_wide(buffer, static_cast<std::size_t>(indicator) / sf::wide::wchar_byte_size())};
 }
 
 template <int SQL_C_TYPE>

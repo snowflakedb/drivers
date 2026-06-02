@@ -64,18 +64,21 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on idle statement",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after query execution",
                  "[odbc-api][cancel][terminating_statement]") {
+  // Given an executed statement with an open cursor
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // When the statement is cancelled
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
+    // Then the cursor is preserved and SQLFetch still succeeds
     ret = SQLFetch(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
   UNIX_ONLY {
+    // Then the cursor is closed: SQLFetch reports HY010 and re-execute reports 24000
     ret = SQLFetch(stmt_handle());
     REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
@@ -85,21 +88,24 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after query execution
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after fetch", "[odbc-api][cancel][terminating_statement]") {
+  // Given an executed statement with one row already fetched
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // When the statement is cancelled mid-cursor
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
+    // Then the cursor is preserved and the next SQLFetch reports SQL_NO_DATA
     ret = SQLFetch(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsNoData());
   }
   UNIX_ONLY {
+    // Then the cursor is closed: SQLFetch reports HY010 and re-execute reports 24000
     ret = SQLFetch(stmt_handle());
     REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
@@ -134,21 +140,24 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on prepared but not e
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: After cancel on executed prepared statement",
                  "[odbc-api][cancel][terminating_statement]") {
+  // Given a prepared statement that has been executed (cursor open)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // When the executed prepared statement is cancelled
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
+    // Then the cursor is preserved and SQLFetch still succeeds
     ret = SQLFetch(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
   UNIX_ONLY {
+    // Then the cursor is closed: SQLFetch reports HY010 and re-execute reports 24000
     ret = SQLFetch(stmt_handle());
     REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
@@ -159,22 +168,25 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: After cancel on executed pre
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Statement recoverable via SQLFreeStmt SQL_CLOSE after cancel",
                  "[odbc-api][cancel][terminating_statement]") {
+  // Given an executed statement with an open cursor
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // When the statement is cancelled and then explicitly closed via SQLFreeStmt(SQL_CLOSE)
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
+    // Then the cursor remains open until re-execute is attempted
     ret = SQLFetch(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-    // Re-execution fails because cursor is still open (BD#33).
+    // And re-execution fails because the cursor is still open (BD#33)
     ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
     REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
   UNIX_ONLY {
+    // Then the cursor is closed: SQLFetch reports HY010 and re-execute reports 24000
     ret = SQLFetch(stmt_handle());
     REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
@@ -182,6 +194,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Statement recoverable via SQ
     REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
 
+  // And under every DM the SQLFreeStmt(SQL_CLOSE) recovery restores the statement
+  //   to a usable state for the next execute/fetch cycle
   // Both paths recover via SQL_CLOSE.
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
@@ -200,20 +214,31 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Statement recoverable via SQ
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: SQLCloseCursor after cancel",
                  "[odbc-api][cancel][terminating_statement]") {
+  // Given an executed statement with an open cursor that was then cancelled
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  // Unix DMs close the cursor on SQLCancel.
+  // When SQLCloseCursor is called after the cancel
   WINDOWS_ONLY {
+    // Then the close succeeds (cursor was still open)
     ret = SQLCloseCursor(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
   UNIX_ONLY {
-    ret = SQLCloseCursor(stmt_handle());
-    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+    NON_IODBC {
+      // Then the close surfaces SQLSTATE 24000 because the cursor was already
+      //   closed by the cancel
+      ret = SQLCloseCursor(stmt_handle());
+      REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+    }
+    IODBC_ONLY {
+      // Then the close is a no-op and returns SQL_SUCCESS
+      ret = SQLCloseCursor(stmt_handle());
+      REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+    }
   }
 }
 
@@ -550,6 +575,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on statement in Error
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cursor remains usable after cancel on multi-row result",
                  "[odbc-api][cancel][terminating_statement]") {
+  // Given an executed three-row SELECT with the first row already fetched
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT column1 FROM VALUES (1),(2),(3) ORDER BY 1"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
@@ -561,11 +587,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cursor remains usable after 
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 1);
 
+  // When the statement is cancelled mid-iteration
   ret = SQLCancel(stmt_handle());
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
+    // Then the cursor is preserved and the iteration continues to rows 2 and 3
     ret = SQLFetch(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
     ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
@@ -585,6 +612,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cursor remains usable after 
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsNoData());
   }
   UNIX_ONLY {
+    // Then the cursor is closed and the next SQLFetch reports HY010
     ret = SQLFetch(stmt_handle());
     REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
   }
@@ -766,8 +794,20 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrup
   // records of the canceled function, and does NOT post its own.
   // The HY008 from the canceled SQLExecDirect should be the only record.
   auto records = get_diag_rec(SQL_HANDLE_STMT, stmt);
-  REQUIRE(records.size() == 1);
-  REQUIRE(records[0].sqlState == "HY008");
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver under iODBC ends up with two diagnostic records: the
+    //   first is iODBC's own "S1010" (function sequence error) posted when
+    //   the cross-thread cancel collided with the in-flight SQLExecDirect,
+    //   and the second is the driver's "HY008" for the canceled exec. The
+    //   new driver coalesces this to a single HY008 record per spec.
+    REQUIRE(records.size() == 2);
+    REQUIRE(records[0].sqlState == "S1010");
+    REQUIRE(records[1].sqlState == "HY008");
+  }
+  NEW_IODBC_ONLY("BD#60") {
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "HY008");
+  }
 }
 
 // HY018 (server declines cancel) is not tested: Backend always accepts

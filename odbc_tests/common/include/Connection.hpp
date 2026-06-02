@@ -5,8 +5,10 @@
 #include <sqlext.h>
 
 #include <string>
+#include <string_view>
 
 #include "HandleWrapper.hpp"
+#include "WideString.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
@@ -63,14 +65,21 @@ class Connection {
     }
   }
 
-  StatementHandleWrapper executew(const std::u16string& query) {
+  // Submit a SQL statement through the wide entry point. The query is
+  // given as Unicode code points (`U"..."` literal or `std::u32string`)
+  // and transcoded to the DM-side `SQLWCHAR` encoding (UTF-16 under
+  // unixODBC, UTF-32 under iODBC) inside the call. Going through the
+  // wide entry point avoids iODBC's narrow→wide auto-conversion, which
+  // transcodes via Latin-1 and would mangle non-ASCII bytes.
+  StatementHandleWrapper executew(std::u32string_view query) {
     auto stmt = createStatement();
-    SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)query.data(), query.size());
+    auto wide = sf::wide::encode_wide(query);
+    SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), wide.data(), static_cast<SQLINTEGER>(wide.size() - 1));
     REQUIRE_ODBC(ret, stmt);
     return stmt;
   }
 
-  StatementHandleWrapper executew_fetch(const std::u16string& query) {
+  StatementHandleWrapper executew_fetch(std::u32string_view query) {
     auto stmt = executew(query);
     SQLRETURN ret = SQLFetch(stmt.getHandle());
     REQUIRE_ODBC(ret, stmt);

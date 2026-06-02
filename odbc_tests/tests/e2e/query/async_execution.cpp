@@ -296,12 +296,19 @@ TEST_CASE("should execute prepared statement asynchronously", "[query][async]") 
   // Given Snowflake client is logged in with async enabled and a prepared statement
   Connection conn;
   auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-
-  ret = poll_prepare(stmt.getHandle(), "SELECT 123 AS val");
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  SQLRETURN ret;
+  IODBC_ONLY {
+    ret = poll_prepare(stmt.getHandle(), "SELECT 123 AS val");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
+  NON_IODBC {
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = poll_prepare(stmt.getHandle(), "SELECT 123 AS val");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
 
   // When SQLExecute is called asynchronously — must go async
   ret = SQLExecute(stmt.getHandle());
@@ -319,12 +326,19 @@ TEST_CASE("should prepare and execute with bound parameters asynchronously", "[q
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-
-  ret = poll_prepare(stmt.getHandle(), "SELECT ? AS val");
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  SQLRETURN ret;
+  IODBC_ONLY {
+    ret = poll_prepare(stmt.getHandle(), "SELECT ? AS val");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
+  NON_IODBC {
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = poll_prepare(stmt.getHandle(), "SELECT ? AS val");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
 
   // Bind a parameter
   SQLINTEGER param_val = 456;
@@ -348,12 +362,19 @@ TEST_CASE("should re-execute prepared statement multiple times asynchronously", 
   // Given Snowflake client is logged in with async enabled and a prepared statement
   Connection conn;
   auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-
-  ret = poll_prepare(stmt.getHandle(), "SELECT ? AS val");
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  SQLRETURN ret;
+  IODBC_ONLY {
+    ret = poll_prepare(stmt.getHandle(), "SELECT ? AS val");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
+  NON_IODBC {
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = poll_prepare(stmt.getHandle(), "SELECT ? AS val");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
 
   SQLINTEGER param_val = 0;
   SQLLEN ind = 0;
@@ -385,12 +406,19 @@ TEST_CASE("should preserve prepared state after async execute and cursor close",
   // Given Snowflake client is logged in with async enabled and a prepared SELECT
   Connection conn;
   auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-
-  ret = poll_prepare(stmt.getHandle(), "SELECT 1 AS col1, 2 AS col2");
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  SQLRETURN ret;
+  IODBC_ONLY {
+    ret = poll_prepare(stmt.getHandle(), "SELECT 1 AS col1, 2 AS col2");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
+  NON_IODBC {
+    ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+    ret = poll_prepare(stmt.getHandle(), "SELECT 1 AS col1, 2 AS col2");
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  }
 
   // Verify prepared state reports column count before execution
   SQLSMALLINT num_cols_before = 0;
@@ -485,7 +513,15 @@ TEST_CASE("should cancel from another thread with HY008", "[query][async][cross_
   NEW_DRIVER_ONLY("BD#47") { REQUIRE_THAT(OdbcResult(ctx.cancel_result, stmt), OdbcMatchers::Succeeded()); }
 
   REQUIRE(exec_ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY008");
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM catches the cross-thread cancel as a function-sequence event
+    //   on the busy async statement and surfaces ODBC 2.x "S1010" instead of
+    //   the spec-mandated "HY008" the new driver maps inside.
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
+  else {
+    CHECK(get_sqlstate(stmt) == "HY008");
+  }
 }
 
 // =============================================================================
@@ -528,7 +564,15 @@ TEST_CASE("should reject non-permitted function call during async execution", "[
 
   // Then it should return HY010 (function sequence error)
   CHECK(bad_ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  IODBC_ONLY {
+    // iODBC's DM catches the non-permitted call against the still-executing
+    //   async statement and surfaces the ODBC 2.x form "S1010" before the
+    //   driver gets to map it to the spec "HY010".
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
+  else {
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
 
   // Cleanup: poll to completion
   poll_exec_direct(stmt.getHandle(), kLongQuery);

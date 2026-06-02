@@ -17,12 +17,19 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            driver_manager: unixodbc
           - os: macos-latest
             name: macOS Universal
             driver_lib: libSnowflake.dylib
+            driver_manager: unixodbc
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            driver_manager: unixodbc
+          - os: macos-latest
+            name: macOS Universal + iODBC
+            driver_lib: libSnowflake.dylib
+            driver_manager: iodbc
     runs-on: ${{ matrix.os }}
     name: odbc_reference_tests (${{ matrix.name }})
     steps:
@@ -117,13 +124,18 @@ jobs:
           "$CMAKE_VENV/bin/pip" install 'cmake>=4.0.3'
           echo "$CMAKE_VENV/bin" >> "$GITHUB_PATH"
           "$CMAKE_VENV/bin/cmake" --version
-          # unixodbc is the DM our test harness links against; ccache speeds up
-          # _deps rebuilds; ninja is the cmake generator used by run_tests_unix.sh.
-          brew install unixodbc ccache ninja
+          # unixodbc is the default DM our test harness links against; libiodbc
+          # is installed so the iODBC matrix cell can use it (cheap no-op on
+          # cache hit). ccache speeds up _deps rebuilds; ninja is the cmake
+          # generator used by run_tests_unix.sh. The chosen DM is selected by
+          # `DRIVER_MANAGER` when invoking run_tests_unix.sh.
+          brew install unixodbc libiodbc ccache ninja
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> "$GITHUB_ENV"
 
       - name: Install reference ODBC driver
         uses: ./.github/actions/install-reference-odbc
+        with:
+          driver-manager: ${{ matrix.driver_manager }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -166,6 +178,7 @@ jobs:
           DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_TYPE: OLD
+          DRIVER_MANAGER: ${{ matrix.driver_manager }}
 
       - name: Run flaky Old ODBC tests (macOS)
         if: matrix.os == 'macos-latest'
@@ -175,6 +188,8 @@ jobs:
           DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_TYPE: OLD
+          DRIVER_MANAGER: ${{ matrix.driver_manager }}
+          SF_RUNNING_IODBC_TEST_SUITE: ${{ matrix.driver_manager == 'iodbc' && '1' || '' }}
 
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'
@@ -219,9 +234,18 @@ jobs:
           else
             echo "schema_tool not found (build may have failed), skipping cleanup"
           fi
+        # On the iODBC matrix cell `schema_tool` is linked against libiodbc and
+        # opens its DSN through the same `UnixConfigInstallation` flow as the
+        # tests. That flow only publishes `ODBCINSTINI` (where the per-process
+        # `SnowflakeDriver_<random>` alias lives) when SF_RUNNING_IODBC_TEST_SUITE
+        # is set — `run_tests_unix.sh` does that for the test step, but this
+        # cleanup step shells `schema_tool` directly and must re-export the
+        # flag, otherwise iODBC falls back to `~/Library/ODBC/odbcinst.ini`,
+        # cannot resolve the alias, and `SQLDriverConnect` fails with IM003.
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_PATH: /opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib
+          SF_RUNNING_IODBC_TEST_SUITE: ${{ matrix.driver_manager == 'iodbc' && '1' || '' }}
 
       - name: Save test dependencies cache
         if: always()

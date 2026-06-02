@@ -1,7 +1,8 @@
 use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::encoding::{
-    OdbcEncoding, read_string_from_pointer, write_string_bytes, write_string_bytes_i32,
+    OdbcEncoding, read_pre_connection_string_attr, read_string_from_pointer, write_string_bytes,
+    write_string_bytes_i32,
 };
 use crate::api::error::Required;
 use crate::api::error::{
@@ -879,7 +880,11 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
-            let value = read_string_from_pointer::<E>(value_ptr, string_length)?;
+            // These are Snowflake-custom attribute IDs; iODBC's narrow→wide
+            // bridge does not transcode them, so the W variant of the
+            // driver may receive a narrow buffer. `read_pre_connection_string_attr`
+            // sniffs the leading bytes and reads narrow-or-wide as needed.
+            let value = read_pre_connection_string_attr::<E>(value_ptr, string_length)?;
             tracing::debug!("set_connect_attr: {attr:?} (set)");
             connection.pre_connection_attrs.insert(attr, value);
             Ok(())

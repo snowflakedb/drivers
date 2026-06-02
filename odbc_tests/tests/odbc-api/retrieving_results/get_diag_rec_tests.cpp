@@ -6,17 +6,27 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "test_macros.hpp"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: returns HY092 on descriptor after SQLCancelHandle",
                  "[odbc-api][getdiagrec][descriptor][diagnostics]") {
+  // SQLCancelHandle is an ODBC 3.8 entry point that iODBC does not export, so
+  // this scenario is unrunnable there.
+  SKIP_IODBC("SQLCancelHandle (ODBC 3.8) is not exposed by iODBC");
+
+  // Given a default statement with its ARD descriptor handle
   SQLHDESC ard = SQL_NULL_HDESC;
   SQLRETURN ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(ard != SQL_NULL_HDESC);
 
+  // When SQLCancelHandle is called on the descriptor handle
   ret = SQLCancelHandle(SQL_HANDLE_DESC, ard);
+
   WINDOWS_ONLY {
+    // Then the call returns SQL_ERROR and a diagnostic record with SQLSTATE HY092
+    //   (invalid attribute identifier) is produced
     REQUIRE(ret == SQL_ERROR);
 
     SQLCHAR state[6] = {};
@@ -27,19 +37,30 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: returns HY092 on descrip
     REQUIRE(ret == SQL_SUCCESS);
     CHECK(std::string(reinterpret_cast<char*>(state), 5) == "HY092");
   }
-  // unixODBC returns SQL_INVALID_HANDLE for unsupported handle types.
-  UNIX_ONLY { REQUIRE(ret == SQL_INVALID_HANDLE); }
+  UNIX_ONLY {
+    // Then the call returns SQL_INVALID_HANDLE (no diagnostic record produced)
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagField: returns record count on descriptor after SQLCancelHandle",
                  "[odbc-api][getdiagfield][descriptor][diagnostics]") {
+  // SQLCancelHandle is an ODBC 3.8 entry point that iODBC does not export, so
+  // this scenario is unrunnable there.
+  SKIP_IODBC("SQLCancelHandle (ODBC 3.8) is not exposed by iODBC");
+
+  // Given a default statement with its ARD descriptor handle
   SQLHDESC ard = SQL_NULL_HDESC;
   SQLRETURN ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(ard != SQL_NULL_HDESC);
 
+  // When SQLCancelHandle is called on the descriptor handle
   ret = SQLCancelHandle(SQL_HANDLE_DESC, ard);
+
   WINDOWS_ONLY {
+    // Then the call returns SQL_ERROR and SQLGetDiagField sees one record with
+    //   SQLSTATE HY092 (invalid attribute identifier)
     REQUIRE(ret == SQL_ERROR);
 
     SQLINTEGER num_records = 0;
@@ -53,8 +74,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagField: returns record count o
     REQUIRE(ret == SQL_SUCCESS);
     CHECK(std::string(reinterpret_cast<char*>(state), 5) == "HY092");
   }
-  // unixODBC returns SQL_INVALID_HANDLE for unsupported handle types.
-  UNIX_ONLY { REQUIRE(ret == SQL_INVALID_HANDLE); }
+  UNIX_ONLY {
+    // Then the call returns SQL_INVALID_HANDLE for unsupported handle types
+    REQUIRE(ret == SQL_INVALID_HANDLE);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDiagRec: SQL_NO_DATA on clean descriptor",

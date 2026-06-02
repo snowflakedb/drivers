@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -152,7 +153,7 @@ TEST_CASE("TIME to SQL_C_WCHAR", "[time][conversion][c_wchar]") {
     auto result = check_wchar_success(conn.execute_fetch("SELECT '14:30:45'::TIME"), 1);
 
     // Then Wide string representation matches expected format
-    CHECK(result == u"14:30:45");
+    CHECK(result == U"14:30:45");
   }
 
   {
@@ -160,7 +161,7 @@ TEST_CASE("TIME to SQL_C_WCHAR", "[time][conversion][c_wchar]") {
     auto result = check_wchar_success(conn.execute_fetch("SELECT '10:30:00.123456789'::TIME"), 1);
 
     // Then Wide string includes fractional seconds
-    CHECK(result == u"10:30:00.123456789");
+    CHECK(result == U"10:30:00.123456789");
   }
 
   {
@@ -168,7 +169,7 @@ TEST_CASE("TIME to SQL_C_WCHAR", "[time][conversion][c_wchar]") {
     auto result = check_wchar_success(conn.execute_fetch("SELECT '00:00:00'::TIME"), 1);
 
     // Then Wide string representation is all zeros
-    CHECK(result == u"00:00:00");
+    CHECK(result == U"00:00:00");
   }
 }
 
@@ -178,13 +179,13 @@ TEST_CASE("TIME to SQL_C_WCHAR exact buffer fit", "[time][conversion][c_wchar]")
 
   // When A TIME value is fetched into a WCHAR buffer of exactly 9 characters
   auto stmt = conn.execute_fetch("SELECT '14:30:45'::TIME");
-  char16_t buffer[9] = {};
+  SQLWCHAR buffer[9] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
   // Then SQL_SUCCESS is returned with the correct wide string
   CHECK(ret == SQL_SUCCESS);
-  CHECK(std::u16string(buffer) == u"14:30:45");
+  CHECK(sf::wide::decode_wide_cstr(buffer) == U"14:30:45");
 }
 
 TEST_CASE("TIME to SQL_C_WCHAR fractional truncation", "[time][conversion][c_wchar][01004]") {
@@ -194,7 +195,7 @@ TEST_CASE("TIME to SQL_C_WCHAR fractional truncation", "[time][conversion][c_wch
 
   // When A TIME with fractional seconds is fetched into a WCHAR buffer of 9 characters
   auto stmt = conn.execute_fetch("SELECT '10:30:00.123456789'::TIME");
-  char16_t buffer[9] = {};
+  SQLWCHAR buffer[9] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
@@ -209,9 +210,12 @@ TEST_CASE("TIME to SQL_C_WCHAR buffer too small", "[time][conversion][c_wchar][2
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A TIME value is fetched into a WCHAR buffer smaller than the time string
+  // When A TIME value is fetched into a WCHAR buffer that cannot hold a
+  // single character plus a NUL terminator. A 1-unit buffer is too small
+  // under both UTF-16 (2 bytes) and UTF-32 (4 bytes), so the driver's
+  // "buffer too small" branch fires regardless of `sizeof(SQLWCHAR)`.
   auto stmt = conn.execute_fetch("SELECT '14:30:45'::TIME");
-  char16_t buffer[5] = {};
+  SQLWCHAR buffer[1] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 

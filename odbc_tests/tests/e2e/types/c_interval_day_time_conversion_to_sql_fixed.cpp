@@ -62,12 +62,12 @@ void bind_interval_and_execute(StatementHandleWrapper& stmt, SQLSMALLINT c_type,
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY to exact-numeric SQL targets and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [sql_type, column_size, days] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER>({
-      {SQL_TINYINT, SQLULEN{0}, SQLUINTEGER{15}},
-      {SQL_SMALLINT, SQLULEN{0}, SQLUINTEGER{365}},
-      {SQL_INTEGER, SQLULEN{0}, SQLUINTEGER{100000}},
-      {SQL_BIGINT, SQLULEN{0}, SQLUINTEGER{9876543}},
-      {SQL_DECIMAL, SQLULEN{10}, SQLUINTEGER{9876543}},
-      {SQL_NUMERIC, SQLULEN{10}, SQLUINTEGER{9876543}},
+      {SQL_TINYINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(15)},
+      {SQL_SMALLINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(365)},
+      {SQL_INTEGER, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(100000)},
+      {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(9876543)},
+      {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(9876543)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(9876543)},
   }));
   CAPTURE(sql_type, column_size, days);
 
@@ -94,12 +94,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_DAY to exact-num
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR to exact-numeric SQL targets and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [sql_type, column_size, hours] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER>({
-      {SQL_TINYINT, SQLULEN{0}, SQLUINTEGER{8}},
-      {SQL_SMALLINT, SQLULEN{0}, SQLUINTEGER{240}},
-      {SQL_INTEGER, SQLULEN{0}, SQLUINTEGER{100000}},
-      {SQL_BIGINT, SQLULEN{0}, SQLUINTEGER{1234567}},
-      {SQL_DECIMAL, SQLULEN{10}, SQLUINTEGER{1234567}},
-      {SQL_NUMERIC, SQLULEN{10}, SQLUINTEGER{1234567}},
+      {SQL_TINYINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(8)},
+      {SQL_SMALLINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(240)},
+      {SQL_INTEGER, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(100000)},
+      {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(1234567)},
+      {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567)},
   }));
   CAPTURE(sql_type, column_size, hours);
 
@@ -126,12 +126,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_HOUR to exact-nu
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE to exact-numeric SQL targets and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [sql_type, column_size, minutes] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER>({
-      {SQL_TINYINT, SQLULEN{0}, SQLUINTEGER{30}},
-      {SQL_SMALLINT, SQLULEN{0}, SQLUINTEGER{1440}},
-      {SQL_INTEGER, SQLULEN{0}, SQLUINTEGER{525600}},
-      {SQL_BIGINT, SQLULEN{0}, SQLUINTEGER{78901234}},
-      {SQL_DECIMAL, SQLULEN{10}, SQLUINTEGER{78901234}},
-      {SQL_NUMERIC, SQLULEN{10}, SQLUINTEGER{78901234}},
+      {SQL_TINYINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(30)},
+      {SQL_SMALLINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(1440)},
+      {SQL_INTEGER, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(525600)},
+      {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(78901234)},
+      {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(78901234)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(78901234)},
   }));
   CAPTURE(sql_type, column_size, minutes);
 
@@ -164,15 +164,16 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_INTERVAL_MINUTE to exact-
 TEST_CASE_METHOD(ConnSchemaFixture,
                  "should bind SQL_C_INTERVAL_SECOND to exact-numeric SQL targets and truncate fraction",
                  "[c_interval][conversion][sql_fixed]") {
-  auto [sql_type, column_size, seconds, fraction] =
-      GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER, SQLUINTEGER>({
-          {SQL_TINYINT, SQLULEN{0}, SQLUINTEGER{45}, SQLUINTEGER{999'999'999}},
-          {SQL_SMALLINT, SQLULEN{0}, SQLUINTEGER{3600}, SQLUINTEGER{0}},
-          {SQL_INTEGER, SQLULEN{0}, SQLUINTEGER{86400}, SQLUINTEGER{500'000'000}},
-          {SQL_BIGINT, SQLULEN{0}, SQLUINTEGER{1234567890}, SQLUINTEGER{0}},
-          {SQL_DECIMAL, SQLULEN{10}, SQLUINTEGER{1234567890}, SQLUINTEGER{500'000'000}},
-          {SQL_NUMERIC, SQLULEN{10}, SQLUINTEGER{1234567890}, SQLUINTEGER{0}},
-      }));
+  auto [sql_type, column_size, seconds,
+        fraction] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLULEN, SQLUINTEGER, SQLUINTEGER>({
+      {SQL_TINYINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(45), static_cast<SQLUINTEGER>(999'999'999)},
+      {SQL_SMALLINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(3600), static_cast<SQLUINTEGER>(0)},
+      {SQL_INTEGER, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(86400), static_cast<SQLUINTEGER>(500'000'000)},
+      {SQL_BIGINT, static_cast<SQLULEN>(0), static_cast<SQLUINTEGER>(1234567890), static_cast<SQLUINTEGER>(0)},
+      {SQL_DECIMAL, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567890),
+       static_cast<SQLUINTEGER>(500'000'000)},
+      {SQL_NUMERIC, static_cast<SQLULEN>(10), static_cast<SQLUINTEGER>(1234567890), static_cast<SQLUINTEGER>(0)},
+  }));
   CAPTURE(sql_type, column_size, seconds, fraction);
 
   // The reference driver rejects a fractional SQL_C_INTERVAL_SECOND bound to a
@@ -210,10 +211,10 @@ TEST_CASE_METHOD(ConnSchemaFixture,
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative day-time interval to SQL_INTEGER and read back",
                  "[c_interval][conversion][sql_fixed]") {
   auto [c_type, magnitude] = GENERATE(Catch::Generators::table<SQLSMALLINT, SQLUINTEGER>({
-      {SQL_C_INTERVAL_DAY, SQLUINTEGER{15}},
-      {SQL_C_INTERVAL_HOUR, SQLUINTEGER{8}},
-      {SQL_C_INTERVAL_MINUTE, SQLUINTEGER{30}},
-      {SQL_C_INTERVAL_SECOND, SQLUINTEGER{45}},
+      {SQL_C_INTERVAL_DAY, static_cast<SQLUINTEGER>(15)},
+      {SQL_C_INTERVAL_HOUR, static_cast<SQLUINTEGER>(8)},
+      {SQL_C_INTERVAL_MINUTE, static_cast<SQLUINTEGER>(30)},
+      {SQL_C_INTERVAL_SECOND, static_cast<SQLUINTEGER>(45)},
   }));
   CAPTURE(c_type, magnitude);
 
