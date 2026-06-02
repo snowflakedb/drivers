@@ -28,12 +28,18 @@ for claude_file in .claude/rules/*.md; do
 
     # Strip YAML frontmatter from the .mdc file using a state machine:
     # transition out of frontmatter on the second '---', then print everything
-    # including any '---' horizontal rules in the body.
+    # including any '---' horizontal rules in the body. A single blank line
+    # immediately after the closing '---' is conventional and not part of the
+    # canonical body, so drop it. Done in awk (not piped through sed) so the
+    # script works on both GNU and BSD sed.
     cursor_body=$(awk '
-        BEGIN { done=0; n=0 }
+        BEGIN { done=0; n=0; first_body_line=1 }
         /^---$/ && !done { n++; if (n==2) { done=1 }; next }
-        done { print }
-    ' "$cursor_file" | sed '1{/^$/d}')
+        done {
+            if (first_body_line) { first_body_line=0; if ($0 == "") next }
+            print
+        }
+    ' "$cursor_file")
 
     claude_body=$(cat "$claude_file")
 

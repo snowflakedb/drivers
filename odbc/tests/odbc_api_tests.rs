@@ -180,31 +180,27 @@ fn telemetry_rpcs_accept_unknown_handles_silently() {
         magic: 0,
     };
 
-    // api_usage with an unregistered conn handle: must succeed with no
-    // surfaced error so the spawned ODBC task stays fire-and-forget.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("tokio runtime");
-    rt.block_on(async {
-        client
-            .telemetry_send_api_usage(TelemetrySendApiUsageRequest {
-                conn_handle: Some(conn),
-                api_method: "SQLExecDirect".to_string(),
-            })
-            .await
-            .expect("telemetry_send_api_usage on unknown handle must not error");
-        client
-            .telemetry_send_wrapper_error(TelemetrySendWrapperErrorRequest {
-                conn_handle: Some(conn),
-                exception_type: "ConversionError".to_string(),
-                // Wire format must match what `ErrorSource::DataConversion`
-                // serialises to via `Display` (snake_case). Hardcoded here
-                // because the `api` module isn't publicly re-exported;
-                // the round-trip is enforced by the
-                // `error_source_wire_format_round_trips` unit test.
-                error_source: "data_conversion".to_string(),
-            })
-            .await
-            .expect("telemetry_send_wrapper_error on unknown handle must not error");
-    });
+    // Each call is driven through its own `*_blocking` adapter — mirrors
+    // how production ODBC telemetry code (`odbc/src/api/telemetry.rs`)
+    // dispatches each RPC inside its own `block_on` scope, and avoids
+    // composing two large futures into one async block (which overflows
+    // the layout query depth for this generated client).
+    client
+        .telemetry_send_api_usage_blocking(TelemetrySendApiUsageRequest {
+            conn_handle: Some(conn),
+            api_method: "SQLExecDirect".to_string(),
+        })
+        .expect("telemetry_send_api_usage on unknown handle must not error");
+    client
+        .telemetry_send_wrapper_error_blocking(TelemetrySendWrapperErrorRequest {
+            conn_handle: Some(conn),
+            exception_type: "ConversionError".to_string(),
+            // Wire format must match what `ErrorSource::DataConversion`
+            // serialises to via `Display` (snake_case). Hardcoded here
+            // because the `api` module isn't publicly re-exported;
+            // the round-trip is enforced by the
+            // `error_source_wire_format_round_trips` unit test.
+            error_source: "data_conversion".to_string(),
+        })
+        .expect("telemetry_send_wrapper_error on unknown handle must not error");
 }
