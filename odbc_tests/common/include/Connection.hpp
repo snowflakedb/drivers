@@ -35,9 +35,10 @@ class Connection {
         dbc{initDbc(this->env, this->connection_string)} {}
 
   Connection() : Connection(get_connection_string()) {}
-  ~Connection() {
-    SQLRETURN ret = SQLDisconnect(dbc.getHandle());
-    REQUIRE_ODBC(ret, dbc);
+  ~Connection() noexcept {
+    // Disconnect best-effort; the handle wrapper frees
+    // the handle next regardless of the SQLDisconnect return code.
+    SQLDisconnect(dbc.getHandle());
   }
 
   StatementHandleWrapper createStatement() { return dbc.createStatementHandle(); }
@@ -47,6 +48,19 @@ class Connection {
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query.c_str(), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
     return stmt;
+  }
+
+  // Best-effort variant of execute() for destructor / teardown cleanup paths.
+  // REQUIRE_ODBC throws Catch::TestFailureException on failure; from a
+  // destructor running during stack unwinding that becomes std::terminate.
+  // Swallows any exception (including the REQUIRE in HandleWrapper's ctor on
+  // SQLAllocHandle failure) and any non-success SQLRETURN.
+  void try_execute(const std::string& query) noexcept {
+    try {
+      auto stmt = createStatement();
+      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query.c_str(), SQL_NTS);
+    } catch (...) {
+    }
   }
 
   StatementHandleWrapper executew(const std::u16string& query) {

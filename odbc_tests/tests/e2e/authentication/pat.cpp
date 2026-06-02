@@ -115,8 +115,15 @@ class PatSetup {
   }
 
  private:
-  void cleanup() {
-    connection.execute("ALTER USER IF EXISTS " + user + " REMOVE PROGRAMMATIC ACCESS TOKEN " + token_name);
+  void cleanup() noexcept {
+    // Destructor cleanup must not throw: a Catch REQUIRE failure here while
+    // an earlier test-body assertion is unwinding terminates the process and
+    // hides the original failure (observed as "Subprocess aborted" with a
+    // 5-minute timeout). Use try_execute and swallow any error.
+    if (token_name.empty()) {
+      return;
+    }
+    connection.try_execute("ALTER USER IF EXISTS " + user + " REMOVE PROGRAMMATIC ACCESS TOKEN " + token_name);
   }
 };
 
