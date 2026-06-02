@@ -182,6 +182,9 @@ void verify_pat_simple_query_execution(ConnectionHandleWrapper& dbc) {
 }
 
 TEST_CASE("should authenticate using PAT as password", "[pat]") {
+  // TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+  SKIP("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603");
+
   // Given Authentication is set to password and valid PAT token is provided
   PatSetup pat_setup;
   PatResult pat = pat_setup.acquire();
@@ -213,6 +216,9 @@ TEST_CASE("should authenticate using PAT as password", "[pat]") {
 }
 
 TEST_CASE("should authenticate using PAT as token", "[pat]") {
+  // TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+  SKIP("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603");
+
   // Given Authentication is set to Programmatic Access Token and valid PAT token is provided
   PatSetup pat_setup;
   PatResult pat = pat_setup.acquire();
@@ -244,6 +250,9 @@ TEST_CASE("should authenticate using PAT as token", "[pat]") {
 }
 
 TEST_CASE("should authenticate using PAT as token with lowercase authenticator", "[pat]") {
+  // TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+  SKIP("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603");
+
   // Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
   PatSetup pat_setup;
   PatResult pat = pat_setup.acquire();
@@ -281,6 +290,9 @@ TEST_CASE("should authenticate using PAT as token with lowercase authenticator",
 }
 
 TEST_CASE("should fail PAT authentication when invalid token provided", "[pat]") {
+  // TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
+  SKIP("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603");
+
   // Given Authentication is set to Programmatic Access Token and invalid PAT token is provided
   std::string connection_string = get_pat_as_token_connection_string("invalid_token_12345");
 
