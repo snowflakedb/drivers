@@ -27,3 +27,6 @@ strip = false
 
 [profile.dev]
 opt-level = 1
+
+[profile.dev.package."*"]
+debug = 0
