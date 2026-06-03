@@ -1043,3 +1043,35 @@ behavior_differences:
       Returns the spec ODBC 3.x SQLSTATE / return code as the sole diagnostic record on both DMs by validating the condition inside the driver before any iODBC re-shaping or dispatch-time check can fire.
     impact: |
       Applications receive a proper state from the driver and a single spec-correct diagnostic record they can inspect for SQLSTATE / native code / message without having to scan past iODBC-side function-sequence artefacts.
+
+  73:
+    name: "SQL_C_CHAR/WCHAR bound as a SQL_INTERVAL_* parameter is forwarded to the server instead of being rejected"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver rejecting a spec-legal conversion is the bug: ODBC Appendix D lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for every SQL_INTERVAL_* target, so the bind should succeed. The new driver forwards the literal verbatim per the spec.
+    old_driver_behavior: |
+      Binding a character C source (SQL_C_CHAR / SQL_C_WCHAR) with ParameterType set to any SQL_INTERVAL_* type fails at SQLExecute with SQL_ERROR and SQLSTATE HY000 ("Unsupported data type for bind variable", NativeError 18). The legacy driver forwards the ODBC interval type code (101-113) as the Snowflake bind-variable type, which the server does not accept, so there is no path to bind an interval literal through a character C source.
+    new_driver_behavior: |
+      Per ODBC Appendix D ("Converting Data from C to SQL Data Types"), SQL_C_CHAR and SQL_C_WCHAR are legal source types for every SQL_INTERVAL_* target (single-field and compound). The driver treats a character source as always legal and forwards the literal verbatim as the parameter value, so the bind succeeds (SQL_SUCCESS) and the literal round-trips through a VARCHAR column unchanged.
+    impact: |
+      Applications binding interval literals as SQL_C_CHAR/SQL_C_WCHAR to SQL_INTERVAL_* parameters now succeed on the new driver instead of receiving an HY000 bind-variable error.
+    description: |
+      Spec reference: ODBC Appendix D conversion table lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for all SQL_INTERVAL_* targets. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
+
+  74:
+    name: "Binding a SQL_C_CHAR/WCHAR character literal as SQL_TYPE_TIMESTAMP shifts the stored wall-clock value by a timezone offset on the old driver"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      SQL_TYPE_TIMESTAMP routes to TIMESTAMP_NTZ, a timezone-naive type, so the bound wall-clock value must be stored verbatim. The old driver applying a timezone offset is the bug; the new driver storing the literal unchanged is the spec-correct behavior.
+    old_driver_behavior: |
+      Binding a character C source (SQL_C_CHAR / SQL_C_WCHAR) with ParameterType SQL_TYPE_TIMESTAMP into a TIMESTAMP_NTZ column applies a timezone offset to the wall-clock value before it is stored: e.g. the literal "2024-01-15 14:30:45" is read back as "2024-01-15 06:30:45" (an 8-hour shift observed on the UTC CI hosts whose session TIMEZONE resolves to a -8h offset). The exact shift is environment-dependent (driven by client/session timezone), which makes char -> TIMESTAMP_NTZ binds non-deterministic across hosts.
+    new_driver_behavior: |
+      The character literal is forwarded verbatim and stored as the exact wall-clock value with no timezone adjustment, as required for the timezone-naive TIMESTAMP_NTZ target. "2024-01-15 14:30:45" round-trips unchanged regardless of host or session timezone.
+    impact: |
+      Applications binding character timestamp literals as SQL_TYPE_TIMESTAMP now get the wall-clock value they supplied, instead of a host-/session-timezone-shifted value.
+    description: |
+      Spec reference: ODBC Appendix D lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_TYPE_TIMESTAMP; TIMESTAMP_NTZ is timezone-naive so no offset should be applied. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
