@@ -1,0 +1,109 @@
+/*
+Jenkinsfile for authentication E2E tests requiring a headless browser.
+Runs inside the snowdrivers-test-external-browser-universal-driver Docker image
+which provides headless Chromium + Playwright + Rust + Python.
+
+Local usage (requires parameters.json in repo root):
+  ./ci/auth/run_auth_browser_python.sh
+*/
+
+@Library('pipeline-utils') _
+import groovy.transform.Field
+import com.snowflake.DevEnvUtils
+
+def isMergeQueue() {
+  return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
+}
+
+@Field def runPython = false
+
+def detectChanges() {
+  // For main branch builds (and cron), run everything.
+  if (env.CHANGE_ID == null) {
+    runPython = true
+    return
+  }
+
+  def changedFiles = sh(
+    returnStdout: true,
+    script: "git diff --name-only origin/${env.CHANGE_TARGET}...HEAD"
+  ).trim().split('\n').toList()
+
+  echo "Changed files (${changedFiles.size()}):"
+  changedFiles.each { echo "  ${it}" }
+
+  // Shared Rust core — affects sf_core compilation, which the Python connector
+  // builds from source. Include the workspace-level deps of sf_core.
+  def corePatterns = [
+    'sf_core/', 'proto_utils/', 'error_trace/', 'error_trace_derive/', 'proto_generator/',
+    'Cargo.lock', 'rust-toolchain.toml',
+  ]
+
+  for (file in changedFiles) {
+    if (corePatterns.any { file.startsWith(it) || file == it }) {
+      runPython = true
+      break
+    }
+    // Job definition, the container scripts, or the Python connector / tests.
+    if (file == 'ci/Jenkinsfile.auth-browser-tests' ||
+        file.startsWith('ci/auth/') ||
+        file.startsWith('python/') ||
+        file.startsWith('pep249_dbapi/')) {
+      runPython = true
+    }
+  }
+
+  echo "=== Auth Browser Tests Change Detection ==="
+  echo "  Run Python: ${runPython}"
+}
+
+def authenticateDocker() {
+  new DevEnvUtils().withSfCli {
+    sh "sf artifact oci auth"
+  }
+}
+
+pipeline {
+  agent none
+  options {
+    timestamps()
+    disableResume()
+    buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))
+    timeout(time: 1, unit: 'HOURS')
+  }
+  triggers {
+    cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
+  }
+  stages {
+    stage('Detect Changes') {
+      agent { label 'build-node-extra-large' }
+      steps {
+        checkout scm
+        script { detectChanges() }
+      }
+    }
+
+    stage('Auth Browser Tests') {
+      when {
+        expression { !isMergeQueue() }
+      }
+      parallel {
+        stage('Python') {
+          when {
+            expression { runPython }
+          }
+          agent { label 'build-node-extra-large' }
+          steps {
+            script {
+              authenticateDocker()
+              withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+              }
+              sh label: 'Run Python auth browser tests', script: './ci/auth/run_auth_browser_python.sh'
+            }
+          }
+        }
+      }
+    }
+  }
+}

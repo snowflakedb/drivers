@@ -147,6 +147,7 @@ markers = [
     "slow: marks tests as slow (e.g., full sdist install with Rust compilation)",
     "skip_for_json_result_set(reason: str=''): skip when QUERY_RESULT_FORMAT=JSON (tests requiring Arrow precision)",
     "require_vpn: test requires VPN access (skipped outside Jenkins CI)",
+    "requires_browser: test requires headless browser container (skipped unless SF_TEST_HEADLESS_BROWSER=true)",
     "flaky: marks tests as flaky; skipped by default, run explicitly via the flaky CI job or `-m flaky` locally",
 ]
 log_cli = false
