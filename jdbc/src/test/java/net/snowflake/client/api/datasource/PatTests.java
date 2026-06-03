@@ -5,50 +5,45 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Properties;
-import net.snowflake.jdbc.utils.PatTokenHelper;
 import net.snowflake.jdbc.utils.SkipOldDriver;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
+import net.snowflake.jdbc.utils.TestParameters;
 import org.junit.jupiter.api.Test;
 
-// TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
-@Disabled("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
 class PatTests extends SnowflakeIntegrationTestBase {
 
-  private final PatTokenHelper patHelper = new PatTokenHelper();
-  private Properties props;
-  private String jdbcUrl;
-
-  @BeforeAll
-  void setUp() throws Exception {
-    props = loadConnectionProperties();
-    jdbcUrl = buildJdbcUrl(props);
-    try (Connection conn = openConnection()) {
-      patHelper.create(conn, props.getProperty("user"), props.getProperty("role"));
-    }
-  }
-
-  @AfterAll
-  void tearDown() throws Exception {
-    try (Connection conn = openConnection()) {
-      patHelper.cleanup(conn, props.getProperty("user"));
-    }
-  }
-
-  private SnowflakeDataSource createDataSource() {
+  private SnowflakeDataSource createDataSource() throws Exception {
+    Properties props = loadConnectionProperties();
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
-    ds.setUrl(jdbcUrl);
+    ds.setUrl(buildJdbcUrlFromHost(props));
     ds.setUser(props.getProperty("user"));
     ds.setAccount(props.getProperty("account"));
     return ds;
   }
 
+  /**
+   * Build a JDBC URL using the explicit {@code host} property when available, falling back to the
+   * account-derived URL. The default {@link #buildJdbcUrl} always uses {@code
+   * {account}.snowflakecomputing.com}, which may differ from {@code SNOWFLAKE_TEST_HOST} (e.g. a
+   * regional endpoint). Since {@link SnowflakeDataSource} has no {@code setHost} method, the host
+   * must be baked into the URL so the Rust core connects to the correct endpoint.
+   */
+  private String buildJdbcUrlFromHost(Properties props) {
+    String host = props.getProperty("host");
+    if (host == null) {
+      return buildJdbcUrl(props);
+    }
+    String url = "jdbc:snowflake://" + host;
+    if (props.getProperty("port") != null) {
+      url += ":" + props.getProperty("port");
+    }
+    return url;
+  }
+
   @Test
   void shouldAuthenticateUsingPatAsPassword() throws Exception {
     SnowflakeDataSource ds = createDataSource();
-    ds.setPassword(patHelper.getTokenSecret());
+    ds.setPassword(TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
 
     try (Connection conn = ds.getConnection()) {
       assertSimpleQuerySucceeds(conn);
@@ -60,7 +55,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   void shouldAuthenticateUsingPatAsToken() throws Exception {
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("PROGRAMMATIC_ACCESS_TOKEN");
-    ds.setToken(patHelper.getTokenSecret());
+    ds.setToken(TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
 
     try (Connection conn = ds.getConnection()) {
       assertSimpleQuerySucceeds(conn);
@@ -72,7 +67,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   void shouldAuthenticateUsingPatAsTokenWithLowercaseAuthenticator() throws Exception {
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("programmatic_access_token");
-    ds.setToken(patHelper.getTokenSecret());
+    ds.setToken(TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
 
     try (Connection conn = ds.getConnection()) {
       assertSimpleQuerySucceeds(conn);
@@ -80,7 +75,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  void shouldFailPatAuthenticationWhenInvalidTokenProvided() {
+  void shouldFailPatAuthenticationWhenInvalidTokenProvided() throws Exception {
     SnowflakeDataSource ds = createDataSource();
     ds.setAuthenticator("PROGRAMMATIC_ACCESS_TOKEN");
     ds.setToken("invalid_token_12345");

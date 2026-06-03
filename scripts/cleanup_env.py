@@ -252,6 +252,11 @@ def cleanup_stale_owned_schemas(conn_kwargs, params, age_days, dry_run):
         log.info("Schema cleanup done: dropped %d schema(s)", dropped)
 
 
+_PROTECTED_PAT_NAMES = frozenset({
+    "UD_CI",
+})
+
+
 def cleanup_stale_pats(conn_kwargs, age_days, dry_run):
     """Remove ``UD_*`` PATs for the test user older than ``age_days``.
 
@@ -259,6 +264,10 @@ def cleanup_stale_pats(conn_kwargs, age_days, dry_run):
     behind by builds whose teardown did not run (timeouts, aborts, killed
     workers). Only PATs whose name starts with ``UD_`` are eligible — same
     safety convention as :func:`_matches_build_tag`.
+
+    PATs listed in ``_PROTECTED_PAT_NAMES`` are never removed (these are
+    long-lived tokens provisioned outside CI, e.g. the ``SNOWFLAKE_TEST_PAT``
+    used by authentication tests).
     """
     import snowflake.connector
 
@@ -278,10 +287,14 @@ def cleanup_stale_pats(conn_kwargs, age_days, dry_run):
 
         candidates = []
         skipped_non_ud = 0
+        skipped_protected = 0
         for row in rows:
             pat_name = row.get("name")
             if not pat_name or not pat_name.upper().startswith("UD_"):
                 skipped_non_ud += 1
+                continue
+            if pat_name.upper() in _PROTECTED_PAT_NAMES:
+                skipped_protected += 1
                 continue
             created = row.get("created_on")
             if created is None:
@@ -298,6 +311,12 @@ def cleanup_stale_pats(conn_kwargs, age_days, dry_run):
             log.info(
                 "Ignored %d non-UD_* PAT(s) (only UD_* tokens are managed here)",
                 skipped_non_ud,
+            )
+        if skipped_protected:
+            log.info(
+                "Skipped %d protected PAT(s) (%s)",
+                skipped_protected,
+                ", ".join(sorted(_PROTECTED_PAT_NAMES)),
             )
 
         if not candidates:
