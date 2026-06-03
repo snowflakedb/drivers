@@ -14,11 +14,15 @@ use crate::conversion::error::{
     UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+    parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
 use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+
+/// Expected literal shape for a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to a
+/// TIME target, surfaced in the 22018 diagnostic when parsing fails.
+const TIME_CHAR_EXPECTED_FORMAT: &str = "HH:MM:SS[.fffffffff]";
 
 /// Format a `NaiveTime` as `HH:MM:SS[.fffffffff]` into a stack buffer without
 /// heap allocation. 32 bytes is ample for the widest output (`HH:MM:SS.` + 9
@@ -237,27 +241,12 @@ impl ReadODBC for SnowflakeTime {
                         .build()
                     })
             }
-            CDataType::Char => {
-                let s = read_char_str(binding)?;
-                NaiveTime::parse_from_str(s.trim(), "%H:%M:%S")
-                    .or_else(|_| NaiveTime::parse_from_str(s.trim(), "%H:%M:%S%.f"))
-                    .map_err(|_| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
-                        }
-                        .build()
-                    })
-            }
-            CDataType::WChar => {
-                let s = read_wchar_str(binding)?;
-                NaiveTime::parse_from_str(s.trim(), "%H:%M:%S")
-                    .or_else(|_| NaiveTime::parse_from_str(s.trim(), "%H:%M:%S%.f"))
-                    .map_err(|_| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
-                        }
-                        .build()
-                    })
+            CDataType::Char | CDataType::WChar => {
+                parse_temporal_char_input(binding, TIME_CHAR_EXPECTED_FORMAT, |s| {
+                    NaiveTime::parse_from_str(s, "%H:%M:%S")
+                        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S%.f"))
+                        .map_err(|_| ())
+                })
             }
             CDataType::Binary => {
                 let time = read_binary_struct::<sql::Time>(binding, "SQL_TIME_STRUCT")?;

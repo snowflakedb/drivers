@@ -18,7 +18,8 @@ use crate::conversion::error::{
     SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+    TEMPORAL_CHAR_DIAG_MAX_CHARS, parse_temporal_char_input, read_binary_struct, read_char_str,
+    read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -703,27 +704,12 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
             })?;
             Ok(NaiveDateTime::new(date, time))
         }
-        CDataType::Char => {
-            let s = read_char_str(binding)?;
-            NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S")
-                .or_else(|_| NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S%.f"))
-                .map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
-                })
-        }
-        CDataType::WChar => {
-            let s = read_wchar_str(binding)?;
-            NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S")
-                .or_else(|_| NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S%.f"))
-                .map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
-                })
+        CDataType::Char | CDataType::WChar => {
+            parse_temporal_char_input(binding, TS_CHAR_EXPECTED_FORMAT, |s| {
+                NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                    .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+                    .map_err(|_| ())
+            })
         }
         // Bind SQL_C_TYPE_DATE into a TIMESTAMP column by combining the date
         // with midnight (matches the legacy 3.16.0 driver, which auto-promotes
@@ -863,10 +849,11 @@ fn write_timestamp_json_wallclock(value: NaiveDateTime) -> Result<Value, JsonBin
 /// pinning test in lockstep.
 const TZ_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fff] +/-HH:MM";
 
-/// Cap a (potentially adversarial / huge) bound string before stashing it on
-/// a diagnostic record. ODBC diagnostic message buffers are bounded and
-/// callers shouldn't be able to blow them up by binding a 1 MB literal.
-const TZ_CHAR_MAX_DIAG_LEN: usize = 64;
+/// Expected literal shape for a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to an
+/// offset-less TIMESTAMP (NTZ / LTZ) target, surfaced in the 22018 diagnostic
+/// when parsing fails. The input length cap is shared with the other temporal
+/// binds via [`TEMPORAL_CHAR_DIAG_MAX_CHARS`].
+const TS_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD HH:MM:SS[.fffffffff]";
 
 /// Read a TIMESTAMP_TZ value from a parameter binding. Captures both the UTC
 /// instant and the offset so `write_timestamp_tz_json` can emit the legacy
@@ -934,7 +921,10 @@ fn parse_tz_string_with_fallback(
         .map_err(|_| {
             InvalidCharacterValueForCastSnafu {
                 c_type,
-                value: s.chars().take(TZ_CHAR_MAX_DIAG_LEN).collect::<String>(),
+                value: s
+                    .chars()
+                    .take(TEMPORAL_CHAR_DIAG_MAX_CHARS)
+                    .collect::<String>(),
                 expected_format: TZ_CHAR_EXPECTED_FORMAT,
             }
             .build()
@@ -1397,8 +1387,8 @@ mod parse_tz_string_with_fallback_tests {
             JsonBindingError::InvalidCharacterValueForCast { value, .. } => {
                 assert_eq!(
                     value.len(),
-                    TZ_CHAR_MAX_DIAG_LEN,
-                    "diagnostic value must be truncated to TZ_CHAR_MAX_DIAG_LEN"
+                    TEMPORAL_CHAR_DIAG_MAX_CHARS,
+                    "diagnostic value must be truncated to TEMPORAL_CHAR_DIAG_MAX_CHARS"
                 );
             }
             other => panic!("expected InvalidCharacterValueForCast, got {other:?}"),
