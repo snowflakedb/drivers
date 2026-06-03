@@ -66,3 +66,23 @@ behavior_differences:
       (getResultSet() returns null, getUpdateCount() returns -1). The old driver leaves
       currentResultSet / currentUpdateCount populated by the last batched entry. The new driver
       resets both in finalizeBatch.
+  5:
+    name: "MFA token caching parameter consolidated; clientRequestMfaToken removed"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    status_rationale: |
+      The old driver exposed two distinct properties for credential caching:
+        - `clientRequestMfaToken` (setEnableClientRequestMfaToken) — MFA-token cache for
+          USERNAME_PASSWORD_MFA.
+        - `clientStoreTemporaryCredential` (setEnableClientStoreTemporaryCredential) — ID-token
+          cache for EXTERNALBROWSER (and OAuth flows).
+      The new driver consolidates both into a single `clientStoreTemporaryCredential` connection
+      property whose effect is dispatched per active authenticator (caches MFA token under
+      USERNAME_PASSWORD_MFA, ID token under EXTERNALBROWSER, refresh token under
+      OAUTH_AUTHORIZATION_CODE). Consequently the new driver does not expose
+      `setEnableClientRequestMfaToken` on `SnowflakeDataSource`, and the legacy
+      `clientRequestMfaToken` property name is not accepted as an alias — callers that previously
+      relied on the legacy method or property must migrate to `clientStoreTemporaryCredential`.
+      Mirrors the cross-driver consolidation documented as `BD#16` in
+      `python/BehaviorDifferences.yaml`.

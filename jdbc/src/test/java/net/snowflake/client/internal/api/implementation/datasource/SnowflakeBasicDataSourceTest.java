@@ -80,8 +80,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetConnectionDelegatesToGetConnectionWithConfiguredUserAndPassword()
-      throws Exception {
+  public void shouldDelegateGetConnectionWithConfiguredUserAndPassword() throws Exception {
     dataSource.setUser("testuser");
     dataSource.setPassword("testpassword");
 
@@ -101,7 +100,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetConnectionWithUsernameAndPasswordSetsPropertiesAndReturnsConnection()
+  public void shouldGetConnectionWithUsernameAndPasswordSetPropertiesAndReturnConnection()
       throws Exception {
     Connection mockConnection = createDummyConnection();
     TestableSnowflakeBasicDataSource testableDataSource =
@@ -117,7 +116,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetConnectionWithNullUsernameDoesNotSetUserProperty() throws Exception {
+  public void shouldNotSetUserPropertyWhenUsernameIsNull() throws Exception {
     Connection mockConnection = createDummyConnection();
     TestableSnowflakeBasicDataSource testableDataSource =
         (TestableSnowflakeBasicDataSource) dataSource;
@@ -132,7 +131,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetConnectionWithNullPasswordDoesNotSetPasswordProperty() throws Exception {
+  public void shouldNotSetPasswordPropertyWhenPasswordIsNull() throws Exception {
     Connection mockConnection = createDummyConnection();
     TestableSnowflakeBasicDataSource testableDataSource =
         (TestableSnowflakeBasicDataSource) dataSource;
@@ -147,54 +146,54 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetUrlReturnsConfiguredUrl() {
+  public void shouldGetUrlReturnConfiguredUrl() {
     dataSource.setUrl("jdbc:snowflake://custom-url.snowflakecomputing.com");
 
     assertEquals("jdbc:snowflake://custom-url.snowflakecomputing.com", dataSource.getUrl());
   }
 
   @Test
-  public void testGetLogWriterThrowsSQLFeatureNotSupportedException() {
+  public void shouldThrowSQLFeatureNotSupportedExceptionFromGetLogWriter() {
     assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getLogWriter());
   }
 
   @Test
-  public void testSetLogWriterThrowsSQLFeatureNotSupportedException() {
+  public void shouldThrowSQLFeatureNotSupportedExceptionFromSetLogWriter() {
     assertThrows(
         SQLFeatureNotSupportedException.class,
         () -> dataSource.setLogWriter(new PrintWriter(System.out)));
   }
 
   @Test
-  public void testGetLoginTimeoutWhenNotSetReturnsZero() {
+  public void shouldGetLoginTimeoutReturnZeroWhenNotSet() {
     assertEquals(0, dataSource.getLoginTimeout());
   }
 
   @Test
-  public void testGetLoginTimeoutReturnsSetValue() {
+  public void shouldGetLoginTimeoutReturnSetValue() {
     dataSource.setLoginTimeout(30);
 
     assertEquals(30, dataSource.getLoginTimeout());
   }
 
   @Test
-  public void testGetParentLoggerThrowsSQLFeatureNotSupportedException() {
+  public void shouldThrowSQLFeatureNotSupportedExceptionFromGetParentLogger() {
     assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getParentLogger());
   }
 
   @Test
-  public void testIsWrapperForReturnsFalse() {
+  public void shouldThrowSQLFeatureNotSupportedExceptionFromIsWrapperFor() {
     assertThrows(
         SQLFeatureNotSupportedException.class, () -> dataSource.isWrapperFor(Object.class));
   }
 
   @Test
-  public void testUnwrapReturnsNull() {
+  public void shouldThrowSQLFeatureNotSupportedExceptionFromUnwrap() {
     assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.unwrap(Object.class));
   }
 
   @Test
-  public void testSettersStorePropertiesCorrectly() {
+  public void shouldStorePropertiesFromSetters() {
     dataSource.setAccount("myaccount");
     dataSource.setDatabase("mydb");
     dataSource.setSchema("myschema");
@@ -210,7 +209,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetPropertiesReturnsCopy() {
+  public void shouldGetPropertiesReturnCopy() {
     dataSource.setAccount("myaccount");
 
     Properties props = dataSource.getProperties();
@@ -222,7 +221,7 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testSetAuthenticatorStoresProperty() {
+  public void shouldSetAuthenticatorStoreProperty() {
     dataSource.setAuthenticator("PROGRAMMATIC_ACCESS_TOKEN");
 
     Properties props = dataSource.getProperties();
@@ -230,10 +229,55 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testSetTokenStoresProperty() {
+  public void shouldSetTokenStoreProperty() {
     dataSource.setToken("my_pat_token_value");
 
     Properties props = dataSource.getProperties();
     assertEquals("my_pat_token_value", props.getProperty("token"));
+  }
+
+  @Test
+  public void shouldSetPasscodeStorePropertyAndNotTouchAuthenticator() {
+    dataSource.setPasscode("123456");
+
+    Properties props = dataSource.getProperties();
+    assertEquals("123456", props.getProperty("passcode"));
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  public void shouldSetPasscodeInPasswordTrueStorePropertyAndNotTouchAuthenticator() {
+    dataSource.setPasscodeInPassword(true);
+
+    Properties props = dataSource.getProperties();
+    assertEquals("true", props.getProperty("passcodeInPassword"));
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  public void shouldSetPasscodeInPasswordFalseStorePropertyAndNotTouchAuthenticator() {
+    dataSource.setPasscodeInPassword(false);
+
+    Properties props = dataSource.getProperties();
+    assertEquals("false", props.getProperty("passcodeInPassword"));
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  public void shouldSetClientStoreTemporaryCredentialTrueStoreProperty() {
+    dataSource.setClientStoreTemporaryCredential(true);
+
+    Properties props = dataSource.getProperties();
+    assertEquals("true", props.getProperty("clientStoreTemporaryCredential"));
+    assertNull(props.getProperty("authenticator"));
+  }
+
+  @Test
+  public void shouldSetClientStoreTemporaryCredentialFalseStoreProperty() {
+    dataSource.setClientStoreTemporaryCredential(false);
+
+    Properties props = dataSource.getProperties();
+    assertEquals("false", props.getProperty("clientStoreTemporaryCredential"));
+    assertNull(props.getProperty("authenticator"));
   }
 }

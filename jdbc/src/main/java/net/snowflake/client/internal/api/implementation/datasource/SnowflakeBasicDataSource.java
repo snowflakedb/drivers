@@ -26,6 +26,15 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  */
 public class SnowflakeBasicDataSource implements SnowflakeDataSource {
 
+  // TODO: [SNOW-3595091] align authenticator-promotion behavior across drivers.
+  //  The legacy JDBC driver auto-set the authenticator to USERNAME_PASSWORD_MFA
+  //  from setPasscode / setPasscodeInPassword (and analogous setters for other auth methods),
+  //  and analogous behavior exists in the Python and ODBC connectors.
+  //  The new universal driver intentionally drops this side-effect for now so
+  //  that each setter does only what its name says.
+  //  Once the cross-driver decision is finalized: either reinstate the auto-promotion uniformly,
+  //  or document a hard "callers must set the authenticator explicitly" contract everywhere.
+
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeBasicDataSource.class);
 
   static {
@@ -204,6 +213,25 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
       this.properties.setProperty(
           SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
     }
+  }
+
+  @Override
+  public void setPasscode(String passcode) {
+    this.properties.setProperty(SnowflakeSessionProperty.PASSCODE.getPropertyKey(), passcode);
+  }
+
+  @Override
+  public void setPasscodeInPassword(boolean isPasscodeInPassword) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.PASSCODE_IN_PASSWORD.getPropertyKey(),
+        Boolean.toString(isPasscodeInPassword));
+  }
+
+  @Override
+  public void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL.getPropertyKey(),
+        Boolean.toString(clientStoreTemporaryCredential));
   }
 
   @Override

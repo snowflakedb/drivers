@@ -40,6 +40,12 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setPrivateKeyBase64(String privateKeyBase64, String password);
 
+  void setPasscode(String passcode);
+
+  void setPasscodeInPassword(boolean isPasscodeInPassword);
+
+  void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential);
+
   String getUrl();
 
   Properties getProperties();

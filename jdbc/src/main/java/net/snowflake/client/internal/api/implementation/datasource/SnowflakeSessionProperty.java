@@ -19,7 +19,10 @@ enum SnowflakeSessionProperty {
   TOKEN("token"),
   PRIVATE_KEY_FILE("private_key_file"),
   PRIVATE_KEY("private_key"),
-  PRIVATE_KEY_PASSWORD("private_key_password");
+  PRIVATE_KEY_PASSWORD("private_key_password"),
+  PASSCODE("passcode"),
+  PASSCODE_IN_PASSWORD("passcodeInPassword"),
+  CLIENT_STORE_TEMPORARY_CREDENTIAL("clientStoreTemporaryCredential");
 
   private final String propertyKey;
 }
