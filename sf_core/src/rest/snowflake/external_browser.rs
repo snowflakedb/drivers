@@ -17,7 +17,7 @@ const SF_AUTHENTICATOR_REQUEST_PATH: &str = "/session/authenticator-request";
 const SUCCESS_HTML: &str = "\
 <!DOCTYPE html>\
 <html><head><title>Authentication Successful</title></head>\
-<body><h1>Authentication successful</h1>\
+<body><h1>Your identity was confirmed</h1>\
 <p>You can close this browser tab.</p>\
 </body></html>";
 
@@ -672,7 +672,7 @@ mod tests {
         let cb = server.await.unwrap().unwrap();
         assert_eq!(cb.token, "test_token_value");
         assert!(cb.consent_cache_id_token.is_none());
-        assert!(String::from_utf8_lossy(&response).contains("Authentication successful"));
+        assert!(String::from_utf8_lossy(&response).contains("Your identity was confirmed"));
     }
 
     #[tokio::test]
