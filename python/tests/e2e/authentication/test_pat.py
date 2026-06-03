@@ -1,45 +1,17 @@
-import logging
-import os
-import random
-
 import pytest
 
 from ...config import get_test_parameters
 from .auth_helpers import verify_login_error, verify_simple_query_execution
 
 
-def _sanitize(s: str) -> str:
-    return "".join(c for c in s if c.isascii() and c.isalnum())
-
-
-def _ci_build_tag() -> str:
-    for var, prefix in [
-        ("BUILDKITE_BUILD_NUMBER", "BK"),
-        ("BUILD_NUMBER", "JNK"),
-        ("GITHUB_RUN_NUMBER", "GHA"),
-    ]:
-        raw = os.environ.get(var)
-        if raw:
-            s = _sanitize(raw)
-            if s:
-                return f"{prefix}_{s}"
-    return "LOCAL_0"
-
-
-# TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
 @pytest.fixture(scope="session")
-def pat_token(connection_factory):
-    pytest.skip("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
-    # pat_token = PAT(connection_factory)
-    # try:
-    #     token = pat_token.acquire_token()
-    #     yield token
-    # finally:
-    #     pat_token.cleanup()
+def pat_token():
+    params = get_test_parameters()
+    token = params.get("SNOWFLAKE_TEST_PAT")
+    assert token, "SNOWFLAKE_TEST_PAT must be set in parameters.json"
+    return token
 
 
-# TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
-@pytest.mark.skip(reason="Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
 class TestPATAuthentication:
     def test_should_authenticate_using_pat_as_password(self, connection_factory, pat_token):
         # Given Authentication is set to password and valid PAT token is provided
@@ -75,51 +47,6 @@ class TestPATAuthentication:
 
         # Then There is error returned
         verify_login_error(exception, keywords=["token", "invalid"])
-
-
-class PAT:
-    def __init__(self, connection_factory):
-        self.connection_factory = connection_factory
-        self._token_name = None
-        self._token_secret = None
-
-    def acquire_token(self) -> str:
-        token_name = f"UD_PYTHON_{_ci_build_tag()}_{random.randint(0, 2**32 - 1):08x}"
-        test_params = get_test_parameters()
-        user = test_params.get("SNOWFLAKE_TEST_USER")
-        role = test_params.get("SNOWFLAKE_TEST_ROLE")
-
-        with self.connection_factory() as connection:
-            with connection.cursor() as cursor:
-                sql = (
-                    f"ALTER USER IF EXISTS {user} ADD PROGRAMMATIC ACCESS TOKEN {token_name} ROLE_RESTRICTION = {role}"
-                )
-                cursor.execute(sql)
-                result = cursor.fetchone()
-
-                if result and len(result) >= 2:
-                    self._token_name = token_name
-                    self._token_secret = result[1]
-                    return self._token_secret
-                else:
-                    raise RuntimeError("Failed to create PAT token - unexpected result format")
-
-    def cleanup(self):
-        if self._token_name:
-            test_params = get_test_parameters()
-            user = test_params.get("SNOWFLAKE_TEST_USER")
-
-            try:
-                with self.connection_factory() as connection:
-                    with connection.cursor() as cursor:
-                        sql = f"ALTER USER IF EXISTS {user} REMOVE PROGRAMMATIC ACCESS TOKEN {self._token_name}"
-                        cursor.execute(sql)
-            except Exception as e:
-                logging.warning(f"Failed to cleanup PAT token {self._token_name}: {e}")
-                pass
-            finally:
-                self._token_name = None
-                self._token_secret = None
 
 
 def get_invalid_pat_token() -> str:

@@ -64,6 +64,8 @@ pub struct Parameters {
     pub oauth_scope: Option<String>,
     #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN")]
     pub oauth_access_token: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_PAT")]
+    pub pat: Option<String>,
 }
 
 impl Parameters {

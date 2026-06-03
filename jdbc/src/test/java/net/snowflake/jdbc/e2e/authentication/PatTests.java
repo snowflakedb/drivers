@@ -6,40 +6,17 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
-import net.snowflake.jdbc.utils.PatTokenHelper;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
+import net.snowflake.jdbc.utils.TestParameters;
 import org.junit.jupiter.api.Test;
 
-// TODO(SNOW-3595092): Re-enable once Snowflake error 603 / incident 2862203 is resolved
-@Disabled("Temporarily disabled due to SNOW-3595092: SQL execution internal error 603")
 class PatTests extends SnowflakeIntegrationTestBase {
-
-  private final PatTokenHelper patHelper = new PatTokenHelper();
-
-  @BeforeAll
-  void setUp() throws Exception {
-    Properties props = loadConnectionProperties();
-    try (Connection conn = openConnection()) {
-      patHelper.create(conn, props.getProperty("user"), props.getProperty("role"));
-    }
-  }
-
-  @AfterAll
-  void tearDown() throws Exception {
-    Properties props = loadConnectionProperties();
-    try (Connection conn = openConnection()) {
-      patHelper.cleanup(conn, props.getProperty("user"));
-    }
-  }
 
   @Test
   void shouldAuthenticateUsingPatAsPassword() throws Exception {
     // Given Authentication is set to password and valid PAT token is provided
     Properties props = loadConnectionProperties();
-    props.setProperty("password", patHelper.getTokenSecret());
+    props.setProperty("password", TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
 
     // When Trying to Connect
     String url = buildJdbcUrl(props);
@@ -55,7 +32,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
     Properties props = loadConnectionProperties();
     props.remove("password");
     props.setProperty("authenticator", "PROGRAMMATIC_ACCESS_TOKEN");
-    props.setProperty("token", patHelper.getTokenSecret());
+    props.setProperty("token", TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
 
     // When Trying to Connect
     String url = buildJdbcUrl(props);
@@ -72,7 +49,7 @@ class PatTests extends SnowflakeIntegrationTestBase {
     Properties props = loadConnectionProperties();
     props.remove("password");
     props.setProperty("authenticator", "programmatic_access_token");
-    props.setProperty("token", patHelper.getTokenSecret());
+    props.setProperty("token", TestParameters.get().getString("SNOWFLAKE_TEST_PAT"));
 
     // When Trying to Connect
     String url = buildJdbcUrl(props);

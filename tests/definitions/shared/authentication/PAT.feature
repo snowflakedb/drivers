@@ -24,3 +24,9 @@ Feature: Personal Access Token Authentication
     Given Authentication is set to Programmatic Access Token and invalid PAT token is provided
     When Trying to Connect
     Then There is error returned
+
+  @odbc_e2e
+  Scenario: should handle ALTER USER PAT result set: new driver returns token, old driver returns cursor state error
+    Given ALTER USER ADD PROGRAMMATIC ACCESS TOKEN is executed
+    When SQLFetch is called on the ALTER USER result
+    Then The old driver returns invalid cursor state, the new driver returns the token
