@@ -21,9 +21,9 @@ use super::date::SnowflakeDate;
 #[cfg(not(windows))]
 use super::error::InvalidUtf8Snafu;
 use super::error::{
-    BindingNumericOutOfRangeSnafu, InvalidParameterIndicesSnafu, JsonBindingError,
-    NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
-    UnsupportedParameterTypeSnafu, WCharConversionSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidCharacterValueForCastSnafu, InvalidParameterIndicesSnafu,
+    JsonBindingError, NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
+    UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu, WCharConversionSnafu,
 };
 use super::interval::{
     SnowflakeIntervalDayTime, SnowflakeIntervalYearMonth, day_time_subtype_from_sql,
@@ -643,6 +643,43 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
         buffer_data_len(binding) / unit_size
     };
     Wide::read_string(ptr, unit_len as i32).map_err(|_| WCharConversionSnafu.build())
+}
+
+/// Upper bound on the number of input characters copied into a 22018
+/// (`InvalidCharacterValueForCast`) diagnostic record for a CHAR/WCHAR temporal
+/// bind. ODBC diagnostic-record buffers are bounded, so an adversarial caller
+/// must not be able to blow them up by binding a megabyte literal.
+pub(crate) const TEMPORAL_CHAR_DIAG_MAX_CHARS: usize = 64;
+
+/// Shared CHAR/WCHAR dispatch for temporal parameter binds (DATE / TIME /
+/// TIMESTAMP). Reads the bound character payload (ANSI or wide), then parses
+/// the trimmed text with `try_parse`. On parse failure it surfaces SQLSTATE
+/// 22018 (`InvalidCharacterValueForCast`) carrying a length-capped copy of the
+/// input plus the `expected_format` template, so the conversions in `date.rs`,
+/// `time.rs` and `timestamp.rs` don't each repeat the read/trim/diagnostic
+/// boilerplate. Callers must only dispatch `CDataType::Char` / `CDataType::WChar`
+/// here; any other value type yields the 07006 `UnsupportedCDataType` error.
+pub(crate) fn parse_temporal_char_input<T>(
+    binding: &ParameterBinding,
+    expected_format: &'static str,
+    try_parse: impl Fn(&str) -> Result<T, ()>,
+) -> Result<T, JsonBindingError> {
+    let s = match binding.value_type {
+        CDataType::Char => read_char_str(binding)?,
+        CDataType::WChar => read_wchar_str(binding)?,
+        other => return UnsupportedCDataTypeSnafu { c_type: other }.fail(),
+    };
+    try_parse(s.trim()).map_err(|()| {
+        InvalidCharacterValueForCastSnafu {
+            c_type: binding.value_type,
+            value: s
+                .chars()
+                .take(TEMPORAL_CHAR_DIAG_MAX_CHARS)
+                .collect::<String>(),
+            expected_format,
+        }
+        .build()
+    })
 }
 
 /// Test-only entry point that mirrors what `odbc_bindings_to_json` does
@@ -1599,6 +1636,132 @@ mod tests {
             convert_binding(&binding).is_err(),
             "Non-numeric non-boolean string should fail"
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Invalid CHAR / WCHAR -> DATE / TIME / TIMESTAMP must surface as
+    // SQLSTATE 22018 (`InvalidCharacterValueForCast`), NOT 07006
+    // (`UnsupportedCDataType`). Per ODBC Appendix D ("Converting Data from
+    // C to SQL Data Types") a SQL_C_CHAR / SQL_C_WCHAR source IS a supported
+    // binding for temporal targets; a value that doesn't match the accepted
+    // grammar is a *data* error (22018), not an *unsupported-conversion*
+    // error (07006). Returning 07006 wrongly tells the app the conversion
+    // itself is unavailable.
+
+    fn assert_invalid_char_value_for_cast(
+        err: JsonBindingError,
+        want_c_type: CDataType,
+        want_value: &str,
+        want_format: &str,
+    ) {
+        match err {
+            JsonBindingError::InvalidCharacterValueForCast {
+                c_type,
+                value,
+                expected_format,
+                ..
+            } => {
+                assert_eq!(c_type, want_c_type, "c_type mismatch");
+                assert_eq!(value, want_value, "rejected value mismatch");
+                assert_eq!(expected_format, want_format, "expected_format mismatch");
+            }
+            other => panic!("expected InvalidCharacterValueForCast (22018), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_char_garbage_to_date_returns_22018() {
+        let val = b"not-a-date\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DATE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("garbage must not parse as DATE");
+        assert_invalid_char_value_for_cast(err, CDataType::Char, "not-a-date", "YYYY-MM-DD");
+    }
+
+    #[test]
+    fn convert_wchar_garbage_to_date_returns_22018() {
+        let val: [u16; 11] = [
+            b'n' as u16,
+            b'o' as u16,
+            b't' as u16,
+            b'-' as u16,
+            b'a' as u16,
+            b'-' as u16,
+            b'd' as u16,
+            b'a' as u16,
+            b't' as u16,
+            b'e' as u16,
+            0,
+        ];
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::DATE,
+            val.as_ptr() as sql::Pointer,
+            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            &mut ind,
+        );
+        let err = convert_binding(&binding).expect_err("garbage must not parse as DATE");
+        assert_invalid_char_value_for_cast(err, CDataType::WChar, "not-a-date", "YYYY-MM-DD");
+    }
+
+    #[test]
+    fn convert_char_garbage_to_time_returns_22018() {
+        let val = b"not-a-time\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::TIME,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("garbage must not parse as TIME");
+        assert_invalid_char_value_for_cast(
+            err,
+            CDataType::Char,
+            "not-a-time",
+            "HH:MM:SS[.fffffffff]",
+        );
+    }
+
+    #[test]
+    fn convert_char_garbage_to_timestamp_returns_22018() {
+        let val = b"not-a-timestamp\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::TIMESTAMP,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let err = convert_binding(&binding).expect_err("garbage must not parse as TIMESTAMP");
+        assert_invalid_char_value_for_cast(
+            err,
+            CDataType::Char,
+            "not-a-timestamp",
+            "YYYY-MM-DD HH:MM:SS[.fffffffff]",
+        );
+    }
+
+    #[test]
+    fn convert_char_valid_date_still_succeeds() {
+        // Guard the happy path: the new error mapping must not regress
+        // acceptance of a well-formed literal.
+        let val = b"2024-01-15\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::DATE,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, _v) = convert_binding(&binding).expect("valid date literal must convert");
+        assert_eq!(ty, SnowflakeLogicalType::Date);
     }
 
     #[test]

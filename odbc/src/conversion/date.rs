@@ -17,12 +17,16 @@ use crate::conversion::error::{
     SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+    parse_temporal_char_input, read_binary_struct, read_unaligned,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+
+/// Expected literal shape for a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to a
+/// DATE target, surfaced in the 22018 diagnostic when parsing fails.
+const DATE_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD";
 
 /// Format a `NaiveDate` as `YYYY-MM-DD` into a stack buffer without heap
 /// allocation. 32 bytes is sufficient for any year chrono can represent.
@@ -199,22 +203,9 @@ impl ReadODBC for SnowflakeDate {
                         .build()
                     })
             }
-            CDataType::Char => {
-                let s = read_char_str(binding)?;
-                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
-                })
-            }
-            CDataType::WChar => {
-                let s = read_wchar_str(binding)?;
-                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
+            CDataType::Char | CDataType::WChar => {
+                parse_temporal_char_input(binding, DATE_CHAR_EXPECTED_FORMAT, |s| {
+                    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| ())
                 })
             }
             CDataType::Binary => {
