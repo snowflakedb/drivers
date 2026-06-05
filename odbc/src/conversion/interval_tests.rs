@@ -10,10 +10,11 @@
 //!     numeric C types (single-field only), `SQL_C_NUMERIC` (with both
 //!     integer and fractional input for SECOND), and same-family
 //!     SQL_C_INTERVAL_* sources.
-//!   * Negative paths — illegal C sources (FLOAT/DOUBLE/BINARY/GUID,
+//!   * Negative paths — illegal C sources (FLOAT/DOUBLE/BINARY/GUID/BIT,
 //!     date/time C types) and family mismatches (e.g. day-time C interval
 //!     into a year-month SQL target). All must fail with SQLSTATE 07006
-//!     (`UnsupportedCDataType`).
+//!     (`UnsupportedCDataType`). `SQL_C_BIT` is rejected because ODBC
+//!     Appendix D's "C to SQL: Bit" table lists no interval targets.
 //!   * `SnowflakeLogicalType` propagation — confirms the JSON `type`
 //!     field reads `INTERVAL_YEAR_MONTH` / `INTERVAL_DAY_TIME` rather than
 //!     the legacy `TEXT`.
@@ -137,19 +138,43 @@ fn ulong_to_day_renders_unsigned_integer() -> TestResult {
 }
 
 #[test]
-fn bit_to_hour_renders_zero_or_one() -> TestResult {
-    for &b in &[0u8, 1u8] {
+fn bit_to_interval_rejected_07006() {
+    // SQL_C_BIT has no interval targets in ODBC Appendix D's dedicated
+    // "C to SQL: Bit" table (unlike the exact numeric types in "C to SQL:
+    // Numeric"), so binding it to any interval target — single-field or
+    // compound — must be rejected with SQLSTATE 07006 (`UnsupportedCDataType`).
+    let b: u8 = 1;
+    // Exhaustively cover every ODBC interval type code (101 = SQL_INTERVAL_YEAR
+    // through 113 = SQL_INTERVAL_MINUTE_TO_SECOND), both single-field and
+    // compound, so no interval target silently gains a Bit conversion path.
+    for code in [
+        101, // SQL_INTERVAL_YEAR
+        102, // SQL_INTERVAL_MONTH
+        103, // SQL_INTERVAL_DAY
+        104, // SQL_INTERVAL_HOUR
+        105, // SQL_INTERVAL_MINUTE
+        106, // SQL_INTERVAL_SECOND
+        107, // SQL_INTERVAL_YEAR_TO_MONTH
+        108, // SQL_INTERVAL_DAY_TO_HOUR
+        109, // SQL_INTERVAL_DAY_TO_MINUTE
+        110, // SQL_INTERVAL_DAY_TO_SECOND
+        111, // SQL_INTERVAL_HOUR_TO_MINUTE
+        112, // SQL_INTERVAL_HOUR_TO_SECOND
+        113, // SQL_INTERVAL_MINUTE_TO_SECOND
+    ] {
         let binding = make_binding(
             CDataType::Bit,
-            sql::SqlDataType(104), // SQL_INTERVAL_HOUR
+            sql::SqlDataType(code),
             &b as *const _ as sql::Pointer,
             std::mem::size_of::<u8>() as sql::Len,
             std::ptr::null_mut(),
         );
-        let (_, v) = convert(&binding)?;
-        assert_eq!(v, Value::String(b.to_string()));
+        let err = convert(&binding).expect_err("SQL_C_BIT → interval must be rejected");
+        assert!(
+            matches!(err, JsonBindingError::UnsupportedCDataType { .. }),
+            "expected UnsupportedCDataType (07006) for interval code {code}, got {err:?}",
+        );
     }
-    Ok(())
 }
 
 #[test]
