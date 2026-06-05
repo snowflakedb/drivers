@@ -461,6 +461,14 @@ static SampleValue make_sample_value(SQLSMALLINT c_type, SQLSMALLINT target_sql_
       val.minute = 30;
       val.second = 45;
       val.fraction = 0;
+      // Binding a timestamp to a DATE target is only legal when the time
+      // portion is zero (ODBC "C to SQL: Timestamp" rejects a non-zero time
+      // with 22008). Use midnight so the matrix exercises the supported path.
+      if (target_sql_type == SQL_DATE || target_sql_type == SQL_TYPE_DATE) {
+        val.hour = 0;
+        val.minute = 0;
+        val.second = 0;
+      }
       std::memcpy(sv.raw, &val, sizeof(val));
       sv.indicator = sizeof(val);
       sv.buffer_length = sizeof(val);
