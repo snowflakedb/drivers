@@ -1044,6 +1044,20 @@ behavior_differences:
     impact: |
       Applications receive a proper state from the driver and a single spec-correct diagnostic record they can inspect for SQLSTATE / native code / message without having to scan past iODBC-side function-sequence artefacts.
 
+  72:
+    name: "SQLBindParameter numeric C types to SQL_INTERVAL_* follow ODBC Appendix D 'C to SQL: Numeric' semantics"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      The reference driver does not implement the ODBC Appendix D "C to SQL: Numeric" rules for binding numeric C types to SQL_INTERVAL_* parameters via SQLBindParameter. It rejects exact-numeric C types (SQL_C_STINYINT .. SQL_C_UBIGINT, SQL_C_NUMERIC) bound to single-field interval targets (SQL_INTERVAL_YEAR/MONTH/DAY/HOUR/MINUTE/SECOND), and it accepts approximate-numeric C types (SQL_C_FLOAT / SQL_C_DOUBLE) bound to single-field interval targets.
+    new_driver_behavior: |
+      Per ODBC Appendix D ("C to SQL: Numeric"), the new driver accepts exact-numeric C types bound to single-field interval targets (the numeric value is the count of the single leading field), and rejects approximate-numeric C types (SQL_C_FLOAT / SQL_C_DOUBLE) bound to any interval target with SQLSTATE 07006. Multi-field/compound interval targets (e.g. SQL_INTERVAL_YEAR_TO_MONTH) reject every numeric source with 07006 on both drivers. SQL_C_BIT is rejected for all interval targets (07006).
+    impact: |
+      Applications binding exact-numeric C values to single-field SQL_INTERVAL_* parameters will succeed on the new driver where the reference driver failed. Applications binding SQL_C_FLOAT / SQL_C_DOUBLE to single-field interval parameters will now receive 07006 instead of silent acceptance.
+    description: |
+      Spec reference: ODBC "C to SQL: Numeric" conversion table. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/c-to-sql-numeric
+
   73:
     name: "SQL_C_CHAR/WCHAR bound as a SQL_INTERVAL_* parameter is forwarded to the server instead of being rejected"
     status: allowed

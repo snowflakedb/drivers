@@ -156,6 +156,11 @@ impl ReadODBC for SnowflakeIntervalYearMonth {
             }
 
             // Exact-numeric sources only legal for single-field targets.
+            // SQL_C_BIT is intentionally excluded: ODBC Appendix D's dedicated
+            // "C to SQL: Bit" table lists no interval targets for SQL_C_BIT, so
+            // it falls through to the 07006 path below (unlike the exact numeric
+            // types, which "C to SQL: Numeric" permits for single-field
+            // intervals).
             CDataType::TinyInt | CDataType::STinyInt => {
                 self.render_signed(read_unaligned::<i8>(binding) as i128, binding)?
             }
@@ -180,7 +185,6 @@ impl ReadODBC for SnowflakeIntervalYearMonth {
             CDataType::UBigInt => {
                 self.render_signed(read_unaligned::<u64>(binding) as i128, binding)?
             }
-            CDataType::Bit => self.render_signed(read_unaligned::<u8>(binding) as i128, binding)?,
             CDataType::Numeric => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 self.render_numeric(mantissa, scale, binding)?
@@ -238,7 +242,6 @@ impl ReadODBC for SnowflakeIntervalDayTime {
             CDataType::UBigInt => {
                 self.render_signed(read_unaligned::<u64>(binding) as i128, binding)?
             }
-            CDataType::Bit => self.render_signed(read_unaligned::<u8>(binding) as i128, binding)?,
             CDataType::Numeric => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 self.render_numeric(mantissa, scale, binding)?
