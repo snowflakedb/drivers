@@ -16,6 +16,19 @@ pub enum WinOdbcParserError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display(
+        "Missing return code on EXIT block for {function} at line {line}: \
+         the Windows DM trace did not include a parseable return code, and we \
+         refuse to silently default to SQL_SUCCESS because a failing call \
+         would then be asserted as a successful one"
+    ))]
+    MissingReturnCode {
+        function: String,
+        line: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 type Result<T> = std::result::Result<T, WinOdbcParserError>;
@@ -28,7 +41,7 @@ pub fn parse_str(content: &str) -> Result<TraceLog> {
     }
 
     let entries = parse_entries(content);
-    let (calls, handle_graph) = pair_entries(entries);
+    let (calls, handle_graph) = pair_entries(entries)?;
 
     let header = TraceHeader {
         format: TraceFormat::WinOdbc,
@@ -82,8 +95,20 @@ static OUTPUT_INT_RE: LazyLock<Regex> = LazyLock::new(|| {
 static INT_NAMED_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(-?\d+)\s*<([A-Z_][A-Z_0-9]+)>$").unwrap());
 
+// Captures the **outermost** `"..."` literal on a WinODBC body line. We
+// match from the first `"` to the *last* `"` followed by optional trailing
+// whitespace and end-of-string, because the Windows DM trace format does
+// **not** escape embedded `"` characters inside string values — e.g.
+// `SQLGetInfo(SQL_IDENTIFIER_QUOTE_CHAR)` returns `"` and is rendered as
+// `[       2] """` (open quote, the actual `"`, close quote). A non-greedy
+// inner match would stop at the embedded `"` and capture an empty string.
+//
+// The `\s*$` anchor is what makes the greedy `(.*)` backtrack to the right
+// closing quote: it forces the close quote to be the *last* one on the line.
+// Genuine C-style escapes (`\"`, `\\`, etc.) and the Windows DM's `\ X` hex
+// escapes are still resolved downstream by `decode_winodbc_string`.
 static STRING_VALUE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?s).*?"((?:\\.|[^"\\])*)""#).unwrap());
+    LazyLock::new(|| Regex::new(r#"(?s).*?"(.*)"\s*$"#).unwrap());
 
 static HEX_ADDR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^0x[0-9A-Fa-f]+$").unwrap());
 
@@ -170,30 +195,26 @@ fn parse_param_value(raw: &str) -> ParamValue {
     }
 
     if let Some(caps) = OUTPUT_INT_RE.captures(trimmed) {
+        // Captured by `(-?\d+)` so the parse cannot fail. Use a panic
+        // (rather than silent `unwrap_or(0)`) to surface any future regex
+        // change that broadens the group without updating this site.
+        let value = parse_winodbc_signed_int(&caps[2])
+            .expect("OUTPUT_INT_RE `(-?\\d+)` group must parse as i64");
         if let Some(name) = caps.get(3) {
             return ParamValue::OutputNamedConstant {
                 address: caps[1].to_string(),
                 name: name.as_str().to_string(),
+                value: Some(value),
             };
         }
         return ParamValue::OutputInteger {
             address: caps[1].to_string(),
-            value: caps[2].parse().unwrap_or(0),
+            value,
         };
     }
 
     if let Some(caps) = STRING_VALUE_RE.captures(trimmed) {
-        let mut text = caps[1].to_string();
-        // Windows DM traces NUL as `\ 0` at end of wide strings, e.g. `"SELECT 1;\ 0"`.
-        if text.ends_with("\\ 0") {
-            text.truncate(text.len() - 3);
-        } else if text.ends_with(" 0") && text.contains(';') {
-            text.truncate(text.len() - 2);
-        }
-        text = text.replace("\\0", "");
-        if text.ends_with('\0') {
-            text.pop();
-        }
+        let text = decode_winodbc_string(&caps[1]);
         return ParamValue::StringValue {
             value: text,
             truncated: false,
@@ -202,7 +223,14 @@ fn parse_param_value(raw: &str) -> ParamValue {
 
     if let Some(caps) = INT_NAMED_RE.captures(trimmed) {
         return ParamValue::NamedConstant {
-            value: caps[1].parse().unwrap_or(0),
+            // Captured by `(-?\d+)`; an infallible parse modelled as a panic
+            // rather than `unwrap_or(0)` so a future regex broadening
+            // surfaces immediately instead of silently substituting `0`.
+            value: Some(
+                caps[1]
+                    .parse()
+                    .expect("INT_NAMED_RE `(-?\\d+)` group must parse as i64"),
+            ),
             name: caps[2].to_string(),
         };
     }
@@ -210,11 +238,30 @@ fn parse_param_value(raw: &str) -> ParamValue {
     if let Some(angle) = trimmed.split_once('<') {
         let name = angle.1.trim_end_matches('>').trim();
         if is_constant_name(name) {
-            let value = angle.0.trim().parse::<i64>().unwrap_or(0);
+            // Preserve `None` rather than substituting `0` when the prefix
+            // is missing or unparseable — `0` is itself a valid value for
+            // many ODBC fields (e.g. `SQL_INFO_FIRST` for InfoType).
+            let value = angle.0.trim().parse::<i64>().ok();
             return ParamValue::NamedConstant {
                 value,
                 name: name.to_string(),
             };
+        }
+    }
+
+    // Windows DM occasionally emits `<unknown>` (lowercase) when its symbol
+    // table doesn't recognize an InfoType / FieldIdentifier ID — e.g.
+    // `UWORD 169 <unknown>` for `SQL_AGGREGATE_FUNCTIONS`. Without this
+    // branch the line falls through to `Address("169 <unknown>")` and the
+    // integer is permanently lost, materialising as `SQLGetInfo(dbc0, 0,
+    // ...)` (a different real call) downstream. Treat any bracketed tag
+    // that isn't a SQL_-style constant as a plain integer when the prefix
+    // parses. Other variants (`<Invalid *>`, `<unknown type>`, `<zero
+    // length>`) have already been handled above or do not carry an
+    // integer prefix and continue to fall through unchanged.
+    if let Some((head, _tail)) = trimmed.split_once('<') {
+        if let Ok(v) = head.trim().parse::<i64>() {
+            return ParamValue::Integer(v);
         }
     }
 
@@ -227,13 +274,100 @@ fn parse_param_value(raw: &str) -> ParamValue {
     }
 
     if is_constant_name(trimmed) {
+        // Bare symbolic name with no rendered numeric value (e.g. a body
+        // line emitted as just `SQL_HANDLE_STMT`). Represent the missing
+        // numeric form as `None` so downstream consumers don't confuse it
+        // with `Some(0)`.
         return ParamValue::NamedConstant {
             name: trimmed.to_string(),
-            value: 0,
+            value: None,
         };
     }
 
     ParamValue::Address(trimmed.to_string())
+}
+
+/// Parse an integer captured from a WinODBC `SQLLEN *` / `SQLINTEGER *` output
+/// dump, recovering its signed interpretation.
+///
+/// The Windows DM trace formatter prints 32-bit-truncated integer outputs via
+/// `%u`, so a negative `SQLLEN` like `-2` (e.g. `SQL_BINARY` for
+/// `SQL_DESC_CONCISE_TYPE`) appears in the trace as `4294967294`. On a
+/// 64-bit Unix replay platform `SQLLEN` is `i64`, and the driver returns the
+/// signed value as-is; without this normalisation, every captured
+/// `SQLColAttribute` numeric output for a negative-valued descriptor field
+/// would replay as a mismatch.
+///
+/// Heuristic: any value in `[2^31, 2^32)` is the unsigned representation of a
+/// signed `i32` negative — sign-extend it. Values outside that range pass
+/// through unchanged so genuinely-large `SQLULEN` outputs (e.g. blob lengths)
+/// are preserved.
+///
+/// Returns `None` for unparseable input (preserved as `None` through the IR
+/// rather than collapsed to `0`, because `0` is itself a meaningful value
+/// for many ODBC numeric outputs).
+fn parse_winodbc_signed_int(s: &str) -> Option<i64> {
+    let raw: i64 = s.parse().ok()?;
+    if (0x8000_0000..=0xFFFF_FFFF).contains(&(raw as u64)) {
+        Some((raw as i32) as i64)
+    } else {
+        Some(raw)
+    }
+}
+
+/// Decode the contents of a quoted string parameter as emitted by the
+/// Windows ODBC Driver Manager trace.
+///
+/// The DM emits the underlying wide-string buffer as a C-style quoted literal
+/// where:
+///   * non-printable bytes are rendered as `\ <hex>` (backslash, space, single
+///     lowercase hex digit) — e.g. `\ a` is `0x0a` (LF), `\ 0` is `0x00` (NUL),
+///     `\ 9` would be `0x09` (TAB)
+///   * standard C escapes (`\\`, `\"`, `\n`, `\r`, `\t`, `\0`) are honored as
+///     a fallback so synthetic / test traces using C-string conventions still
+///     parse correctly
+///   * the trailing NUL terminator written by the DM is stripped
+fn decode_winodbc_string(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(' ') => match chars.next() {
+                Some(h) if h.is_ascii_hexdigit() => {
+                    let v = h.to_digit(16).unwrap() as u8;
+                    out.push(v as char);
+                }
+                Some(other) => {
+                    out.push('\\');
+                    out.push(' ');
+                    out.push(other);
+                }
+                None => {
+                    out.push('\\');
+                    out.push(' ');
+                }
+            },
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('0') => out.push('\0'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    if out.ends_with('\0') {
+        out.pop();
+    }
+    out
 }
 
 fn is_constant_name(s: &str) -> bool {
@@ -352,13 +486,17 @@ fn parse_body(body_lines: &[String], function_name: &str) -> Vec<Parameter> {
         };
         let type_name = caps[1].trim().to_string();
         let raw_value = caps[2].trim().to_string();
-        let param_name = names.get(idx).copied().unwrap_or("").to_string();
+        // Prefer the synthetic-names table entry when it exists; fall back
+        // to the raw C type token (e.g. `SQLHENV`) so downstream lookups
+        // by name still have something concrete to match. Explicit branch
+        // — never silently substitute the empty string, which would
+        // defeat every `find_param_int(_, "InfoType")` etc.
+        let param_name = match names.get(idx).copied() {
+            Some(name) => name.to_string(),
+            None => type_name.clone(),
+        };
         params.push(Parameter {
-            type_name: if param_name.is_empty() {
-                type_name
-            } else {
-                param_name
-            },
+            type_name: param_name,
             value: parse_param_value(&raw_value),
         });
     }
@@ -387,7 +525,7 @@ fn parse_entries(content: &str) -> Vec<TraceEntry> {
     entries
 }
 
-fn pair_entries(entries: Vec<TraceEntry>) -> (Vec<TracedCall>, HandleGraph) {
+fn pair_entries(entries: Vec<TraceEntry>) -> Result<(Vec<TracedCall>, HandleGraph)> {
     let mut calls = Vec::new();
     let mut handle_graph = HandleGraph::new();
     let mut pending_enters: Vec<TraceEntry> = Vec::new();
@@ -409,7 +547,17 @@ fn pair_entries(entries: Vec<TraceEntry>) -> (Vec<TracedCall>, HandleGraph) {
                     (Vec::new(), None)
                 };
 
-                let return_code = entry.return_code.unwrap_or(ReturnCode::Success);
+                // Refuse to silently default to `SQL_SUCCESS` — a failed-to-parse
+                // return code on a real failure would otherwise produce a test
+                // that asserts success on a failing call.
+                let return_code =
+                    entry
+                        .return_code
+                        .ok_or_else(|| WinOdbcParserError::MissingReturnCode {
+                            function: entry.function_name.clone(),
+                            line: entry.line_number.unwrap_or(0),
+                            location: Location::default(),
+                        })?;
                 let exit_line = entry.line_number;
                 let output_params = entry.parameters;
 
@@ -435,7 +583,7 @@ fn pair_entries(entries: Vec<TraceEntry>) -> (Vec<TracedCall>, HandleGraph) {
         }
     }
 
-    (calls, handle_graph)
+    Ok((calls, handle_graph))
 }
 
 fn register_alloc(
@@ -465,7 +613,7 @@ fn find_param_int(params: &[Parameter], key: &str) -> Option<i64> {
         .find(|p| p.type_name == key)
         .and_then(|p| match &p.value {
             ParamValue::Integer(v) => Some(*v),
-            ParamValue::NamedConstant { value, .. } => Some(*value),
+            ParamValue::NamedConstant { value, .. } => *value,
             _ => None,
         })
 }
@@ -591,5 +739,328 @@ mod tests {
                 .any(|c| matches!(c.call, OdbcCall::Unsupported(_))),
             "no unsupported calls"
         );
+    }
+
+    #[test]
+    fn decode_string_handles_dm_hex_escapes() {
+        assert_eq!(decode_winodbc_string("SELECT 1;\\ 0"), "SELECT 1;");
+        assert_eq!(decode_winodbc_string("a\\ ab"), "a\nb");
+        assert_eq!(decode_winodbc_string("\\ 9"), "\t");
+        assert_eq!(decode_winodbc_string("\\ d"), "\r");
+        assert_eq!(
+            decode_winodbc_string(
+                "SELECT * REPLACE(\\ a  DATEADD('day', -1, TSLTZ) AS TSLTZ\\ a) \
+                 FROM ALLDATATYPES;\\ 0"
+            ),
+            "SELECT * REPLACE(\n  DATEADD('day', -1, TSLTZ) AS TSLTZ\n) FROM ALLDATATYPES;",
+        );
+    }
+
+    #[test]
+    fn decode_string_handles_c_style_escapes_for_synthetic_traces() {
+        assert_eq!(decode_winodbc_string("SELECT 1;\\0"), "SELECT 1;");
+        assert_eq!(decode_winodbc_string("a\\nb"), "a\nb");
+        assert_eq!(decode_winodbc_string("a\\\\b"), "a\\b");
+        assert_eq!(decode_winodbc_string("a\\\"b"), "a\"b");
+    }
+
+    #[test]
+    fn parse_extracts_multiline_sql_from_dm_escapes() {
+        let trace = "proc-1 1234-5678\tENTER SQLAllocHandle\n\
+             \t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+             \t\tSQLHANDLE           0x0000000000000000\n\
+             \t\tSQLHANDLE *         0x0000018E00866BE0\n\
+             \n\
+             proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+             \t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+             \t\tSQLHANDLE           0x0000000000000000\n\
+             \t\tSQLHANDLE *         0x0000018E00866BE0 ( 0x0000018E656DAC50)\n\
+             \n\
+             proc-1 1234-5678\tENTER SQLExecDirectW\n\
+             \t\tHSTMT               0x0000018E656DA1E0\n\
+             \t\tWCHAR *             0x0000018E006DF854 [      -3] \"SELECT *\\ a  FROM T;\\ 0\"\n\
+             \t\tSDWORD                    -3\n\
+             \n\
+             proc-1 1234-5678\tEXIT  SQLExecDirectW  with return code 0 (SQL_SUCCESS)\n\
+             \t\tHSTMT               0x0000018E656DA1E0\n\
+             \t\tWCHAR *             0x0000018E006DF854 [      -3] \"SELECT *\\ a  FROM T;\\ 0\"\n\
+             \t\tSDWORD                    -3\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let exec = parsed
+            .calls
+            .iter()
+            .find_map(|c| match &c.call {
+                OdbcCall::ExecDirect(e) => Some(e),
+                _ => None,
+            })
+            .expect("exec direct");
+        assert_eq!(exec.sql.as_deref(), Some("SELECT *\n  FROM T;"));
+    }
+
+    #[test]
+    fn parses_string_values_containing_embedded_double_quote() {
+        // The WinODBC DM doesn't escape `"` inside string values, so
+        // `SQL_IDENTIFIER_QUOTE_CHAR == "\""` shows up on the wire as the
+        // three-quote sequence `"""` and `SQL_COLUMN_ESCAPE_CHAR == "\""` as
+        // `"""`. Make sure the regex picks up the inner character rather
+        // than collapsing to an empty string.
+        assert_eq!(
+            parse_param_value(r#"0x0000015380842E08 [       2] """"#),
+            ParamValue::StringValue {
+                value: "\"".to_string(),
+                truncated: false,
+            },
+        );
+        // Sanity-check normal single-character strings still parse correctly.
+        assert_eq!(
+            parse_param_value(r#"0x0000015380843588 [       1] "." "#),
+            ParamValue::StringValue {
+                value: ".".to_string(),
+                truncated: false,
+            },
+        );
+        // Empty strings should still parse to an empty value.
+        assert_eq!(
+            parse_param_value(r#"0x0000015380843588 [       0] """#),
+            ParamValue::StringValue {
+                value: String::new(),
+                truncated: false,
+            },
+        );
+        // Backslash-quote escapes used by synthetic traces keep working.
+        assert_eq!(
+            parse_param_value(r#"0x0000015380843588 [       3] "a\"b""#),
+            ParamValue::StringValue {
+                value: "a\"b".to_string(),
+                truncated: false,
+            },
+        );
+    }
+
+    #[test]
+    fn parses_sql_get_info_numeric_outputs_via_all_three_winodbc_renderings() {
+        // The WinODBC DM renders numeric `SQLGetInfo` outputs in three
+        // mutually exclusive ways depending on whether the value is decoded
+        // to a symbolic constant and how it's formatted. All three must end
+        // up populating `GetInfo.info_value_numeric` so the generator can
+        // emit a `CHECK(numericValue == ...)` assertion.
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010 ( 0x0000000000000020)\n\
+\n\
+proc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  2 <SQL_HANDLE_DBC>\n\
+\t\tSQLHANDLE           0x0000000000000020\n\
+\t\tSQLHANDLE *         0x0000000000000030\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  2 <SQL_HANDLE_DBC>\n\
+\t\tSQLHANDLE           0x0000000000000020\n\
+\t\tSQLHANDLE *         0x0000000000000030 ( 0x0000000000000040)\n\
+\n\
+proc-1 1234-5678\tENTER SQLGetInfoW \n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                       91 <SQL_OWNER_USAGE>\n\
+\t\tPTR                 0x0000000000000100\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLGetInfoW  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                       91 <SQL_OWNER_USAGE>\n\
+\t\tPTR                 0x0000000000000100 ( 0x0000000000000015)\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200 (4)\n\
+\n\
+proc-1 1234-5678\tENTER SQLGetInfoW \n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                       99 <SQL_MAX_COLUMNS_IN_ORDER_BY>\n\
+\t\tPTR                 0x0000000000000110\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLGetInfoW  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                       99 <SQL_MAX_COLUMNS_IN_ORDER_BY>\n\
+\t\tPTR                 0x0000000000000110 (65535)\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200 (2)\n\
+\n\
+proc-1 1234-5678\tENTER SQLGetInfoW \n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                      114 <SQL_CATALOG_LOCATION>\n\
+\t\tPTR                 0x0000000000000120\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLGetInfoW  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                      114 <SQL_CATALOG_LOCATION>\n\
+\t\tPTR                 0x0000000000000120 (1) <SQL_CL_START>\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200 (2)\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let get_infos: Vec<_> = parsed
+            .calls
+            .iter()
+            .filter_map(|c| match &c.call {
+                OdbcCall::GetInfo(g) => Some(g),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(get_infos.len(), 3, "expected three SQLGetInfo calls");
+
+        // OutputAddress path: `0xPTR ( 0xVALUE)` where the value is hex.
+        assert_eq!(get_infos[0].info_type.as_deref(), Some("SQL_OWNER_USAGE"),);
+        assert_eq!(get_infos[0].info_value_numeric, Some(0x15));
+
+        // OutputInteger path: `0xPTR (DECIMAL)` with no symbolic name.
+        assert_eq!(
+            get_infos[1].info_type.as_deref(),
+            Some("SQL_MAX_COLUMNS_IN_ORDER_BY"),
+        );
+        assert_eq!(get_infos[1].info_value_numeric, Some(65535));
+
+        // OutputNamedConstant path: `0xPTR (DECIMAL) <SQL_NAME>`.
+        assert_eq!(
+            get_infos[2].info_type.as_deref(),
+            Some("SQL_CATALOG_LOCATION"),
+        );
+        assert_eq!(get_infos[2].info_value_numeric, Some(1));
+    }
+
+    #[test]
+    fn parses_unknown_bracketed_tag_as_integer() {
+        // Windows DM emits `<unknown>` (lowercase) for InfoTypes /
+        // FieldIdentifiers that its symbol table doesn't recognize. The
+        // parser must preserve the integer prefix - dropping it would
+        // materialize as a different (real) ODBC call downstream because
+        // every `unwrap_or(...)` default in the generator is itself a
+        // valid ODBC value (`0` = `SQL_INFO_FIRST` etc.).
+        assert_eq!(parse_param_value("169 <unknown>"), ParamValue::Integer(169),);
+        // The same path also handles other non-SQL_ bracketed tags as
+        // long as a parseable integer leads.
+        assert_eq!(
+            parse_param_value("180 <some-future-tag>"),
+            ParamValue::Integer(180),
+        );
+        // `<unknown type>` and `<zero length>` appear *after* a `PTR
+        // 0xADDR` and don't have a parseable integer prefix - those
+        // continue to fall through to `Address` unchanged.
+        assert_eq!(
+            parse_param_value("0x0000000000000100 <unknown type>"),
+            ParamValue::Address("0x0000000000000100 <unknown type>".to_string()),
+        );
+    }
+
+    #[test]
+    fn preserves_sql_owner_usage_named_constant_after_unknown_branch_added() {
+        // Regression guard: the well-formed `<SQL_OWNER_USAGE>` branch
+        // runs *before* the new `<unknown>` fallback, so legitimate
+        // named constants must still produce `NamedConstant`, not get
+        // demoted to `Integer`.
+        assert_eq!(
+            parse_param_value("91 <SQL_OWNER_USAGE>"),
+            ParamValue::NamedConstant {
+                value: Some(91),
+                name: "SQL_OWNER_USAGE".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn unknown_info_type_surfaces_as_info_type_value_in_ir() {
+        // End-to-end: `UWORD 169 <unknown>` for the InfoType parameter
+        // must show up in `GetInfo.info_type_value`, not be silently
+        // lost. The previous behaviour produced `info_type: null,
+        // info_type_value: null`, which the generator then materialized
+        // as the (different!) call `SQLGetInfo(dbc0, 0, ...)`.
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010 ( 0x0000000000000020)\n\
+\n\
+proc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  2 <SQL_HANDLE_DBC>\n\
+\t\tSQLHANDLE           0x0000000000000020\n\
+\t\tSQLHANDLE *         0x0000000000000030\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocHandle  with return code 0 (SQL_SUCCESS)\n\
+\t\tSQLSMALLINT                  2 <SQL_HANDLE_DBC>\n\
+\t\tSQLHANDLE           0x0000000000000020\n\
+\t\tSQLHANDLE *         0x0000000000000030 ( 0x0000000000000040)\n\
+\n\
+proc-1 1234-5678\tENTER SQLGetInfoW \n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                      169 <unknown>\n\
+\t\tPTR                 0x0000000000000100\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLGetInfoW  with return code 0 (SQL_SUCCESS)\n\
+\t\tHDBC                0x0000000000000040\n\
+\t\tUWORD                      169 <unknown>\n\
+\t\tPTR                 0x0000000000000100 ( 0x000000000000007F)\n\
+\t\tSWORD                        4 \n\
+\t\tSWORD *             0x0000000000000200 (4)\n";
+
+        let parsed = parse_str(trace).expect("parse");
+        let get_info = parsed
+            .calls
+            .iter()
+            .find_map(|c| match &c.call {
+                OdbcCall::GetInfo(g) => Some(g),
+                _ => None,
+            })
+            .expect("expected one SQLGetInfo");
+
+        assert_eq!(get_info.info_type, None, "no symbolic name to recover");
+        assert_eq!(
+            get_info.info_type_value,
+            Some(169),
+            "integer prefix must survive parse_param_value's `<unknown>` branch",
+        );
+    }
+
+    #[test]
+    fn pair_entries_rejects_missing_return_code() {
+        // Build a trace whose EXIT block has no parseable return code
+        // (drop the `with return code N (NAME)` suffix). Today this would
+        // silently default to `SUCCESS` - the worst-case substitution
+        // because a failing call would then be asserted as successful.
+        // The new error path makes the parser refuse instead.
+        let trace = "\
+proc-1 1234-5678\tENTER SQLAllocHandle\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010\n\
+\n\
+proc-1 1234-5678\tEXIT  SQLAllocHandle\n\
+\t\tSQLSMALLINT                  1 <SQL_HANDLE_ENV>\n\
+\t\tSQLHANDLE           0x0000000000000000\n\
+\t\tSQLHANDLE *         0x0000000000000010 ( 0x0000000000000020)\n";
+
+        let err = parse_str(trace).expect_err("must reject missing return code");
+        match err {
+            WinOdbcParserError::MissingReturnCode { function, .. } => {
+                assert_eq!(function, "SQLAllocHandle");
+            }
+            other => panic!("expected MissingReturnCode, got {other:?}"),
+        }
     }
 }

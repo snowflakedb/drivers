@@ -87,7 +87,15 @@ impl fmt::Display for ReturnCode {
 pub enum ParamValue {
     Integer(i64),
     NamedConstant {
-        value: i64,
+        /// Numeric value the trace rendered alongside the symbolic name (e.g.
+        /// `91` in `UWORD 91 <SQL_OWNER_USAGE>`). `None` when the trace gave
+        /// us a name without a parseable integer prefix (and the parser must
+        /// refuse to silently substitute `0`, which is itself a valid
+        /// ODBC value for many fields). Default-deserialised so older
+        /// `ir.yaml` files with a bare `value: N` continue to load as
+        /// `Some(N)`.
+        #[serde(default)]
+        value: Option<i64>,
         name: String,
     },
     Address(String),
@@ -99,6 +107,12 @@ pub enum ParamValue {
     OutputNamedConstant {
         address: String,
         name: String,
+        /// Decimal value the trace rendered next to the constant name (e.g.
+        /// `(1) <SQL_CL_START>` from WinODBC). `None` for trace formats that
+        /// only emit the symbolic name without a numeric form (iodbc's
+        /// `0xPTR (SQL_FOO)` style).
+        #[serde(default)]
+        value: Option<i64>,
     },
     OutputAddress {
         address: String,
@@ -307,7 +321,18 @@ pub struct GetInfo {
     pub handle: Option<String>,
     pub info_type: Option<String>,
     pub info_type_value: Option<i64>,
+    /// Captured contents of `InfoValuePtr` when the trace renders it as a
+    /// string (i.e. the info type is character-typed, like `SQL_DRIVER_NAME`).
     pub info_value: Option<String>,
+    /// Captured contents of `InfoValuePtr` when the trace renders it as an
+    /// integer (i.e. the info type is numeric- or bitmask-typed, like
+    /// `SQL_GETDATA_EXTENSIONS`). For any given `SQLGetInfo` call this is
+    /// mutually exclusive with [`info_value`] — the parser emits exactly one
+    /// of the two depending on what the trace contains. Default-deserialised
+    /// to `None` so older `ir.yaml` files (captured before this field
+    /// existed) still load.
+    #[serde(default)]
+    pub info_value_numeric: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -934,6 +959,13 @@ mod raw {
                 .or_else(|| named_const_by_name(&input, "Info Type")),
             info_type_value: int_or_named(&output, 1).or_else(|| int_by_name(&input, "Info Type")),
             info_value: first_string(&output),
+            // `InfoValue` sits at output index 2 (see `SQLGetInfo`'s param
+            // list in `parser/winodbc.rs`). For string-typed info types the
+            // parser produced a `StringValue` and we leave this as `None`;
+            // for numeric/bitmask types it's either an `OutputInteger`
+            // (iodbc/unixodbc) or an `OutputAddress` (WinODBC's ambiguous
+            // `0xPTR (0xVALUE)` rendering — see helper docs).
+            info_value_numeric: output_int_or_deref_addr_at(&output, 2),
         })
     }
 
@@ -977,7 +1009,7 @@ mod raw {
     fn int_or_named(params: &[Parameter], idx: usize) -> Option<i64> {
         params.get(idx).and_then(|p| match &p.value {
             ParamValue::Integer(v) => Some(*v),
-            ParamValue::NamedConstant { value, .. } => Some(*value),
+            ParamValue::NamedConstant { value, .. } => *value,
             _ => None,
         })
     }
@@ -988,7 +1020,7 @@ mod raw {
             .find(|p| p.type_name == name)
             .and_then(|p| match &p.value {
                 ParamValue::Integer(v) => Some(*v),
-                ParamValue::NamedConstant { value, .. } => Some(*value),
+                ParamValue::NamedConstant { value, .. } => *value,
                 _ => None,
             })
     }
@@ -1108,6 +1140,35 @@ mod raw {
         })
     }
 
+    /// Like [`output_int_at`] but also accepts the other `ParamValue`
+    /// variants the parser may produce for a pointer-to-integer trace line:
+    ///
+    ///   * `OutputAddress` — the WinODBC pattern `0xPTR (0xVALUE)` is
+    ///     syntactically identical for "pointer dereferenced to a pointer"
+    ///     (e.g. `SQLAllocHandle` returning a handle) and "pointer
+    ///     dereferenced to a `SQLUINTEGER`" (e.g. `SQLGetInfo` returning a
+    ///     bitmask); the parser greedily picks `OutputAddress` first. We
+    ///     parse the hex string back into an integer here.
+    ///   * `OutputNamedConstant` with a decimal value — WinODBC also renders
+    ///     numeric outputs like `(1) <SQL_CL_START>` where both the integer
+    ///     and the symbolic name are present; the parser stores the int in
+    ///     `value: Some(_)`.
+    ///
+    /// Call sites that *know* the dereferenced byte sequence is a numeric —
+    /// `SQLGetInfo` for non-string info types is the canonical case — should
+    /// use this helper so the value survives into the IR.
+    fn output_int_or_deref_addr_at(params: &[Parameter], idx: usize) -> Option<i64> {
+        params.get(idx).and_then(|p| match &p.value {
+            ParamValue::OutputInteger { value, .. } => Some(*value),
+            ParamValue::OutputAddress { output_address, .. } => {
+                let hex = output_address.trim_start_matches("0x");
+                u64::from_str_radix(hex, 16).ok().map(|v| v as i64)
+            }
+            ParamValue::OutputNamedConstant { value, .. } => *value,
+            _ => None,
+        })
+    }
+
     fn output_named_at(params: &[Parameter], idx: usize) -> Option<String> {
         params.get(idx).and_then(|p| match &p.value {
             ParamValue::OutputNamedConstant { name, .. } => Some(name.clone()),
@@ -1125,20 +1186,29 @@ mod raw {
             })
     }
 
+    /// Extract the `Value` pointer parameter from `SQLSet*Attr` as an
+    /// integer, *only* when the trace gave us something concrete to read.
+    ///
+    /// Returns `None` (rather than `Some(0)`) when:
+    ///   * the captured `ParamValue` variant didn't carry an integer
+    ///     interpretation, or
+    ///   * the address hex prefix failed to parse.
+    ///
+    /// `0` is a real attribute value (e.g. `SQL_AUTOCOMMIT_OFF`,
+    /// `SQL_FALSE`), so we must not silently substitute it for missing
+    /// data; the generator's validator turns `None` into a hard error.
     fn pointer_as_int(params: &[Parameter]) -> Option<i64> {
-        params
-            .iter()
-            .find(|p| p.type_name == "Value")
-            .map(|p| match &p.value {
-                ParamValue::NullPointer => 0,
-                ParamValue::Integer(v) => *v,
-                ParamValue::Address(addr) => addr
-                    .strip_prefix("0x")
-                    .or_else(|| addr.strip_prefix("0X"))
-                    .and_then(|h| i64::from_str_radix(h, 16).ok())
-                    .unwrap_or(0),
-                _ => 0,
-            })
+        let param = params.iter().find(|p| p.type_name == "Value")?;
+        match &param.value {
+            ParamValue::NullPointer => Some(0),
+            ParamValue::Integer(v) => Some(*v),
+            ParamValue::NamedConstant { value, .. } => *value,
+            ParamValue::Address(addr) => addr
+                .strip_prefix("0x")
+                .or_else(|| addr.strip_prefix("0X"))
+                .and_then(|h| i64::from_str_radix(h, 16).ok()),
+            _ => None,
+        }
     }
 }
 

@@ -170,7 +170,7 @@ fn main() {
             tag,
             allow_unsupported,
         } => {
-            let calls = load_calls(&input, &format);
+            let (calls, entry_lines) = load_calls_with_lines(&input, &format);
 
             let qm_path =
                 query_map_path.unwrap_or_else(|| default_sibling_path(&input, "queries.yaml"));
@@ -183,7 +183,11 @@ fn main() {
                 query_map: Some(qm),
                 allow_unsupported,
             };
-            let cpp_output = match generator::cpp::generate(&calls, &config) {
+            let cpp_output = match generator::cpp::generate_with_lines(
+                &calls,
+                &entry_lines,
+                &config,
+            ) {
                 Ok(cpp) => cpp,
                 Err(generator::cpp::GenerateError::Unsupported(calls)) => {
                     eprintln!("Error: trace contains unsupported ODBC calls:");
@@ -192,6 +196,25 @@ fn main() {
                     }
                     eprintln!("Add typed handlers in odbc_trace_tool or pass --allow-unsupported");
                     process::exit(1);
+                }
+                Err(generator::cpp::GenerateError::MissingRequired(missing)) => {
+                    // Fail-fast: the parser produced an IR with at least one
+                    // required field missing, and substituting a default
+                    // would silently emit a different valid ODBC call (e.g.
+                    // `SQLGetInfo(dbc0, 0, ...)` for a lost InfoType). Report
+                    // every offending call so users can fix the upstream
+                    // trace/parser in one pass, then exit with a distinct
+                    // code so regenerate scripts and CI catch this.
+                    eprintln!(
+                            "error: trace tool refused to generate code because the IR is missing required fields:"
+                        );
+                    for err in &missing {
+                        eprintln!("  - {err}");
+                    }
+                    eprintln!(
+                            "Fix the upstream parser (or trace) so each call carries the required field; we will not silently substitute a different valid ODBC value."
+                        );
+                    process::exit(2);
                 }
             };
 
@@ -395,15 +418,51 @@ fn load_ir(input: &Path, format: &FormatArg) -> ir::TraceIr {
 
 /// Load a flat call list, either from IR YAML or by parsing a trace log.
 fn load_calls(input: &Path, format: &FormatArg) -> Vec<model::OdbcCall> {
+    load_calls_with_lines(input, format).0
+}
+
+/// Like [`load_calls`] but also returns per-call source trace line numbers
+/// when they can be recovered. The IR YAML preserves entry lines as
+/// `path:line` strings; we parse the trailing integer back out so the
+/// generator's validator can include it in error messages. Trace-file
+/// inputs return the raw line numbers directly. Lines are returned in a
+/// parallel `Vec<Option<usize>>` aligned with the returned calls.
+fn load_calls_with_lines(
+    input: &Path,
+    format: &FormatArg,
+) -> (Vec<model::OdbcCall>, Vec<Option<usize>>) {
     if is_yaml_file(input) {
         let trace_ir = ir::load_ir_yaml(input).unwrap_or_else(|e| {
             eprintln!("Error loading IR YAML {}: {e}", input.display());
             process::exit(1);
         });
-        trace_ir.flatten_calls()
+        let ops = trace_ir.all_operations_sorted();
+        let calls = ops.iter().map(|op| op.call.clone()).collect();
+        let lines = ops
+            .iter()
+            .map(|op| {
+                // Operation.entry_line is formatted as `"path:line"` (or
+                // bare `"line"`); extract the trailing integer when
+                // present so the generator's validator can surface it.
+                op.entry_line.as_deref().and_then(|s| {
+                    s.rsplit_once(':')
+                        .map(|(_, n)| n)
+                        .unwrap_or(s)
+                        .parse::<usize>()
+                        .ok()
+                })
+            })
+            .collect();
+        (calls, lines)
     } else {
         let trace = parse_trace(input, format);
-        trace.calls.into_iter().map(|tc| tc.call).collect()
+        let mut calls = Vec::with_capacity(trace.calls.len());
+        let mut lines = Vec::with_capacity(trace.calls.len());
+        for tc in trace.calls {
+            lines.push(tc.entry_line);
+            calls.push(tc.call);
+        }
+        (calls, lines)
     }
 }
 
