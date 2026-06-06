@@ -160,13 +160,24 @@ fn parse_param_value(raw: &str) -> ParamValue {
     if let Some(caps) = NAMED_CONST_PARENS_RE.captures(trimmed) {
         return ParamValue::NamedConstant {
             name: caps[1].to_string(),
-            value: caps[2].parse().unwrap_or(0),
+            // Captured digit group; an infallible parse modelled as a panic
+            // so a regex change surfaces instead of silently substituting
+            // `0` (which is a meaningful ODBC value in many contexts).
+            value: Some(
+                caps[2]
+                    .parse()
+                    .expect("unixodbc NAMED_CONST_PARENS_RE digit group must parse"),
+            ),
         };
     }
 
     if let Some(caps) = NAMED_CONST_PREFIX_RE.captures(trimmed) {
         return ParamValue::NamedConstant {
-            value: caps[1].parse().unwrap_or(0),
+            value: Some(
+                caps[1]
+                    .parse()
+                    .expect("unixodbc NAMED_CONST_PREFIX_RE digit group must parse"),
+            ),
             name: caps[2].to_string(),
         };
     }
@@ -180,9 +191,11 @@ fn parse_param_value(raw: &str) -> ParamValue {
     }
 
     if is_constant_name(trimmed) {
+        // Bare symbolic name without a captured numeric — represent the
+        // missing form as `None` rather than silently substituting `0`.
         return ParamValue::NamedConstant {
             name: trimmed.to_string(),
-            value: 0,
+            value: None,
         };
     }
 
@@ -552,7 +565,7 @@ mod tests {
             parse_param_value("SQL_DBMS_NAME (17)"),
             ParamValue::NamedConstant {
                 name: "SQL_DBMS_NAME".to_string(),
-                value: 17,
+                value: Some(17),
             }
         );
     }
@@ -562,7 +575,7 @@ mod tests {
         assert_eq!(
             parse_param_value("1 SQL_CHAR"),
             ParamValue::NamedConstant {
-                value: 1,
+                value: Some(1),
                 name: "SQL_CHAR".to_string(),
             }
         );
@@ -588,7 +601,7 @@ mod tests {
             parse_param_value("SQL_ATTR_ODBC_VERSION"),
             ParamValue::NamedConstant {
                 name: "SQL_ATTR_ODBC_VERSION".to_string(),
-                value: 0,
+                value: None,
             }
         );
     }

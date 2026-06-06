@@ -196,6 +196,7 @@ fn parse_param_value(raw_value: &str) -> ParamValue {
         return ParamValue::OutputNamedConstant {
             address: caps[1].to_string(),
             name: caps[2].to_string(),
+            value: None,
         };
     }
 
@@ -212,7 +213,15 @@ fn parse_param_value(raw_value: &str) -> ParamValue {
 
     if let Some(caps) = INT_NAMED_RE.captures(trimmed) {
         return ParamValue::NamedConstant {
-            value: caps[1].parse().unwrap_or(0),
+            // Captured by `INT_NAMED_RE`'s digit group; the parse is
+            // infallible, so a failure here means the regex itself was
+            // broadened. Surface as a panic rather than silently emitting
+            // `Some(0)`, which would be a *valid* (different) ODBC value.
+            value: Some(
+                caps[1]
+                    .parse()
+                    .expect("iodbc INT_NAMED_RE digit group must parse"),
+            ),
             name: caps[2].to_string(),
         };
     }
@@ -362,7 +371,9 @@ fn register_alloc_from_params(params: &[Parameter], graph: &mut HandleGraph) {
     }
 
     let handle_type_value = match &params[0].value {
-        ParamValue::NamedConstant { value, .. } => *value,
+        ParamValue::NamedConstant {
+            value: Some(value), ..
+        } => *value,
         ParamValue::Integer(v) => *v,
         _ => return,
     };
@@ -436,7 +447,7 @@ mod tests {
         assert_eq!(
             parse_param_value("3 (SQL_HANDLE_STMT)"),
             ParamValue::NamedConstant {
-                value: 3,
+                value: Some(3),
                 name: "SQL_HANDLE_STMT".to_string()
             }
         );
@@ -459,7 +470,8 @@ mod tests {
             parse_param_value("0x16b5980ea (SQL_DECIMAL)"),
             ParamValue::OutputNamedConstant {
                 address: "0x16b5980ea".to_string(),
-                name: "SQL_DECIMAL".to_string()
+                name: "SQL_DECIMAL".to_string(),
+                value: None,
             }
         );
     }
