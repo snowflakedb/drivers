@@ -181,7 +181,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "displayUserName")]
     pub _display_user_name: Option<String>,
     #[serde(rename = "serverVersion")]
-    pub _server_version: Option<String>,
+    pub server_version: Option<String>,
     #[serde(rename = "firstLogin")]
     pub _first_login: Option<bool>,
     #[serde(rename = "remMeToken")]

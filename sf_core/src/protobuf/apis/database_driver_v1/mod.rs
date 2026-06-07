@@ -417,6 +417,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_get_server_version",
+        skip(self, input)
+    )]
+    async fn connection_get_server_version(
+        &self,
+        input: ConnectionGetServerVersionRequest,
+    ) -> Result<ConnectionGetServerVersionResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let server_version = self
+            .driver
+            .connection_get_server_version(conn_handle.into())
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionGetServerVersionResponse { server_version })
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_get_all_parameters",
         skip(self, input)
     )]
@@ -1065,6 +1084,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetInfoRequest,
     ) -> BlockingProtoResult<ConnectionGetInfoResponse>;
+    fn connection_get_server_version_blocking(
+        &self,
+        input: ConnectionGetServerVersionRequest,
+    ) -> BlockingProtoResult<ConnectionGetServerVersionResponse>;
     fn connection_get_result_set_blocking(
         &self,
         input: ConnectionGetResultSetRequest,
@@ -1203,6 +1226,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionGetInfoRequest,
     ) -> BlockingProtoResult<ConnectionGetInfoResponse> {
         block_on_client_call(self.connection_get_info(input))
+    }
+
+    fn connection_get_server_version_blocking(
+        &self,
+        input: ConnectionGetServerVersionRequest,
+    ) -> BlockingProtoResult<ConnectionGetServerVersionResponse> {
+        block_on_client_call(self.connection_get_server_version(input))
     }
 
     fn connection_get_result_set_blocking(

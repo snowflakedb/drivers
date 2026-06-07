@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -152,8 +153,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_AWARE_POOLING_SUP
 // are implemented by the driver manager alone
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -163,7 +162,31 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_NAME", "[odbc-api
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(nameLen > 0);
-  REQUIRE(std::string(driverName) == "Snowflake");
+
+  OLD_DRIVER_ONLY("BD#71") {
+    // Reference driver returns the fixed marketing identifier
+    // "Snowflake" rather than a file path. This conflicts with the
+    // ODBC spec ("a character string with the file name of the driver
+    // used to access the data source") but the legacy implementation
+    // has always done it this way, so pin the exact value to detect
+    // regressions.
+    REQUIRE(std::string(driverName) == "Snowflake");
+  }
+  NEW_DRIVER_ONLY("BD#71") {
+    // New driver is spec-compliant: it returns the on-disk file path
+    // of the loaded driver shared library, resolved via the ODBC
+    // installer API (`SQLGetPrivateProfileString` against
+    // odbc.ini/odbcinst.ini) with a `dladdr` self-path fallback.
+    // The test fixture stamps the actually-loaded library path into
+    // odbcinst.ini via the `DRIVER_PATH` env var, so the resolver
+    // must round-trip to exactly that value.
+    const char* expected = std::getenv("DRIVER_PATH");
+    INFO(
+        "DRIVER_PATH must be set by the test runner so the new-driver "
+        "branch knows what file path to expect from SQL_DRIVER_NAME");
+    REQUIRE(expected != nullptr);
+    REQUIRE(std::string(driverName) == std::string(expected));
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -186,8 +209,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_ODBC_VER", "[odbc
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -197,7 +218,40 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DRIVER_VER", "[odbc-api]
 
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(verLen > 0);
-  REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);  // Format: ##.##.####
+
+  OLD_DRIVER_ONLY("BD#72") {
+    // Reference driver reports the version as `MM.mm.bbbb` with each
+    // field zero-padded (e.g. `03.17.0000`).
+    REQUIRE(std::count(driverVer, driverVer + verLen, '.') == 2);
+  }
+  NEW_DRIVER_ONLY("BD#72") {
+    // New driver reports the Cargo package version verbatim: semver
+    // `M.m.p` with NO zero-padding (e.g. `4.0.0`). Assert the exact
+    // shape — three dot-separated, unpadded, non-negative integer
+    // components — so a regression to the old zero-padded `MM.mm.bbbb`
+    // format (e.g. `03.17.0000`) fails here instead of slipping past a
+    // bare dot-count check that both formats satisfy.
+    const std::string ver(driverVer, static_cast<size_t>(verLen));
+    int components = 0;
+    for (size_t start = 0; start <= ver.size();) {
+      const size_t dot = ver.find('.', start);
+      const size_t end = (dot == std::string::npos) ? ver.size() : dot;
+      const std::string component = ver.substr(start, end - start);
+      INFO("version component '" << component << "' in '" << ver << "'");
+      // Non-empty and every char is a digit.
+      REQUIRE_FALSE(component.empty());
+      REQUIRE(std::all_of(component.begin(), component.end(), [](char c) { return c >= '0' && c <= '9'; }));
+      // Unpadded: a leading zero is only allowed when the component is
+      // exactly "0" (rejects "03", "0000").
+      REQUIRE((component.size() == 1 || component.front() != '0'));
+      ++components;
+      if (dot == std::string::npos) {
+        break;
+      }
+      start = dot + 1;
+    }
+    REQUIRE(components == 3);
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -734,8 +788,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_NAME", "[odbc-api][
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DBMS_VER", "[odbc-api][getinfo][driver_info]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -4046,13 +4098,29 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY090 - Negative BufferLengt
   SQLDisconnect(dbc_handle());
 }
 
-TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: Requires active connection even for driver info",
+TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: SQL_DRIVER_NAME requires active connection",
                  "[odbc-api][getinfo][driver_info][error]") {
   char driverName[256];
-  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, driverName, sizeof(driverName), nullptr);
+  SQLSMALLINT nameLen = 0;
+  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, driverName, sizeof(driverName), &nameLen);
 
-  // Note: Reference driver requires active connection even for driver info
+  // Per ODBC spec, every InfoType except SQL_ODBC_VER requires an open connection;
+  // every DM (Windows, unixODBC, iODBC) intercepts and synthesises 08003 on an
+  // unconnected handle, so the call never reaches either driver.
   REQUIRE_EXPECTED_ERROR(ret, "08003", dbc_handle(), SQL_HANDLE_DBC);
+}
+
+TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: SQL_ODBC_VER succeeds before active connection",
+                 "[odbc-api][getinfo][driver_info]") {
+  char odbcVer[256] = {};
+  SQLSMALLINT verLen = 0;
+  const SQLRETURN ret = SQLGetInfo(dbc_handle(), SQL_ODBC_VER, odbcVer, sizeof(odbcVer), &verLen);
+
+  // Per ODBC spec, SQL_ODBC_VER is the only InfoType that may be queried on an
+  // unconnected handle; the DM answers from its own state with the ODBC version
+  // string it implements, without ever loading or contacting a driver.
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(verLen > 0);
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLGetInfo: Returns error before connection for data source info",

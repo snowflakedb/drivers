@@ -1103,3 +1103,27 @@ behavior_differences:
       Applications binding character timestamp literals as SQL_TYPE_TIMESTAMP now get the wall-clock value they supplied, instead of a host-/session-timezone-shifted value.
     description: |
       Spec reference: ODBC Appendix D lists SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_TYPE_TIMESTAMP; TIMESTAMP_NTZ is timezone-naive so no offset should be applied. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
+
+  75:
+    name: "SQLGetInfo(SQL_DRIVER_NAME) returns the driver's installed file path instead of a fixed identifier"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    old_driver_behavior: |
+      SQLGetInfo(SQL_DRIVER_NAME) returns the fixed string "Snowflake" regardless of where the driver is installed. This is non-spec — the ODBC specification defines SQL_DRIVER_NAME as "a character string with the file name of the driver used to access the data source".
+    new_driver_behavior: |
+      SQLGetInfo(SQL_DRIVER_NAME) returns the on-disk file path of the loaded driver shared library, exactly as the ODBC spec prescribes. The path is resolved via the ODBC installer API (`SQLGetPrivateProfileString` against odbc.ini / odbcinst.ini) using whichever lookup hints (`DRIVER={...}` keyword or `DSN=`) were supplied at connect time, with a `dladdr` self-path fallback for DM-less contexts. Returns an empty string only when every layer fails (e.g. a missing installer library on a sandboxed unit-test box).
+    impact: |
+      Applications that compared SQL_DRIVER_NAME against the literal string "Snowflake" (for driver detection or telemetry tagging) need to switch to a path-based check or to SQL_DBMS_NAME. Applications that already expected a file path — including Excel/Power Query, which uses SQL_DRIVER_NAME to populate the connection-properties dialog — now receive the spec-compliant value.
+
+  76:
+    name: "SQLGetInfo(SQL_DRIVER_VER) reports the Cargo package version verbatim instead of a zero-padded `MM.mm.bbbb` string"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      SQLGetInfo(SQL_DRIVER_VER) returns the version as `MM.mm.bbbb` with each field zero-padded to a fixed width (e.g. `03.17.0000`).
+    new_driver_behavior: |
+      SQLGetInfo(SQL_DRIVER_VER) returns the Cargo package version verbatim, in unpadded semver form (e.g. `4.0.0`). The dot count is preserved (two dots, three components) so existing version-pattern consumers keep working, but the exact numeric width differs from the legacy fixed-width format.
+    impact: |
+      Applications that parsed SQL_DRIVER_VER assuming fixed `MM.mm.bbbb` widths need to relax their parser to accept unpadded semver. Applications that only used the dot count or treated the string as opaque are unaffected.
