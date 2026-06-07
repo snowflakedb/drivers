@@ -11,6 +11,7 @@ pub mod handle_allocation;
 pub mod handle_registry;
 pub mod ini_paths;
 pub mod oauth;
+pub mod odbc_installer;
 pub mod query_type;
 pub mod runtime;
 pub mod sql_state;

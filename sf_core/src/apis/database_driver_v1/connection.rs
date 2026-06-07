@@ -312,6 +312,7 @@ impl DatabaseDriverV1 {
                     warehouse: login_result.warehouse_name,
                     role: login_result.role_name,
                 };
+                let login_server_version = login_result.server_version;
 
                 // `CLIENT_SESSION_KEEP_ALIVE` and
                 // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are read from
@@ -342,6 +343,7 @@ impl DatabaseDriverV1 {
                         login_parameters.client_info.clone(),
                         merged_params,
                         login_final_names,
+                        login_server_version,
                         resolved_snapshot,
                         logout_config,
                     )
@@ -794,6 +796,10 @@ pub struct Connection {
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
+    /// Snowflake server version reported in the login response (e.g. "9.34.0").
+    /// Read by ODBC `SQLGetInfo(SQL_DBMS_VER)` and the equivalent JDBC
+    /// `getDatabaseProductVersion`. `None` until login completes.
+    pub server_version: RwLock<Option<String>>,
     /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
     /// Snowflake session id, populated from `tokens.session_id` once
@@ -830,6 +836,7 @@ impl Connection {
             is_closed: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
+            server_version: RwLock::new(None),
             wrapper_identity: None,
             session_id: None,
             heartbeat_handle: None,
@@ -890,6 +897,7 @@ impl Connection {
         client_info: ClientInfo,
         session_params: HashMap<String, String>,
         final_names: FinalSessionNames,
+        server_version: Option<String>,
         resolved_connect: ParamStore,
         logout_config: LogoutConfig,
     ) {
@@ -909,6 +917,10 @@ impl Connection {
 
         if let Ok(mut names) = self.final_session_names.write() {
             *names = final_names;
+        }
+
+        if let Ok(mut version) = self.server_version.write() {
+            *version = server_version;
         }
     }
 
@@ -1587,6 +1599,41 @@ impl DatabaseDriverV1 {
                 }
 
                 Ok(result)
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Returns the Snowflake server version cached from the login response
+    /// (`serverVersion` in `/session/v1/login-request`).
+    ///
+    /// Backs `SQLGetInfo(SQL_DBMS_VER)` in ODBC and
+    /// `getDatabaseProductVersion` in JDBC. Kept separate from
+    /// [`Self::connection_get_info`] so probing this single attribute
+    /// (Excel does it during `SQLDriverConnect`) doesn't pay for the
+    /// full info aggregation — token guard, session-parameters async lock,
+    /// final-session-names lock, and the seed/resolved/override lookups
+    /// for role/database/schema/warehouse.
+    ///
+    /// Returns `Ok(None)` if the connection has not completed login yet,
+    /// so callers can render the attribute as an empty string instead of
+    /// failing the surrounding ODBC/JDBC call.
+    pub async fn connection_get_server_version(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<Option<String>, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                let version = conn
+                    .server_version
+                    .read()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?
+                    .clone();
+                Ok(version)
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -2389,6 +2436,62 @@ mod tests {
         assert_eq!(info.session_id, None);
 
         ds.connection_release(handle).unwrap();
+    }
+
+    /// On a pre-login connection the cached server version must surface as
+    /// `None` so callers can render `SQL_DBMS_VER` / `getDatabaseProductVersion`
+    /// as empty rather than failing the surrounding ODBC/JDBC call.
+    #[tokio::test]
+    async fn connection_get_server_version_returns_none_before_login() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        let version = ds.connection_get_server_version(handle).await.unwrap();
+
+        assert_eq!(version, None);
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    /// Whatever the login response wrote into `Connection.server_version`
+    /// must round-trip through `connection_get_server_version` unchanged.
+    /// This is the invariant that backs `SQLGetInfo(SQL_DBMS_VER)` in ODBC
+    /// and `getDatabaseProductVersion` in JDBC.
+    #[tokio::test]
+    async fn connection_get_server_version_returns_cached_value() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        if let Some(conn_ptr) = ds.connections.get_obj(handle) {
+            let conn = conn_ptr.lock().await;
+            *conn.server_version.write().unwrap() = Some("9.34.0".into());
+        }
+
+        let version = ds.connection_get_server_version(handle).await.unwrap();
+
+        assert_eq!(version, Some("9.34.0".into()));
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    /// Calling the getter on a released handle must produce a structured
+    /// `invalid_argument`, mirroring how the other connection-scoped
+    /// getters fail. Guards against accidental panics from `unwrap()` if
+    /// someone re-wires `connections.get_obj` later.
+    #[tokio::test]
+    async fn connection_get_server_version_invalid_handle_returns_error() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_release(handle).unwrap();
+
+        let err = ds
+            .connection_get_server_version(handle)
+            .await
+            .expect_err("released handle must not succeed");
+        assert!(
+            matches!(err, ApiError::InvalidArgument { .. }),
+            "expected InvalidArgument, got {err:?}"
+        );
     }
 
     #[tokio::test]

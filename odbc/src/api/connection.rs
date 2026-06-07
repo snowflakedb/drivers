@@ -12,6 +12,7 @@ use crate::api::error::{
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::oauth;
+use crate::api::odbc_installer::resolve_driver_path;
 use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
@@ -208,7 +209,12 @@ pub fn driver_connect<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let params = parse_connection_string(&connection_string)?;
-    connect_with_params(connection_handle, params)
+    // Capture the original `DRIVER=` / `DSN=` keywords (if any) before
+    // they get normalised away — they are needed later to resolve the
+    // driver's installed file path for `SQLGetInfo(SQL_DRIVER_NAME)`.
+    let driver_section = params.get("DRIVER").cloned();
+    let dsn_name = params.get("DSN").cloned();
+    connect_with_params(connection_handle, params, driver_section, dsn_name)
 }
 
 /// Core connection logic shared by `driver_connect` and `connect`.
@@ -219,11 +225,24 @@ pub fn driver_connect<E: OdbcEncoding>(
 fn connect_with_params(
     connection_handle: sql::Handle,
     params: HashMap<String, String>,
+    driver_section: Option<String>,
+    dsn_name: Option<String>,
 ) -> OdbcResult<()> {
     tracing::info!(
         "connect_with_params: params={:?}",
         oauth::redacted_param_map(&params)
     );
+
+    // Stash the ini-identity hints on the DBC up front so they are
+    // available to `SQLGetInfo(SQL_DRIVER_NAME)` even if the connection
+    // itself fails partway through. Connection-string parsing has
+    // already validated the strings; we just retain them verbatim.
+    {
+        let dbc = conn_from_handle(connection_handle)?;
+        let mut conn = dbc.connection.lock();
+        conn.driver_section = driver_section;
+        conn.dsn_name = dsn_name;
+    }
 
     let mut options = normalize_connection_string_options(params);
     if let Some(config_setting::Value::StringValue(raw_port)) = options
@@ -472,7 +491,11 @@ pub fn connect<E: OdbcEncoding>(
     params
         .retain(|k, _| !k.eq_ignore_ascii_case("Driver") && !k.eq_ignore_ascii_case("Description"));
 
-    connect_with_params(connection_handle, params)
+    // The DSN name is what reaches `SQLGetInfo(SQL_DRIVER_NAME)` for
+    // resolving the driver's installed file path via `odbc.ini` →
+    // `odbcinst.ini`. SQLConnect never carries a `DRIVER=` keyword, so
+    // there is no direct driver section to capture here.
+    connect_with_params(connection_handle, params, None, Some(dsn))
 }
 
 /// Look up DSN parameters.
@@ -1199,7 +1222,7 @@ pub fn get_info<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
-    let _conn = conn_from_handle(connection_handle)?;
+    let dbc = conn_from_handle(connection_handle)?;
 
     let info_type = InfoType::try_from(info_type)?;
     tracing::debug!("get_info: info_type={info_type:?}");
@@ -1219,9 +1242,80 @@ pub fn get_info<E: OdbcEncoding>(
             }
             Ok(())
         }
+        InfoType::DriverName => {
+            // Per ODBC spec, `SQL_DRIVER_NAME` returns "a character string
+            // with the file name of the driver used to access the data
+            // source" — i.e. the on-disk path of the shared library the
+            // Driver Manager loaded. We resolve it via the DM's installer
+            // API (`SQLGetPrivateProfileString`) using whichever lookup
+            // hints we captured at connect time; see
+            // [`odbc_installer::resolve_driver_path`] for the layering.
+            let (driver_section, dsn_name) = {
+                let conn = dbc.connection.lock();
+                (conn.driver_section.clone(), conn.dsn_name.clone())
+            };
+            let path = resolve_driver_path(driver_section.as_deref(), dsn_name.as_deref());
+            write_string_bytes::<E>(
+                &path,
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
+        InfoType::DriverVer => {
+            write_string_bytes::<E>(
+                ODBC_DRIVER_VERSION,
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
         InfoType::DbmsName => {
             write_string_bytes::<E>(
                 "Snowflake",
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
+            Ok(())
+        }
+        InfoType::DbmsVer => {
+            // Sourced from `serverVersion` in the login response (parsed in
+            // [`sf_core::rest::snowflake::auth::AuthResponseMain`]). Matches
+            // the legacy driver and avoids the extra `SELECT CURRENT_VERSION()`
+            // round trip that JDBC currently performs.
+            //
+            // Uses the dedicated `connection_get_server_version` getter
+            // rather than `connection_get_info` — Excel polls this attribute
+            // during `SQLDriverConnect` and the full info aggregation is
+            // wasteful when only the version is needed.
+            //
+            // Before the connection is established, sf_core has no
+            // `server_version` yet — return an empty string instead of
+            // surfacing an error so callers that probe this attribute during
+            // `SQLDriverConnect` (Excel does) still succeed.
+            let conn_handle = match dbc.connection.lock().state {
+                ConnectionState::Connected { conn_handle, .. } => Some(conn_handle),
+                ConnectionState::Disconnected => None,
+            };
+            let version = match conn_handle {
+                Some(handle) => global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                    let resp = c
+                        .connection_get_server_version(ConnectionGetServerVersionRequest {
+                            conn_handle: Some(handle),
+                        })
+                        .await?;
+                    Ok::<Option<String>, crate::api::OdbcError>(resp.server_version)
+                })?,
+                None => None,
+            };
+            write_string_bytes::<E>(
+                version.as_deref().unwrap_or(""),
                 info_value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,

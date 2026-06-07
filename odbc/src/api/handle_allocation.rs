@@ -53,6 +53,8 @@ pub fn alloc_connection(env_id: HandleId) -> OdbcResult<sql::Handle> {
             cached_autocommit: crate::api::types::AutocommitValue::On,
             current_catalog: None,
             metadata_id: false,
+            driver_section: None,
+            dsn_name: None,
         }),
     };
     let dbc_handle = global().context(OdbcRuntimeSnafu)?.dbc_registry.add(dbc)?;
