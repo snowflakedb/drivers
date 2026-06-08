@@ -113,14 +113,14 @@ impl PythonGenerator {
                 content += &self.generate_server_class(&service, &package);
             }
 
-            // Generate client classes
+            // Generate (synchronous) client classes
             for service in file.service.clone() {
                 content += &self.generate_client_class(&service, &package);
             }
 
-            // Generate blocking client wrappers
+            // Generate async client classes (separate code path from the sync clients)
             for service in file.service {
-                content += &self.generate_blocking_client_class(&service, &package);
+                content += &self.generate_async_client_class(&service, &package);
             }
 
             result.add_file(
@@ -133,8 +133,7 @@ impl PythonGenerator {
     }
 
     fn generate_common_imports(&self) -> String {
-        r#"import asyncio
-from abc import ABC, abstractmethod
+        r#"from abc import ABC, abstractmethod
 from typing import Optional
 from google.protobuf import message
 from .database_driver_v1_pb2 import *
@@ -297,8 +296,8 @@ class ProtoError(Exception):
             let error_type = method_error.or(service_error).unwrap_or(&empty_error);
 
             content += &format!(
-                r#"    async def {name}(self, request: {input_type}) -> {output_type}:
-        (code, response_bytes) = await self._transport.handle_message('{service_name}', '{name}', request.SerializeToString())
+                r#"    def {name}(self, request: {input_type}) -> {output_type}:
+        (code, response_bytes) = self._transport.handle_message('{service_name}', '{name}', request.SerializeToString())
         if code == 0:
             response = {output_type}()
             response.ParseFromString(response_bytes)
@@ -318,29 +317,49 @@ class ProtoError(Exception):
         content
     }
 
-    fn generate_blocking_client_class(
+    /// Generate the asynchronous client for a service.
+    ///
+    /// This is a dedicated client for the async code path — separate from the
+    /// synchronous ``{service}Client``. Each method awaits
+    /// ``transport.handle_message_async``, which today offloads the blocking
+    /// FFI call to a worker thread via ``asyncio.to_thread``. A non-blocking,
+    /// callback-based FFI will replace that hop later without changing this
+    /// client's surface.
+    fn generate_async_client_class(
         &self,
         service: &crate::protobuf::ServiceDescriptorProto,
         package: &str,
     ) -> String {
         let service_name = service.name.as_ref().unwrap_or(&String::new()).clone();
+        let service_error = service
+            .options
+            .as_ref()
+            .and_then(|o| o.service_error.as_ref());
 
         let mut content = format!(
-            r#"
-class Blocking{service_name}Client:
-    """Synchronous wrapper over :class:`{service_name}Client`.
+            r#"class Async{service_name}Client:
+    """Asynchronous {service_name} client.
 
-    Runs each async RPC on a background event loop so that callers can keep
-    using the existing blocking API while the underlying transport is
-    async-first. The loop is provided at construction time by the caller.
+    Each RPC awaits ``transport.handle_message_async``, which runs the
+    blocking FFI call on a worker thread so the event loop is not blocked.
+    This is a separate code path from the synchronous ``{service_name}Client``.
     """
 
-    def __init__(self, async_client: '{service_name}Client', loop: asyncio.AbstractEventLoop):
-        self._async_client = async_client
-        self._loop = loop
+    def __init__(self, transport, error_handler=None):
+        """
+        Args:
+            transport: Transport layer that handles message serialization.
+            error_handler: Optional callable that converts a proto-layer exception
+                into a public exception.  Must **return** the converted exception
+                (not raise it); ``_raise_error`` takes care of raising.
+        """
+        self._transport = transport
+        self._error_handler = error_handler
 
-    def _run(self, coro):
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+    def _raise_error(self, exc):
+        if self._error_handler is not None:
+            raise self._error_handler(exc) from None
+        raise exc
 
 "#
         );
@@ -359,10 +378,28 @@ class Blocking{service_name}Client:
                     .unwrap_or(&String::new())
                     .clone(),
             );
+            let method_error = method
+                .options
+                .as_ref()
+                .and_then(|o| o.method_error.as_ref());
+            let empty_error = "EmptyError".to_string();
+            let error_type = method_error.or(service_error).unwrap_or(&empty_error);
 
             content += &format!(
-                r#"    def {name}(self, request: {input_type}) -> {output_type}:
-        return self._run(self._async_client.{name}(request))
+                r#"    async def {name}(self, request: {input_type}) -> {output_type}:
+        (code, response_bytes) = await self._transport.handle_message_async('{service_name}', '{name}', request.SerializeToString())
+        if code == 0:
+            response = {output_type}()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = {error_type}()
+            error.ParseFromString(response_bytes)
+            self._raise_error(ProtoApplicationException(error))
+        elif code == 2:
+            self._raise_error(ProtoTransportException(str(response_bytes)))
+        else:
+            self._raise_error(ProtoTransportException(f"Unknown error code: %s", code))
 "#
             );
         }
