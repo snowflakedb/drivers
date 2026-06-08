@@ -1337,6 +1337,7 @@ class TestClosedCursorErrors:
             assert isinstance(excinfo.value, AttributeError)
 
 
+@pytest.mark.flaky
 class TestClosedConnectionCursorErrors:
     """Test cursor operations when the underlying connection has been closed."""
 

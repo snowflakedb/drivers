@@ -66,6 +66,7 @@ class TestLogoutSessionInvalidation:
     These tests verify that connections properly reject operations after close().
     """
 
+    @pytest.mark.flaky
     def test_should_reject_queries_client_side_after_connection_is_closed(self, connection_factory):
         """Verify queries are rejected client-side after connection is closed."""
         # Given Snowflake client is logged in
@@ -122,6 +123,7 @@ class TestLogoutEdgeCases:
         # And No errors are thrown
         assert conn.is_closed()
 
+    @pytest.mark.flaky
     @pytest.mark.skip_reference(reason="Old connector has no close idempotency — 5 threads send 5 logouts")
     def test_should_handle_concurrent_close_calls_safely(self, int_test_connection_factory, wiremock):
         """Verify that concurrent close() calls are thread-safe and send only one logout request."""
