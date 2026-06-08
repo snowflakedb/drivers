@@ -7,6 +7,7 @@ pub mod encoding;
 pub mod environment;
 pub mod error;
 pub(crate) mod error_trace_flag;
+pub mod get_info_bitmasks;
 pub mod handle_allocation;
 pub mod handle_registry;
 pub mod ini_paths;
