@@ -1,6 +1,8 @@
 name: ODBC CI
 
 on:
+  schedule:
+    - cron: '0 3 * * *'  # Nightly at 03:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
     branches:
       - main
@@ -46,7 +48,7 @@ jobs:
 
   odbc_unit_tests:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_odbc == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -102,7 +104,7 @@ jobs:
 
   odbc_tests_reference:
     needs: detect-changes
-    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || needs.detect-changes.outputs.run_odbc_reference == 'true')"
+    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_odbc_reference == 'true')"
     uses: ./.github/workflows/_test-odbc-reference.yml
     # secrets.PARAMETERS_SECRET is read by decode_secrets inside the
     # reusable workflow; reusable workflows do NOT auto-inherit secrets
@@ -111,7 +113,7 @@ jobs:
 
   odbc_tests:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_odbc == 'true'
     uses: ./.github/workflows/_test-odbc.yml
     # See odbc_tests_reference above for the secrets-inherit rationale.
     secrets: inherit

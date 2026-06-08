@@ -19,11 +19,9 @@ jobs:
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          # Use nightly scope on release branches so every platform × cloud
-          # combination is validated before a release. Main pushes stay at
-          # merge (pairwise) scope.
           LEVEL_ARG=""
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi
           python ci/test_matrix/generate_matrix.py \
@@ -34,7 +32,8 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           LEVEL_ARG=""
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi
           python ci/test_matrix/generate_matrix.py \

@@ -1,6 +1,8 @@
 name: JDBC CI
 
 on:
+  schedule:
+    - cron: '0 4 * * *'  # Nightly at 04:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
     branches: [main]
   pull_request:
@@ -22,7 +24,7 @@ jobs:
 
   jdbc_tests:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -174,7 +176,7 @@ jobs:
 
   jdbc_tests_reference:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc_reference == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_jdbc_reference == 'true'
     name: JDBC Old Driver Reference Tests
     runs-on: ubuntu-latest
     steps:

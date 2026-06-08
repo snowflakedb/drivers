@@ -1,6 +1,8 @@
 name: Rust Core CI
 
 on:
+  schedule:
+    - cron: '0 5 * * *'  # Nightly at 05:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
     branches: [main]
   pull_request:
@@ -89,7 +91,7 @@ jobs:
   # for no benefit. Keep this job lightweight; it finishes in under 30 seconds.
   format:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -103,7 +105,7 @@ jobs:
 
   build-without-protobuf:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -156,7 +158,7 @@ jobs:
   test:
     needs: [detect-changes, load-core-matrix]
     if: |
-      (github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true')
+      (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true')
       && needs.load-core-matrix.outputs.test_matrix != '[]'
     strategy:
       fail-fast: false
@@ -332,7 +334,7 @@ jobs:
   test_windows_arm64_nonfips:
     needs: [detect-changes, load-core-matrix]
     if: |
-      (github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true')
+      (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true')
       && needs.load-core-matrix.outputs.windows_arm_active == 'true'
     runs-on: windows-11-arm
     name: test (Windows ARM64, non-FIPS)
@@ -526,7 +528,7 @@ jobs:
   test_windows_x86:
     needs: [detect-changes, load-core-matrix]
     if: |
-      (github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true')
+      (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_rust_core == 'true')
       && needs.load-core-matrix.outputs.windows_x86_active == 'true'
     runs-on: windows-latest
     name: test (Windows x86)

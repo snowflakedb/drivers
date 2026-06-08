@@ -1,6 +1,8 @@
 name: Python CI
 
 on:
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 02:00 UTC on main (staggered: python=02, odbc=03, jdbc=04, rust=05)
   push:
     branches: [main, 'release/python-**']
   pull_request:
@@ -56,11 +58,9 @@ jobs:
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
-          # Use nightly scope on release branches so every platform × cloud
-          # combination is validated before a release. Main pushes stay at
-          # merge (pairwise) scope.
           LEVEL_ARG=""
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi
           python ci/test_matrix/generate_matrix.py \
@@ -71,7 +71,8 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           LEVEL_ARG=""
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] || \
+             [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/heads/release/* ]]; then
             LEVEL_ARG="--level nightly"
           fi
           python ci/test_matrix/generate_matrix.py \
@@ -81,7 +82,7 @@ jobs:
   # ── Build all wheels via shared reusable workflow ────────────────────
   build_wheels:
     needs: [detect-changes, load-python-matrix]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python == 'true'
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
       targets: ${{ needs.load-python-matrix.outputs.build-targets }}
@@ -89,7 +90,7 @@ jobs:
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
     needs: [detect-changes]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python_packaging == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -189,7 +190,7 @@ jobs:
   # Combined unit + integration tests with universal connector
   python_tests:
     needs: [detect-changes, build_wheels, load-python-matrix]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -503,7 +504,7 @@ jobs:
   # skip-install=true, so no universal wheel download is needed.
   python_tests_reference:
     needs: [detect-changes, build_wheels]
-    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || needs.detect-changes.outputs.run_python_reference == 'true')"
+    if: "!contains(github.event.pull_request.labels.*.name, 'ci:scope-merge-queue') && github.event_name != 'merge_group' && (github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python_reference == 'true')"
     strategy:
       fail-fast: false
       matrix:
@@ -570,7 +571,7 @@ jobs:
   # not gate merges and the job is intentionally omitted from python-status.
   python_flaky_tests:
     needs: [detect-changes, build_wheels]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     name: python_flaky_tests (ubuntu-latest, py3.13, aws)
     continue-on-error: true
