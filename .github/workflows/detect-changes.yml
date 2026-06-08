@@ -236,6 +236,12 @@ jobs:
       - name: Compute combined conditions
         id: computed
         run: |
+          if [[ "${{ github.repository_owner }}" != "snowflakedb" ]]; then
+            IS_SNOWFLAKE_ENG=true
+          else
+            IS_SNOWFLAKE_ENG=false
+          fi
+
           # docs_only is true if every modified file is a documentation
           # file (path matches `**/*.md`, equals `LICENSE`, or equals
           # `.github/CODEOWNERS`).
@@ -253,42 +259,47 @@ jobs:
           echo "docs_only=$DOCS_ONLY" >> $GITHUB_OUTPUT
 
           # JDBC should run if: jdbc OR core OR shared changed
-          if [[ "${{ steps.filter.outputs.jdbc }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.jdbc }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
             echo "run_jdbc=true" >> $GITHUB_OUTPUT
           else
             echo "run_jdbc=false" >> $GITHUB_OUTPUT
           fi
 
           # ODBC should run if: odbc OR core OR shared changed
-          if [[ "${{ steps.filter.outputs.odbc }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.odbc }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
             echo "run_odbc=true" >> $GITHUB_OUTPUT
           else
             echo "run_odbc=false" >> $GITHUB_OUTPUT
           fi
 
           # Python should run if: python OR core OR shared changed
-          if [[ "${{ steps.filter.outputs.python }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.python }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
             echo "run_python=true" >> $GITHUB_OUTPUT
           else
             echo "run_python=false" >> $GITHUB_OUTPUT
           fi
 
           # Packaging should run if: packaging files changed
-          if [[ "${{ steps.filter.outputs.python_packaging }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.python_packaging }}" == "true" ]]; then
             echo "run_python_packaging=true" >> $GITHUB_OUTPUT
           else
             echo "run_python_packaging=false" >> $GITHUB_OUTPUT
           fi
 
           # Rust Core should run if: core OR shared changed
-          if [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
-             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             { [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+               [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; }; then
             echo "run_rust_core=true" >> $GITHUB_OUTPUT
           else
             echo "run_rust_core=false" >> $GITHUB_OUTPUT
@@ -299,42 +310,48 @@ jobs:
           # driver is a fresh skeleton with no real integration yet, so
           # changes to shared infra do not trigger nodejs tests.
           # Broaden this rule (add `core`/`shared`) once the wrapper actually depends on them.
-          if [[ "${{ steps.filter.outputs.nodejs }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs }}" == "true" ]]; then
             echo "run_nodejs=true" >> $GITHUB_OUTPUT
           else
             echo "run_nodejs=false" >> $GITHUB_OUTPUT
           fi
 
           # JDBC reference tests should run if: e2e/integ tests changed
-          if [[ "${{ steps.filter.outputs.jdbc_e2e_integ }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.jdbc_e2e_integ }}" == "true" ]]; then
             echo "run_jdbc_reference=true" >> $GITHUB_OUTPUT
           else
             echo "run_jdbc_reference=false" >> $GITHUB_OUTPUT
           fi
 
           # ODBC reference tests should run if: e2e/integ tests changed
-          if [[ "${{ steps.filter.outputs.odbc_e2e_integ }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.odbc_e2e_integ }}" == "true" ]]; then
             echo "run_odbc_reference=true" >> $GITHUB_OUTPUT
           else
             echo "run_odbc_reference=false" >> $GITHUB_OUTPUT
           fi
 
           # Python reference tests should run if: e2e/integ tests changed
-          if [[ "${{ steps.filter.outputs.python_e2e_integ }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.python_e2e_integ }}" == "true" ]]; then
             echo "run_python_reference=true" >> $GITHUB_OUTPUT
           else
             echo "run_python_reference=false" >> $GITHUB_OUTPUT
           fi
 
           # Node.js reference tests should run if: e2e tests changed
-          if [[ "${{ steps.filter.outputs.nodejs_e2e_integ }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.nodejs_e2e_integ }}" == "true" ]]; then
             echo "run_nodejs_reference=true" >> $GITHUB_OUTPUT
           else
             echo "run_nodejs_reference=false" >> $GITHUB_OUTPUT
           fi
 
           # ODBC packaging should run if installer/packaging files changed
-          if [[ "${{ steps.filter.outputs.odbc_packaging }}" == "true" ]]; then
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.odbc_packaging }}" == "true" ]]; then
             echo "run_odbc_packaging=true" >> $GITHUB_OUTPUT
           else
             echo "run_odbc_packaging=false" >> $GITHUB_OUTPUT
