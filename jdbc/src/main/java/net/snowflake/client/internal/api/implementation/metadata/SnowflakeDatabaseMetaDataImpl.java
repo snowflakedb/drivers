@@ -735,7 +735,7 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   public ResultSet getProcedures(String catalog, String schemaPattern, String procedureNamePattern)
       throws SQLException {
     connection.checkClosed();
-    throw new SQLFeatureNotSupportedException("getProcedures not supported");
+    throw new NotImplementedException();
   }
 
   @Override
