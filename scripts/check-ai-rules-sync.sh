@@ -33,12 +33,10 @@ for claude_file in .claude/rules/*.md; do
     # canonical body, so drop it. Done in awk (not piped through sed) so the
     # script works on both GNU and BSD sed.
     cursor_body=$(awk '
-        BEGIN { done=0; n=0; first_body_line=1 }
+        BEGIN { done=0; n=0; skipped_blank=0 }
         /^---$/ && !done { n++; if (n==2) { done=1 }; next }
-        done {
-            if (first_body_line) { first_body_line=0; if ($0 == "") next }
-            print
-        }
+        done && !skipped_blank && /^[[:space:]]*$/ { skipped_blank=1; next }
+        done { print }
     ' "$cursor_file")
 
     claude_body=$(cat "$claude_file")

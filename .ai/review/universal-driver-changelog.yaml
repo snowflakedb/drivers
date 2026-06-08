@@ -1,0 +1,64 @@
+id: universal-driver-changelog
+friendly_name: "Universal Driver Changelog Rules"
+status: enabled
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  # Changelog updates for nodejs are not planned in the near future.
+  # - "nodejs"
+  - "python"
+  - "sf_core"
+  - "jdbc"
+  - "odbc"
+excluded_folders: []
+llm_model: "claude-sonnet-4-6"
+allowed_file_extensions:
+  - ".md"
+rules:
+  - id: ud-changelog-pr-link-required
+    rule: |
+      **OBJECTIVE**: Every changelog entry must end with a link to the PR that introduced it so reviewers and users can navigate directly to the full diff, discussion, and test plan.
+
+      **REQUIREMENT**: Every bullet entry under any release heading in `CHANGELOG.md` MUST end with a PR reference in the format `(snowflake-eng/universal-driver#N)`. Entries without a PR link are incomplete and must not be merged. Applies to both `## Upcoming Release` and versioned release sections (`## X.Y.Z`). For multi-line entries (parent bullet + indented sub-bullets), the PR link goes on the parent bullet.
+
+      ❌ **BAD — no PR link**
+      ```
+      - Fixed connection reset on idle timeout.
+      ```
+
+      ✅ **GOOD**
+      ```
+      - Fixed connection reset on idle timeout. (snowflake-eng/universal-driver#42)
+      ```
+
+  - id: ud-changelog-section-structure
+    rule: |
+      **OBJECTIVE**: Enforce a consistent, scannable CHANGELOG structure across all components so release notes are easy to audit and publish.
+
+      **REQUIREMENT**:
+      1. The first section MUST be `## Upcoming Release`. No other heading precedes it.
+      2. Shipped releases use `## X.Y.Z` headings below `## Upcoming Release`.
+      3. Within a release, entries MUST be grouped under plain-text section labels followed by a colon and a blank line. Allowed section names in order: `Breaking changes:` (only when present), `New features:`, `Changes:`, `Bug fixes:`, `Dependencies:`, `Internal changes:`. Omit empty sections.
+      4. Do NOT use the legacy `[NEXT RELEASE]` or `- ## [...]` stub format.
+
+      ❌ **BAD — legacy stub**
+      ```markdown
+      # Changelog
+      - ## [NEXT RELEASE]
+      ```
+
+      ✅ **GOOD**
+      ```markdown
+      # Changelog
+
+      ## Upcoming Release
+
+      Bug fixes:
+
+      - Fixed connection reset on idle timeout. (snowflake-eng/universal-driver#42)
+
+      ## 1.2.3
+
+      New features:
+
+      - Added OAuth token refresh support. (snowflake-eng/universal-driver#38)
+      ```

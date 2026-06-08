@@ -1,0 +1,45 @@
+# Changelog Format
+
+Apply this rule whenever you write, edit, or review a `CHANGELOG.md` file in this repo.
+
+## File structure
+
+- Component changelogs live at `<component>/CHANGELOG.md` (e.g. `python/CHANGELOG.md`, `nodejs/CHANGELOG.md`).
+- The first section is always `## Upcoming Release` for in-progress work.
+- Shipped releases use `## X.Y.Z` headings below that.
+- Within a release, group entries under plain-text section labels followed by a colon and a blank line. Order: `Breaking changes:` (only when present), `New features:`, `Changes:`, `Bug fixes:`, `Dependencies:`, `Internal changes:`. Omit empty sections.
+- The `## Upcoming Release` section must always be present even when empty — leave the body blank until real content is added (no placeholder bullets).
+
+## PR link requirement
+
+Every bullet entry **must** end with a PR link in the format `(snowflakedb/universal-driver#N)` where N is the pull request number. An entry without a PR link is incomplete and must not be merged.
+
+```
+# ❌ Missing PR link
+- Fixed connection reset on idle timeout.
+
+# ✅ Correct
+- Fixed connection reset on idle timeout. (snowflakedb/universal-driver#42)
+```
+
+For multi-line entries (parent bullet + indented sub-bullets), place the PR link on the parent bullet line.
+
+## Entry wording
+
+- Start with a past-tense verb: `Added`, `Fixed`, `Removed`, `Improved`, `Changed`, `Bumped`.
+- One sentence per entry; avoid internal jargon.
+- Customer-invisible changes (CI automation, internal telemetry, repo hygiene with no user-visible effect) belong in `Internal changes:`.
+
+These rules apply at write-time. For interactive changelog cleanup and sorting, invoke the `changelog-cleanup` skill.
+
+<!-- sync-target: .cursor/rules/changelog-format.mdc carries an identical body
+     (the full content of this file) plus Cursor-specific frontmatter.
+     WHY both files need full content instead of a pointer:
+       alwaysApply rules are injected into the agent system prompt at session start.
+       A pointer file loads the body via tool call, putting it in conversation history
+       where context compaction can silently drop it mid-session. Full content in both
+       files keeps the rule in context for the lifetime of any session.
+     TO UPDATE: edit this file, copy its complete contents into the body of
+       .cursor/rules/changelog-format.mdc (below the closing ---
+       of the Cursor frontmatter), then run: bash scripts/check-ai-rules-sync.sh
+     The pre-commit hook (ai-rules-sync) catches drift automatically. -->
