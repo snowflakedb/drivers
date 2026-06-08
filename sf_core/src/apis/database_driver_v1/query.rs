@@ -20,14 +20,31 @@ use std::sync::Arc;
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
-/// Result of processing a query response, containing the Arrow reader and
-/// optional column metadata for cases where the server does not provide rowtype
+/// Result of processing a query response: the Arrow reader plus optional
+/// column metadata for responses where the server does not provide rowtype
 /// (e.g. PUT/GET file transfer commands).
+///
+/// The reader is a plain [`RecordBatchReader`], not an FFI stream. For chunked
+/// result sets it downloads and parses chunks lazily using a blocking channel
+/// receiver, so it must be drained from a synchronous context -- never from
+/// within an async runtime (a `tokio` task or `block_on`), which would panic.
+/// Drain it after returning from `block_on`, or on a dedicated thread or via
+/// `spawn_blocking`.
+#[non_exhaustive]
 pub struct QueryResult {
+    /// Arrow reader over the result set; `Send + 'static`. See the type-level
+    /// note above on draining it outside an async runtime.
     pub reader: Box<dyn RecordBatchReader + Send>,
+    /// Column metadata override: `Some` only for PUT/GET file-transfer
+    /// commands; `None` for ordinary queries, whose schema comes from `reader`.
     pub columns: Option<Vec<ColumnMetadata>>,
 }
 
+/// Process a Snowflake query response into a [`QueryResult`], returning the
+/// Arrow [`RecordBatchReader`] directly with no FFI wrapping. For chunked
+/// result sets `http_client` downloads further chunks lazily as the reader is
+/// drained; see [`QueryResult`] for the requirement to drain it from a
+/// synchronous context.
 pub async fn process_query_response(
     data: &query_response::Data,
     http_client: &Client,

@@ -31,8 +31,13 @@ fn process_query_response_returns_record_batch_reader_without_ffi() {
         .expect("process_query_response should succeed for an inline JSON rowset");
 
     // The explicit type is the contract under test: the field is exactly
-    // `Box<dyn RecordBatchReader + Send + 'static>`, not an FFI stream.
-    let reader: Box<dyn RecordBatchReader + Send + 'static> = result.reader;
+    // `Box<dyn RecordBatchReader + Send + 'static>`, not an FFI stream. Routing
+    // the real value through a `Send + 'static` bound ties the guarantee to
+    // `QueryResult.reader` itself.
+    fn assert_send_static<T: Send + 'static>(value: T) -> T {
+        value
+    }
+    let reader: Box<dyn RecordBatchReader + Send + 'static> = assert_send_static(result.reader);
     assert!(result.columns.is_none());
 
     let schema = reader.schema();
@@ -68,11 +73,4 @@ fn process_query_response_returns_record_batch_reader_without_ffi() {
         .expect("column 1 should be Utf8");
     assert_eq!(names.value(0), "alice");
     assert_eq!(names.value(1), "bob");
-}
-
-// Compile-time guarantee that the returned reader is `Send + 'static`.
-#[test]
-fn returned_reader_is_send_and_static() {
-    fn assert_send_static<T: Send + 'static>() {}
-    assert_send_static::<Box<dyn RecordBatchReader + Send>>();
 }
