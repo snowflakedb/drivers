@@ -11,6 +11,15 @@ use crate::api::error::{
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu,
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
+use crate::api::get_info_bitmasks::{
+    AGGREGATE_FUNCTIONS, CATALOG_USAGE, CONVERT_BIGINT, CONVERT_BINARY, CONVERT_BIT, CONVERT_CHAR,
+    CONVERT_DATE, CONVERT_DECIMAL, CONVERT_DOUBLE, CONVERT_FLOAT, CONVERT_FUNCTIONS, CONVERT_GUID,
+    CONVERT_INTEGER, CONVERT_LONGVARBINARY, CONVERT_LONGVARCHAR, CONVERT_NUMERIC, CONVERT_REAL,
+    CONVERT_SMALLINT, CONVERT_TIME, CONVERT_TIMESTAMP, CONVERT_TINYINT, CONVERT_VARBINARY,
+    CONVERT_VARCHAR, CONVERT_WCHAR, CONVERT_WLONGVARCHAR, CONVERT_WVARCHAR, NUMERIC_FUNCTIONS,
+    SCHEMA_USAGE, SQL92_PREDICATES, SQL92_RELATIONAL_JOIN_OPERATORS, SQL92_VALUE_EXPRESSIONS,
+    STRING_FUNCTIONS, SYSTEM_FUNCTIONS, TIMEDATE_FUNCTIONS, TIMEDATE_TSI_INTERVALS, synthesize,
+};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_path;
 use crate::api::runtime::global;
@@ -1211,6 +1220,62 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     }
 }
 
+/// Write an ODBC string value into the `SQLGetInfo` output buffers.
+/// Both pointers are individually null-guarded — the Driver Manager passes
+/// null for either side when it only wants the other.
+fn write_get_info_string<E: OdbcEncoding>(
+    value: &str,
+    info_value_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    write_string_bytes::<E>(
+        value,
+        info_value_ptr as *mut E::Char,
+        buffer_length,
+        string_length_ptr,
+        None,
+    );
+}
+
+/// Write a `SQLUSMALLINT` info value (used by InfoTypes whose return type is
+/// `SQLUSMALLINT`, e.g. `SQL_CONCAT_NULL_BEHAVIOR`).
+fn write_get_info_u16(
+    value: u16,
+    info_value_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    if !info_value_ptr.is_null() {
+        unsafe {
+            *(info_value_ptr as *mut u16) = value;
+        }
+    }
+    if !string_length_ptr.is_null() {
+        unsafe {
+            *string_length_ptr = std::mem::size_of::<u16>() as sql::SmallInt;
+        }
+    }
+}
+
+/// Write a `SQLUINTEGER` info value (used by all bitmask InfoTypes and the
+/// `SQLUINTEGER`-typed numeric InfoTypes).
+fn write_get_info_u32(
+    value: u32,
+    info_value_ptr: sql::Pointer,
+    string_length_ptr: *mut sql::SmallInt,
+) {
+    if !info_value_ptr.is_null() {
+        unsafe {
+            *(info_value_ptr as *mut u32) = value;
+        }
+    }
+    if !string_length_ptr.is_null() {
+        unsafe {
+            *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+        }
+    }
+}
+
 /// Retrieve general information about the driver and data source
 /// (SQLGetInfo / SQLGetInfoW).
 pub fn get_info<E: OdbcEncoding>(
@@ -1227,21 +1292,14 @@ pub fn get_info<E: OdbcEncoding>(
     let info_type = InfoType::try_from(info_type)?;
     tracing::debug!("get_info: info_type={info_type:?}");
 
+    // Local aliases to keep each match arm a single readable line.
+    let write_str =
+        |s: &str| write_get_info_string::<E>(s, info_value_ptr, buffer_length, string_length_ptr);
+    let write_u16 = |v: u16| write_get_info_u16(v, info_value_ptr, string_length_ptr);
+    let write_u32 = |v: u32| write_get_info_u32(v, info_value_ptr, string_length_ptr);
+
     match info_type {
-        InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => {
-            let cb_close: u16 = 1;
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u16) = cb_close;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u16>() as sql::SmallInt;
-                }
-            }
-            Ok(())
-        }
+        // ----- Strings -----------------------------------------------------
         InfoType::DriverName => {
             // Per ODBC spec, `SQL_DRIVER_NAME` returns "a character string
             // with the file name of the driver used to access the data
@@ -1255,35 +1313,10 @@ pub fn get_info<E: OdbcEncoding>(
                 (conn.driver_section.clone(), conn.dsn_name.clone())
             };
             let path = resolve_driver_path(driver_section.as_deref(), dsn_name.as_deref());
-            write_string_bytes::<E>(
-                &path,
-                info_value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                None,
-            );
-            Ok(())
+            write_str(&path);
         }
-        InfoType::DriverVer => {
-            write_string_bytes::<E>(
-                ODBC_DRIVER_VERSION,
-                info_value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                None,
-            );
-            Ok(())
-        }
-        InfoType::DbmsName => {
-            write_string_bytes::<E>(
-                "Snowflake",
-                info_value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                None,
-            );
-            Ok(())
-        }
+        InfoType::DriverVer => write_str(ODBC_DRIVER_VERSION),
+        InfoType::DbmsName => write_str("Snowflake"),
         InfoType::DbmsVer => {
             // Sourced from `serverVersion` in the login response (parsed in
             // [`sf_core::rest::snowflake::auth::AuthResponseMain`]). Matches
@@ -1314,14 +1347,7 @@ pub fn get_info<E: OdbcEncoding>(
                 })?,
                 None => None,
             };
-            write_string_bytes::<E>(
-                version.as_deref().unwrap_or(""),
-                info_value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                None,
-            );
-            Ok(())
+            write_str(version.as_deref().unwrap_or(""));
         }
         InfoType::DriverOdbcVer => {
             // ODBC 3.80 — matches the level the legacy Snowflake ODBC
@@ -1333,89 +1359,92 @@ pub fn get_info<E: OdbcEncoding>(
             // ODBC 3.5+ C type. Returning `03.80` is also a superset
             // claim: every API the driver currently implements is
             // available at that level.
-            write_string_bytes::<E>(
-                ODBC_API_VERSION,
-                info_value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                None,
-            );
-            Ok(())
+            write_str(ODBC_API_VERSION);
         }
-        InfoType::GetDataExtensions => {
-            let extensions = [
+        InfoType::SearchPatternEscape => write_str("\\"),
+        InfoType::IdentifierQuoteChar => write_str("\""),
+        InfoType::SchemaTerm => write_str("schema"),
+        InfoType::CatalogNameSeparator => write_str("."),
+        InfoType::CatalogTerm => write_str("database"),
+        InfoType::ColumnAlias => write_str("Y"),
+        InfoType::OrderByColumnsInSelect => write_str("N"),
+        InfoType::SpecialCharacters => write_str(""),
+        InfoType::CatalogName => write_str("Y"),
+
+        // ----- Scalar `SQLUSMALLINT` --------------------------------------
+        InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => write_u16(1), // SQL_CB_CLOSE
+        InfoType::ConcatNullBehavior => write_u16(0), // SQL_CB_NULL
+        InfoType::GroupBy => write_u16(2),            // SQL_GB_GROUP_BY_CONTAINS_SELECT
+        InfoType::MaxColumnsInGroupBy => write_u16(65535),
+        InfoType::MaxColumnsInOrderBy => write_u16(65535),
+        InfoType::MaxColumnsInSelect => write_u16(65535),
+        InfoType::CatalogLocation => write_u16(1), // SQL_CL_START
+        InfoType::MaxIdentifierLen => write_u16(255),
+
+        // ----- Scalar `SQLUINTEGER` ---------------------------------------
+        InfoType::SqlConformance => write_u32(1), // SQL_SC_SQL92_ENTRY
+        InfoType::OdbcInterfaceConformance => write_u32(1), // SQL_OIC_CORE
+        InfoType::AsyncMode => write_u32(2),      // SQL_AM_STATEMENT
+        InfoType::MaxAsyncConcurrentStatements => write_u32(0),
+        InfoType::AsyncDbcFunctions => write_u32(1), // SQL_ASYNC_DBC_CAPABLE
+        InfoType::AsyncNotification => write_u32(0), // SQL_ASYNC_NOTIFICATION_NOT_CAPABLE
+
+        // ----- Bitmask `SQLUINTEGER` (with-slice families) -----------------
+        InfoType::GetDataExtensions => write_u32(
+            [
                 GetDataExtensions::AnyColumn,
                 GetDataExtensions::AnyOrder,
                 GetDataExtensions::Bound,
-            ];
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = extensions.bitmask();
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
-            Ok(())
+            ]
+            .bitmask(),
+        ),
+        InfoType::AggregateFunctions => write_u32(synthesize(AGGREGATE_FUNCTIONS)),
+        InfoType::CatalogUsage => write_u32(synthesize(CATALOG_USAGE)),
+        InfoType::SchemaUsage => write_u32(synthesize(SCHEMA_USAGE)),
+        InfoType::ConvertFunctions => write_u32(synthesize(CONVERT_FUNCTIONS)),
+        InfoType::NumericFunctions => write_u32(synthesize(NUMERIC_FUNCTIONS)),
+        InfoType::StringFunctions => write_u32(synthesize(STRING_FUNCTIONS)),
+        InfoType::SystemFunctions => write_u32(synthesize(SYSTEM_FUNCTIONS)),
+        InfoType::TimedateFunctions => write_u32(synthesize(TIMEDATE_FUNCTIONS)),
+        InfoType::TimedateAddIntervals => write_u32(synthesize(TIMEDATE_TSI_INTERVALS)),
+        InfoType::TimedateDiffIntervals => write_u32(synthesize(TIMEDATE_TSI_INTERVALS)),
+        InfoType::Sql92Predicates => write_u32(synthesize(SQL92_PREDICATES)),
+        InfoType::Sql92RelationalJoinOperators => {
+            write_u32(synthesize(SQL92_RELATIONAL_JOIN_OPERATORS))
         }
-        InfoType::AsyncMode => {
-            let sql_am_statement: u32 = 2;
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = sql_am_statement;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
-            Ok(())
-        }
-        InfoType::MaxAsyncConcurrentStatements => {
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = 0;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
-            Ok(())
-        }
-        InfoType::AsyncDbcFunctions => {
-            let sql_async_dbc_capable: u32 = 1;
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = sql_async_dbc_capable;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
-            Ok(())
-        }
-        InfoType::AsyncNotification => {
-            let sql_async_notification_not_capable: u32 = 0;
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    *(info_value_ptr as *mut u32) = sql_async_notification_not_capable;
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
-                }
-            }
-            Ok(())
-        }
+        InfoType::Sql92ValueExpressions => write_u32(synthesize(SQL92_VALUE_EXPRESSIONS)),
+
+        // ----- `SQL_CONVERT_<source>` bitmasks (per-source-type) ----------
+        InfoType::ConvertBigint => write_u32(synthesize(CONVERT_BIGINT)),
+        InfoType::ConvertBinary => write_u32(synthesize(CONVERT_BINARY)),
+        InfoType::ConvertBit => write_u32(synthesize(CONVERT_BIT)),
+        InfoType::ConvertChar => write_u32(synthesize(CONVERT_CHAR)),
+        InfoType::ConvertDate => write_u32(synthesize(CONVERT_DATE)),
+        InfoType::ConvertDecimal => write_u32(synthesize(CONVERT_DECIMAL)),
+        InfoType::ConvertDouble => write_u32(synthesize(CONVERT_DOUBLE)),
+        InfoType::ConvertFloat => write_u32(synthesize(CONVERT_FLOAT)),
+        InfoType::ConvertGuid => write_u32(synthesize(CONVERT_GUID)),
+        InfoType::ConvertInteger => write_u32(synthesize(CONVERT_INTEGER)),
+        InfoType::ConvertLongVarbinary => write_u32(synthesize(CONVERT_LONGVARBINARY)),
+        InfoType::ConvertLongVarchar => write_u32(synthesize(CONVERT_LONGVARCHAR)),
+        InfoType::ConvertNumeric => write_u32(synthesize(CONVERT_NUMERIC)),
+        InfoType::ConvertReal => write_u32(synthesize(CONVERT_REAL)),
+        InfoType::ConvertSmallint => write_u32(synthesize(CONVERT_SMALLINT)),
+        InfoType::ConvertTime => write_u32(synthesize(CONVERT_TIME)),
+        InfoType::ConvertTimestamp => write_u32(synthesize(CONVERT_TIMESTAMP)),
+        InfoType::ConvertTinyint => write_u32(synthesize(CONVERT_TINYINT)),
+        InfoType::ConvertVarbinary => write_u32(synthesize(CONVERT_VARBINARY)),
+        InfoType::ConvertVarchar => write_u32(synthesize(CONVERT_VARCHAR)),
+        InfoType::ConvertWchar => write_u32(synthesize(CONVERT_WCHAR)),
+        InfoType::ConvertWlongVarchar => write_u32(synthesize(CONVERT_WLONGVARCHAR)),
+        InfoType::ConvertWvarchar => write_u32(synthesize(CONVERT_WVARCHAR)),
+
+        // ----- Zero-valued `SQLUINTEGER` bitmasks --------------------------
+        // The reference driver advertises no dynamic-cursor capabilities.
+        InfoType::DynamicCursorAttributes1 => write_u32(0),
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
