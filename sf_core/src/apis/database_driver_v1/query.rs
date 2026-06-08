@@ -506,4 +506,39 @@ mod tests {
 
         assert_eq!(rt.1, DataType::Int64);
     }
+
+    #[tokio::test]
+    async fn process_query_response_schema_only_exposes_reader() {
+        let data: crate::rest::snowflake::query_response::Data = serde_json::from_str(
+            r#"{
+                "queryResultFormat": "arrow",
+                "rowtype": [
+                    {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0},
+                    {"name": "NAME", "type": "TEXT", "nullable": true, "length": 100, "byteLength": 400}
+                ]
+            }"#,
+        )
+        .expect("fixture must deserialize into query_response::Data");
+
+        let client = reqwest::Client::new();
+        let result = process_query_response(&data, &client)
+            .await
+            .expect("schema-only response should process successfully");
+
+        assert!(result.columns.is_none());
+
+        let reader = result.reader;
+        let schema = reader.schema();
+        assert_eq!(schema.fields().len(), 2);
+        assert_eq!(schema.field(0).name(), "ID");
+        assert_eq!(schema.field(0).data_type(), &DataType::Int64);
+        assert_eq!(schema.field(1).name(), "NAME");
+        assert_eq!(schema.field(1).data_type(), &DataType::Utf8);
+
+        let batches = reader
+            .collect::<Result<Vec<_>, _>>()
+            .expect("draining the schema-only reader should not error");
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 0);
+    }
 }
