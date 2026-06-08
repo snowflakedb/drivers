@@ -305,7 +305,7 @@ fn should_detect_orphaned_test_files_and_methods() -> Result<()> {
         TestImplementations::create_rust_test_with_orphaned_method(),
     )?;
 
-    // Create an orphaned test file that doesn't match any feature
+    // Create a test file that doesn't match any feature — should be ignored (no definition required)
     workspace.create_rust_test(
         "query",
         "orphaned_file",
@@ -322,28 +322,23 @@ fn should_detect_orphaned_test_files_and_methods() -> Result<()> {
         tests_format_validator::Language::Rust
     );
 
-    // Should find both the file with orphaned methods and the completely orphaned file
-    assert_eq!(rust_orphans.orphaned_files.len(), 2);
+    // Only the login file with an orphaned method is reported;
+    // orphaned_file has no shared definition so it is silently skipped.
+    assert_eq!(rust_orphans.orphaned_files.len(), 1);
 
-    // Check for the file with orphaned methods
-    let file_with_orphaned_methods = rust_orphans
-        .orphaned_files
-        .iter()
-        .find(|f| f.file_path.file_stem().and_then(|s| s.to_str()) == Some("login"))
-        .expect("Should find login file with orphaned methods");
+    let file_with_orphaned_methods = &rust_orphans.orphaned_files[0];
+    assert_eq!(
+        file_with_orphaned_methods
+            .file_path
+            .file_stem()
+            .and_then(|s| s.to_str()),
+        Some("login")
+    );
     assert_eq!(file_with_orphaned_methods.orphaned_methods.len(), 1);
     assert_eq!(
         file_with_orphaned_methods.orphaned_methods[0],
         "orphaned_test_method"
     );
-
-    // Check for the completely orphaned file
-    let orphaned_file = rust_orphans
-        .orphaned_files
-        .iter()
-        .find(|f| f.file_path.file_stem().and_then(|s| s.to_str()) == Some("orphaned_file"))
-        .expect("Should find completely orphaned file");
-    assert!(orphaned_file.orphaned_methods.is_empty()); // Orphaned files don't list methods
 
     Ok(())
 }
@@ -1584,8 +1579,7 @@ public class AssumeTrueJdbcTest {
 
 // ===== Regression Tests for Feature Name Collision in BD Processing =====
 
-/// Test that behaviour differences are found even when two feature files share the same
-/// file stem (e.g. shared/auth/auth.feature and odbc/auth/auth.feature).
+/// Test that behaviour differences are found for a shared feature with BD annotations.
 #[test]
 fn should_find_behavior_differences_when_feature_names_collide() -> Result<()> {
     let workspace = TestWorkspace::new()?;
@@ -1603,22 +1597,6 @@ Feature: Key Auth (shared)
     Given Authentication is set to JWT
     When Trying to Connect with no key provided
     Then There is error returned
-"#,
-    )?;
-
-    // odbc/auth/key_auth.feature — same file stem, different scenarios
-    workspace.create_feature_file_in_folder(
-        "odbc",
-        "auth",
-        "key_auth",
-        r#"@odbc
-Feature: Key Auth (ODBC-specific)
-
-  @odbc_int
-  Scenario: should forward key content via SQLSetConnectAttr
-    Given A connection handle is allocated with key content
-    When Trying to Connect
-    Then The key is forwarded to core
 "#,
     )?;
 
@@ -1654,7 +1632,7 @@ TEST_CASE("should fail when no key provided") {
     let odbc_bds = report
         .behavior_differences_by_language
         .get("odbc")
-        .expect("Should find ODBC behaviour differences even with colliding feature names");
+        .expect("Should find ODBC behaviour differences from shared feature");
 
     let bd_ids: Vec<&str> = odbc_bds
         .iter()
@@ -1663,7 +1641,7 @@ TEST_CASE("should fail when no key provided") {
 
     assert!(
         bd_ids.contains(&"BD#1"),
-        "BD#1 must be found from shared feature despite name collision with odbc feature. Found: {:?}",
+        "BD#1 must be found from shared feature. Found: {:?}",
         bd_ids
     );
 
@@ -1672,9 +1650,7 @@ TEST_CASE("should fail when no key provided") {
 
 // ===== Regression Tests for Path-Based Feature IDs =====
 
-/// Test that features with the same name in different folders are treated as separate.
-/// This is a regression test for the fix where shared/session/logout.feature and
-/// core/session/logout.feature were incorrectly conflated.
+/// Test that features with the same name in different subfolders within shared/ are treated as separate.
 #[test]
 fn should_not_conflate_features_with_same_name_in_different_folders() -> Result<()> {
     let workspace = TestWorkspace::new()?;
@@ -1695,13 +1671,13 @@ Feature: Shared Logout
 "#,
     )?;
 
-    // Create core/session/logout.feature - Rust-only feature
+    // Create shared/auth/logout.feature - Rust-only feature in a different subfolder
     workspace.create_feature_file_in_folder(
-        "core",
-        "session",
+        "shared",
+        "auth",
         "logout",
         r#"@core
-Feature: Core Logout
+Feature: Auth Logout
 
   @core_e2e
   Scenario: User can force logout all sessions
@@ -1730,46 +1706,46 @@ Feature: Core Logout
         "Should find shared/session/logout.feature"
     );
     assert!(
-        feature_paths.iter().any(|p| p.contains("core/session")),
-        "Should find core/session/logout.feature"
+        feature_paths.iter().any(|p| p.contains("shared/auth")),
+        "Should find shared/auth/logout.feature"
     );
 
-    // Verify the shared feature requires BOTH Rust and ODBC
-    let shared_result = results
+    // Verify the session feature requires BOTH Rust and ODBC
+    let session_result = results
         .iter()
         .find(|r| normalize_path(&r.feature_file).contains("shared/session"))
-        .expect("Should find shared feature");
-    let shared_languages: Vec<_> = shared_result
+        .expect("Should find session feature");
+    let session_languages: Vec<_> = session_result
         .validations
         .iter()
         .map(|v| &v.language)
         .collect();
     assert!(
-        shared_languages.contains(&&tests_format_validator::Language::Rust),
-        "Shared feature should require Rust"
+        session_languages.contains(&&tests_format_validator::Language::Rust),
+        "Session feature should require Rust"
     );
     assert!(
-        shared_languages.contains(&&tests_format_validator::Language::Odbc),
-        "Shared feature should require ODBC"
+        session_languages.contains(&&tests_format_validator::Language::Odbc),
+        "Session feature should require ODBC"
     );
 
-    // Verify the core feature requires ONLY Rust (not ODBC)
-    let core_result = results
+    // Verify the auth feature requires ONLY Rust (not ODBC)
+    let auth_result = results
         .iter()
-        .find(|r| normalize_path(&r.feature_file).contains("core/session"))
-        .expect("Should find core feature");
-    let core_languages: Vec<_> = core_result
+        .find(|r| normalize_path(&r.feature_file).contains("shared/auth"))
+        .expect("Should find auth feature");
+    let auth_languages: Vec<_> = auth_result
         .validations
         .iter()
         .map(|v| &v.language)
         .collect();
     assert!(
-        core_languages.contains(&&tests_format_validator::Language::Rust),
-        "Core feature should require Rust"
+        auth_languages.contains(&&tests_format_validator::Language::Rust),
+        "Auth feature should require Rust"
     );
     assert!(
-        !core_languages.contains(&&tests_format_validator::Language::Odbc),
-        "Core feature should NOT require ODBC"
+        !auth_languages.contains(&&tests_format_validator::Language::Odbc),
+        "Auth feature should NOT require ODBC"
     );
 
     Ok(())
@@ -1782,16 +1758,16 @@ Feature: Core Logout
 fn should_not_require_tests_when_no_implementation_tags_exist() -> Result<()> {
     let workspace = TestWorkspace::new()?;
 
-    // Create jdbc/session/logout.feature with NO implementation tags (@jdbc_e2e)
-    // This is a "planned" feature that documents behavior but has no tests yet
+    // Create shared/session/logout.feature with NO implementation tags
+    // A feature with no language tags and no scenario-level implementation tags means
+    // "not yet attributed to any language" — no tests required.
     workspace.create_feature_file_in_folder(
-        "jdbc",
+        "shared",
         "session",
         "logout",
-        r#"@jdbc
-Feature: JDBC Logout (Planned)
+        r#"Feature: JDBC Logout (Planned)
 
-  # This feature documents planned behavior - no @jdbc_e2e tags means no tests required
+  # This feature documents planned behavior - no implementation tags means no tests required
   Scenario: User can logout from JDBC connection
     Given I have an active JDBC connection
     When I close the connection
@@ -1805,8 +1781,7 @@ Feature: JDBC Logout (Planned)
     // The feature should be found
     assert_eq!(results.len(), 1);
 
-    // But since there are no @jdbc_e2e tags, JDBC validation should not be performed
-    // (no language validations should be generated for scenarios without implementation tags)
+    // Since there are no implementation tags, no language validations should be generated
     let jdbc_validations: Vec<_> = results[0]
         .validations
         .iter()
@@ -1815,7 +1790,7 @@ Feature: JDBC Logout (Planned)
 
     assert!(
         jdbc_validations.is_empty(),
-        "Should not require JDBC tests when no @jdbc_e2e tags exist"
+        "Should not require JDBC tests when no implementation tags exist"
     );
 
     Ok(())
@@ -1826,9 +1801,9 @@ Feature: JDBC Logout (Planned)
 fn should_require_tests_when_implementation_tags_exist() -> Result<()> {
     let workspace = TestWorkspace::new()?;
 
-    // Create jdbc/session/logout.feature WITH implementation tag @jdbc_e2e
+    // Create shared/session/logout.feature WITH implementation tag @jdbc_e2e
     workspace.create_feature_file_in_folder(
-        "jdbc",
+        "shared",
         "session",
         "logout",
         r#"@jdbc
@@ -2587,6 +2562,318 @@ fn should_pass_with_all_steps() {
 
     assert_eq!(results.len(), 1);
     assert!(results[0].scenario_structure_errors.is_empty());
+
+    Ok(())
+}
+
+// ===== WHEN/THEN Step Comment Structure Validation Tests =====
+
+#[test]
+fn gherkin_structure_e2e_test_missing_when_is_flagged() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        r#"
+#[tokio::test]
+async fn should_login_successfully() {
+    // Given a valid connection
+    let client = connect().await;
+
+    // Then the session is active
+    assert!(client.is_connected());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let violations = validator.validate_gherkin_step_structure()?;
+
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].violations.len(), 1);
+    assert_eq!(violations[0].violations[0].method_name, "should_login_successfully");
+    assert!(violations[0].violations[0].missing_keywords.contains(&"When".to_string()));
+
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_e2e_test_missing_then_is_flagged() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        r#"
+#[test]
+fn should_return_token() {
+    // Given a valid connection
+    let client = connect();
+
+    // When login is called
+    client.login("user", "pass");
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let violations = validator.validate_gherkin_step_structure()?;
+
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].violations[0].method_name, "should_return_token");
+    assert!(violations[0].violations[0].missing_keywords.contains(&"Then".to_string()));
+
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_e2e_test_with_when_and_then_passes() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        r#"
+#[tokio::test(flavor = "multi_thread")]
+async fn should_login_and_return_session() {
+    // Given a valid connection
+    let client = connect().await;
+
+    // When login is called
+    let session = client.login("user", "pass").await;
+
+    // Then the session token is returned
+    assert!(session.token().is_some());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let violations = validator.validate_gherkin_step_structure()?;
+
+    assert!(violations.is_empty(), "Expected no violations, got: {:?}", violations);
+
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_integration_test_with_shared_feature_is_checked() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a shared feature so the integration test file is eligible for checking
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        r#"@core
+Feature: Login
+
+  @core_int
+  Scenario: should login successfully
+    Given A valid connection
+    When Login is called
+    Then Session is active
+"#,
+    )?;
+
+    // Create an integration test file missing When
+    let integ_path = workspace
+        .workspace_root
+        .join("sf_core/tests/integration/auth");
+    fs::create_dir_all(&integ_path)?;
+    fs::write(
+        integ_path.join("login.rs"),
+        r#"
+#[test]
+fn should_login_successfully() {
+    // Given A valid connection
+    let client = connect();
+
+    // Then Session is active
+    assert!(client.is_connected());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let violations = validator.validate_gherkin_step_structure()?;
+
+    assert_eq!(violations.len(), 1, "Integration test matching shared feature should be checked");
+    assert!(violations[0].violations[0].missing_keywords.contains(&"When".to_string()));
+
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_integration_test_without_shared_feature_is_skipped() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // No feature file — integration test has no shared definition
+    let integ_path = workspace
+        .workspace_root
+        .join("sf_core/tests/integration/auth");
+    fs::create_dir_all(&integ_path)?;
+    fs::write(
+        integ_path.join("private_key_auth.rs"),
+        r#"
+#[test]
+fn should_auth_with_key() {
+    // Given a private key
+    let key = load_key();
+
+    // Then authentication succeeds
+    assert!(auth(key).is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let violations = validator.validate_gherkin_step_structure()?;
+
+    assert!(
+        violations.is_empty(),
+        "Integration test with no shared feature should not be checked"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn gherkin_structure_integration_test_with_e2e_only_feature_is_skipped() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Feature exists but only declares e2e, not integration — the integration file should be skipped
+    workspace.create_feature_file(
+        "session",
+        "session_parameters",
+        r#"@python
+Feature: Session Parameters
+
+  @python_e2e
+  Scenario: Get parameter after alter session
+    Given A valid connection
+    When ALTER SESSION sets a parameter
+    Then The parameter value is returned
+"#,
+    )?;
+
+    let integ_path = workspace
+        .workspace_root
+        .join("python/tests/integ/session");
+    fs::create_dir_all(&integ_path)?;
+    fs::write(
+        integ_path.join("test_session_parameters.py"),
+        r#"
+def test_get_parameter_after_alter_session(connection):
+    cursor = connection.cursor()
+    cursor.execute("ALTER SESSION SET QUERY_TAG = 'tag'")
+    value = connection._get_session_parameter("QUERY_TAG")
+    assert value == "tag"
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let violations = validator.validate_gherkin_step_structure()?;
+
+    assert!(
+        violations.is_empty(),
+        "Integration test whose shared feature has only @python_e2e should not be checked: {:?}",
+        violations
+    );
+
+    Ok(())
+}
+
+#[test]
+fn orphan_integration_test_with_matching_shared_feature_is_reported() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a shared feature that requires Rust core integration
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        r#"@core
+Feature: Login
+
+  @core_int
+  Scenario: Successful login with valid credentials
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    // Put an integration test whose name matches the feature but has no scenario tag
+    let integ_path = workspace.workspace_root.join("sf_core/tests/integration/auth");
+    fs::create_dir_all(&integ_path)?;
+    fs::write(
+        integ_path.join("login.rs"),
+        r#"
+#[test]
+fn untagged_orphan_method() {
+    // Given I have valid credentials
+    let c = setup();
+    // When I attempt to login
+    let r = login(&c);
+    // Then login should succeed
+    assert!(r.is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let orphan_results = validator.find_orphaned_tests()?;
+
+    // The integration test file matches a shared feature — it should be checked for orphans
+    let rust_orphans = orphan_results
+        .iter()
+        .find(|o| o.language == tests_format_validator::Language::Rust);
+    assert!(
+        rust_orphans.is_some(),
+        "Rust integration file matching a shared feature should be reported"
+    );
+    let rust_orphans = rust_orphans.unwrap();
+    assert!(
+        !rust_orphans.orphaned_files.is_empty(),
+        "Integration test with method not matching any scenario tag should be reported"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn orphan_integration_test_without_matching_shared_feature_is_ignored() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // No feature file — this integration test is language-specific and needs no definition
+    let integ_path = workspace
+        .workspace_root
+        .join("sf_core/tests/integration/auth");
+    fs::create_dir_all(&integ_path)?;
+    fs::write(
+        integ_path.join("private_key_auth.rs"),
+        r#"
+#[test]
+fn test_private_key_auth() {
+    // When I use a private key
+    let result = auth_with_key();
+    // Then it succeeds
+    assert!(result.is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let orphan_results = validator.find_orphaned_tests()?;
+
+    // No shared feature for this file — should be completely ignored
+    let has_rust_orphans = orphan_results
+        .iter()
+        .any(|o| o.language == tests_format_validator::Language::Rust && !o.orphaned_files.is_empty());
+    assert!(
+        !has_rust_orphans,
+        "Integration test with no matching shared feature should not be reported as orphaned"
+    );
 
     Ok(())
 }

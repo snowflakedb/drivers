@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any, NamedTuple
 
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ExecuteResult,
     PrepareResult,
     QueryStats,
+    ResultSetDescriptor,
 )
 from .._internal.type_codes import get_type_code
 
@@ -51,7 +51,7 @@ class ResultMetadata(NamedTuple):
         )
 
     @classmethod
-    def create_description(cls, result: ExecuteResult | PrepareResult | None) -> list[ResultMetadata] | None:
+    def create_description(cls, result: PrepareResult | ResultSetDescriptor | None) -> list[ResultMetadata] | None:
         """Extract description from execute result column metadata."""
         if result and result.columns:
             return [cls.from_column(col) for col in result.columns]

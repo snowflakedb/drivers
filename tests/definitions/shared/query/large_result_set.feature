@@ -8,7 +8,7 @@ Feature: Large Result Set
     Then there are 1000000 numbered sequentially rows returned
 
   # For this query the initial chunk is empty, this test verifies that we handle this situation
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario: should process ten thousand string rows when initial chunk is empty
     Given Snowflake client is logged in
     When Query "select L_COMMENT from SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM limit 10000" is executed

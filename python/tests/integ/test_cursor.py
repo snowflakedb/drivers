@@ -8,6 +8,7 @@ import pytest
 
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
+from tests.compatibility import NEW_DRIVER_ONLY, is_new_driver
 from tests.conftest import with_paramstyle
 from tests.e2e.types.utils import assert_sequential_values
 
@@ -423,6 +424,91 @@ class TestCursorDescription:
         # These may be None or have values depending on server response
         # At minimum, verify the structure is correct
         assert len(result[0]) == 7
+
+    # Type codes used by dbt contract enforcement. When dbt checks column types,
+    # it runs `SELECT * FROM (<sql>) AS __dbt_sbq WHERE false LIMIT 0` and reads
+    # cursor.description type_code. These tests verify the driver returns correct
+    # type metadata even for zero-row results (which hit the SchemaOnly code path).
+    EMPTY_SUBQUERY_TYPES = [
+        ("1", 0, "FIXED"),
+        ("1.5::FLOAT", 1, "REAL"),
+        ("'1'", 2, "TEXT"),
+        ("cast('2019-01-01' as date)", 3, "DATE"),
+        (
+            """TO_VARIANT(PARSE_JSON('{"key3": "value3"}'))""",
+            5,
+            "VARIANT",
+        ),
+        ("'2013-11-03 00:00:00'::TIMESTAMP_LTZ", 6, "TIMESTAMP_LTZ"),
+        ("'2013-11-03 00:00:00-07'::timestamptz", 7, "TIMESTAMP_TZ"),
+        ("'2013-11-03 00:00:00-07'::timestamp", 8, "TIMESTAMP_NTZ"),
+        ("OBJECT_CONSTRUCT('key', 'value')", 9, "OBJECT"),
+        ("ARRAY_CONSTRUCT('a','b','c')", 10, "ARRAY"),
+        ("TO_BINARY('48454C4C4F', 'HEX')", 11, "BINARY"),
+        ("'12:00:00'::TIME", 12, "TIME"),
+        ("true", 13, "BOOLEAN"),
+        ("TO_GEOGRAPHY('POINT(-122.35 37.55)')", 14, "GEOGRAPHY"),
+        ("TO_GEOMETRY('POINT(1820.12 890.56)')", 15, "GEOMETRY"),
+        ("[1.0, 2.0, 3.0]::VECTOR(FLOAT, 3)", 16, "VECTOR"),
+    ]
+
+    @pytest.mark.parametrize(
+        "sql_expr,expected_type_code,expected_type_name",
+        EMPTY_SUBQUERY_TYPES,
+        ids=[name for _, _, name in EMPTY_SUBQUERY_TYPES],
+    )
+    def test_description_empty_subquery_type_code(self, cursor, sql_expr, expected_type_code, expected_type_name):
+        """Verify cursor.description type_code for zero-row results.
+
+        dbt wraps model SQL in:
+            SELECT * FROM (<model_sql>) AS __dbt_sbq WHERE false LIMIT 0
+        to get column metadata without scanning data. The driver must return
+        correct type_code even for zero-row results.
+        """
+        sql = f"SELECT * FROM (SELECT {sql_expr} AS col) AS __dbt_sbq WHERE false LIMIT 0"
+        cursor.execute(sql)
+
+        desc = cursor.description
+        assert desc is not None, "cursor.description should not be None for empty subquery"
+        actual_type_code = desc[0].type_code
+        assert actual_type_code == expected_type_code, (
+            f"Type code mismatch for '{sql_expr}': "
+            f"got {actual_type_code}, expected {expected_type_code} ({expected_type_name})"
+        )
+
+    CAST_NULL_TYPES = [
+        ("INT", 0, "FIXED"),
+        ("FLOAT", 1, "REAL"),
+        ("TEXT", 2, "TEXT"),
+        ("DATE", 3, "DATE"),
+        ("VARIANT", 5, "VARIANT"),
+        ("TIMESTAMP_LTZ", 6, "TIMESTAMP_LTZ"),
+        ("TIMESTAMP_TZ", 7, "TIMESTAMP_TZ"),
+        ("TIMESTAMP_NTZ", 8, "TIMESTAMP_NTZ"),
+        ("OBJECT", 9, "OBJECT"),
+        ("ARRAY", 10, "ARRAY"),
+        ("BINARY", 11, "BINARY"),
+        ("TIME", 12, "TIME"),
+        ("BOOLEAN", 13, "BOOLEAN"),
+    ]
+
+    @pytest.mark.parametrize(
+        "cast_type,expected_type_code,expected_type_name",
+        CAST_NULL_TYPES,
+        ids=[name for _, _, name in CAST_NULL_TYPES],
+    )
+    def test_description_cast_null_empty_subquery(self, cursor, cast_type, expected_type_code, expected_type_name):
+        """Verify cursor.description for CAST(null AS <type>) in empty subquery."""
+        sql = f"SELECT * FROM (SELECT CAST(null AS {cast_type}) AS col) AS __dbt_sbq WHERE false LIMIT 0"
+        cursor.execute(sql)
+
+        desc = cursor.description
+        assert desc is not None
+        actual_type_code = desc[0].type_code
+        assert actual_type_code == expected_type_code, (
+            f"Type code mismatch for CAST(null AS {cast_type}): "
+            f"got {actual_type_code}, expected {expected_type_code} ({expected_type_name})"
+        )
 
 
 class TestCursorRowcount:
@@ -1055,6 +1141,350 @@ class TestCursorStatementLifecycle:
         assert cursor.fetchone() == (2,)
 
 
+class TestFetchBeforeExecute:
+    """Test that fetching before execute raises TypeError."""
+
+    @staticmethod
+    def _assert_programming_error(excinfo):
+        if is_new_driver():
+            error = excinfo.value
+            assert isinstance(error, ProgrammingError)
+            assert error.errno == 252009
+            assert "no results available" in error.msg.lower()
+
+    def test_fetchone_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            cursor.fetchone()
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchall_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            cursor.fetchall()
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchmany_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            cursor.fetchmany(1)
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_iter_before_execute(self, cursor):
+        with pytest.raises(Exception) as excinfo:
+            next(iter(cursor))
+
+        if NEW_DRIVER_ONLY("BD#22"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+
+class TestClosedCursorErrors:
+    """Test that operations on a closed cursor raise proper errors."""
+
+    @staticmethod
+    def _assert_interface_error(excinfo):
+        error = excinfo.value
+        assert isinstance(error, InterfaceError)
+        assert "cursor is closed" in error.msg.lower()
+        assert error.errno == 252006
+
+    def test_execute_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_execute_async_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute_async("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_describe_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.describe("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_executemany_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.executemany("SELECT %s", [(1,)])
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_fetchone_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchone()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchall_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchall()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchmany_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchmany(1)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_iter_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            next(iter(cur))
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_callproc_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.callproc("any_proc")
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_reset_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.reset()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_abort_query_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.abort_query(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_query_result_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.query_result(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_get_results_from_sfqid_on_closed_cursor(self, connection):
+        cur = connection.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        cur.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.get_results_from_sfqid(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+
+@pytest.mark.flaky
+class TestClosedConnectionCursorErrors:
+    """Test cursor operations when the underlying connection has been closed."""
+
+    @staticmethod
+    def _assert_interface_error(excinfo):
+        error = excinfo.value
+        assert isinstance(error, InterfaceError)
+        assert error.errno == 252006
+        assert "cursor is closed" in error.msg.lower()
+
+    @staticmethod
+    def _assert_programming_error(excinfo):
+        error = excinfo.value
+        assert isinstance(error, ProgrammingError)
+        assert error.errno == 252009
+        assert "no results available" in error.msg.lower()
+
+    def test_execute_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_execute_async_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute_async("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_describe_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.describe("SELECT 1")
+        self._assert_interface_error(excinfo)
+
+    def test_executemany_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.executemany("SELECT %s", [(1,)])
+        self._assert_interface_error(excinfo)
+
+    def test_callproc_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.callproc("any_proc")
+        self._assert_interface_error(excinfo)
+
+    def test_fetchone_on_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        conn.close()
+        result = cur.fetchone()
+        assert result == (1,)
+
+    def test_fetchall_on_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        conn.close()
+        results = cur.fetchall()
+        assert results == [(1,)]
+
+    def test_abort_query_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.abort_query(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_query_result_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        qid = cur.sfqid
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.query_result(qid)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_interface_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, AttributeError)
+
+    def test_reset_on_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        assert cur.is_closed
+
+        cur.reset()
+        assert cur.is_closed
+
+    def test_fetchone_on_never_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchone()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchall_on_never_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchall()
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+    def test_fetchmany_on_never_executed_cursor_after_connection_closed(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(Exception) as excinfo:
+            cur.fetchmany(1)
+
+        if NEW_DRIVER_ONLY("BD#21"):
+            self._assert_programming_error(excinfo)
+        else:
+            assert isinstance(excinfo.value, TypeError)
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 
@@ -1119,15 +1549,6 @@ class TestCursorMethods:
         ret = cursor.callproc(proc_name, None)
         assert ret == ()
         assert cursor.fetchall() == [(True,)]
-
-    @pytest.mark.skip_reference(
-        reason="Reference driver raises AttributeError instead of InterfaceError on closed cursor"
-    )
-    def test_callproc_on_closed_cursor_raises(self, cursor):
-        """Test that callproc raises InterfaceError on a closed cursor."""
-        cursor.close()
-        with pytest.raises(InterfaceError):
-            cursor.callproc("any_proc")
 
     @pytest.mark.skip_reference(reason="Reference driver does not validate args type")
     def test_callproc_rejects_string_args(self, cursor):
@@ -1222,15 +1643,6 @@ class TestCursorMethods:
         # Just verify it's callable and accepts empty sequence without error
         cursor.executemany("INSERT INTO test VALUES (?)", [])
 
-    @pytest.mark.skip_reference(
-        reason="Reference driver returns None from nextset instead of raising NotImplementedError"
-    )
-    def test_nextset_not_implemented(self, cursor):
-        """Test that nextset raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as excinfo:
-            cursor.nextset()
-        assert "nextset is not implemented" in str(excinfo.value)
-
     def test_setinputsizes_no_op(self, cursor):
         """Test that setinputsizes is a no-op."""
         # Should not raise any exception
@@ -1266,6 +1678,32 @@ class TestCursorExecutemany:
         cursor.execute(f"SELECT id, name FROM {tmp_schema}.test_em ORDER BY id")
         rows = cursor.fetchall()
         assert rows == [(1, "alice"), (2, "bob"), (3, "charlie")]
+
+
+class TestCursorExecutemanyErrors:
+    """Integration tests for executemany validation errors."""
+
+    @with_paramstyle("qmark")
+    def test_bulk_row_length_mismatch(self, cursor):
+        """Test that executemany raises InterfaceError when rows have inconsistent lengths."""
+        with pytest.raises(InterfaceError) as excinfo:
+            cursor.executemany("INSERT INTO any_table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
+        error = excinfo.value
+        assert error.errno == 251007
+        assert "bulk data size don't match" in error.msg.lower()
+        assert "expected: 2" in error.msg.lower()
+        assert "got: 3" in error.msg.lower()
+
+    @with_paramstyle("numeric")
+    def test_bulk_row_length_mismatch_numeric(self, cursor):
+        """Test that executemany raises InterfaceError for inconsistent lengths with numeric paramstyle."""
+        with pytest.raises(InterfaceError) as excinfo:
+            cursor.executemany("INSERT INTO any_table VALUES (:1, :2)", [(1, "a"), (2,)])
+        error = excinfo.value
+        assert error.errno == 251007
+        assert "bulk data size don't match" in error.msg.lower()
+        assert "expected: 2" in error.msg.lower()
+        assert "got: 1" in error.msg.lower()
 
 
 class TestCursorReset:
@@ -2079,7 +2517,7 @@ class TestCursorDescribe:
 
         assert describe_result is not None
         assert cursor.description is not None
-        for d, e in zip(describe_result, cursor.description):
+        for d, e in zip(describe_result, cursor.description, strict=True):
             assert d.name == e.name
             assert d.type_code == e.type_code
 
@@ -2145,7 +2583,6 @@ class TestGetResultsFromSfqid:
             assert cur2.description[0].name == "A"
             assert cur2.description[1].name == "B"
 
-    @pytest.mark.skip_universal(reason="execute_async not yet implemented")
     def test_get_results_from_sfqid_waits_for_async_query(self, connection):
         """get_results_from_sfqid polls until an async query completes."""
         with connection.cursor() as cur1:
@@ -2168,3 +2605,86 @@ class TestGetResultsFromSfqid:
         with connection.cursor() as cur2:
             with pytest.raises(ProgrammingError):
                 cur2.get_results_from_sfqid(qid)
+
+
+class TestCursorAbortQuery:
+    """Integration tests for Cursor.abort_query method."""
+
+    def test_abort_query_returns_false_for_completed_query(self, cursor):
+        """abort_query returns False for a query that has already completed."""
+        cursor.execute("SELECT 1")
+        qid = cursor.sfqid
+
+        result = cursor.abort_query(qid)
+        assert result is False
+
+    def test_abort_query_returns_true_for_running_query(self, connection):
+        """abort_query returns True when aborting a currently running query."""
+        long_running_query = "SELECT SYSTEM$WAIT(30, 'SECONDS')"
+        cur_query = connection.cursor()
+
+        cur_query.execute_async(long_running_query)
+        sfqid = cur_query.sfqid
+
+        result = connection.cursor().abort_query(sfqid)
+        assert result is True
+
+        try:
+            connection.cursor().query_result(sfqid)
+        except ProgrammingError as e:
+            assert "57014" in e.msg
+            assert "canceled" in e.msg
+
+
+@with_paramstyle("pyformat")
+class TestInterpolateEmptySequences:
+    """Integration tests for _interpolate_empty_sequences flag.
+
+    The pyformat paramstyle doubles literal '%' to '%%' during compilation.
+    The connector must unescape '%%' back to '%' when the flag is set (as
+    SQLAlchemy does), but preserve '%%' when the flag is off (default).
+    """
+
+    def test_flag_defaults_to_false(self, connection):
+        assert connection._interpolate_empty_sequences is False
+
+    def test_doubled_percents_preserved_by_default(self, connection):
+        """Without the flag, '%%' is NOT unescaped with empty params."""
+        cursor = connection.cursor()
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT 1600 %% 400 AS a", {})
+
+    def test_doubled_percents_unescaped_when_flag_set(self, connection):
+        """With the flag set, '%%' is unescaped and the query succeeds."""
+        connection._interpolate_empty_sequences = True
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT 1600 %% 400 AS a, 1599 %% 400 AS b", {})
+            row = cursor.fetchone()
+            assert row == (0, 399)
+        finally:
+            connection._interpolate_empty_sequences = False
+
+    def test_doubled_percents_unescaped_with_empty_list(self, connection):
+        """With the flag set, '%%' is unescaped even with an empty list."""
+        connection._interpolate_empty_sequences = True
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT 100 %% 7 AS a", [])
+            row = cursor.fetchone()
+            assert row == (2,)
+        finally:
+            connection._interpolate_empty_sequences = False
+
+    def test_normal_params_always_interpolate(self, cursor):
+        """Parameterized queries work regardless of the flag."""
+        cursor.execute("SELECT %s AS a, %s AS b", [42, "hello"])
+        row = cursor.fetchone()
+        assert row == (42, "hello")
+
+    def test_percent_with_params_works(self, connection):
+        """When actual params are present, '%%' is unescaped even without the flag."""
+        cursor = connection.cursor()
+        cursor.execute("SELECT %s AS a, 100 %% 7 AS b", [42])
+        row = cursor.fetchone()
+        assert row == (42, 2)

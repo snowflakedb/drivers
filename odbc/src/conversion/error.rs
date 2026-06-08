@@ -7,6 +7,11 @@ use snafu::{Location, Snafu};
 
 use crate::{api::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError};
 
+/// SQL DATE / TIMESTAMP year range. Values outside this range cannot be
+/// represented as a SQL DATE or TIMESTAMP and surface as
+/// [`ConversionError::DatetimeOutOfSqlRange`] (SQLSTATE 22007).
+pub const SQL_DATETIME_YEAR_RANGE: std::ops::RangeInclusive<i32> = 1..=9999;
+
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ReadArrowError {
@@ -92,6 +97,14 @@ pub enum ConversionError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Datetime out of SQL range: {reason}"))]
+    DatetimeOutOfSqlRange {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to write ODBC value"))]
     WriteOdbcValue {
         source: WriteOdbcError,
@@ -155,6 +168,24 @@ pub enum ConversionError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    /// Address arithmetic for a per-row binding overflowed `usize`. This
+    /// can only happen with a pathological `SQL_ATTR_ROW_BIND_TYPE` /
+    /// large rowset combination, but we surface it as a row-level error
+    /// instead of panicking across the FFI boundary.
+    #[snafu(display(
+        "Binding stride overflow at row_idx={row_idx} \
+         (value_stride={value_stride}, indicator_stride={indicator_stride}, \
+         bind_offset={bind_offset})"
+    ))]
+    BindingStrideOverflow {
+        row_idx: usize,
+        value_stride: usize,
+        indicator_stride: usize,
+        bind_offset: isize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Debug, Snafu, ErrorTrace)]
@@ -200,8 +231,117 @@ pub enum JsonBindingError {
         location: Location,
     },
 
-    #[snafu(display("Wide-character (WChar) parameter is not valid UTF-16"))]
+    #[snafu(display("Wide-character (WChar) parameter is not a valid wide-character string"))]
     WCharConversion {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Numeric value out of range: {reason}"))]
+    NumericMagnitudeOverflow {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// The character input parsed to a value that is not a valid numeric
+    /// literal for the SQL target type (e.g. "Infinity", "-Infinity", "NaN"
+    /// bound as SQL_C_CHAR/SQL_C_WCHAR to SQL_REAL/SQL_DOUBLE). The ODBC
+    /// spec's "numeric-literal" grammar (Appendix C) does not permit these
+    /// tokens, so the driver returns SQLSTATE 22018 (Invalid character
+    /// value for cast specification).
+    #[snafu(display("Invalid numeric literal: {reason}"))]
+    InvalidNumericLiteral {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// The character input bound to a `SQL_BINARY` / `SQL_VARBINARY` /
+    /// `SQL_LONGVARBINARY` parameter is not a valid hex literal. Per
+    /// ODBC Appendix D ("Converting Data from C to SQL Data Types"), a
+    /// `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to a binary SQL target
+    /// must be a string whose characters are pairs of hexadecimal
+    /// digits (each pair representing one byte). Invalid input — odd
+    /// length, or any character outside `[0-9A-Fa-f]` — surfaces as
+    /// SQLSTATE 22018 ("Invalid character value for cast specification").
+    #[snafu(display("Invalid hex literal: {reason}"))]
+    InvalidHexLiteral {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// The character input failed to parse against the format(s) the SQL
+    /// target type accepts. Use this for bind paths where the C buffer
+    /// holds a string that doesn't match the spec-prescribed grammar for
+    /// the target -- e.g. SQL_C_CHAR / SQL_C_WCHAR bound to
+    /// SQL_SF_TIMESTAMP_TZ with neither a `+/-HH:MM` offset suffix nor an
+    /// offset-less `YYYY-MM-DD HH:MM:SS[.fff]` shape. Maps to SQLSTATE
+    /// 22018 ("Invalid character value for cast specification"), the same
+    /// class as `InvalidNumericLiteral` / `InvalidBooleanValue`, so apps
+    /// that switch on the SQLSTATE class can distinguish "bad input data"
+    /// from 07006 ("unsupported binding shape").
+    ///
+    /// `value` is truncated to a safe length before storage so an
+    /// adversarial caller can't blow up diagnostic-record buffers; the
+    /// `expected_format` is a static template the user can compare against.
+    #[snafu(display(
+        "Invalid character value for cast: {c_type:?} input {value:?} does not match expected format {expected_format:?}"
+    ))]
+    InvalidCharacterValueForCast {
+        c_type: CDataType,
+        value: String,
+        expected_format: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Binding value out of range: {reason}"))]
+    BindingNumericOutOfRange {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// Maps to SQLSTATE 22007 ("Invalid datetime format"). Use this when a
+    /// SQL_DATE_STRUCT / SQL_TIME_STRUCT / SQL_TIMESTAMP_STRUCT bound to a
+    /// temporal SQL target contains field values that don't form a valid
+    /// date/time (e.g. month = 13, hour = 25). Per ODBC Appendix D ("C to
+    /// SQL: Date / Time / Timestamp"), the spec-mandated SQLSTATE for
+    /// "Data value does not contain a valid date/time" is 22007 — distinct
+    /// from 22003 (numeric out of range) and 07006 (restricted data type
+    /// attribute violation, i.e. unsupported conversion).
+    #[snafu(display("Invalid datetime value: {reason}"))]
+    InvalidDatetimeValue {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// Maps to SQLSTATE 22008 ("Datetime field overflow"). Use this when a
+    /// SQL_C_TYPE_TIMESTAMP source is bound to a SQL_TYPE_DATE or
+    /// SQL_TYPE_TIME target and the discarded portion is non-zero. Per ODBC
+    /// Appendix D ("Converting Data from C to SQL Data Types"):
+    ///
+    ///   - TIMESTAMP → DATE: 22008 if the time portion of the timestamp is
+    ///     nonzero (any of hour / minute / second / fraction).
+    ///   - TIMESTAMP → TIME: 22008 if the fractional seconds portion is
+    ///     nonzero.
+    ///
+    /// This is distinct from 22007 (struct field outside the legal range,
+    /// e.g. month=13), 22003 (numeric magnitude overflow), and 07006
+    /// (unsupported conversion).
+    #[snafu(display("Datetime field overflow: {reason}"))]
+    DatetimeFieldOverflow {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid boolean value: {value}"))]
+    InvalidBooleanValue {
+        value: String,
         #[snafu(implicit)]
         location: Location,
     },

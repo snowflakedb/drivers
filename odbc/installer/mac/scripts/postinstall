@@ -1,0 +1,219 @@
+#!/bin/bash
+#
+# Post-install script for the Snowflake ODBC UD macOS pkg.
+# Registers the driver and a default DSN with the iODBC Driver Manager.
+#
+# Driver registration and DSN content live in ini section templates installed
+# alongside this script. odbc/installer/mac/package.sh substitutes
+# __ODBC_API_VERSION__ at packaging time from [package.metadata.odbc] in
+# odbc/Cargo.toml; the remaining placeholders (__DRIVER_NAME__,
+# __DRIVER_PATH__, __SF_ACCOUNT__) are substituted here at install time.
+#
+# The driver name (the section header in odbcinst.ini and the Driver= value
+# in odbc.ini) can come from three sources, in priority order:
+#
+#   1. The SF_DRIVER_NAME environment variable (useful for headless installs
+#      and CI: `sudo SF_DRIVER_NAME=... installer -pkg ... -target /`).
+#   2. An interactive AppleScript dropdown shown to the logged-in console
+#      user when the pkg is launched from Installer.app
+#   3. The default "Snowflake ODBC UD" when neither of the above is
+#      available (e.g. fully non-interactive install with no console user).
+#
+
+INSTALL_DIR="/opt/snowflake/snowflakeodbcud"
+DRIVER_PATH="$INSTALL_DIR/lib/libsfodbc.dylib"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+DEFAULT_DRIVER_NAME="Snowflake ODBC UD"
+ALT_DRIVER_NAME="SnowflakeDSIIDriverUD"
+
+# pkg postinstall scripts run as root. Resolve the invoking user's home so the
+# driver and DSN land in the per-user iODBC config (~/Library/ODBC/), which is
+# the macOS convention.
+if [ -n "${SUDO_USER:-}" ]; then
+    USER_HOME=$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory | awk '{print $2}')
+else
+    USER_HOME="$HOME"
+fi
+
+ODBC_DIR="$USER_HOME/Library/ODBC"
+ODBCINST_FILE="$ODBC_DIR/odbcinst.ini"
+ODBC_FILE="$ODBC_DIR/odbc.ini"
+
+if [ -z "${SF_ACCOUNT:-}" ]; then
+    echo "[WARN] SF_ACCOUNT is not set, please manually update $ODBC_FILE after installation"
+    SF_ACCOUNT=SF_ACCOUNT
+fi
+
+# Show an AppleScript "choose from list" dropdown as the console user.
+#
+# Returns the picked name on stdout. Returns empty on failure (no console
+# user, no AppleScript GUI, user cancelled, etc.) so the caller can fall back
+# to the default. Errors are intentionally swallowed because this is a
+# best-effort interactive prompt: install must still succeed when the
+# package is run headless (no GUI session) or via `sudo installer` from a
+# terminal where AppleScript can't display a dialog.
+prompt_driver_name() {
+    local console_user console_uid script picked
+
+    console_user=$(stat -f "%Su" /dev/console 2>/dev/null || true)
+    if [ -z "$console_user" ] || [ "$console_user" = "root" ]; then
+        return 0
+    fi
+    console_uid=$(id -u "$console_user" 2>/dev/null || true)
+    if [ -z "$console_uid" ]; then
+        return 0
+    fi
+
+    script=$(cat <<OSA
+set presets to {"${DEFAULT_DRIVER_NAME}", "${ALT_DRIVER_NAME}", "Other..."}
+set picked to choose from list presets with prompt "Choose the name used to register the Snowflake ODBC driver. This is the name applications will reference in odbcinst.ini." default items {"${DEFAULT_DRIVER_NAME}"} OK button name "Continue" cancel button name "Use default"
+if picked is false then return ""
+set chosen to item 1 of picked
+if chosen is "Other..." then
+    try
+        set answer to display dialog "Enter a custom ODBC driver name:" default answer "${DEFAULT_DRIVER_NAME}" buttons {"Cancel", "Continue"} default button "Continue"
+    on error
+        return ""
+    end try
+    return text returned of answer
+end if
+return chosen
+OSA
+    )
+
+    picked=$(launchctl asuser "$console_uid" sudo -u "$console_user" \
+        /usr/bin/osascript -e "$script" 2>/dev/null || true)
+
+    printf '%s' "$picked"
+}
+
+DRIVER_NAME="${SF_DRIVER_NAME:-}"
+if [ -z "$DRIVER_NAME" ]; then
+    DRIVER_NAME=$(prompt_driver_name)
+fi
+if [ -z "$DRIVER_NAME" ]; then
+    DRIVER_NAME="$DEFAULT_DRIVER_NAME"
+fi
+
+echo "Registering ODBC driver as: $DRIVER_NAME"
+
+mkdir -p "$ODBC_DIR"
+
+parse_section_header() {
+    head -n 1 "$1" | sed -e 's/^\[//' -e 's/\]$//'
+}
+
+DSN_NAME=$(parse_section_header "$SCRIPT_DIR/odbc.ini.template")
+
+render_template() {
+    sed \
+        -e "s|__DRIVER_NAME__|${DRIVER_NAME}|g" \
+        -e "s|__DRIVER_PATH__|${DRIVER_PATH}|g" \
+        -e "s|__SF_ACCOUNT__|${SF_ACCOUNT}|g" \
+        "$1"
+}
+
+# Replace (or append) a named ini section so re-running the installer with
+# updated driver metadata leaves the file well-formed instead of accreting
+# duplicate keys. The section content includes the [section] header line; the
+# section name is parsed from it so callers don't have to repeat themselves.
+write_ini_section() {
+    local target_file="$1" section_content="$2"
+
+    local section_name
+    section_name=$(printf '%s\n' "$section_content" \
+        | head -n 1 \
+        | sed -e 's/^\[//' -e 's/\]$//')
+    if [ -z "$section_name" ]; then
+        echo "Section content must start with a [section] header" >&2
+        return 1
+    fi
+
+    local tmp
+    tmp=$(mktemp)
+
+    if [ -f "$target_file" ]; then
+        awk -v header="[$section_name]" '
+            $0 == header { skip = 1; next }
+            /^\[/        { skip = 0 }
+            !skip
+        ' "$target_file" > "$tmp"
+    fi
+
+    if [ -s "$tmp" ] && [ "$(tail -n 1 "$tmp")" != "" ]; then
+        printf '\n' >> "$tmp"
+    fi
+    printf '%s\n' "$section_content" >> "$tmp"
+
+    mv "$tmp" "$target_file"
+}
+
+upsert_ini_kv() {
+    local target_file="$1" section="$2" key="$3" value="$4"
+
+    local tmp
+    tmp=$(mktemp)
+
+    if [ -f "$target_file" ]; then
+        awk -v section="[$section]" -v key="$key" -v value="$value" '
+            BEGIN { in_section = 0; seen_section = 0; updated = 0 }
+            /^\[/ {
+                if (in_section && !updated) {
+                    print key "=" value
+                    updated = 1
+                }
+                in_section = ($0 == section) ? 1 : 0
+                if (in_section) seen_section = 1
+                print
+                next
+            }
+            in_section {
+                eq = index($0, "=")
+                if (eq > 0) {
+                    line_key = substr($0, 1, eq - 1)
+                    sub(/[[:space:]]+$/, "", line_key)
+                    if (line_key == key) {
+                        if (!updated) {
+                            print key "=" value
+                            updated = 1
+                        }
+                        next
+                    }
+                }
+                print
+                next
+            }
+            { print }
+            END {
+                if (!seen_section) {
+                    if (NR > 0) print ""
+                    print section
+                    print key "=" value
+                } else if (!updated) {
+                    print key "=" value
+                }
+            }
+        ' "$target_file" > "$tmp"
+    else
+        printf '%s\n%s=%s\n' "[$section]" "$key" "$value" > "$tmp"
+    fi
+
+    mv "$tmp" "$target_file"
+}
+
+write_ini_section "$ODBCINST_FILE" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
+write_ini_section "$ODBC_FILE"     "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
+
+# Maintain the iODBC index sections so SQLDrivers() / SQLDataSources() and
+# tools like ODBC Manager.app see our driver and DSN.
+upsert_ini_kv "$ODBCINST_FILE" "ODBC Drivers"      "$DRIVER_NAME" "Installed"
+upsert_ini_kv "$ODBC_FILE"     "ODBC Data Sources" "$DSN_NAME"    "$DRIVER_NAME"
+
+echo "Driver '$DRIVER_NAME' registered in $ODBCINST_FILE"
+echo "Default Snowflake DSN written to $ODBC_FILE"
+
+if [ -n "${SUDO_UID:-}" ]; then
+    chown -R "$SUDO_UID":"${SUDO_GID:-$SUDO_UID}" "$ODBC_DIR"
+fi

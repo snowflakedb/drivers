@@ -8,13 +8,13 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Properties;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
-public class SessionParametersTests extends SnowflakeIntegrationTestBase {
+class SessionParametersTests extends SnowflakeIntegrationTestBase {
 
   @Test
-  public void shouldForwardUnrecognizedConnectionOptionAsSessionParameter() throws Exception {
+  void shouldForwardUnrecognizedConnectionOptionAsSessionParameter() throws Exception {
     // Given Snowflake client is logged in with connection option QUERY_TAG set to
     // "session_param_e2e_test"
     Properties props = loadConnectionProperties();
@@ -27,6 +27,44 @@ public class SessionParametersTests extends SnowflakeIntegrationTestBase {
       // Then the result should contain value "session_param_e2e_test"
       assertTrue(rs.next(), "Expected one row");
       assertEquals("session_param_e2e_test", rs.getString(1));
+    }
+  }
+
+  @Test
+  void shouldEnableSessionKeepAliveViaConnectionString() throws Exception {
+    // Given Snowflake client is logged in with connection option CLIENT_SESSION_KEEP_ALIVE set to
+    // "true"
+    Properties props = loadConnectionProperties();
+    props.setProperty("CLIENT_SESSION_KEEP_ALIVE", "true");
+    String url = buildJdbcUrl(props);
+    try (Connection conn = DriverManager.getConnection(url, props);
+        Statement stmt = conn.createStatement();
+        // When Query "SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE'" is executed
+        ResultSet rs = stmt.executeQuery("SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE'")) {
+      // Then the session parameter value should be "true"
+      assertTrue(rs.next(), "Expected one row");
+      assertEquals("true", rs.getString("value"));
+    }
+  }
+
+  @Test
+  void shouldSetHeartbeatFrequencyViaConnectionString() throws Exception {
+    // Given Snowflake client is logged in with CLIENT_SESSION_KEEP_ALIVE=true and
+    // CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY=1800
+    Properties props = loadConnectionProperties();
+    props.setProperty("CLIENT_SESSION_KEEP_ALIVE", "true");
+    props.setProperty("CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY", "1800");
+    String url = buildJdbcUrl(props);
+    try (Connection conn = DriverManager.getConnection(url, props);
+        Statement stmt = conn.createStatement();
+        // When Query "SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY'" is
+        // executed
+        ResultSet rs =
+            stmt.executeQuery(
+                "SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY'")) {
+      // Then the session parameter value reflects the configured frequency
+      assertTrue(rs.next(), "Expected one row");
+      assertEquals("1800", rs.getString("value"));
     }
   }
 }

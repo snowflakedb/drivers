@@ -1,0 +1,544 @@
+header:
+  format: unixodbc
+  started: null
+  driver_manager_version: null
+  source_file: /tmp/odbc_trace_clean.log
+roots:
+- handle_type: env
+  address: '0x3445a590'
+  logical_name: env124
+  alloc:
+    seq: 419213
+    call:
+      function: SQLAllocHandle
+      return_code: SQL_SUCCESS
+      handle_type: env
+      parent_handle: null
+      child_handle: env124
+    exit_line: /tmp/odbc_trace_clean.log:4912538
+  free: null
+  operations:
+  - seq: 419214
+    call:
+      function: SQLSetEnvAttr
+      return_code: SQL_SUCCESS
+      handle: env124
+      attribute: SQL_ATTR_ODBC_VERSION
+      value: 380
+      str_len: 0
+    entry_line: /tmp/odbc_trace_clean.log:4912541
+    exit_line: /tmp/odbc_trace_clean.log:4912547
+  children:
+  - handle_type: dbc
+    address: '0x3445b2a0'
+    logical_name: dbc124
+    alloc:
+      seq: 419215
+      call:
+        function: SQLAllocHandle
+        return_code: SQL_SUCCESS
+        handle_type: dbc
+        parent_handle: env124
+        child_handle: dbc124
+      entry_line: /tmp/odbc_trace_clean.log:4912549
+      exit_line: /tmp/odbc_trace_clean.log:4912555
+    free:
+      seq: 423991
+      call:
+        function: SQLFreeHandle
+        return_code: SQL_SUCCESS
+        handle_type: dbc
+        handle: dbc124
+      entry_line: /tmp/odbc_trace_clean.log:4969084
+      exit_line: /tmp/odbc_trace_clean.log:4969088
+    operations:
+    - seq: 419216
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc124
+        attribute: SQL_ATTR_CONNECTION_TIMEOUT
+        value: 0
+        str_len: 0
+      entry_line: /tmp/odbc_trace_clean.log:4912558
+      exit_line: /tmp/odbc_trace_clean.log:4912564
+    - seq: 419217
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc124
+        attribute: SQL_ATTR_AUTOCOMMIT
+        value: 1
+        str_len: 0
+      entry_line: /tmp/odbc_trace_clean.log:4912566
+      exit_line: /tmp/odbc_trace_clean.log:4912572
+    - seq: 419595
+      call:
+        function: SQLDriverConnect
+        return_code: SQL_SUCCESS
+        handle: dbc124
+      entry_line: /tmp/odbc_trace_clean.log:4912574
+      exit_line: /tmp/odbc_trace_clean.log:4917013
+    - seq: 419596
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc124
+        attribute: SQL_ATTR_AUTOCOMMIT
+        value: 1
+        str_len: 0
+      entry_line: /tmp/odbc_trace_clean.log:4917016
+      exit_line: /tmp/odbc_trace_clean.log:4917022
+    - seq: 423990
+      call:
+        function: SQLDisconnect
+        return_code: SQL_SUCCESS
+        handle: dbc124
+      entry_line: /tmp/odbc_trace_clean.log:4968366
+      exit_line: /tmp/odbc_trace_clean.log:4969082
+    children:
+    - handle_type: stmt
+      address: '0x348afb90'
+      logical_name: stmt10006
+      alloc:
+        seq: 420758
+        call:
+          function: SQLAllocHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          parent_handle: dbc124
+          child_handle: stmt10084
+        entry_line: /tmp/odbc_trace_clean.log:4931029
+        exit_line: /tmp/odbc_trace_clean.log:4931033
+      free:
+        seq: 420792
+        call:
+          function: SQLFreeHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          handle: stmt10084
+        entry_line: /tmp/odbc_trace_clean.log:4931486
+        exit_line: /tmp/odbc_trace_clean.log:4931490
+      operations:
+      - seq: 420759
+        call:
+          function: SQLExecDirect
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          sql: |-
+            -- DTM_BRID: 6691e2b3-389d-40d4-90f9-873fc082c184
+            -- DTM_QRY:
+            show schemas like 'public'
+          sql_truncated: false
+        entry_line: /tmp/odbc_trace_clean.log:4931036
+        exit_line: /tmp/odbc_trace_clean.log:4931042
+      - seq: 420760
+        call:
+          function: SQLNumResultCols
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          count: 14
+        entry_line: /tmp/odbc_trace_clean.log:4931044
+        exit_line: /tmp/odbc_trace_clean.log:4931048
+      - seq: 420761
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 1
+          column_name: created_on
+          buffer_length: 255
+          data_type: '93'
+          column_size: 23
+          decimal_digits: 3
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931051
+        exit_line: /tmp/odbc_trace_clean.log:4931062
+      - seq: 420762
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 2
+          column_name: name
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931069
+        exit_line: /tmp/odbc_trace_clean.log:4931080
+      - seq: 420763
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 3
+          column_name: is_default
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931087
+        exit_line: /tmp/odbc_trace_clean.log:4931098
+      - seq: 420764
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 4
+          column_name: is_current
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931105
+        exit_line: /tmp/odbc_trace_clean.log:4931116
+      - seq: 420765
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 5
+          column_name: database_name
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931123
+        exit_line: /tmp/odbc_trace_clean.log:4931134
+      - seq: 420766
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 6
+          column_name: owner
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931141
+        exit_line: /tmp/odbc_trace_clean.log:4931152
+      - seq: 420767
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 7
+          column_name: comment
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931159
+        exit_line: /tmp/odbc_trace_clean.log:4931170
+      - seq: 420768
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 8
+          column_name: options
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931177
+        exit_line: /tmp/odbc_trace_clean.log:4931188
+      - seq: 420769
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 9
+          column_name: retention_time
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931195
+        exit_line: /tmp/odbc_trace_clean.log:4931206
+      - seq: 420770
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 10
+          column_name: owner_role_type
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931213
+        exit_line: /tmp/odbc_trace_clean.log:4931224
+      - seq: 420771
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 11
+          column_name: classification_profile_database
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931231
+        exit_line: /tmp/odbc_trace_clean.log:4931242
+      - seq: 420772
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 12
+          column_name: classification_profile_schema
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931249
+        exit_line: /tmp/odbc_trace_clean.log:4931260
+      - seq: 420773
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 13
+          column_name: classification_profile
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931267
+        exit_line: /tmp/odbc_trace_clean.log:4931278
+      - seq: 420774
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 14
+          column_name: object_visibility
+          buffer_length: 255
+          data_type: '12'
+          column_size: 134217728
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:4931285
+        exit_line: /tmp/odbc_trace_clean.log:4931296
+      - seq: 420775
+        call:
+          function: SQLFetch
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+        entry_line: /tmp/odbc_trace_clean.log:4931303
+        exit_line: /tmp/odbc_trace_clean.log:4931306
+      - seq: 420776
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 1
+          target_type: 93
+          target_type_name: SQL_TYPE_TIMESTAMP
+          buffer_length: 1000001
+          value: TIMESTAMP...
+          indicator: 16
+        entry_line: /tmp/odbc_trace_clean.log:4931308
+        exit_line: /tmp/odbc_trace_clean.log:4931316
+      - seq: 420777
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 2
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: PUBLIC
+          indicator: 6
+        entry_line: /tmp/odbc_trace_clean.log:4931320
+        exit_line: /tmp/odbc_trace_clean.log:4931328
+      - seq: 420778
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 3
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: N
+          indicator: 1
+        entry_line: /tmp/odbc_trace_clean.log:4931332
+        exit_line: /tmp/odbc_trace_clean.log:4931340
+      - seq: 420779
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 4
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: N
+          indicator: 1
+        entry_line: /tmp/odbc_trace_clean.log:4931344
+        exit_line: /tmp/odbc_trace_clean.log:4931352
+      - seq: 420780
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 5
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: TOUCAN_JENKINS_BUILD_860
+          indicator: 24
+        entry_line: /tmp/odbc_trace_clean.log:4931356
+        exit_line: /tmp/odbc_trace_clean.log:4931364
+      - seq: 420781
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 6
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: SYSADMIN
+          indicator: 8
+        entry_line: /tmp/odbc_trace_clean.log:4931368
+        exit_line: /tmp/odbc_trace_clean.log:4931376
+      - seq: 420782
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 7
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: ''
+          indicator: 0
+        entry_line: /tmp/odbc_trace_clean.log:4931380
+        exit_line: /tmp/odbc_trace_clean.log:4931388
+      - seq: 420783
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 8
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: ''
+          indicator: 0
+        entry_line: /tmp/odbc_trace_clean.log:4931392
+        exit_line: /tmp/odbc_trace_clean.log:4931400
+      - seq: 420784
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 9
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: '1'
+          indicator: 1
+        entry_line: /tmp/odbc_trace_clean.log:4931404
+        exit_line: /tmp/odbc_trace_clean.log:4931412
+      - seq: 420785
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 10
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: ROLE
+          indicator: 4
+        entry_line: /tmp/odbc_trace_clean.log:4931416
+        exit_line: /tmp/odbc_trace_clean.log:4931424
+      - seq: 420786
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 11
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: null
+          indicator: -1
+        entry_line: /tmp/odbc_trace_clean.log:4931428
+        exit_line: /tmp/odbc_trace_clean.log:4931436
+      - seq: 420787
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 12
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: null
+          indicator: -1
+        entry_line: /tmp/odbc_trace_clean.log:4931440
+        exit_line: /tmp/odbc_trace_clean.log:4931448
+      - seq: 420788
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 13
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: null
+          indicator: -1
+        entry_line: /tmp/odbc_trace_clean.log:4931452
+        exit_line: /tmp/odbc_trace_clean.log:4931460
+      - seq: 420789
+        call:
+          function: SQLGetData
+          return_code: SQL_SUCCESS
+          handle: stmt10084
+          column_number: 14
+          target_type: 1
+          target_type_name: SQL_CHAR
+          buffer_length: 1000001
+          value: null
+          indicator: -1
+        entry_line: /tmp/odbc_trace_clean.log:4931464
+        exit_line: /tmp/odbc_trace_clean.log:4931472
+      - seq: 420790
+        call:
+          function: SQLFetch
+          return_code: SQL_NO_DATA
+          handle: stmt10084
+        entry_line: /tmp/odbc_trace_clean.log:4931476
+        exit_line: /tmp/odbc_trace_clean.log:4931479
+      - seq: 420791
+        call:
+          function: SQLMoreResults
+          return_code: SQL_NO_DATA
+          handle: stmt10084
+        entry_line: /tmp/odbc_trace_clean.log:4931481
+        exit_line: /tmp/odbc_trace_clean.log:4931484
+      children: []
+unscoped_operations: []
+total_operations: 44

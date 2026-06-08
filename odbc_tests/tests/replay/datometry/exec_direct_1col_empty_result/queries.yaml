@@ -1,0 +1,4 @@
+queries:
+- index: 0
+  original: "-- DTM_BRID:\n-- DTM_QRY:\n-- DTM_BSID: fd750769-1447-4446-a75c-a476ec9ee5ab.0001 \n-- __dtm_noop__ \nSELECT\n    1 \nWHERE\n    1=0 \n"
+  mapped: "-- __dtm_noop__ \nSELECT\n    1 \nWHERE\n    1=0"

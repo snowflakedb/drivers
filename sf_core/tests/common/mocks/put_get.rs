@@ -37,7 +37,7 @@ pub async fn mount_unsupported_compression(server: &MockServer, repo_root: &str)
                         "encryptionMaterial": {
                             "queryStageMasterKey": "mock_key==",
                             "queryId": "mock-query-id",
-                            "smkId": 1
+                            "smkId": "1"
                         },
                         "src_locations": [src_locations_pattern],
                         "autoCompress": true,

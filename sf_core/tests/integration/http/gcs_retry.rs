@@ -1,5 +1,8 @@
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use sf_core::file_manager::{CloudCredentials, LocationType, StageInfo};
 use sf_core::sensitive::SensitiveString;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wiremock::matchers::{method, path};
@@ -15,10 +18,12 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
         creds: CloudCredentials::Gcs {
             gcs_access_token: None,
         },
-        end_point: None,
+        endpoint: None,
         presigned_url: Some(presigned_url.to_string()),
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
+        storage_account: None,
     }
 }
 
@@ -32,10 +37,12 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         creds: CloudCredentials::Gcs {
             gcs_access_token: Some(SensitiveString::from("test-bearer-token")),
         },
-        end_point: Some(endpoint.to_string()),
+        endpoint: Some(endpoint.to_string()),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        use_s3_regional_url: false,
+        storage_account: None,
     }
 }
 
@@ -247,5 +254,175 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         attempt.load(Ordering::SeqCst),
         3,
         "should have retried twice"
+    );
+}
+
+// ---------------------------------------------------------------
+// Response-side gzip auto-decode is disabled on the GCS client
+// (matches JDBC `HttpUtil.disableContentCompression()` at
+//   `HttpUtil.java:420`, used by `SnowflakeGCSClient.java:237,:432`;
+//  Python `remove_content_encoding` hook at `storage_client.py:54-59`
+//   — see `--gcp--/2.6-response_gzip_workaround.md`).
+//
+// External tooling (`gsutil cp -Z`, BigQuery exports, customer ETL)
+// can land objects on a stage whose stored metadata advertises
+// `Content-Encoding: gzip` while the body is the raw payload (or, for
+// CSE stages, ciphertext). The driver must hand the body to the caller
+// verbatim — otherwise CSE decrypt and the SHA-256/Content-Length
+// checks (gaps 2.3, 2.5) silently fail.
+// ---------------------------------------------------------------
+
+fn gzip_encode(payload: &[u8]) -> Vec<u8> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(payload).expect("gzip encode write");
+    encoder.finish().expect("gzip encode finish")
+}
+
+/// A GCS response that claims `Content-Encoding: gzip` but ships a
+/// non-gzip body. With reqwest auto-decompression on, the body reader
+/// would either error (gunzip on non-gzip bytes) or return decoded
+/// garbage; either way the caller wouldn't see the wire bytes.
+#[tokio::test]
+async fn gcs_download_content_encoding_gzip_with_non_gzip_body_is_returned_verbatim() {
+    let server = MockServer::start().await;
+
+    let payload: &[u8] = b"hello world (raw plaintext, NOT gzip)";
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(payload.to_vec())
+                .insert_header("content-encoding", "gzip")
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let result = sf_core::file_manager::download_from_gcs(&stage, "file.csv").await;
+
+    let response = result.expect(
+        "download must succeed: reqwest auto-gunzip must be disabled on the GCS client \
+         (otherwise the body reader errors on non-gzip bytes)",
+    );
+    assert_eq!(
+        response.data, payload,
+        "wire body bytes must reach the caller verbatim (no auto-decode)"
+    );
+    assert_eq!(
+        response.cloud_byte_count,
+        payload.len() as i64,
+        "cloud_byte_count must reflect the wire bytes"
+    );
+}
+
+/// Even when the body is *valid* gzip and the header says `gzip`, the
+/// driver must hand the caller the compressed wire bytes — proving the
+/// auto-decoder is off (positive byte-equality, not just "did not
+/// error"). This is the case that matters for CSE: ciphertext that
+/// happens to follow the gzip magic must not be re-decoded.
+#[tokio::test]
+async fn gcs_download_content_encoding_gzip_with_gzip_body_is_not_decoded() {
+    let server = MockServer::start().await;
+
+    let raw_payload: &[u8] = b"raw bytes that were gzipped on the way in";
+    let gzipped = gzip_encode(raw_payload);
+    assert_ne!(
+        gzipped, raw_payload,
+        "sanity: gzip output should differ from input"
+    );
+
+    let body_for_mock = gzipped.clone();
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(body_for_mock)
+                .insert_header("content-encoding", "gzip")
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv")
+        .await
+        .expect("download must succeed");
+
+    assert_eq!(
+        response.data, gzipped,
+        "driver must return the gzipped wire bytes, NOT the decoded payload"
+    );
+    assert_ne!(
+        response.data, raw_payload,
+        "if this fires, reqwest auto-gunzip ran — the .no_gzip() fix has regressed"
+    );
+}
+
+/// Regression guard: a response with no `Content-Encoding` header
+/// behaves identically to the pre-fix happy path.
+#[tokio::test]
+async fn gcs_download_without_content_encoding_header_is_unchanged() {
+    let server = MockServer::start().await;
+
+    let payload: &[u8] = b"plain body, no Content-Encoding header";
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(payload.to_vec())
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    let response = sf_core::file_manager::download_from_gcs(&stage, "file.csv")
+        .await
+        .expect("happy-path download must still succeed");
+
+    assert_eq!(response.data, payload);
+}
+
+/// The GCS download path must not advertise `Accept-Encoding: gzip` on
+/// the wire either. `.no_gzip()` on reqwest also suppresses the
+/// automatic `Accept-Encoding` header injection — mirroring libcurl's
+/// default (no opt-in) and JDBC's `disableContentCompression`. This
+/// guards against a future regression where someone calls `.gzip(true)`
+/// or removes `.no_gzip()` and only the auto-decoder check is asserted.
+#[tokio::test]
+async fn gcs_download_does_not_advertise_gzip_accept_encoding() {
+    let server = MockServer::start().await;
+
+    let payload: &[u8] = b"plain body";
+
+    Mock::given(method("GET"))
+        .and(path("/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(payload.to_vec())
+                .insert_header("x-goog-meta-sfc-digest", "test-digest"),
+        )
+        .mount(&server)
+        .await;
+
+    let stage = gcs_stage_with_presigned_url(&format!("{}/download", server.uri()));
+    sf_core::file_manager::download_from_gcs(&stage, "file.csv")
+        .await
+        .expect("download must succeed");
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "exactly one GET expected");
+    let accept_encoding = requests[0]
+        .headers
+        .get("accept-encoding")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        !accept_encoding.to_ascii_lowercase().contains("gzip"),
+        "GCS GET must not advertise gzip in Accept-Encoding (reqwest .no_gzip() also \
+         suppresses the auto-injected header); got: {accept_encoding:?}"
     );
 }

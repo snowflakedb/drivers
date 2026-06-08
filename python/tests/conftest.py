@@ -4,6 +4,8 @@ pytest configuration and fixtures for PEP 249 tests.
 
 from __future__ import annotations
 
+import os
+
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,10 +16,37 @@ from snowflake.connector.cursor import DictCursor
 from .compatibility import IS_UNIVERSAL_DRIVER
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .private_key_helper import get_test_private_key_path
+from .wiremock_client import WiremockClient
 
 
 # Type alias for a single row returned from cursor
 Row = tuple[Any, ...]
+
+
+def pytest_configure(config):
+    # scripts/ is not a Python package (no __init__.py, not on sys.path), so
+    # load setup_local_reg.py by file path via importlib. bootstrap() is a
+    # no-op unless SNOWFLAKE_TEST_HOST points at a *.reg.local instance.
+    #
+    # Unit tests must not require parameters.json: when the file is absent
+    # we simply skip the bootstrap step — only integ / e2e suites need
+    # credentials, and those will fail with a clearer error downstream.
+    import importlib.util
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
+    if not param_path.is_file():
+        return
+
+    spec = importlib.util.spec_from_file_location("setup_local_reg", repo_root / "scripts" / "setup_local_reg.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.bootstrap(parameters_path=param_path)
+
+
+def pytest_xdist_auto_num_workers(config):
+    return os.cpu_count() or 1
 
 
 @pytest.mark.optionalhook
@@ -46,16 +75,31 @@ def with_paramstyle(style: str):
     return pytest.mark.parametrize("connection", [style], indirect=True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def connection(request, connector_adapter):
-    """Create a test connection using the configured connector adapter.
+    """Module-scoped test connection; shared across tests in the same module.
 
-    Use ``@with_paramstyle(...)`` to enable parameter binding on the
-    connection.  When the decorator is absent the connection has no
-    paramstyle set.
+    Use ``@with_paramstyle(...)`` to enable parameter binding. When a paramstyle
+    is supplied via indirect parametrize, a distinct instance is created per
+    paramstyle so tests with different paramstyles don't collide.
+
+    Tests that mutate connection state (close, autocommit, commit/rollback,
+    set_autocommit, etc.) must use ``function_connection`` instead — this
+    fixture is reused across tests in a module and must remain untouched.
     """
     paramstyle = getattr(request, "param", None)
     with create_connection_with_adapter(connector_adapter, paramstyle=paramstyle) as conn:
+        yield conn
+
+
+@pytest.fixture
+def function_connection(connector_adapter):
+    """Function-scoped connection for tests that mutate connection state.
+
+    Required for tests that call ``close()``, ``autocommit()``, ``commit()``,
+    ``rollback()``, or similar methods that invalidate the session.
+    """
+    with create_connection_with_adapter(connector_adapter) as conn:
         yield conn
 
 
@@ -179,9 +223,47 @@ def int_test_connection_factory(connector_adapter):
     return _create_connection
 
 
+@pytest.fixture(scope="session")
+def _wiremock_session():
+    """Start one Wiremock JVM per xdist worker and reuse it across tests."""
+    client = WiremockClient().start()
+    try:
+        yield client
+    finally:
+        client.stop()
+
+
+@pytest.fixture
+def wiremock(_wiremock_session):
+    """Per-test Wiremock handle backed by a session-scoped JVM.
+
+    Mappings and captured requests are cleared before each test; the JVM itself
+    stays up, saving ~1–3 s of startup per test.
+    """
+    _wiremock_session.reset()
+    return _wiremock_session
+
+
 def pytest_runtest_setup(item):
     """Skip tests based on connector type and markers."""
     if IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_universal"):
-        pytest.skip("Skipping test for universal driver")
+        marker = item.get_closest_marker("skip_universal")
+        reason = marker.kwargs.get("reason", "Skipping test for universal driver")
+        pytest.skip(reason)
     elif not IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_reference"):
-        pytest.skip("Skipping test for reference driver")
+        marker = item.get_closest_marker("skip_reference")
+        reason = marker.kwargs.get("reason", "Skipping test for reference driver")
+        pytest.skip(reason)
+    marker = item.get_closest_marker("skip_for_json_result_set")
+    if marker is not None:
+        result_format = os.getenv("QUERY_RESULT_FORMAT")
+        if result_format and result_format.upper() == "JSON":
+            reason = marker.kwargs.get("reason", "Test requires Arrow format precision")
+            pytest.skip(f"Skipped for JSON result format: {reason}")
+
+    if item.get_closest_marker("require_vpn") and os.environ.get("JENKINS_URL") is None:
+        pytest.skip("Requires VPN (run on Jenkins)")
+
+
+from tests.helpers.fixtures import core_proxy as core_proxy  # noqa: E402
+from tests.helpers.fixtures import mock_db_api as mock_db_api  # noqa: E402

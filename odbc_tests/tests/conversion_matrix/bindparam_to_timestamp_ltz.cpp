@@ -7,13 +7,11 @@ static const SqlTypeInfo TIMESTAMP_LTZ_SQL_TYPES[] = {
 };
 // clang-format on
 
-TEST_CASE("conversion matrix: all C types -> TIMESTAMP_LTZ column via SQLBindParameter",
-          "[conversion_matrix][bindparam][timestamp_ltz]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> TIMESTAMP_LTZ column via SQLBindParameter",
+                 "[conversion_matrix][bindparam][timestamp_ltz]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE OR REPLACE TABLE cm_timestamp_ltz (val TIMESTAMP_LTZ)");
+  conn.execute("CREATE TEMPORARY TABLE cm_timestamp_ltz (val TIMESTAMP_LTZ)");
   ResultWriter report(get_report_path("bindparam_to_timestamp_ltz"));
 
   // When each C type is bound to each TIMESTAMP SQL type and executed

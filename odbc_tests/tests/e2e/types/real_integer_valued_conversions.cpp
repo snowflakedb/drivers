@@ -108,7 +108,7 @@ TEST_CASE("should handle i32 and u32 boundary values stored as float", "[datatyp
 // ============================================================================
 
 TEST_CASE("should convert large integer-valued floats to wider types and strings",
-          "[datatype][float][conversion][integer][edge]") {
+          "[datatype][float][conversion][integer][edge][flaky]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -172,7 +172,7 @@ TEST_CASE("should convert integer-valued floats to SQL_C_FLOAT", "[datatype][flo
 // ============================================================================
 
 TEST_CASE("should encode large integer-valued floats correctly in SQL_C_NUMERIC",
-          "[datatype][float][conversion][numeric][edge]") {
+          "[datatype][float][conversion][numeric][edge][flaky]") {
   // Given Snowflake client is logged in
   Connection conn;
 

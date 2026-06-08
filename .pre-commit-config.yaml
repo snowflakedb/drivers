@@ -31,16 +31,22 @@ repos:
         # to avoid huge diffs in case we need to upgrade nanoarrow
         exclude: ^python/src/snowflake/connector/_internal/nanoarrow_cpp/
         language: system
-    -   id: tests-format-validator
-        name: Tests format validator
-        description: Validate that test implementations match Gherkin feature scenarios
-        entry: ./tests/tests_format_validator/run_validator.sh
+    -   id: generate-connection-config
+        name: Generate ConnectionConfig from Rust PARAM_DEFS
+        description: Regenerate connection_config.py when param_registry.rs changes
+        # ``-p sf_core`` pins the workspace package so this still works
+        # unambiguously when other crates expose a ``param_defs_export`` bin.
+        # ``set -euo pipefail`` makes any cargo / hatch failure stop the hook
+        # immediately, and we deliberately let stderr through so generator or
+        # formatter errors are visible in the pre-commit log.
+        entry: bash -c 'set -euo pipefail; cargo run -p sf_core --bin param_defs_export > python/src/snowflake/connector/connection_config.py && (cd python && hatch run precommit:fix src/snowflake/connector/connection_config.py) && git add python/src/snowflake/connector/connection_config.py'
         pass_filenames: false
+        files: (param_registry\.rs|param_defs_export\.rs)$
         language: system
     -   id: python-checks
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files
-        entry: bash -c 'cd python && uv run hatch run precommit:check'
+        entry: bash -c 'cd python && hatch run precommit:check'
         pass_filenames: false
         files: ^python/.*\.py$
         language: system
@@ -63,4 +69,37 @@ repos:
         entry: bash -c 'cd jdbc && bash ./gradlew spotlessCheck'
         pass_filenames: false
         files: ^jdbc/
+        language: system
+    -   id: nodejs-code-format
+        name: Node.js code formatting & linting
+        description: Auto-format with oxfmt and lint with oxlint
+        entry: bash -c 'cd nodejs && npm run fmt:fix && npm run lint:check'
+        pass_filenames: false
+        files: ^nodejs/
+        language: system
+    -   id: behavior-differences-validator
+        name: Behavioral Differences format check
+        description: Validate BehaviorDifferences.yaml schema (status, type, required fields)
+        entry: python3 odbc_tests/validate_behavior_differences.py
+        pass_filenames: false
+        files: ^odbc_tests/BehaviorDifferences\.yaml$
+        language: system
+    -   id: tests-format-validator
+        name: Tests format validator
+        description: Validate that test implementations match Gherkin feature scenarios
+        entry: ./tests/tests_format_validator/run_validator.sh
+        pass_filenames: false
+        language: system
+    -   id: ai-rules-sync
+        name: AI rules sync check
+        description: >
+          Two checks: (1) verify .cursor/rules/*.mdc body matches .claude/rules/*.md
+          canonical source (alwaysApply rules need full content in both — pointer files
+          place the body in tool-call history where context compaction can drop it);
+          (2) verify every .claude/skills/*/SKILL.md has a matching .cursor/skills/
+          pointer so Cursor users can invoke the skill. Edit .claude/ first for rules,
+          then copy the body to .cursor/rules/. Run scripts/check-ai-rules-sync.sh to fix.
+        entry: bash scripts/check-ai-rules-sync.sh
+        pass_filenames: false
+        files: (\.claude/rules/|\.cursor/rules/|\.claude/skills/|\.cursor/skills/)
         language: system

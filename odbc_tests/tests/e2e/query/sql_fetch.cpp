@@ -5,7 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -984,14 +984,13 @@ TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYP
   REQUIRE(ret == SQL_ERROR);
   CHECK(get_sqlstate(stmt) == "22018");
 }
-TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetch returns 24000 when no result set exists.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto schema = Schema::use_random_schema(conn);
 
   // When a non-SELECT statement is executed (no result set)
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE test_table (id INT)", SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE fetch_no_resultset_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
@@ -1015,16 +1014,25 @@ TEST_CASE("SQLFetch returns SQL_NO_DATA when result set is empty.", "[query]") {
 }
 
 TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[query]") {
-  // Given Snowflake client is logged in
+  // Given a fresh statement handle on an active connection (no execute yet)
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLFetch is called without executing any statement first
+  // When SQLFetch is called without first executing a statement
   SQLRETURN ret = SQLFetch(stmt.getHandle());
 
-  // Then SQLFetch should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLFetch returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]") {
@@ -1361,25 +1369,33 @@ TEST_CASE("SQLFetchScroll returns HY010 when called without executing statement.
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLFetchScroll is called without executing any statement first
+  // When SQLFetchScroll is called without first executing a statement
   SQLRETURN ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
 
-  // Then SQLFetchScroll should return SQL_ERROR with SQLSTATE HY010
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+  // Then SQLFetchScroll returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1010"));
+  }
 }
 
-TEST_CASE("SQLFetchScroll returns 24000 when no result set exists after DDL.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetchScroll returns 24000 when no result set exists after DDL.", "[query]") {
   // Doc: "24000 - Invalid cursor state: The StatementHandle was in an executed state
   //       but no result set was associated with the StatementHandle."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#diagnostics
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto schema = Schema::use_random_schema(conn);
 
   // When a DDL statement is executed (no result set)
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TABLE fetch_scroll_test (id INT)"), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TEMPORARY TABLE fetch_scroll_test (id INT)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetchScroll is called on the statement with no result set

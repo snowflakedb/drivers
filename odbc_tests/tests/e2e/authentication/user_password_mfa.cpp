@@ -81,33 +81,34 @@ void verify_simple_query_execution(ConnectionHandleWrapper& dbc) {
 // E2E Tests
 // =============================================================================
 
-TEST_CASE("should authenticate using user password mfa with passcode in password", "[mfa_auth]") {
+TEST_CASE("should authenticate using username password with appended TOTP passcode", "[mfa_auth]") {
   // TOTP codes are one time and would be extremely flaky on CI
   REQUIRE_DAILY_RUN_JENKINS_JOB("MFA specific setup required");
   std::string connection_string = get_mfa_connection_string(PASSCODE_IN_PASSWORD);
-  // Given MFA authentication is configured with valid credentials
+  // Given Authentication is set to username_password_mfa and user, password with appended passcode are provided and
+  // passcodeInPassword is set
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
 
-  // Then Login is successful
+  // Then Login is successful and simple query can be executed
   SQLDisconnect(dbc.getHandle());
 }
 
-TEST_CASE("should authenticate using user password mfa with passcode explicit", "[mfa_auth]") {
+TEST_CASE("should authenticate using username password and TOTP passcode", "[mfa_auth]") {
   // TOTP codes are one time and would be extremely flaky on CI
   REQUIRE_DAILY_RUN_JENKINS_JOB("MFA specific setup required");
 
   std::string connection_string = get_mfa_connection_string(PASSCODE_NOT_IN_PASSWORD);
-  // Given MFA authentication is configured with valid credentials
+  // Given Authentication is set to username_password_mfa and user, password and passcode are provided
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
 
-  // Then Login is successful
+  // Then Login is successful and simple query can be executed
   SQLDisconnect(dbc.getHandle());
 }

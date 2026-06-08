@@ -1,4 +1,4 @@
-@python
+@python @core_not_needed
 Feature: TIMESTAMP_LTZ type support
 
   # =========================================================================== #

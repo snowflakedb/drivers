@@ -2,10 +2,14 @@
 
 TIMESTAMP_LTZ (Local Time Zone) stores timestamp with local timezone.
 Values are stored in UTC and converted to the session timezone on retrieval.
-Python type: datetime with tzinfo set (not None).
+Python type: datetime with tzinfo set to the session timezone.
 
-All SQL string literals use explicit '+00:00' UTC offset so that expected
-values are deterministic regardless of the Snowflake session timezone.
+The session timezone is explicitly set to America/New_York (a non-UTC zone)
+so that tests verify the driver actually propagates the session timezone
+to the result rather than silently falling back to UTC.
+
+SQL string literals use explicit '+00:00' UTC offsets so input values are
+deterministic; expected values are expressed in America/New_York.
 """
 
 from __future__ import annotations
@@ -13,18 +17,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytz
 
 from ...conftest import with_paramstyle
-from .utils import assert_datetime_type, assert_sequential_values, batch_insert
+from .utils import assert_datetime_type, assert_sequential_values, assert_timezone, batch_insert
 
 
-# =============================================================================
-# EXPECTED DATETIME VALUES (UTC)
-# =============================================================================
-TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=timezone.utc)
-TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=timezone.utc)
+SESSION_TZ_NAME = "America/New_York"
+SESSION_TZ = pytz.timezone(SESSION_TZ_NAME)
 
 # =============================================================================
 # SQL STRING REPRESENTATIONS (with explicit UTC offset)
@@ -35,25 +35,33 @@ TS_EPOCH_STR = "1970-01-01 00:00:00 +00:00"
 TS_WITH_MICROSECONDS_STR = "2024-01-15 10:30:00.123456 +00:00"
 
 # =============================================================================
+# EXPECTED DATETIME VALUES in America/New_York
+# Constructed from the UTC instants then converted to the session timezone.
+# Jan 15 is EST (UTC-5): 10:30 UTC -> 05:30 EST
+# Jun 20 is EDT (UTC-4): 14:45:30 UTC -> 10:45:30 EDT
+# Epoch is EST (UTC-5): 00:00 UTC -> 1969-12-31 19:00 EST
+# =============================================================================
+TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc).astimezone(SESSION_TZ)
+TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=timezone.utc).astimezone(SESSION_TZ)
+TS_EPOCH = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc).astimezone(SESSION_TZ)
+TS_WITH_MICROSECONDS = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=timezone.utc).astimezone(SESSION_TZ)
+
+# =============================================================================
 # LARGE RESULT SET
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 50_000
-SEQUENTIAL_BASE = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-
-
-def to_utc(values):
-    """Convert datetime values to UTC, preserving None."""
-    return [v.astimezone(timezone.utc) if v is not None else None for v in values]
+SEQUENTIAL_BASE_UTC = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 
 def sequential_timestamp(i):
-    """Transform index to expected sequential UTC timestamp."""
-    return SEQUENTIAL_BASE + timedelta(seconds=i)
+    """Transform index to expected sequential timestamp in session timezone."""
+    return (SEQUENTIAL_BASE_UTC + timedelta(seconds=i)).astimezone(SESSION_TZ)
 
 
-def compare_ts_utc(actual, expected):
-    """Compare timestamps by converting actual to UTC."""
-    return actual.astimezone(timezone.utc) == expected
+@pytest.fixture(autouse=True)
+def _set_session_timezone(cursor):
+    """Set session timezone to a non-UTC zone for all tests in this module."""
+    cursor.execute(f"ALTER SESSION SET TIMEZONE = '{SESSION_TZ_NAME}'")
 
 
 class TestTimestampLtzTypeCasting:
@@ -70,7 +78,7 @@ class TestTimestampLtzTypeCasting:
         assert_datetime_type(result)
 
         # And Values should have timezone info
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_timezone(result, expected_tz=SESSION_TZ_NAME)
 
 
 class TestTimestampLtzLiteral:
@@ -101,8 +109,9 @@ class TestTimestampLtzLiteral:
         result = execute_query(f"SELECT {select_cols}", single_row=True)
 
         # Then Result should contain timestamps <expected_values>
-        assert_datetime_type(result, require_tzinfo=True)
-        assert tuple(to_utc(result)) == expected_values
+        assert_datetime_type(result)
+        assert_timezone(result, expected_tz=SESSION_TZ_NAME)
+        assert tuple(result) == expected_values
 
     def test_should_handle_null_values_for_timestamp_ltz(self, execute_query):
         # Given Snowflake client is logged in
@@ -115,8 +124,9 @@ class TestTimestampLtzLiteral:
         )
 
         # Then Result should contain [2024-01-15 10:30:00 UTC, NULL]
-        assert_datetime_type(result, can_be_none=True, require_tzinfo=True)
-        assert tuple(to_utc(result)) == (TS_2024_JAN, None)
+        assert_datetime_type(result, can_be_none=True)
+        assert_timezone(result, expected_tz=SESSION_TZ_NAME, can_be_none=True)
+        assert result == (TS_2024_JAN, None)
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_ltz(self, execute_query):
         # Given Snowflake client is logged in
@@ -135,8 +145,9 @@ class TestTimestampLtzLiteral:
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00 UTC
         values = [row[0] for row in rows]
-        assert_datetime_type(values, require_tzinfo=True)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp, compare=compare_ts_utc)
+        assert_datetime_type(values)
+        assert_timezone(values, expected_tz=SESSION_TZ_NAME)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp)
 
 
 class TestTimestampLtzTable:
@@ -169,8 +180,9 @@ class TestTimestampLtzTable:
         result = [row[0] for row in rows]
 
         # Then Result should contain timestamps <expected_values>
-        assert_datetime_type(result, can_be_none=can_be_none, require_tzinfo=True)
-        assert to_utc(result) == expected_values
+        assert_datetime_type(result, can_be_none=can_be_none)
+        assert_timezone(result, expected_tz=SESSION_TZ_NAME, can_be_none=can_be_none)
+        assert result == expected_values
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table_for_timestamp_ltz(
         self, execute_query, tmp_schema
@@ -193,8 +205,9 @@ class TestTimestampLtzTable:
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00 UTC
         values = [row[0] for row in rows]
-        assert_datetime_type(values, require_tzinfo=True)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp, compare=compare_ts_utc)
+        assert_datetime_type(values)
+        assert_timezone(values, expected_tz=SESSION_TZ_NAME)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=sequential_timestamp)
 
 
 @with_paramstyle("qmark")
@@ -218,7 +231,8 @@ class TestTimestampLtzBinding:
         )
 
         # Then Result should contain the bound timestamps
-        assert_datetime_type(result, require_tzinfo=True)
+        assert_datetime_type(result)
+        assert_timezone(result, expected_tz=SESSION_TZ_NAME)
         assert len(result) == 2
 
     def test_should_select_null_timestamp_ltz_using_parameter_binding(self, execute_query):
@@ -256,4 +270,5 @@ class TestTimestampLtzBinding:
         null_results = [r for r in result if r is None]
         assert len(non_null_results) == 2
         assert len(null_results) == 1
-        assert_datetime_type(non_null_results, require_tzinfo=True)
+        assert_datetime_type(non_null_results)
+        assert_timezone(non_null_results, expected_tz=SESSION_TZ_NAME)

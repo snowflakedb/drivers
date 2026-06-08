@@ -60,15 +60,15 @@ class TestGetLoggers:
 class TestLoggerConfiguration:
     """Test that loggers are configured correctly at module load."""
 
-    def test_sf_core_logger_propagate_disabled(self):
-        """Test that sf_core logger has propagation disabled."""
+    def test_sf_core_logger_propagate_enabled(self):
+        """Test that sf_core logger propagates by default (before setup_logging)."""
         logger = get_sf_core_logger()
-        assert logger.propagate is False
+        assert logger.propagate is True
 
-    def test_connector_logger_propagate_disabled(self):
-        """Test that connector logger has propagation disabled."""
+    def test_connector_logger_propagate_enabled(self):
+        """Test that connector logger propagates by default (before setup_logging)."""
         logger = get_connector_logger()
-        assert logger.propagate is False
+        assert logger.propagate is True
 
     def test_sf_core_logger_has_null_handler(self):
         """Test that sf_core logger has a NullHandler."""
@@ -92,11 +92,13 @@ class TestSetupLogging:
         connector_logger = get_connector_logger()
         sf_core_logger = get_sf_core_logger()
 
-        # Store original handlers
+        # Store original state
         original_connector_handlers = list(connector_logger.handlers)
         original_sf_core_handlers = list(sf_core_logger.handlers)
         original_connector_level = connector_logger.level
         original_sf_core_level = sf_core_logger.level
+        original_connector_propagate = connector_logger.propagate
+        original_sf_core_propagate = sf_core_logger.propagate
 
         yield
 
@@ -105,6 +107,8 @@ class TestSetupLogging:
         sf_core_logger.handlers = original_sf_core_handlers
         connector_logger.setLevel(original_connector_level)
         sf_core_logger.setLevel(original_sf_core_level)
+        connector_logger.propagate = original_connector_propagate
+        sf_core_logger.propagate = original_sf_core_propagate
 
     def test_setup_logging_sets_connector_level(self):
         """Test that setup_logging sets the connector logger level."""
@@ -219,6 +223,19 @@ class TestSetupLogging:
         # Handler count should not increase after the second call
         assert connector_handlers_after_second == connector_handlers_after_first
         assert sf_core_handlers_after_second == sf_core_handlers_after_first
+
+    def test_setup_logging_disables_propagation(self):
+        """Test that setup_logging disables propagation to prevent duplicates."""
+        connector_logger = get_connector_logger()
+        sf_core_logger = get_sf_core_logger()
+
+        assert connector_logger.propagate is True
+        assert sf_core_logger.propagate is True
+
+        setup_logging()
+
+        assert connector_logger.propagate is False
+        assert sf_core_logger.propagate is False
 
     def test_setup_logging_skips_handler_if_non_null_handler_exists(self):
         """Test that setup_logging skips adding handler if a non-NullHandler already exists."""

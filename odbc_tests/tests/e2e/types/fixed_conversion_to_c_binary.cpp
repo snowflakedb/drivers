@@ -5,16 +5,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("SQL_DECIMAL to SQL_C_BINARY", "[fixed][conversion][c_binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL to SQL_C_BINARY", "[fixed][conversion][c_binary]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("integer value");
@@ -46,13 +44,12 @@ TEST_CASE("SQL_DECIMAL to SQL_C_BINARY", "[fixed][conversion][c_binary]") {
   }
 }
 
-TEST_CASE("SQL_DECIMAL SQL_C_BINARY buffer too small returns 22003", "[fixed][conversion][c_binary][22003]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQL_C_BINARY buffer too small returns 22003",
+                 "[fixed][conversion][c_binary][22003]") {
   SKIP_OLD_DRIVER("BD#12",
                   "Old driver does not return SQL_ERROR (22003) when SQL_C_BINARY buffer is too small for "
                   "SQL_NUMERIC_STRUCT");
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NUMBER value is fetched as SQL_C_BINARY into a buffer smaller than SQL_NUMERIC_STRUCT
   auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
@@ -65,10 +62,8 @@ TEST_CASE("SQL_DECIMAL SQL_C_BINARY buffer too small returns 22003", "[fixed][co
   CHECK(get_sqlstate(stmt) == "22003");
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_BINARY", "[fixed][conversion][c_binary][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_BINARY", "[fixed][conversion][c_binary][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL NUMBER value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0)");

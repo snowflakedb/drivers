@@ -3,7 +3,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 
@@ -544,9 +543,17 @@ TEST_CASE("SQLBindCol returns HY090 when BufferLength is less than 0.", "[query]
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, -1, &indicator);
 
-  // Then SQLBindCol should return SQL_ERROR with SQLSTATE HY090
+  // Then SQLBindCol returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY090");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY090
+    CHECK(get_sqlstate(stmt) == "HY090");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1090 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1090");
+  }
 }
 
 TEST_CASE("SQLBindCol does not return error when BufferLength is 0 for non-character type.", "[query][bind_col]") {
@@ -690,14 +697,23 @@ TEST_CASE("SQLBindCol returns HY003 for invalid TargetType.", "[query][bind_col]
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLBindCol is called with an invalid TargetType
+  // When SQLBindCol is called with an invalid TargetType (9999, not a real SQL_C_* code)
   SQLCHAR buffer[100] = {0};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, 9999, buffer, sizeof(buffer), &indicator);
 
-  // Then SQLBindCol should return SQL_ERROR with SQLSTATE HY003
+  // Then SQLBindCol returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY003");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY003
+    //   (invalid application buffer type)
+    CHECK(get_sqlstate(stmt) == "HY003");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1003 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1003");
+  }
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_DEFAULT as TargetType.", "[query][bind_col]") {
@@ -1970,16 +1986,26 @@ TEST_CASE("Setting SQL_DESC_COUNT to -1 on the ARD returns an error.", "[query][
   SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
   REQUIRE(ret == SQL_SUCCESS);
 
-  // And SQL_DESC_COUNT is set to -1 on the ARD
+  // When SQL_DESC_COUNT is set to -1 on the ARD (invalid: SQL_DESC_COUNT is unsigned)
   ret = SQLSetDescField(ard, 0, SQL_DESC_COUNT, (SQLPOINTER)(intptr_t)-1, 0);
 
-  // Then SQLSetDescField should return an error
-  CHECK(ret == SQL_ERROR);
-  // TODO: Check why this is different on Windows
-  UNIX_ONLY { CHECK(get_sqlstate(SQL_HANDLE_DESC, ard) == "07009"); }
-  WINDOWS_ONLY {
-    auto sqlstate = get_sqlstate(SQL_HANDLE_DESC, ard);
-    CHECK((sqlstate == "07009" || sqlstate == "HY024"));
+  NON_IODBC {
+    // Then the DM validates and rejects with SQL_ERROR; under unixODBC the SQLSTATE
+    //   is 07009 (invalid descriptor index) and under Windows it is either 07009 or
+    //   HY024 (invalid attribute value)
+    // TODO: Check why this is different on Windows
+    CHECK(ret == SQL_ERROR);
+    UNIX_ONLY { CHECK(get_sqlstate(SQL_HANDLE_DESC, ard) == "07009"); }
+    WINDOWS_ONLY {
+      auto sqlstate = get_sqlstate(SQL_HANDLE_DESC, ard);
+      CHECK((sqlstate == "07009" || sqlstate == "HY024"));
+    }
+  }
+  IODBC_ONLY {
+    // Then the DM does not validate SQL_DESC_COUNT and forwards the call to the
+    //   driver; the driver silently accepts or rejects the bogus value, so we only
+    //   assert the call did not crash (no specific SQLSTATE is guaranteed)
+    CHECK((ret == SQL_SUCCESS || ret == SQL_ERROR));
   }
 }
 

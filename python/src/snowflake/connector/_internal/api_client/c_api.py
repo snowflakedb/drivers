@@ -60,8 +60,8 @@ except OSError as err:
 LOGGER_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p
 )
-core.sf_core_init_logger.argtypes = [LOGGER_CALLBACK]
-core.sf_core_init_logger.restype = ctypes.c_uint32
+core.sf_core_init.argtypes = [LOGGER_CALLBACK]
+core.sf_core_init.restype = ctypes.c_uint32
 
 core.sf_core_api_call_proto.restype = ctypes.c_uint32
 core.sf_core_api_call_proto.argtypes = [
@@ -120,8 +120,8 @@ def sf_core_free_buffer(buffer: Any, length: int) -> None:
     core.sf_core_free_buffer(buffer, length)
 
 
-def sf_core_init_logger(callback: Any) -> None:
-    core.sf_core_init_logger(callback)
+def sf_core_init(callback: Any) -> None:
+    core.sf_core_init(callback)
 
 
 level_map = {
@@ -165,7 +165,7 @@ def register_default_logger_callback() -> None:
     Register the default logger callback with the core API.
     Call this function explicitly to set up logging.
     """
-    sf_core_init_logger(c_logger_callback)
+    sf_core_init(c_logger_callback)
 
 
 @functools.lru_cache(maxsize=1)

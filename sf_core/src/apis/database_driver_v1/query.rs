@@ -1,100 +1,119 @@
 use super::ColumnMetadata;
+use super::connection::{Connection, RefreshContext};
+use super::global_state::{PutGetResultsetFlavor, WrapperPresets};
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{boxed_arrow_reader, create_schema};
 use crate::chunks::{
-    ChunkError, DEFAULT_PREFETCH_THREADS, arrow_prefetch_reader, empty_reader,
-    json_prefetch_reader, schema_only_reader, single_chunk_reader,
+    ChunkError, PrefetchConfig, arrow_prefetch_reader, empty_reader, json_prefetch_reader,
+    schema_only_reader, single_chunk_reader,
 };
 use crate::file_manager;
-use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
+use crate::file_manager::{
+    CloudCredentials, DownloadResult, StageCredsCache, StageCredsRefreshError, UploadResult,
+    download_files, upload_files,
+};
 use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
-use rest::snowflake::query_response::{self, QueryResponseError};
-use snafu::{Location, ResultExt, Snafu};
+use rest::snowflake::query_response::{self, QueryResponseError, RowsetData};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
-/// Result of processing a query response: the Arrow reader plus optional
-/// column metadata for responses where the server does not provide rowtype
-/// (e.g. PUT/GET file transfer commands).
+/// Literal emitted by `PutGetResultsetFlavor::Odbc` in the PUT result's
+/// `encryption` column. Mirrors `#define ENCRYPTION_ENCRYPTED "ENCRYPTED"`
+/// from legacy libsnowflakeclient's `FileTransferExecutionResult.cpp`. The
+/// value is a constant string for *every* row (it advertises "your data
+/// ended up encrypted", not "this row's encryption material"). Any C++ /
+/// Python wrapper test that asserts on this column must use the same
+/// literal — kept here so the contract has one source of truth.
+const ODBC_PUT_ENCRYPTION_LITERAL: &str = "ENCRYPTED";
+
+/// Literal emitted by `PutGetResultsetFlavor::Odbc` in the GET result's
+/// `encryption` column. Mirrors `#define ENCRYPTION_DECRYPTED "DECRYPTED"`
+/// from legacy libsnowflakeclient. See `ODBC_PUT_ENCRYPTION_LITERAL`.
+const ODBC_GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
+
+/// Inputs the refresher needs to re-issue the original PUT/GET SQL against GS.
 ///
-/// The reader is a plain [`RecordBatchReader`], not an FFI stream. For chunked
-/// result sets it downloads and parses chunks lazily using a blocking channel
-/// receiver, so it must be drained from a synchronous context -- never from
-/// within an async runtime (a `tokio` task or `block_on`), which would panic.
-/// Drain it after returning from `block_on`, or on a dedicated thread or via
-/// `spawn_blocking`.
-#[non_exhaustive]
-pub struct QueryResult {
-    /// Arrow reader over the result set; `Send + 'static`. See the type-level
-    /// note above on draining it outside an async runtime.
-    pub reader: Box<dyn RecordBatchReader + Send>,
-    /// Column metadata override: `Some` only for PUT/GET file-transfer
-    /// commands; `None` for ordinary queries, whose schema comes from `reader`.
-    pub columns: Option<Vec<ColumnMetadata>>,
+/// The connection handle is held instead of a snapshot session token: a long
+/// upload batch can outlive its session, and reading the token freshly per
+/// refresh (via `RefreshContext::execute_with_refresh`) lets PR #1137's
+/// session-renewal path heal a 390112 transparently.
+#[derive(Clone)]
+pub struct StageCredsRefreshContext {
+    pub sql: String,
+    pub query_parameters: crate::config::rest_parameters::QueryParameters,
+    pub conn: Arc<Mutex<Connection>>,
 }
 
-/// Process a Snowflake query response into a [`QueryResult`], returning the
-/// Arrow [`RecordBatchReader`] directly with no FFI wrapping. For chunked
-/// result sets `http_client` downloads further chunks lazily as the reader is
-/// drained; see [`QueryResult`] for the requirement to drain it from a
-/// synchronous context.
-pub async fn process_query_response(
+/// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
+///
+/// When `stage_creds_refresh_context` is `Some`, an S3 `ExpiredToken` during a
+/// file transfer triggers a re-issue of the original PUT/GET SQL to obtain fresh
+/// STS credentials and the operation is retried. Non-PUT/GET callers pass `None`.
+///
+/// `use_s3_regional_url_session_param` is the resolved value of the
+/// `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session parameter (read at the
+/// dispatch site via `read_use_s3_regional_url_session_param`). When `true`,
+/// it ORs into the S3 regional-URL decision, matching the Python connector,
+/// JDBC, and libsnowflakeclient behavior.
+pub(super) async fn perform_put_get_transfer(
+    command: &str,
     data: &query_response::Data,
-    http_client: &Client,
-) -> Result<QueryResult, QueryResponseProcessingError> {
-    match data.command {
-        Some(ref command) => perform_put_get(command.clone(), data).await,
-        None => {
-            let reader = read_batches(data.to_rowset_data(), http_client.clone())
-                .await
-                .context(BatchReadingSnafu)?;
-            Ok(QueryResult {
-                reader,
-                columns: None,
-            })
-        }
-    }
-}
+    wrapper_presets: &WrapperPresets,
+    stage_creds_refresh_context: Option<StageCredsRefreshContext>,
+    use_s3_regional_url_session_param: bool,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    // Seed the refresher's cache with the initial creds.
+    let initial_creds = data
+        .stage_info_creds()
+        .context(FileTransferPreparationSnafu)?;
+    let mut refresher = stage_creds_refresh_context
+        .zip(initial_creds)
+        .map(|(ctx, initial_creds)| SnowflakeStageCredsRefresher::new(ctx, initial_creds));
+    let refresher_handle = refresher
+        .as_mut()
+        .map(|r| r as &mut dyn file_manager::StageCredsRefresher);
 
-async fn perform_put_get(
-    command: String,
-    data: &query_response::Data,
-) -> Result<QueryResult, QueryResponseProcessingError> {
-    match command.as_str() {
+    match command {
         "UPLOAD" => {
             let file_upload_data = data
-                .to_file_upload_data()
+                .to_file_upload_data(
+                    wrapper_presets.put_get_resultset_flavor.clone(),
+                    wrapper_presets.legacy_odbc_compression_autodetect,
+                    use_s3_regional_url_session_param,
+                )
                 .context(FileTransferPreparationSnafu)?;
-            let upload_results = upload_files(&file_upload_data)
+            let upload_results = upload_files(&file_upload_data, refresher_handle)
                 .await
                 .context(FileUploadSnafu)?;
-            let reader =
-                upload_results_reader(upload_results).context(UploadResultsConversionSnafu)?;
-            Ok(QueryResult {
-                reader,
-                columns: Some(upload_column_metadata()),
-            })
+            Ok(RowsetData::Upload(upload_results))
         }
         "DOWNLOAD" => {
             let file_download_data = data
-                .to_file_download_data()
-                .context(FileTransferPreparationSnafu)?;
-            let download_results = download_files(file_download_data)
+                .to_file_download_data(
+                    &wrapper_presets.put_get_resultset_flavor,
+                    use_s3_regional_url_session_param,
+                )
+                .map_err(|e| {
+                    if e.to_string().contains("source locations") {
+                        RemoteFileNotFoundSnafu.build()
+                    } else {
+                        FileTransferPreparationSnafu.into_error(e)
+                    }
+                })?;
+            let download_results = download_files(file_download_data, refresher_handle)
                 .await
                 .context(FileDownloadSnafu)?;
-            let reader = download_results_reader(download_results)
-                .context(DownloadResultsConversionSnafu)?;
-            Ok(QueryResult {
-                reader,
-                columns: Some(download_column_metadata()),
-            })
+            Ok(RowsetData::Download(download_results))
         }
         _ => UnsupportedCommandSnafu {
             command: command.to_string(),
@@ -103,34 +122,182 @@ async fn perform_put_get(
     }
 }
 
-async fn read_batches<'a>(
-    data: query_response::RowsetData<'a>,
+/// Window during which repeated `refresh()` calls return without hitting GS.
+/// Matches ODBC's `FileTransferAgent.cpp` `m_lastRefreshTokenSec` gate (10
+/// minutes), which coalesces rapid-fire refreshes from concurrent uploads.
+const REFRESH_COALESCE_WINDOW: Duration = Duration::from_secs(10 * 60);
+
+/// Refreshes stage credentials by re-executing the original PUT/GET SQL
+/// against Snowflake GS, matching Python's `StorageCredential.update` and
+/// ODBC's `FileTransferAgent::renewToken`. GS returns a brand-new `stageInfo`
+/// per query, so we take only the creds and leave bucket/region/key_prefix
+/// untouched. The new creds land in the shared `StageCredsCache` so every
+/// in-flight transfer in the batch picks them up on its next attempt.
+///
+/// The refresh re-issues the PUT/GET SQL through `RefreshContext::execute_with_refresh`
+/// — if the session token has itself expired by the time we reach this point
+/// (e.g. a long batch upload), the 390112 detection from PR #1137 transparently
+/// renews the session before retrying the SQL.
+///
+/// A 10-minute coalescing window short-circuits subsequent refresh calls
+/// without re-issuing the SQL, keeping us well-behaved against a burst of
+/// `ExpiredToken` responses (long batch upload, concurrent parts in a future
+/// parallel implementation) without either capping retries artificially or
+/// hammering GS.
+struct SnowflakeStageCredsRefresher {
+    ctx: StageCredsRefreshContext,
+    cache: StageCredsCache,
+    last_refresh_at: Option<Instant>,
+}
+
+impl SnowflakeStageCredsRefresher {
+    fn new(ctx: StageCredsRefreshContext, initial_creds: CloudCredentials) -> Self {
+        Self {
+            ctx,
+            cache: StageCredsCache::new(initial_creds),
+            last_refresh_at: None,
+        }
+    }
+}
+
+/// Returns `true` if a refresh recorded at `last` is still considered fresh
+/// at `now` and a new fetch should be coalesced. Extracted so the
+/// time-window logic can be unit-tested without a real `Instant::now()`.
+fn should_coalesce(last: Option<Instant>, now: Instant) -> bool {
+    last.is_some_and(|at| now.saturating_duration_since(at) < REFRESH_COALESCE_WINDOW)
+}
+
+impl file_manager::StageCredsRefresher for SnowflakeStageCredsRefresher {
+    fn refresh(&mut self) -> file_manager::RefreshFuture<'_> {
+        Box::pin(async move {
+            // Coalesce rapid-fire refreshes: if we already fetched creds
+            // within the window, the cache still holds them — nothing to do.
+            if should_coalesce(self.last_refresh_at, Instant::now()) {
+                tracing::debug!("Stage creds refresh coalesced; cache holds recent creds");
+                return Ok(());
+            }
+
+            tracing::info!("Refreshing stage credentials by re-executing PUT/GET SQL");
+            let creds = fetch_fresh_stage_creds(&self.ctx).await?;
+            self.cache.store(creds);
+            self.last_refresh_at = Some(Instant::now());
+            Ok(())
+        })
+    }
+
+    fn cache(&self) -> &StageCredsCache {
+        &self.cache
+    }
+}
+
+/// Re-issues the original PUT/GET SQL through `RefreshContext::execute_with_refresh`
+/// and extracts the fresh `stageInfo.creds` from the response. Going through
+/// `execute_with_refresh` means a session-token expiry mid-batch is healed
+/// transparently by PR #1137's 390112 detection before the SQL is retried.
+async fn fetch_fresh_stage_creds(
+    ctx: &StageCredsRefreshContext,
+) -> Result<CloudCredentials, StageCredsRefreshError> {
+    use crate::file_manager::types::stage_creds_refresh_error::*;
+
+    // `from_arc` is used (not `new`) so that a `close()` raced against an
+    // in-flight refresh is rejected, consistent with the original query path.
+    let mut refresh_ctx = RefreshContext::from_arc(&ctx.conn)
+        .await
+        .context(QueryFailedSnafu)?;
+    // `from_arc` already validates that `http_client` is present (via the
+    // is_closed check + `RefreshContext::new`), so this lookup just clones it.
+    let http_client = ctx
+        .conn
+        .lock()
+        .await
+        .http_client
+        .clone()
+        .expect("http_client present after RefreshContext::from_arc succeeded");
+
+    let query_input = rest::snowflake::QueryInput::new(ctx.sql.clone());
+    let response = refresh_ctx
+        .execute_with_refresh(|session_token| {
+            let http_client = http_client.clone();
+            let query_parameters = ctx.query_parameters.clone();
+            let query_input = query_input.clone();
+            async move {
+                rest::snowflake::snowflake_query_with_client(
+                    &http_client,
+                    query_parameters,
+                    session_token.reveal(),
+                    query_input,
+                    &crate::config::retry::RetryPolicy::default(),
+                    rest::snowflake::QueryExecutionMode::Blocking,
+                )
+                .await
+            }
+        })
+        .await
+        .context(QueryFailedSnafu)?;
+
+    if !response.success {
+        return Err(ServerRejectedSnafu {
+            message: response
+                .message
+                .unwrap_or_else(|| "Unknown error".to_string()),
+        }
+        .build());
+    }
+
+    // The re-issued PUT/GET carries the fresh stageInfo on the response.
+    response
+        .data
+        .stage_info_creds()
+        .context(InvalidStageInfoSnafu)?
+        .context(MissingStageInfoSnafu)
+}
+
+/// Builds an Arrow `RecordBatchReader` from the stored `RowsetData`.
+/// Called lazily by `result_set_get_stream` / `result_set_get_reader`.
+pub(super) async fn build_reader_from_rowset_data(
+    data: &RowsetData,
     http_client: Client,
+    prefetch_config: &PrefetchConfig,
+    wrapper_presets: &WrapperPresets,
+) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+    match data {
+        RowsetData::Upload(results) => {
+            upload_results_reader(results, wrapper_presets).context(UploadResultsConversionSnafu)
+        }
+        RowsetData::Download(results) => download_results_reader(results, wrapper_presets)
+            .context(DownloadResultsConversionSnafu),
+        _ => read_batches(data, http_client, prefetch_config)
+            .await
+            .context(BatchReadingSnafu),
+    }
+}
+
+pub(super) async fn read_batches(
+    data: &RowsetData,
+    http_client: Client,
+    prefetch_config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
-        query_response::RowsetData::ArrowSingleChunk { chunk_base64 } => {
+        RowsetData::ArrowSingleChunk { chunk_base64 } => {
             single_chunk_reader(chunk_base64).context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::ArrowMultiChunk {
+        RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
-        } => {
-            // Handle chunk download case without base64 data
-            arrow_prefetch_reader(
-                initial_base64_opt,
-                chunk_download_data.into(),
-                http_client.clone(),
-                DEFAULT_PREFETCH_THREADS,
-            )
-            .await
-            .context(ChunkReadingSnafu)
-        }
-        query_response::RowsetData::SchemaOnly { rowtype } => {
+        } => arrow_prefetch_reader(
+            initial_base64_opt.as_deref(),
+            chunk_download_data.clone().into(),
+            http_client.clone(),
+            prefetch_config,
+        )
+        .await
+        .context(ChunkReadingSnafu),
+        RowsetData::SchemaOnly { rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             schema_only_reader(&row_types).context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::JsonRowset { rowset, rowtype } => {
+        RowsetData::JsonRowset { rowset, rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             validate_column_count(rowset, &row_types)?;
             json_prefetch_reader(
@@ -138,12 +305,12 @@ async fn read_batches<'a>(
                 row_types,
                 Vec::new(),
                 http_client.clone(),
-                DEFAULT_PREFETCH_THREADS,
+                prefetch_config,
             )
             .await
             .context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::JsonMultiChunk {
+        RowsetData::JsonMultiChunk {
             rowset,
             rowtype,
             chunk_download_data,
@@ -154,14 +321,14 @@ async fn read_batches<'a>(
             json_prefetch_reader(
                 rowset,
                 row_types,
-                chunk_download_data,
+                chunk_download_data.clone(),
                 http_client.clone(),
-                DEFAULT_PREFETCH_THREADS,
+                prefetch_config,
             )
             .await
             .context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::NoData => Ok(empty_reader()),
+        RowsetData::NoData | RowsetData::Upload(_) | RowsetData::Download(_) => Ok(empty_reader()),
     }
 }
 
@@ -209,8 +376,8 @@ macro_rules! int64_array {
     };
 }
 
-fn upload_row_types() -> Vec<(RowType, DataType)> {
-    vec![
+fn upload_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+    let mut row_types = vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
         build_generic_fixed_rowtype("source_size"),
@@ -218,26 +385,37 @@ fn upload_row_types() -> Vec<(RowType, DataType)> {
         build_generic_text_rowtype("source_compression"),
         build_generic_text_rowtype("target_compression"),
         build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ]
+    ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        row_types.push(build_generic_text_rowtype("encryption"));
+    }
+    row_types.push(build_generic_text_rowtype("message"));
+    row_types
 }
 
-fn download_row_types() -> Vec<(RowType, DataType)> {
-    vec![
+fn download_row_types(wrapper_presets: &WrapperPresets) -> Vec<(RowType, DataType)> {
+    let mut row_types = vec![
         build_generic_text_rowtype("file"),
         build_generic_fixed_rowtype("size"),
         build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ]
+    ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        row_types.push(build_generic_text_rowtype("encryption"));
+    }
+    row_types.push(build_generic_text_rowtype("message"));
+    row_types
 }
 
 /// Converts upload results to Arrow format
-pub fn upload_results_reader(
-    upload_results: Vec<UploadResult>,
+pub(super) fn upload_results_reader(
+    upload_results: &[UploadResult],
+    wrapper_presets: &WrapperPresets,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let schema = create_schema(&upload_row_types()).expect("Failed to create schema from RowTypes");
+    let schema = create_schema(&upload_row_types(wrapper_presets))
+        .expect("Failed to create schema from RowTypes");
 
-    let columns: Vec<Arc<dyn Array>> = vec![
+    let n = upload_results.len();
+    let mut columns: Vec<Arc<dyn Array>> = vec![
         string_array!(upload_results, source),
         string_array!(upload_results, target),
         int64_array!(upload_results, source_size),
@@ -245,25 +423,37 @@ pub fn upload_results_reader(
         string_array!(upload_results, source_compression),
         string_array!(upload_results, target_compression),
         string_array!(upload_results, status),
-        string_array!(upload_results, message),
     ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        columns.push(Arc::new(StringArray::from_iter_values(
+            std::iter::repeat_n(ODBC_PUT_ENCRYPTION_LITERAL, n),
+        )));
+    }
+    columns.push(string_array!(upload_results, message));
 
     boxed_arrow_reader(schema, columns)
 }
 
 /// Converts download results to Arrow format
-pub fn download_results_reader(
-    download_results: Vec<DownloadResult>,
+pub(super) fn download_results_reader(
+    download_results: &[DownloadResult],
+    wrapper_presets: &WrapperPresets,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let schema =
-        create_schema(&download_row_types()).expect("Failed to create schema from RowTypes");
+    let schema = create_schema(&download_row_types(wrapper_presets))
+        .expect("Failed to create schema from RowTypes");
 
-    let columns: Vec<Arc<dyn Array>> = vec![
+    let n = download_results.len();
+    let mut columns: Vec<Arc<dyn Array>> = vec![
         string_array!(download_results, file),
         int64_array!(download_results, size),
         string_array!(download_results, status),
-        string_array!(download_results, message),
     ];
+    if wrapper_presets.put_get_resultset_flavor == PutGetResultsetFlavor::Odbc {
+        columns.push(Arc::new(StringArray::from_iter_values(
+            std::iter::repeat_n(ODBC_GET_ENCRYPTION_LITERAL, n),
+        )));
+    }
+    columns.push(string_array!(download_results, message));
 
     boxed_arrow_reader(schema, columns)
 }
@@ -323,16 +513,16 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
 }
 
 /// Build column metadata for PUT (UPLOAD) results.
-pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
-    upload_row_types()
+pub fn upload_column_metadata(wrapper_presets: &WrapperPresets) -> Vec<ColumnMetadata> {
+    upload_row_types(wrapper_presets)
         .iter()
         .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
 }
 
 /// Build column metadata for GET (DOWNLOAD) results.
-pub fn download_column_metadata() -> Vec<ColumnMetadata> {
-    download_row_types()
+pub fn download_column_metadata(wrapper_presets: &WrapperPresets) -> Vec<ColumnMetadata> {
+    download_row_types(wrapper_presets)
         .iter()
         .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
@@ -379,6 +569,11 @@ pub enum QueryResponseProcessingError {
     #[snafu(display("Failed to prepare file transfer data"))]
     FileTransferPreparation {
         source: QueryResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("While getting file(s) there was an error: the file does not exist"))]
+    RemoteFileNotFound {
         #[snafu(implicit)]
         location: Location,
     },
@@ -431,10 +626,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn upload_column_metadata_has_correct_structure() {
-        let columns = upload_column_metadata();
+    fn upload_column_metadata_has_correct_structure_python() {
+        let columns = upload_column_metadata(&WrapperPresets::python());
 
-        assert_eq!(columns.len(), 8, "PUT should have 8 columns");
+        assert_eq!(columns.len(), 8, "PUT (Python) should have 8 columns");
 
         assert_eq!(columns[0].name, "source");
         assert_eq!(columns[0].r#type, "TEXT");
@@ -468,10 +663,54 @@ mod tests {
     }
 
     #[test]
-    fn download_column_metadata_has_correct_structure() {
-        let columns = download_column_metadata();
+    fn upload_column_metadata_has_correct_structure_odbc() {
+        let columns = upload_column_metadata(&WrapperPresets::odbc());
 
-        assert_eq!(columns.len(), 4, "GET should have 4 columns");
+        assert_eq!(
+            columns.len(),
+            9,
+            "PUT (ODBC) should have 9 columns including encryption"
+        );
+
+        assert_eq!(columns[0].name, "source");
+        assert_eq!(columns[0].r#type, "TEXT");
+        assert!(!columns[0].nullable);
+
+        assert_eq!(columns[1].name, "target");
+        assert_eq!(columns[1].r#type, "TEXT");
+
+        assert_eq!(columns[2].name, "source_size");
+        assert_eq!(columns[2].r#type, "FIXED");
+        assert_eq!(
+            columns[2].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[2].scale, Some(0));
+
+        assert_eq!(columns[3].name, "target_size");
+        assert_eq!(columns[3].r#type, "FIXED");
+
+        assert_eq!(columns[4].name, "source_compression");
+        assert_eq!(columns[4].r#type, "TEXT");
+
+        assert_eq!(columns[5].name, "target_compression");
+        assert_eq!(columns[5].r#type, "TEXT");
+
+        assert_eq!(columns[6].name, "status");
+        assert_eq!(columns[6].r#type, "TEXT");
+
+        assert_eq!(columns[7].name, "encryption");
+        assert_eq!(columns[7].r#type, "TEXT");
+
+        assert_eq!(columns[8].name, "message");
+        assert_eq!(columns[8].r#type, "TEXT");
+    }
+
+    #[test]
+    fn download_column_metadata_has_correct_structure_python() {
+        let columns = download_column_metadata(&WrapperPresets::python());
+
+        assert_eq!(columns.len(), 4, "GET (Python) should have 4 columns");
 
         assert_eq!(columns[0].name, "file");
         assert_eq!(columns[0].r#type, "TEXT");
@@ -490,6 +729,38 @@ mod tests {
 
         assert_eq!(columns[3].name, "message");
         assert_eq!(columns[3].r#type, "TEXT");
+    }
+
+    #[test]
+    fn download_column_metadata_has_correct_structure_odbc() {
+        let columns = download_column_metadata(&WrapperPresets::odbc());
+
+        assert_eq!(
+            columns.len(),
+            5,
+            "GET (ODBC) should have 5 columns including encryption"
+        );
+
+        assert_eq!(columns[0].name, "file");
+        assert_eq!(columns[0].r#type, "TEXT");
+        assert!(!columns[0].nullable);
+
+        assert_eq!(columns[1].name, "size");
+        assert_eq!(columns[1].r#type, "FIXED");
+        assert_eq!(
+            columns[1].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[1].scale, Some(0));
+
+        assert_eq!(columns[2].name, "status");
+        assert_eq!(columns[2].r#type, "TEXT");
+
+        assert_eq!(columns[3].name, "encryption");
+        assert_eq!(columns[3].r#type, "TEXT");
+
+        assert_eq!(columns[4].name, "message");
+        assert_eq!(columns[4].r#type, "TEXT");
     }
 
     #[test]
@@ -524,38 +795,51 @@ mod tests {
         assert_eq!(rt.1, DataType::Int64);
     }
 
-    #[tokio::test]
-    async fn process_query_response_schema_only_exposes_reader() {
-        let data: crate::rest::snowflake::query_response::Data = serde_json::from_str(
-            r#"{
-                "queryResultFormat": "arrow",
-                "rowtype": [
-                    {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0},
-                    {"name": "NAME", "type": "TEXT", "nullable": true, "length": 100, "byteLength": 400}
-                ]
-            }"#,
-        )
-        .expect("fixture must deserialize into query_response::Data");
+    // --- Stage-creds coalescing window ---
+    //
+    // The coalescing decision is extracted as `should_coalesce(last, now)`
+    // so we can drive it with synthetic Instants instead of the real clock.
+    // These tests pin the boundary at REFRESH_COALESCE_WINDOW (10 min) and
+    // verify both edges.
 
-        let client = reqwest::Client::new();
-        let result = process_query_response(&data, &client)
-            .await
-            .expect("schema-only response should process successfully");
+    #[test]
+    fn should_coalesce_returns_false_before_first_refresh() {
+        let now = Instant::now();
+        assert!(!should_coalesce(None, now));
+    }
 
-        assert!(result.columns.is_none());
+    #[test]
+    fn should_coalesce_returns_true_inside_window() {
+        let last = Instant::now();
+        // Just inside the window — anything < REFRESH_COALESCE_WINDOW.
+        let now = last + REFRESH_COALESCE_WINDOW - Duration::from_secs(1);
+        assert!(should_coalesce(Some(last), now));
+    }
 
-        let reader = result.reader;
-        let schema = reader.schema();
-        assert_eq!(schema.fields().len(), 2);
-        assert_eq!(schema.field(0).name(), "ID");
-        assert_eq!(schema.field(0).data_type(), &DataType::Int64);
-        assert_eq!(schema.field(1).name(), "NAME");
-        assert_eq!(schema.field(1).data_type(), &DataType::Utf8);
+    #[test]
+    fn should_coalesce_returns_false_at_window_boundary() {
+        // Exactly REFRESH_COALESCE_WINDOW elapsed should *not* coalesce —
+        // it's strictly less-than. Belt-and-braces: if we ever change the
+        // comparison, this catches it.
+        let last = Instant::now();
+        let now = last + REFRESH_COALESCE_WINDOW;
+        assert!(!should_coalesce(Some(last), now));
+    }
 
-        let batches = reader
-            .collect::<Result<Vec<_>, _>>()
-            .expect("draining the schema-only reader should not error");
-        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(total_rows, 0);
+    #[test]
+    fn should_coalesce_returns_false_past_window() {
+        let last = Instant::now();
+        let now = last + REFRESH_COALESCE_WINDOW + Duration::from_secs(1);
+        assert!(!should_coalesce(Some(last), now));
+    }
+
+    #[test]
+    fn should_coalesce_handles_clock_going_backwards() {
+        // saturating_duration_since avoids panics if the system clock skews
+        // backwards between the recorded last and now (paranoia for tests
+        // that mint Instants by hand; in production Instants are monotonic).
+        let last = Instant::now();
+        let now = last - Duration::from_millis(0); // same instant
+        assert!(should_coalesce(Some(last), now));
     }
 }

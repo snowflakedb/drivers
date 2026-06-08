@@ -15,8 +15,10 @@ use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     RustParsingSnafu, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::interval::format_interval;
 use crate::conversion::param_binding::{
-    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+    buffer_data_len, format_numeric_value, read_char_str, read_numeric_struct, read_unaligned,
+    read_wchar_str,
 };
 use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
@@ -27,6 +29,7 @@ use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 pub(crate) struct SnowflakeVarchar {
     #[allow(dead_code)]
     pub len: u32,
+    pub is_semi_structured: bool,
 }
 
 impl SnowflakeType for SnowflakeVarchar {
@@ -207,6 +210,17 @@ impl WriteODBCType for SnowflakeVarchar {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
+        if self.is_semi_structured {
+            match binding.target_type {
+                CDataType::Default | CDataType::Char | CDataType::WChar | CDataType::Binary => {}
+                _ => {
+                    return UnsupportedOdbcTypeSnafu {
+                        target_type: binding.target_type,
+                    }
+                    .fail();
+                }
+            }
+        }
         let snowflake_value: &str = &snowflake_value;
         match binding.target_type {
             CDataType::Default | CDataType::Char => {
@@ -369,6 +383,30 @@ impl WriteODBCType for SnowflakeVarchar {
             CDataType::Binary => {
                 Ok(binding.write_binary(snowflake_value.as_bytes(), get_data_offset))
             }
+            // SQL_C_INTERVAL_* fetch (per ODBC Appendix D, "Character to
+            // Interval"). Snowflake VARCHAR holds the interval literal
+            // text; the parser is target-aware so the input shape must
+            // match the qualifier (truncation of trailing fields is
+            // surfaced as 01S07 in the helper).
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => {
+                crate::conversion::interval_str::varchar_to_interval(
+                    snowflake_value,
+                    binding.target_type,
+                    binding,
+                )
+            }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }
@@ -439,30 +477,8 @@ impl ReadODBC for SnowflakeVarchar {
                 format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second)
             }
             CDataType::Numeric => {
-                let n = read_unaligned::<sql::Numeric>(binding);
-                let magnitude = u128::from_le_bytes(n.val);
-                let abs_str = magnitude.to_string();
-                let scaled = if n.scale > 0 {
-                    let s = n.scale as usize;
-                    if abs_str.len() <= s {
-                        let padded = format!("{:0>width$}", abs_str, width = s + 1);
-                        let (whole, frac) = padded.split_at(padded.len() - s);
-                        format!("{}.{}", whole, frac)
-                    } else {
-                        let (whole, frac) = abs_str.split_at(abs_str.len() - s);
-                        format!("{}.{}", whole, frac)
-                    }
-                } else if n.scale < 0 {
-                    let zeros = (-(i16::from(n.scale))) as usize;
-                    format!("{}{}", abs_str, "0".repeat(zeros))
-                } else {
-                    abs_str
-                };
-                if n.sign == 0 && magnitude != 0 {
-                    format!("-{}", scaled)
-                } else {
-                    scaled
-                }
+                let (mantissa, scale) = read_numeric_struct(binding)?;
+                format_numeric_value(mantissa, scale)
             }
             CDataType::Binary => {
                 let len = buffer_data_len(binding);
@@ -470,6 +486,36 @@ impl ReadODBC for SnowflakeVarchar {
                     std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
                 };
                 hex_encode_lowercase(bytes)
+            }
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => format_interval(binding),
+            CDataType::Guid => {
+                let g = read_unaligned::<sql::Guid>(binding);
+                format!(
+                    "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                    g.d1,
+                    g.d2,
+                    g.d3,
+                    g.d4[0],
+                    g.d4[1],
+                    g.d4[2],
+                    g.d4[3],
+                    g.d4[4],
+                    g.d4[5],
+                    g.d4[6],
+                    g.d4[7],
+                )
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

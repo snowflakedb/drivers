@@ -1,4 +1,4 @@
-@python
+@python @core_not_needed
 Feature: TIMESTAMP_NTZ type support
 
   # =========================================================================== #
@@ -130,9 +130,10 @@ Feature: TIMESTAMP_NTZ type support
     Then All values should be returned as appropriate type
     And Values should have timezone info
 
-  # Python truncation behaviour (digits 7–9 dropped) is tested in: tests/definitions/python/types/timestamp_ntz.feature
-  @python_not_needed
-  Scenario: should preserve nanosecond precision for timestamp_ntz
+  # Python truncation behaviour (digits 7–9 dropped)
+  @python_e2e
+  Scenario: should truncate nanosecond precision to microseconds for timestamp ntz
     Given Snowflake client is logged in
-    When Query "SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ" is executed
-    Then Result should contain [2024-01-15 10:30:00.123456789]
+    When Query "SELECT '<input>'::TIMESTAMP_NTZ" is executed
+    Then Result should contain [<expected>]
+    And Values should not have timezone info

@@ -45,11 +45,9 @@ class TestModuleConstants:
 
     def test_threadsafety_constant(self):
         """Test threadsafety constant."""
-        assert threadsafety == 1
+        assert threadsafety == 2
         assert hasattr(pep249_dbapi, "threadsafety")
-        assert pep249_dbapi.threadsafety == 1
-        assert isinstance(threadsafety, int)
-        assert 0 <= threadsafety <= 3  # Valid range according to PEP 249
+        assert pep249_dbapi.threadsafety == 2
 
     def test_paramstyle_constant(self):
         """Test paramstyle constant."""

@@ -39,7 +39,8 @@ pub enum ApiError {
     Login {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("Failed to lock connection"))]
     ConnectionLocking {
@@ -51,9 +52,15 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Connection is closed"))]
+    ConnectionClosed {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("TLS client creation failed: {source}"))]
     TlsClientCreation {
-        source: TlsError,
+        #[snafu(source(from(TlsError, Box::new)))]
+        source: Box<TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -78,7 +85,8 @@ pub enum ApiError {
     SessionRefresh {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("Statement error: {source}"))]
     Statement {
@@ -86,11 +94,12 @@ pub enum ApiError {
         location: Location,
         source: StatementError,
     },
-    #[snafu(display("Query execution failed: {source}"))]
+    #[snafu(display("{source}"))]
     Query {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("HTTP request failed: {context}: {source}"))]
     HttpRequest {
@@ -103,10 +112,17 @@ pub enum ApiError {
     TokenRequest {
         #[snafu(implicit)]
         location: Location,
-        source: RestError,
+        #[snafu(source(from(RestError, Box::new)))]
+        source: Box<RestError>,
     },
     #[snafu(display("Master token expired, full re-authentication required"))]
     MasterTokenExpired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Logout failed: {message}"))]
+    LogoutFailed {
+        message: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -136,9 +152,34 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to decode JSON chunk data"))]
+    JsonChunkDecoding {
+        source: arrow::error::ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to encode inline JSON rowset as Arrow IPC"))]
+    InlineJsonEncoding {
+        #[snafu(implicit)]
+        location: Location,
+        source: ChunkError,
+    },
+    #[snafu(display("Invalid column metadata for '{column}'"))]
+    InvalidColumnMetadata {
+        column: String,
+        #[snafu(implicit)]
+        location: Location,
+        source: crate::rest::snowflake::query_response::QueryResponseError,
+    },
     #[snafu(display("Failed to decode base64 chunk data"))]
     Base64Decoding {
         source: base64::DecodeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported queryResultFormat reported by the server: '{format}'"))]
+    UnsupportedQueryResultFormat {
+        format: String,
         #[snafu(implicit)]
         location: Location,
     },

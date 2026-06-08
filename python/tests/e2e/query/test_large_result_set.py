@@ -18,3 +18,18 @@ class TestLargeResultSet:
         # Then there are 1000000 numbered sequentially rows returned
         values = [row[0] for row in rows]
         assert_sequential_values(values, 1000000)
+
+    def test_should_process_ten_thousand_string_rows_when_initial_chunk_is_empty(self, cursor):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "select L_COMMENT from SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM limit 10000" is executed
+        sql = "select L_COMMENT from SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM limit 10000"
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+
+        # Then there are 10000 rows returned
+        assert len(rows) == 10000
+        for row in rows:
+            assert isinstance(row[0], str)
+            assert row[0] != ""

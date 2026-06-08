@@ -1,32 +1,36 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
 import lombok.experimental.UtilityClass;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
 
 @UtilityClass
 class StatementTypeClassifier {
   public static final long NO_UPDATE_COUNT = -1L;
 
-  static boolean producesResultSet(ExecuteResult executeResult) {
-    return lookupType(executeResult).producesResultSet();
+  static boolean producesResultSet(ResultSetDescriptor descriptor) {
+    return lookupType(descriptor).producesResultSet();
   }
 
-  static long getUpdateCount(ExecuteResult executeResult) {
-    StatementType statementType = lookupType(executeResult);
+  static boolean producesResultSet(long statementTypeId) {
+    return StatementType.lookupById(statementTypeId).producesResultSet();
+  }
+
+  static long getUpdateCount(ResultSetDescriptor descriptor) {
+    StatementType statementType = lookupType(descriptor);
     if (statementType.producesResultSet()) {
       return NO_UPDATE_COUNT;
     }
 
-    return statementType.isDml() && executeResult.hasRowsAffected()
-        ? executeResult.getRowsAffected()
+    return statementType.isDml() && descriptor.hasRowsAffected()
+        ? descriptor.getRowsAffected()
         : 0L;
   }
 
-  private static StatementType lookupType(ExecuteResult executeResult) {
-    if (!executeResult.hasStatementTypeId()) {
+  private static StatementType lookupType(ResultSetDescriptor descriptor) {
+    if (!descriptor.hasStatementTypeId()) {
       return StatementType.UNKNOWN;
     }
-    return StatementType.lookupById(executeResult.getStatementTypeId());
+    return StatementType.lookupById(descriptor.getStatementTypeId());
   }
 
   private enum StatementType {

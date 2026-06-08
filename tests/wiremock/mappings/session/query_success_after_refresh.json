@@ -17,8 +17,22 @@
       "success": true,
       "data": {
         "queryId": "test-query-id",
-        "rowtype": [],
-        "rowset": [[1]]
+        "rowtype": [
+          {
+            "name": "STATUS",
+            "type": "text",
+            "nullable": true,
+            "length": 16777216,
+            "byteLength": 16777216,
+            "precision": null,
+            "scale": null
+          }
+        ],
+        "rowset": [],
+        "total": 0,
+        "returned": 0,
+        "queryResultFormat": "json",
+        "statementTypeId": 16384
       }
     },
     "headers": {

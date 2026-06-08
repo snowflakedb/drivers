@@ -1,10 +1,15 @@
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jobject};
 use proto_utils::{ProtoError, Transport};
+use sf_core::logging::LogManager;
 use sf_core::protobuf::apis::RustTransport;
+use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPresets};
+use sf_core::telemetry::snowflake_exporter::SessionRegistry;
+
+static JDBC_LOG_MANAGER: Mutex<Option<LogManager>> = Mutex::new(None);
 
 struct JdbcBridge {
     runtime: tokio::runtime::Runtime,
@@ -13,16 +18,21 @@ struct JdbcBridge {
 
 impl JdbcBridge {
     pub fn new() -> Self {
+        let providers = DriverProviders {
+            log_manager: JDBC_LOG_MANAGER
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take(),
+            wrapper_presets: WrapperPresets::jdbc(),
+            ..Default::default()
+        };
         Self {
-            // Single worker thread is intentional: keeps contention minimal and
-            // makes deadlocks easier to detect. Will be increased during
-            // performance optimization.
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()
                 .build()
                 .expect("Failed to create tokio runtime"),
-            transport: RustTransport::new(),
+            transport: RustTransport::new_with(providers),
         }
     }
 
@@ -47,10 +57,13 @@ mod sflogger_layer;
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
-    let config = sf_core::logging::LoggingConfig::new(None, false, false);
     let layer = sflogger_layer::SFLoggerLayer::new(jvm);
-    match sf_core::logging::init_logging(config, Some(layer)) {
-        Ok(_) => jni::sys::JNI_VERSION_1_2,
+    let sessions = SessionRegistry::default();
+    match LogManager::with_app_sink(sf_core::logging::LoggingConfig::default(), layer, sessions) {
+        Ok(lm) => {
+            *JDBC_LOG_MANAGER.lock().unwrap_or_else(|e| e.into_inner()) = Some(lm);
+            jni::sys::JNI_VERSION_1_2
+        }
         Err(e) => {
             eprintln!("Failed to initialize logging: {e:?}");
             -1
@@ -167,4 +180,15 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
     };
 
     response_obj.into_raw()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_new_succeeds_without_log_manager() {
+        // LogManager::get() returns None when not initialised; construction must not panic.
+        let _bridge = JdbcBridge::new();
+    }
 }

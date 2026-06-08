@@ -1,10 +1,12 @@
 package net.snowflake.client.internal.api.implementation.datasource;
 
 import java.io.PrintWriter;
+import java.security.PrivateKey;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.util.Base64;
 import java.util.Properties;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -23,6 +25,15 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  * net.snowflake.client.api.datasource.SnowflakeDataSourceFactory#createDataSource()} instead.
  */
 public class SnowflakeBasicDataSource implements SnowflakeDataSource {
+
+  // TODO: [SNOW-3595091] align authenticator-promotion behavior across drivers.
+  //  The legacy JDBC driver auto-set the authenticator to USERNAME_PASSWORD_MFA
+  //  from setPasscode / setPasscodeInPassword (and analogous setters for other auth methods),
+  //  and analogous behavior exists in the Python and ODBC connectors.
+  //  The new universal driver intentionally drops this side-effect for now so
+  //  that each setter does only what its name says.
+  //  Once the cross-driver decision is finalized: either reinstate the auto-promotion uniformly,
+  //  or document a hard "callers must set the authenticator explicitly" contract everywhere.
 
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeBasicDataSource.class);
 
@@ -165,6 +176,62 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   @Override
   public void setWarehouse(String warehouse) {
     this.properties.setProperty(SnowflakeSessionProperty.WAREHOUSE.getPropertyKey(), warehouse);
+  }
+
+  @Override
+  public void setAuthenticator(String authenticator) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.AUTHENTICATOR.getPropertyKey(), authenticator);
+  }
+
+  @Override
+  public void setToken(String token) {
+    this.properties.setProperty(SnowflakeSessionProperty.TOKEN.getPropertyKey(), token);
+  }
+
+  @Override
+  public void setPrivateKey(PrivateKey privateKey) {
+    String base64 = Base64.getEncoder().encodeToString(privateKey.getEncoded());
+    this.properties.setProperty(SnowflakeSessionProperty.PRIVATE_KEY.getPropertyKey(), base64);
+  }
+
+  @Override
+  public void setPrivateKeyFile(String location, String password) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.PRIVATE_KEY_FILE.getPropertyKey(), location);
+    if (password != null) {
+      this.properties.setProperty(
+          SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
+    }
+  }
+
+  @Override
+  public void setPrivateKeyBase64(String privateKeyBase64, String password) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.PRIVATE_KEY.getPropertyKey(), privateKeyBase64);
+    if (password != null) {
+      this.properties.setProperty(
+          SnowflakeSessionProperty.PRIVATE_KEY_PASSWORD.getPropertyKey(), password);
+    }
+  }
+
+  @Override
+  public void setPasscode(String passcode) {
+    this.properties.setProperty(SnowflakeSessionProperty.PASSCODE.getPropertyKey(), passcode);
+  }
+
+  @Override
+  public void setPasscodeInPassword(boolean isPasscodeInPassword) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.PASSCODE_IN_PASSWORD.getPropertyKey(),
+        Boolean.toString(isPasscodeInPassword));
+  }
+
+  @Override
+  public void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential) {
+    this.properties.setProperty(
+        SnowflakeSessionProperty.CLIENT_STORE_TEMPORARY_CREDENTIAL.getPropertyKey(),
+        Boolean.toString(clientStoreTemporaryCredential));
   }
 
   @Override

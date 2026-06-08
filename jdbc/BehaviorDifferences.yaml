@@ -1,0 +1,88 @@
+# Behavioral Differences between the new (universal) JDBC driver and the old (legacy) JDBC driver.
+#
+# Allowed statuses:
+#  - unknown (default): status is not yet determined
+#  - todo: BD has to be fixed
+#  - fixed: BD has been addressed, removing the difference between the old and new driver
+#  - allowed: the change is expected and is accepted
+#
+# Allowed types:
+#  - unknown (default): type is not yet determined
+#  - api_incompatibility: the new driver removes support for a functionality
+#  - bug: the new driver has a bug/incompatibility relative to the old driver
+#  - bugfix: the new driver fixes incorrect old-driver behavior (e.g. non-compliance with the JDBC specification)
+#  - enhancement: the new driver extends or improves existing functionality
+#
+# Reviewed:
+#  - true: the BD has been reviewed and its status is accepted
+#  - false (default): the BD has not yet been reviewed
+#
+# status_rationale (required when reviewed is true):
+#  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
+#  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
+
+behavior_differences:
+  1:
+    name: "DataSource rejects PAT authentication without password"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver's DataSource.getConnection() unconditionally requires a password for all
+      authenticators except SNOWFLAKE_JWT and EXTERNALBROWSER. This prevents PAT (Programmatic
+      Access Token) authentication via DataSource even though setToken() and setAuthenticator()
+      exist. The new driver correctly allows token-based authentication without a password.
+  2:
+    name: "Statement.executeBatch update-count int overflow"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      The old driver throws SnowflakeSQLLoggedException(EXECUTE_BATCH_INTEGER_OVERFLOW,
+      NUMERIC_VALUE_OUT_OF_RANGE) for any per-row count that exceeds Integer.MAX_VALUE in
+      executeBatch(). The new driver maps such counts to Statement.SUCCESS_NO_INFO so the
+      batch result array stays valid and length-correct; callers wanting full fidelity should
+      use executeLargeBatch().
+  3:
+    name: "getBatchQueryIDs positional alignment with updateCounts"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      In the old driver, Statement.executeBatch's success branch is the only place that appends
+      to batchQueryIDs, so failed entries skip the append and the resulting list is shorter than
+      updateCounts (positional alignment broken). The new driver always appends, using null for
+      failed entries, so callers can correlate updateCounts[i] with batchQueryIDs.get(i).
+      For the PreparedStatement array-bind path, the old driver does not populate batchQueryIDs
+      at all; the new driver appends a single entry covering the whole batch (or null on RPC
+      failure).
+  4:
+    name: "executeBatch resets current-result state on return"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    status_rationale: |
+      Per JDBC spec, after Statement.executeBatch() the statement should have no current result
+      (getResultSet() returns null, getUpdateCount() returns -1). The old driver leaves
+      currentResultSet / currentUpdateCount populated by the last batched entry. The new driver
+      resets both in finalizeBatch.
+  5:
+    name: "MFA token caching parameter consolidated; clientRequestMfaToken removed"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    status_rationale: |
+      The old driver exposed two distinct properties for credential caching:
+        - `clientRequestMfaToken` (setEnableClientRequestMfaToken) — MFA-token cache for
+          USERNAME_PASSWORD_MFA.
+        - `clientStoreTemporaryCredential` (setEnableClientStoreTemporaryCredential) — ID-token
+          cache for EXTERNALBROWSER (and OAuth flows).
+      The new driver consolidates both into a single `clientStoreTemporaryCredential` connection
+      property whose effect is dispatched per active authenticator (caches MFA token under
+      USERNAME_PASSWORD_MFA, ID token under EXTERNALBROWSER, refresh token under
+      OAUTH_AUTHORIZATION_CODE). Consequently the new driver does not expose
+      `setEnableClientRequestMfaToken` on `SnowflakeDataSource`, and the legacy
+      `clientRequestMfaToken` property name is not accepted as an alias — callers that previously
+      relied on the legacy method or property must migrate to `clientStoreTemporaryCredential`.
+      Mirrors the cross-driver consolidation documented as `BD#16` in
+      `python/BehaviorDifferences.yaml`.

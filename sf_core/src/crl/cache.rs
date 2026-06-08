@@ -1,6 +1,9 @@
 use crate::config::retry::RetryPolicy;
 use crate::crl::config::CrlConfig;
-use crate::crl::error::{CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu, MutexPoisonedSnafu};
+use crate::crl::error::{
+    CrlDistributionPointFailedSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
+    MutexPoisonedSnafu,
+};
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry};
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
@@ -315,6 +318,11 @@ impl CrlCache {
         let mut any_verified = false;
         let mut any_full_coverage = false;
         let mut min_expires: Option<DateTime<Utc>> = None;
+        // Remember the last URL whose CRL failed verification alongside its error.
+        // We propagate BOTH so callers receive an error that identifies which
+        // distribution point failed (via CrlDistributionPointFailed), not just the
+        // underlying cause. See CrlError::CrlDistributionPointFailed in error.rs.
+        let mut last_verify_error: Option<(String, CrlError)> = None;
         for url in crl_urls.iter() {
             let bytes = self
                 .get(url)
@@ -350,10 +358,27 @@ impl CrlCache {
                         any_full_coverage = true;
                     }
                 }
-                Err(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        target: "sf_core::crl",
+                        url = %url,
+                        error = %e,
+                        "CRL verification failed for distribution point"
+                    );
+                    last_verify_error = Some((url.clone(), e));
+                }
             }
         }
         if !any_verified {
+            // If CRL URLs existed but none could be verified, propagate the error
+            // rather than returning NotDetermined (which could be misinterpreted as
+            // "no CRL distribution points available"). Wrap with the CRLDP URL so
+            // callers can identify which endpoint failed without parsing logs.
+            if let Some((failed_url, err)) = last_verify_error {
+                return Err(Box::new(err))
+                    .context(CrlDistributionPointFailedSnafu { url: failed_url })
+                    .context(crate::tls::revocation::CrlOperationSnafu);
+            }
             return Ok(RevocationOutcome::NotDetermined);
         }
         let outcome = if any_full_coverage {
@@ -401,7 +426,12 @@ impl CrlCache {
         }
 
         if !verified {
-            tracing::warn!(
+            // Diagnostic only — emitted at debug level to avoid duplicating the
+            // warn emitted by the caller ("CRL verification failed for distribution
+            // point"), which includes the URL context that's more useful for ops.
+            // The failure itself is propagated via InvalidCrlSignatureSnafu and logged
+            // with full error chain by the caller.
+            tracing::debug!(
                 target: "sf_core::crl",
                 "Unable to verify CRL signature (serial={}, issuer_provided={}, anchor_attempted={})",
                 hex::encode(serial),

@@ -75,9 +75,9 @@ impl LanguageConfig {
 
     fn odbc() -> Self {
         Self {
-            test_annotation: "TEST_CASE(", // Catch2 style
+            test_annotation: "TEST_CASE(", // Catch2 style (also matches TEST_CASE_METHOD)
             method_pattern: |method_name| {
-                format!(r#"TEST_CASE\s*\(\s*"{}""#, regex::escape(method_name))
+                format!(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#, regex::escape(method_name))
             },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C++
@@ -125,7 +125,7 @@ impl MethodBoundaryFinder {
 
         // Pre-compile regexes outside the loop
         let test_method_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
-        let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
+        let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
         // Rust: support optional async before fn
         let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
         // Match Java method declarations (not annotation lines like @MethodSource(...))
@@ -147,11 +147,26 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "TEST_CASE(" => {
-                    // C++ Catch2: TEST_CASE("method_name")
-                    if trimmed.starts_with("TEST_CASE(") {
+                    // C++ Catch2: TEST_CASE("method_name") or TEST_CASE_METHOD(Fixture, "method_name")
+                    // Declarations may span multiple lines.
+                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(") {
                         if let Some(captures) = catch2_regex.captures(trimmed) {
                             let method_name = captures[1].to_string();
-                            methods.push((method_name, i + 1)); // +1 for 1-indexed line numbers
+                            methods.push((method_name, i + 1));
+                        } else {
+                            let mut combined = trimmed.to_string();
+                            for j in (i + 1)..lines.len().min(i + 5) {
+                                combined.push(' ');
+                                combined.push_str(lines[j].trim());
+                                if let Some(captures) = catch2_regex.captures(&combined) {
+                                    let method_name = captures[1].to_string();
+                                    methods.push((method_name, i + 1));
+                                    break;
+                                }
+                                if combined.contains('{') {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -258,17 +273,33 @@ impl MethodBoundaryFinder {
                 || (self.config.test_annotation.contains("pytest")
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
-                    && trimmed.starts_with("TEST_CASE("))
+                    && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
             {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
+                // (or on a continuation line for multi-line declarations)
                 if self.config.test_annotation == "TEST_CASE(" {
                     let pattern = (self.config.method_pattern)(method_name);
                     let method_regex = Regex::new(&pattern)?;
                     if method_regex.is_match(trimmed) {
                         method_start_line = Some(i);
+                        break;
+                    }
+                    let mut combined = trimmed.to_string();
+                    for j in (i + 1)..lines.len().min(i + 5) {
+                        combined.push(' ');
+                        combined.push_str(lines[j].trim());
+                        if method_regex.is_match(&combined) {
+                            method_start_line = Some(i);
+                            break;
+                        }
+                        if combined.contains('{') {
+                            break;
+                        }
+                    }
+                    if method_start_line.is_some() {
                         break;
                     }
                 } else {
@@ -582,6 +613,115 @@ impl MethodBoundaryFinder {
 
         Ok(empty_steps)
     }
+
+    /// Find the end line of a method given its already-known start line index.
+    /// Avoids rescanning the file from the top — use when start position is known.
+    pub(super) fn find_method_end_from(&self, lines: &[&str], start_idx: usize) -> usize {
+        let mut brace_depth = 0;
+        let mut found_opening_brace = false;
+        let search_limit = start_idx + 500;
+
+        if self.config.uses_braces {
+            let start_line = lines[start_idx].trim();
+            let mut in_string = false;
+            let mut string_delimiter = '\0';
+            let mut escaped = false;
+
+            for ch in start_line.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match ch {
+                    '\\' if in_string => escaped = true,
+                    '"' | '\'' => {
+                        if !in_string {
+                            in_string = true;
+                            string_delimiter = ch;
+                        } else if ch == string_delimiter {
+                            in_string = false;
+                            string_delimiter = '\0';
+                        }
+                    }
+                    '{' if !in_string => {
+                        brace_depth += 1;
+                        found_opening_brace = true;
+                    }
+                    '}' if !in_string => {
+                        if found_opening_brace {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                return start_idx;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        for (i, line) in lines.iter().enumerate().skip(start_idx + 1) {
+            let trimmed = line.trim();
+
+            if i > search_limit && !found_opening_brace {
+                break;
+            }
+
+            if self.config.uses_braces {
+                let mut in_string = false;
+                let mut string_delimiter = '\0';
+                let mut escaped = false;
+
+                for ch in trimmed.chars() {
+                    if escaped {
+                        escaped = false;
+                        continue;
+                    }
+                    match ch {
+                        '\\' if in_string => escaped = true,
+                        '"' | '\'' => {
+                            if !in_string {
+                                in_string = true;
+                                string_delimiter = ch;
+                            } else if ch == string_delimiter {
+                                in_string = false;
+                                string_delimiter = '\0';
+                            }
+                        }
+                        '{' if !in_string => {
+                            brace_depth += 1;
+                            found_opening_brace = true;
+                        }
+                        '}' if !in_string => {
+                            if found_opening_brace {
+                                brace_depth -= 1;
+                                if brace_depth == 0 {
+                                    return i;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if !self.config.method_end_patterns.is_empty() {
+                let line_indent = line.len() - line.trim_start().len();
+                let start_line_indent =
+                    lines[start_idx].len() - lines[start_idx].trim_start().len();
+
+                if line_indent <= start_line_indent {
+                    for pattern in self.config.method_end_patterns {
+                        if trimmed == *pattern || trimmed.starts_with(pattern) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        }
+
+        lines.len()
+    }
 }
 
 pub struct StepFinder {
@@ -729,16 +869,91 @@ impl StepFinder {
                     comment_prefix,
                 )?;
             }
-            let empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
+            let mut empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
                 &content,
                 start_idx,
                 end_idx,
                 comment_prefix,
             )?;
+
+            // When a Catch2 TEST_CASE_METHOD fixture is used, the "Given" step that
+            // establishes a connection is handled by the fixture constructor — allow
+            // it to be empty.  Recognized phrasings (case-insensitive):
+            //   - "Given Snowflake client is logged in"
+            //   - "Given A Snowflake connection is established"
+            //   - "Given A Snowflake connection"
+            // New fixture-based tests should reuse one of these; add new variants
+            // here if a different phrasing becomes necessary.
+            if !empty_steps.is_empty() {
+                let lines: Vec<&str> = content.lines().collect();
+                let uses_fixture = (start_idx..end_idx.min(lines.len()))
+                    .any(|i| lines[i].trim().starts_with("TEST_CASE_METHOD("));
+                if uses_fixture {
+                    empty_steps.retain(|step| {
+                        let s = step.to_lowercase();
+                        !(s.starts_with("given") && (s.contains("logged in")
+                            || s.contains("connection is established")
+                            || s.contains("snowflake connection")))
+                    });
+                }
+            }
+
             Ok((steps, empty_steps))
         } else {
             Ok((vec![], vec![]))
         }
+    }
+
+    /// Find all test methods that are missing required When/Then Gherkin step comments.
+    ///
+    /// Returns a list of `(method_name, line_number, missing_keywords)` for each method
+    /// that lacks at least one non-empty `// When <text>` or `// Then <text>` comment.
+    pub fn find_methods_missing_when_then(
+        &self,
+        file_path: &Path,
+    ) -> Result<Vec<(String, usize, Vec<String>)>> {
+        let content = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
+
+        let comment_prefix = self.comment_prefix();
+        let boundary_finder = MethodBoundaryFinder::new(self.language_config());
+        let all_methods = boundary_finder.find_all_test_methods_with_lines(&content)?;
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Non-empty When/Then: keyword followed by at least one non-whitespace char.
+        // Anchored to start of line to avoid matching inside string literals.
+        let when_regex = Regex::new(&format!(
+            r"(?m)^\s*{}\s*When\s+\S",
+            regex::escape(comment_prefix)
+        ))?;
+        let then_regex = Regex::new(&format!(
+            r"(?m)^\s*{}\s*Then\s+\S",
+            regex::escape(comment_prefix)
+        ))?;
+
+        let mut violations = Vec::new();
+        for (method_name, line_number) in all_methods {
+            // line_number is 1-indexed; convert to 0-indexed start
+            let start_idx = line_number.saturating_sub(1);
+            let end_idx = boundary_finder.find_method_end_from(&lines, start_idx);
+
+            let method_text = lines[start_idx..=end_idx.min(lines.len().saturating_sub(1))]
+                .join("\n");
+
+            let mut missing = Vec::new();
+            if !when_regex.is_match(&method_text) {
+                missing.push("When".to_string());
+            }
+            if !then_regex.is_match(&method_text) {
+                missing.push("Then".to_string());
+            }
+
+            if !missing.is_empty() {
+                violations.push((method_name, line_number, missing));
+            }
+        }
+
+        Ok(violations)
     }
 
     /// Find test functions/methods with line numbers that match a scenario name

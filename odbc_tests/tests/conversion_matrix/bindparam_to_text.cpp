@@ -11,13 +11,11 @@ static const SqlTypeInfo TEXT_SQL_TYPES[] = {
 };
 // clang-format on
 
-TEST_CASE("conversion matrix: all C types -> TEXT SQL types via SQLBindParameter",
-          "[conversion_matrix][bindparam][text]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> TEXT SQL types via SQLBindParameter",
+                 "[conversion_matrix][bindparam][text]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE OR REPLACE TABLE cm_text (val VARCHAR)");
+  conn.execute("CREATE TEMPORARY TABLE cm_text (val VARCHAR)");
   ResultWriter report(get_report_path("bindparam_to_text"));
 
   // When each C type is bound to each TEXT SQL type and executed

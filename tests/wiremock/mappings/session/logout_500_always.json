@@ -1,0 +1,22 @@
+{
+  "name": "Logout session always fails with 500",
+  "request": {
+    "urlPath": "/session",
+    "method": "POST",
+    "queryParameters": {
+      "delete": {
+        "equalTo": "true"
+      }
+    }
+  },
+  "response": {
+    "status": 500,
+    "jsonBody": {
+      "success": false,
+      "message": "Internal Server Error"
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

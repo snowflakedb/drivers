@@ -9,6 +9,13 @@ import pytest
 pytestmark = pytest.mark.skip_reference(reason="Reference driver has no _get_session_parameter method")
 
 
+# ALTER SESSION statements mutate connection state — use a fresh connection per
+# test instead of the module-scoped default.
+@pytest.fixture
+def connection(function_connection):
+    yield function_connection
+
+
 class TestSessionParametersGet:
     """Test getting session parameter values."""
 

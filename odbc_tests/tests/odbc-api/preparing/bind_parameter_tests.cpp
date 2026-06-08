@@ -168,12 +168,22 @@ TEST_CASE("SQLBindParameter: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: 07009 for parameter number 0",
                  "[odbc-api][bindparameter][preparing][error]") {
+  // Given an active statement on the default DSN
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
-  // 07009: Invalid descriptor index
+  // When SQLBindParameter is called with ParameterNumber=0 (descriptor indexes are 1-based)
   SQLRETURN ret =
       SQLBindParameter(stmt_handle(), 0, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param_value, 0, &indicator);
-  REQUIRE_EXPECTED_ERROR(ret, "07009", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects ParameterNumber=0 with the ODBC 3.x
+    //   SQLSTATE 07009 (invalid descriptor index)
+    REQUIRE_EXPECTED_ERROR(ret, "07009", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM does not validate ParameterNumber and forwards the bind to
+    //   the driver, which rejects the zero index using the ODBC-2.x equivalent S1093
+    REQUIRE_EXPECTED_ERROR(ret, "S1093", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Rebinding same parameter number replaces binding",
@@ -214,21 +224,41 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY009 for both null p
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY105 for invalid InputOutputType",
                  "[odbc-api][bindparameter][preparing][error]") {
+  // Given an active statement on the default DSN
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
-  // HY105: Invalid parameter type (999 is not a valid InputOutputType)
+  // When SQLBindParameter is called with an out-of-range InputOutputType (999)
   SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, 999, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param_value, 0, &indicator);
-  REQUIRE_EXPECTED_ERROR(ret, "HY105", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the bogus enum with the ODBC 3.x
+    //   SQLSTATE HY105 (invalid parameter type)
+    REQUIRE_EXPECTED_ERROR(ret, "HY105", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM does not validate the enum and forwards the bind to the
+    //   driver, which returns the ODBC-2.x equivalent S1105
+    REQUIRE_EXPECTED_ERROR(ret, "S1105", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY003 for invalid ValueType",
                  "[odbc-api][bindparameter][preparing][error]") {
+  // Given an active statement on the default DSN
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
-  // HY003: Invalid application buffer type (9999 is not a valid C data type)
+  // When SQLBindParameter is called with an out-of-range ValueType (9999)
   SQLRETURN ret =
       SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, 9999, SQL_INTEGER, 0, 0, &param_value, 0, &indicator);
-  REQUIRE_EXPECTED_ERROR(ret, "HY003", stmt_handle(), SQL_HANDLE_STMT);
+  NON_IODBC {
+    // And the DM rejects the bogus enum with the ODBC 3.x
+    //   SQLSTATE HY003 (invalid application buffer type)
+    REQUIRE_EXPECTED_ERROR(ret, "HY003", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  IODBC_ONLY {
+    // And the DM does not validate ValueType and forwards the bind to the
+    //   driver, which returns the ODBC-2.x equivalent S1003
+    REQUIRE_EXPECTED_ERROR(ret, "S1003", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid ParameterType",
@@ -288,4 +318,25 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQLFreeStmt SQL_RESET
 
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY010 during SQL_NEED_DATA",
+                 "[odbc-api][bindparam][preparing][error]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLINTEGER dummy_val = 0;
+  SQLLEN dummy_ind = sizeof(dummy_val);
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &dummy_val, 0, &dummy_ind);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  SQLCancel(stmt_handle());
 }

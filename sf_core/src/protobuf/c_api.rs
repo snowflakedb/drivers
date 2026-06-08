@@ -1,6 +1,8 @@
 use std::ffi::c_char;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
+use crate::apis::database_driver_v1::{DriverProviders, WrapperPresets};
+use crate::logging::LogManager;
 use crate::protobuf::apis::RustTransport;
 use proto_utils::{ProtoError, Transport};
 
@@ -9,17 +11,28 @@ struct CApiState {
     transport: RustTransport,
 }
 
-static STATE: LazyLock<CApiState> = LazyLock::new(|| CApiState {
-    // Single worker thread is intentional: keeps contention minimal and
-    // makes deadlocks easier to detect. Will be increased during
-    // performance optimization.
-    runtime: tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()
-        .expect("Failed to create tokio runtime"),
-    transport: RustTransport::new(),
-});
+static STATE: OnceLock<CApiState> = OnceLock::new();
+
+/// Eagerly build the entire core state (tokio runtime + transport) using the
+/// given `LogManager`.  Called once from `sf_core_init`.
+pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
+    STATE.get_or_init(|| {
+        let providers = DriverProviders {
+            log_manager: Some(lm),
+            wrapper_presets,
+            ..Default::default()
+        };
+
+        CApiState {
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime"),
+            transport: RustTransport::new_with(providers),
+        }
+    });
+}
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
     let boxed = vec.into_boxed_slice();
@@ -63,13 +76,14 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
 ) -> usize {
     // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
     let result = std::panic::catch_unwind(|| unsafe {
+        let state = STATE.get().expect("sf_core_init was not called");
         let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
         let method = std::ffi::CStr::from_ptr(method)
             .to_string_lossy()
             .to_string();
         let message = std::slice::from_raw_parts(request, request_len);
-        STATE.runtime.block_on(
-            STATE
+        state.runtime.block_on(
+            state
                 .transport
                 .handle_message(&api, &method, message.to_vec()),
         )

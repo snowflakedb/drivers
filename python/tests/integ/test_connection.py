@@ -5,11 +5,22 @@ Integration tests for PEP 249 Connection objects.
 import uuid
 
 from io import StringIO
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
+from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import DictCursor
+from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
+
+
+# These tests heavily mutate the connection (close, autocommit, commit, rollback,
+# set_autocommit). Override the module-scoped default with a fresh function-scoped
+# connection per test so state does not leak across tests.
+@pytest.fixture
+def connection(function_connection):
+    yield function_connection
 
 
 class TestConnectionInfo:
@@ -24,6 +35,59 @@ class TestConnectionInfo:
 
         # Then it should not be None
         assert info is not None
+
+
+class TestConnectionParameters:
+    """Reference tests: minimum parameters required to establish a connection.
+
+    The old snowflake-connector-python driver accepts just ``account`` (plus
+    auth credentials) and derives the host as ``{account}.snowflakecomputing.com``.
+    These tests exercise that behavior against both drivers.
+    """
+
+    def test_connect_with_account_only_no_host_or_server_url(self, connector_adapter):
+        """Connection succeeds when only ``account`` is given — host/server_url are derived.
+
+        Skipped when the test environment targets a non-production host (preprod,
+        localhost, or a dev deployment) — derivation only yields a valid URL for
+        accounts whose canonical host is ``{account}.snowflakecomputing.com``.
+        """
+        from tests.config import get_test_parameters
+        from tests.connector_factory import setup_default_jwt_auth
+
+        test_params = get_test_parameters()
+        account = test_params.get("SNOWFLAKE_TEST_ACCOUNT")
+        if not account:
+            pytest.skip("SNOWFLAKE_TEST_ACCOUNT not configured")
+        custom_host = test_params.get("SNOWFLAKE_TEST_HOST") or ""
+        custom_server_url = test_params.get("SNOWFLAKE_TEST_SERVER_URL") or ""
+        expected_host = f"{account}.snowflakecomputing.com"
+        if (custom_host and custom_host != expected_host) or (
+            custom_server_url and expected_host not in custom_server_url
+        ):
+            pytest.skip(
+                "Test environment overrides host/server_url; account-name derivation "
+                f"yields '{expected_host}', not the configured target."
+            )
+
+        # Build a minimal connection params dict containing only ``account`` plus
+        # auth credentials. No host/server_url/port/protocol is supplied — the
+        # driver must derive ``host = {account}.snowflakecomputing.com``.
+        connection_params: dict[str, Any] = {
+            "account": account,
+            "user": test_params.get("SNOWFLAKE_TEST_USER"),
+        }
+        setup_default_jwt_auth(connection_params)
+
+        with connector_adapter.connect(**connection_params) as conn:
+            assert not conn.is_closed()
+            cur = conn.cursor()
+            try:
+                cur.execute("SELECT 1")
+                row = cur.fetchone()
+                assert row[0] == 1
+            finally:
+                cur.close()
 
 
 class TestConnectionInfoProperties:
@@ -79,6 +143,113 @@ class TestConnectionInfoReflectsSessionChanges:
             cur.close()
 
         assert connection.schema.upper() == "INFORMATION_SCHEMA"
+
+
+class TestClosedConnection:
+    """Test that operations on a closed connection behaves correctly."""
+
+    def test_commit_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.commit()
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_rollback_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.rollback()
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_cursor_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.cursor()
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_execute_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        conn.close()
+        with pytest.raises(InterfaceError) as excinfo:
+            cur.execute("SELECT 1")
+        error = excinfo.value
+        assert "cursor is closed" in error.msg.lower()
+        assert error.errno == 252006
+
+    def test_double_close(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        conn.close()
+
+    def test_autocommit_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        conn.close()
+        with pytest.raises(DatabaseError) as excinfo:
+            conn.autocommit(True)
+        error = excinfo.value
+        assert "connection is closed" in error.msg.lower()
+        assert error.errno == 250002
+
+    def test_get_query_status_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        sfqid = cur.sfqid
+        cur.close()
+        conn.close()
+        status = conn.get_query_status(sfqid)
+        assert status == QueryStatus.DISCONNECTED
+
+    def test_get_query_status_throw_if_error_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        sfqid = cur.sfqid
+        cur.close()
+        conn.close()
+        with pytest.raises(ProgrammingError) as excinfo:
+            conn.get_query_status_throw_if_error(sfqid)
+        error = excinfo.value
+        assert error.sfqid == sfqid
+        assert error.errno == -1
+
+    def test_connection_info_properties_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        role = conn.role
+        database = conn.database
+        schema = conn.schema
+        warehouse = conn.warehouse
+        user = conn.user
+        account = conn.account
+        host = conn.host
+        port = conn.port
+        session_id = conn.session_id
+
+        conn.close()
+
+        assert conn.role == role
+        assert conn.database == database
+        assert conn.schema == schema
+        assert conn.warehouse == warehouse
+        assert conn.user == user
+        assert conn.account == account
+        assert conn.host == host
+        assert conn.port == port
+        assert conn.session_id == session_id
+
+    def test_session_parameters_on_closed_connection(self, connection_factory):
+        conn = connection_factory(session_parameters={"TIMEZONE": "America/Los_Angeles"})
+        conn.close()
+        assert conn._session_parameters["TIMEZONE"] == "America/Los_Angeles"
 
 
 class TestConnectionMethods:
@@ -430,3 +601,17 @@ class TestContextManagerAutocommit:
             cur.execute(f"INSERT INTO {table} VALUES (1)")
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             assert cur.fetchone() == (1,)
+
+
+class TestIsValid:
+    """Integration tests for Connection.is_valid()."""
+
+    def test_is_valid_returns_true_on_open_connection(self, connection):
+        """is_valid() should return True on a live connection."""
+        assert connection.is_valid() is True
+
+    def test_is_valid_returns_false_after_close(self, connection_factory):
+        """is_valid() should return False after the connection is closed."""
+        conn = connection_factory()
+        conn.close()
+        assert conn.is_valid() is False

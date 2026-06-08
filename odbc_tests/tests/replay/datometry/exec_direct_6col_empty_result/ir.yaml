@@ -1,0 +1,225 @@
+header:
+  format: unixodbc
+  started: null
+  driver_manager_version: null
+  source_file: /tmp/odbc_trace_clean.log
+roots:
+- handle_type: env
+  address: '0x2200f5c0'
+  logical_name: env0
+  alloc:
+    seq: 0
+    call:
+      function: SQLAllocHandle
+      return_code: SQL_SUCCESS
+      handle_type: env
+      parent_handle: null
+      child_handle: env0
+    exit_line: /tmp/odbc_trace_clean.log:1
+  free: null
+  operations:
+  - seq: 1
+    call:
+      function: SQLSetEnvAttr
+      return_code: SQL_SUCCESS
+      handle: env0
+      attribute: SQL_ATTR_ODBC_VERSION
+      value: 380
+      str_len: 0
+    entry_line: /tmp/odbc_trace_clean.log:4
+    exit_line: /tmp/odbc_trace_clean.log:10
+  children:
+  - handle_type: dbc
+    address: '0x220102d0'
+    logical_name: dbc0
+    alloc:
+      seq: 2
+      call:
+        function: SQLAllocHandle
+        return_code: SQL_SUCCESS
+        handle_type: dbc
+        parent_handle: env0
+        child_handle: dbc0
+      entry_line: /tmp/odbc_trace_clean.log:12
+      exit_line: /tmp/odbc_trace_clean.log:18
+    free: null
+    operations:
+    - seq: 3
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_CONNECTION_TIMEOUT
+        value: 0
+        str_len: 0
+      entry_line: /tmp/odbc_trace_clean.log:21
+      exit_line: /tmp/odbc_trace_clean.log:27
+    - seq: 4
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_AUTOCOMMIT
+        value: 1
+        str_len: 0
+      entry_line: /tmp/odbc_trace_clean.log:29
+      exit_line: /tmp/odbc_trace_clean.log:35
+    - seq: 5
+      call:
+        function: SQLDriverConnect
+        return_code: SQL_SUCCESS
+        handle: dbc0
+      entry_line: /tmp/odbc_trace_clean.log:37
+      exit_line: /tmp/odbc_trace_clean.log:46
+    - seq: 6
+      call:
+        function: SQLSetConnectAttr
+        return_code: SQL_SUCCESS
+        handle: dbc0
+        attribute: SQL_ATTR_AUTOCOMMIT
+        value: 1
+        str_len: 0
+      entry_line: /tmp/odbc_trace_clean.log:49
+      exit_line: /tmp/odbc_trace_clean.log:55
+    children:
+    - handle_type: stmt
+      address: '0x224b1f50'
+      logical_name: stmt0
+      alloc:
+        seq: 7
+        call:
+          function: SQLAllocHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          parent_handle: dbc0
+          child_handle: stmt3452
+        entry_line: /tmp/odbc_trace_clean.log:64
+        exit_line: /tmp/odbc_trace_clean.log:68
+      free:
+        seq: 18
+        call:
+          function: SQLFreeHandle
+          return_code: SQL_SUCCESS
+          handle_type: stmt
+          handle: stmt3452
+        entry_line: /tmp/odbc_trace_clean.log:202
+        exit_line: /tmp/odbc_trace_clean.log:206
+      operations:
+      - seq: 8
+        call:
+          function: SQLExecDirect
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          sql: select * from "__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where 1=0
+          sql_truncated: false
+        entry_line: /tmp/odbc_trace_clean.log:71
+        exit_line: /tmp/odbc_trace_clean.log:75
+      - seq: 9
+        call:
+          function: SQLNumResultCols
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          count: 6
+        entry_line: /tmp/odbc_trace_clean.log:77
+        exit_line: /tmp/odbc_trace_clean.log:81
+      - seq: 10
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          column_number: 1
+          column_name: SCHEMANAME
+          buffer_length: 255
+          data_type: '12'
+          column_size: 256
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:84
+        exit_line: /tmp/odbc_trace_clean.log:95
+      - seq: 11
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          column_number: 2
+          column_name: OBJECTNAME
+          buffer_length: 255
+          data_type: '12'
+          column_size: 256
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:102
+        exit_line: /tmp/odbc_trace_clean.log:113
+      - seq: 12
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          column_number: 3
+          column_name: COLNAME
+          buffer_length: 255
+          data_type: '12'
+          column_size: 256
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:120
+        exit_line: /tmp/odbc_trace_clean.log:131
+      - seq: 13
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          column_number: 4
+          column_name: PROPNAME
+          buffer_length: 255
+          data_type: '12'
+          column_size: 256
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:138
+        exit_line: /tmp/odbc_trace_clean.log:149
+      - seq: 14
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          column_number: 5
+          column_name: PROPVALUE
+          buffer_length: 255
+          data_type: '12'
+          column_size: 16777216
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:156
+        exit_line: /tmp/odbc_trace_clean.log:167
+      - seq: 15
+        call:
+          function: SQLDescribeCol
+          return_code: SQL_SUCCESS
+          handle: stmt3452
+          column_number: 6
+          column_name: SEQNO
+          buffer_length: 255
+          data_type: '3'
+          column_size: 38
+          decimal_digits: 0
+          nullable: '1'
+        entry_line: /tmp/odbc_trace_clean.log:174
+        exit_line: /tmp/odbc_trace_clean.log:185
+      - seq: 16
+        call:
+          function: SQLFetch
+          return_code: SQL_NO_DATA
+          handle: stmt3452
+        entry_line: /tmp/odbc_trace_clean.log:192
+        exit_line: /tmp/odbc_trace_clean.log:195
+      - seq: 17
+        call:
+          function: SQLMoreResults
+          return_code: SQL_NO_DATA
+          handle: stmt3452
+        entry_line: /tmp/odbc_trace_clean.log:197
+        exit_line: /tmp/odbc_trace_clean.log:200
+      children: []
+unscoped_operations: []
+total_operations: 19

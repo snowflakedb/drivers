@@ -7,16 +7,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "TestTable.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("TREAT_DECIMAL_AS_INT SQL_C_DEFAULT resolves to SBIGINT for scale=0", "[fixed][treat_decimal_as_int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT SQL_C_DEFAULT resolves to SBIGINT for scale=0",
+                 "[fixed][treat_decimal_as_int]") {
   // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT=true
-  Connection conn;
   conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When DECIMAL values with scale=0 are fetched via SQL_C_DEFAULT
   (void)0;
@@ -74,11 +73,9 @@ TEST_CASE("TREAT_DECIMAL_AS_INT SQL_C_DEFAULT resolves to SBIGINT for scale=0", 
   }
 }
 
-TEST_CASE("TREAT_DECIMAL_AS_INT does not affect scale > 0", "[fixed][treat_decimal_as_int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT does not affect scale > 0", "[fixed][treat_decimal_as_int]") {
   // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT=true
-  Connection conn;
   conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A DECIMAL(10,2) value is fetched via SQL_C_DEFAULT
   auto stmt = conn.execute_fetch("SELECT 123.45::DECIMAL(10,2)");
@@ -93,11 +90,10 @@ TEST_CASE("TREAT_DECIMAL_AS_INT does not affect scale > 0", "[fixed][treat_decim
   CHECK(std::string(buffer, indicator) == "123.45");
 }
 
-TEST_CASE("TREAT_DECIMAL_AS_INT applies to precision > 18 too", "[fixed][treat_decimal_as_int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT applies to precision > 18 too",
+                 "[fixed][treat_decimal_as_int]") {
   // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT=true
-  Connection conn;
   conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NUMBER(38,0) value is fetched via SQL_C_DEFAULT
   auto stmt = conn.execute_fetch("SELECT 42::NUMBER(38,0)");
@@ -112,13 +108,11 @@ TEST_CASE("TREAT_DECIMAL_AS_INT applies to precision > 18 too", "[fixed][treat_d
   CHECK(value == 42);
 }
 
-TEST_CASE("TREAT_BIG_NUMBER_AS_STRING overrides TREAT_DECIMAL_AS_INT for precision > 18",
-          "[fixed][treat_big_number_as_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_BIG_NUMBER_AS_STRING overrides TREAT_DECIMAL_AS_INT for precision > 18",
+                 "[fixed][treat_big_number_as_string]") {
   // Given A Snowflake connection with both TREAT_DECIMAL_AS_INT and TREAT_BIG_NUMBER_AS_STRING
-  Connection conn;
   conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
   conn.execute("ALTER SESSION SET ODBC_TREAT_BIG_NUMBER_AS_STRING=true");
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NUMBER(38,0) and DECIMAL(10,0) values are fetched via SQL_C_DEFAULT
   (void)0;
@@ -150,11 +144,9 @@ TEST_CASE("TREAT_BIG_NUMBER_AS_STRING overrides TREAT_DECIMAL_AS_INT for precisi
   }
 }
 
-TEST_CASE("TREAT_DECIMAL_AS_INT with table columns", "[fixed][treat_decimal_as_int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "TREAT_DECIMAL_AS_INT with table columns", "[fixed][treat_decimal_as_int]") {
   // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT=true and a table with mixed columns
-  Connection conn;
   conn.execute("ALTER SESSION SET ODBC_TREAT_DECIMAL_AS_INT=true");
-  auto random_schema = Schema::use_random_schema(conn);
 
   std::string table_name = "test_decimal_as_int";
   TestTable table(conn, table_name, "d_int DECIMAL(10,0), d_frac DECIMAL(10,2), d_big NUMBER(38,0)",

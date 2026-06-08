@@ -114,8 +114,13 @@ impl PythonGenerator {
             }
 
             // Generate client classes
-            for service in file.service {
+            for service in file.service.clone() {
                 content += &self.generate_client_class(&service, &package);
+            }
+
+            // Generate blocking client wrappers
+            for service in file.service {
+                content += &self.generate_blocking_client_class(&service, &package);
             }
 
             result.add_file(
@@ -128,7 +133,8 @@ impl PythonGenerator {
     }
 
     fn generate_common_imports(&self) -> String {
-        r#"from abc import ABC, abstractmethod
+        r#"import asyncio
+from abc import ABC, abstractmethod
 from typing import Optional
 from google.protobuf import message
 from .database_driver_v1_pb2 import *
@@ -291,8 +297,8 @@ class ProtoError(Exception):
             let error_type = method_error.or(service_error).unwrap_or(&empty_error);
 
             content += &format!(
-                r#"    def {name}(self, request: {input_type}) -> {output_type}:
-        (code, response_bytes) = self._transport.handle_message('{service_name}', '{name}', request.SerializeToString())
+                r#"    async def {name}(self, request: {input_type}) -> {output_type}:
+        (code, response_bytes) = await self._transport.handle_message('{service_name}', '{name}', request.SerializeToString())
         if code == 0:
             response = {output_type}()
             response.ParseFromString(response_bytes)
@@ -305,6 +311,58 @@ class ProtoError(Exception):
             self._raise_error(ProtoTransportException(str(response_bytes)))
         else:
             self._raise_error(ProtoTransportException(f"Unknown error code: %s", code))
+"#
+            );
+        }
+
+        content
+    }
+
+    fn generate_blocking_client_class(
+        &self,
+        service: &crate::protobuf::ServiceDescriptorProto,
+        package: &str,
+    ) -> String {
+        let service_name = service.name.as_ref().unwrap_or(&String::new()).clone();
+
+        let mut content = format!(
+            r#"
+class Blocking{service_name}Client:
+    """Synchronous wrapper over :class:`{service_name}Client`.
+
+    Runs each async RPC on a background event loop so that callers can keep
+    using the existing blocking API while the underlying transport is
+    async-first. The loop is provided at construction time by the caller.
+    """
+
+    def __init__(self, async_client: '{service_name}Client', loop: asyncio.AbstractEventLoop):
+        self._async_client = async_client
+        self._loop = loop
+
+    def _run(self, coro):
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+"#
+        );
+
+        for method in &service.method {
+            let name = camel_to_snake_case(method.name.as_ref().unwrap_or(&String::new()));
+            let input_type = to_rust_message_name(
+                &package.to_string(),
+                &method.input_type.as_ref().unwrap_or(&String::new()).clone(),
+            );
+            let output_type = to_rust_message_name(
+                &package.to_string(),
+                &method
+                    .output_type
+                    .as_ref()
+                    .unwrap_or(&String::new())
+                    .clone(),
+            );
+
+            content += &format!(
+                r#"    def {name}(self, request: {input_type}) -> {output_type}:
+        return self._run(self._async_client.{name}(request))
 "#
             );
         }

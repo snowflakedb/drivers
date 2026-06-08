@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 19c526f7-1cb3-44c4-9a1b-e7b8e6c11854
+    -- DTM_QRY:
+    SHOW TABLES LIKE 'iceberg\\_types\\_tbl' IN SCHEMA "DTMREPLAYTESTDB"."PUBLIC"
+  mapped: SHOW TABLES LIKE 'iceberg\\_types\\_tbl' IN SCHEMA "DTMREPLAYTESTDB"."PUBLIC"

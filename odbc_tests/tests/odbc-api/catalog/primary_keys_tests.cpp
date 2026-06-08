@@ -240,7 +240,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative Catalo
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative SchemaName length",
@@ -248,7 +259,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative Schema
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative TableName length",
@@ -256,7 +278,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative TableN
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLPrimaryKeys: 24000 - Cursor already open",

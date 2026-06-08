@@ -118,9 +118,14 @@ class MappingTransformer:
                 # OPTIMIZATION 2: Assign priority (data chunks are MOST common - check first)
                 mapping['priority'] = 1
             else:
-                # Other URLs: add wildcard for query parameters
+                # Other URLs: match exact path with optional query string only.
+                # Using `base_path.*` would match sub-paths too (e.g. `/session.*` would
+                # match `/session/v1/login-request`), so we restrict to query-string
+                # variations only with `(\\?.*)?`.  This prevents the logout mapping
+                # (`/session?delete=true` → `/session(\\?.*)?`) from overshadowing the
+                # login mapping (`/session/v1/login-request`) during replay.
                 base_path = current_url.split('?')[0] if '?' in current_url else current_url
-                mapping['request']['urlPattern'] = f"{base_path}.*"
+                mapping['request']['urlPattern'] = f"{base_path}(\\?.*)?$"
                 if url_field != 'urlPattern' and url_field in mapping['request']:
                     del mapping['request'][url_field]
                 # Remove ALL query parameters for faster matching

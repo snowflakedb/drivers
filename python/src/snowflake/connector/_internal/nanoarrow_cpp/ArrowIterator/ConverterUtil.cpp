@@ -373,7 +373,16 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
     }
 
     case SnowflakeType::Type::INTERVAL_YEAR_MONTH: {
-      converter = std::make_shared<sf::IntervalYearMonthConverter>(array, context, useNumpy);
+      int scale = 0;
+      if (metadata != nullptr) {
+        ArrowStringView scaleString = ArrowCharView(nullptr);
+        returnCode = ArrowMetadataGetValue(metadata, ArrowCharView("scale"), &scaleString);
+        SF_CHECK_ARROW_RC_AND_RETURN(
+          returnCode, nullptr,
+          "[Snowflake Exception] error getting 'scale' from Arrow metadata, error code: %d", returnCode);
+        scale = std::stoi(std::string(scaleString.data, scaleString.size_bytes));
+      }
+      converter = std::make_shared<sf::IntervalYearMonthConverter>(array, context, useNumpy, scale);
       break;
     }
 

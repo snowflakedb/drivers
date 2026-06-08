@@ -10,6 +10,7 @@ EXPORTS
     SQLBindCol
     SQLBindParameter
     SQLCancel
+    SQLCancelHandle
     SQLCloseCursor
     SQLColAttributeW
     SQLConnectW
@@ -36,9 +37,14 @@ EXPORTS
     SQLNumParams
     SQLNumResultCols
     SQLDescribeParam
+    SQLParamData
     SQLPrepareW
+    SQLPutData
     SQLRowCount
     SQLSetConnectAttrW
     SQLSetDescFieldW
     SQLSetEnvAttr
     SQLSetStmtAttrW
+    ConfigDSN
+    ConfigDSNW
+    ConfigDriver

@@ -1,5 +1,12 @@
-#[derive(Debug)]
-#[allow(dead_code)]
+use snafu::{Location, Snafu};
+
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub(crate)))]
 pub enum LogError {
-    InitError(String),
+    #[snafu(display("Failed to initialize logging: {message}"))]
+    Init {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

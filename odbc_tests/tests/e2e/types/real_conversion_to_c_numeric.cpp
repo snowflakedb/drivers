@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 
 // ============================================================================
@@ -9,10 +9,8 @@
 // The old driver (via Simba SDK) supports SQL_C_NUMERIC for SQL_DOUBLE.
 // ============================================================================
 
-TEST_CASE("REAL to SQL_C_NUMERIC", "[e2e][types][real][numeric]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL to SQL_C_NUMERIC", "[e2e][types][real][numeric]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When REAL values are fetched as SQL_C_NUMERIC
   (void)0;  // Brace blocks below perform the fetch and assertions
@@ -107,10 +105,8 @@ TEST_CASE("REAL to SQL_C_NUMERIC", "[e2e][types][real][numeric]") {
   check_null_via_get_data(conn.execute_fetch("SELECT NULL::FLOAT"), 1, SQL_C_NUMERIC);
 }
 
-TEST_CASE("REAL SQL_C_NUMERIC negative zero", "[e2e][types][real][numeric][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_NUMERIC negative zero", "[e2e][types][real][numeric][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Negative fractional REAL values that truncate to zero are fetched as SQL_C_NUMERIC
   auto numeric1 = check_fractional_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -0.5::FLOAT"), 1);
@@ -125,10 +121,8 @@ TEST_CASE("REAL SQL_C_NUMERIC negative zero", "[e2e][types][real][numeric][edge]
   CHECK(numeric2.val[0] == 0);
 }
 
-TEST_CASE("REAL NaN to NUMERIC returns error", "[e2e][types][real][nan][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NaN to NUMERIC returns error", "[e2e][types][real][nan][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NaN is fetched as SQL_C_NUMERIC
   check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
@@ -136,10 +130,8 @@ TEST_CASE("REAL NaN to NUMERIC returns error", "[e2e][types][real][nan][edge]") 
   (void)0;  // check_numeric_out_of_range asserts 22003
 }
 
-TEST_CASE("REAL Infinity to NUMERIC returns 22003", "[e2e][types][real][infinity][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL Infinity to NUMERIC returns 22003", "[e2e][types][real][infinity][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Infinity is fetched as SQL_C_NUMERIC
   check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
@@ -148,10 +140,8 @@ TEST_CASE("REAL Infinity to NUMERIC returns 22003", "[e2e][types][real][infinity
   (void)0;  // check_numeric_out_of_range asserts 22003
 }
 
-TEST_CASE("REAL NULL to SQL_C_NUMERIC", "[real][conversion][c_numeric][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NULL to SQL_C_NUMERIC", "[real][conversion][c_numeric][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL FLOAT value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");

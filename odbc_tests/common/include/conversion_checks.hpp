@@ -13,6 +13,7 @@
 
 #include "HandleWrapper.hpp"
 #include "MetaOfSqlCTypes.hpp"
+#include "WideString.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 
@@ -94,10 +95,31 @@ static typename MetaOfSqlCType<SQL_C_TYPE>::type check_interval_trailing_truncat
   return value;
 }
 
-// Check for interval leading field precision loss (SQLSTATE 22015)
+// Check for interval leading field precision loss (SQLSTATE 22015).
+// See also `check_interval_field_overflow` below for the trailing-range
+// form of the same 22015 case; the two helpers carry distinct intent at
+// the call site but assert the same SQLSTATE.
 template <int SQL_C_TYPE>
 static void check_interval_precision_lost(const StatementHandleWrapper& stmt, int column) {
   INFO("Checking interval leading field precision lost for column " << column);
+  typename MetaOfSqlCType<SQL_C_TYPE>::type value;
+  SQLLEN indicator = -999;
+  SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(stmt);
+  CHECK(records.size() == 1);
+  CHECK(records[0].sqlState == "22015");
+}
+
+// Check for interval field overflow (SQLSTATE 22015) on a *trailing*
+// composite field that fell outside its canonical ANSI range (HOUR > 23,
+// MINUTE/SECOND > 59, MONTH > 11). Asserts the same SQLSTATE as
+// `check_interval_precision_lost` above; the distinct helper carries
+// intent at the call site and lets the diagnostic in the test output
+// point at the trailing-range case explicitly.
+template <int SQL_C_TYPE>
+static void check_interval_field_overflow(const StatementHandleWrapper& stmt, int column) {
+  INFO("Checking interval field overflow (22015) for column " << column);
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator = -999;
   SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);
@@ -115,6 +137,21 @@ inline void check_null_via_get_data(const StatementHandleWrapper& stmt, SQLUSMAL
   CHECK(indicator == SQL_NULL_DATA);
 }
 
+// Snowflake may serialize null values as the bare token "undefined" in
+// semi-structured types (ARRAY, OBJECT, VARIANT).  This is not valid JSON,
+// so we replace it with "null" before parsing.  The token only appears in
+// value positions (never inside quoted strings), so a simple find-replace
+// is safe for the known Snowflake output format.
+inline std::string sanitize_json(const std::string& text) {
+  std::string result = text;
+  size_t pos = 0;
+  while ((pos = result.find("undefined", pos)) != std::string::npos) {
+    result.replace(pos, 9, "null");
+    pos += 4;
+  }
+  return result;
+}
+
 inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   char buffer[8192];
   SQLLEN indicator = -999;
@@ -124,13 +161,17 @@ inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSM
   return std::string(buffer, indicator);
 }
 
-inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
-  char16_t buffer[8192];
+inline std::u32string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  // Buffer is sized in DM-side `SQLWCHAR` units (2 bytes under UTF-16,
+  // 4 under UTF-32). The result is decoded to a Unicode code-point
+  // sequence so callers can compare against `U"..."` literals
+  // regardless of the loaded driver manager.
+  SQLWCHAR buffer[8192];
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(indicator >= 0);
-  return std::u16string(buffer, indicator / sizeof(char16_t));
+  return sf::wide::decode_wide(buffer, static_cast<std::size_t>(indicator) / sf::wide::wchar_byte_size());
 }
 
 // Verifies that a SQLGetData conversion fails with an incompatible-conversion SQLSTATE.
@@ -139,14 +180,14 @@ inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQ
 // when the source SQL type cannot be converted to the requested C target type — for
 // example, numeric to temporal (DATE/TIME/TIMESTAMP) or numeric to GUID.
 //
-// On Windows the ODBC Driver Manager may intercept specific unsupported target types
-// before the driver is even invoked and return HYC00 ("Optional feature not
-// implemented") instead of 07006. Known intercepted types:
-//   - SQL_C_GUID (target_type = -11)
-// The relaxed check is scoped to _WIN32 builds AND only to these known target types;
-// all other target types must return exactly 07006 on every platform.
+// Platform / driver exceptions:
+//   - Windows DM: may return HYC00 for SQL_C_GUID before the driver is invoked.
+//   - Old (reference) driver: may return 22018 ("Invalid character value for cast
+//     specification") or 22003 ("Numeric value out of range") for semi-structured
+//     types (ARRAY/OBJECT/VARIANT) because it attempts the conversion rather than
+//     rejecting the target type upfront. Pass is_semi_structured=true for those callers.
 inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type,
-                                          void* buffer, SQLLEN buffer_size) {
+                                          void* buffer, SQLLEN buffer_size, bool is_semi_structured = false) {
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, target_type, buffer, buffer_size, &indicator);
   auto records = get_diag_rec(stmt);
@@ -154,7 +195,13 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
-#ifdef _WIN32
+#ifdef SNOWFLAKE_OLD_DRIVER
+  if (is_semi_structured) {
+    CHECK((sqlstate == "07006" || sqlstate == "22018" || sqlstate == "22003"));
+  } else {
+    CHECK(sqlstate == "07006");
+  }
+#elif defined(_WIN32)
   if (target_type == SQL_C_GUID) {
     CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
   } else {
@@ -231,6 +278,46 @@ inline void check_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int s
     INFO("val[" << i << "] should be 0");
     CHECK(numeric.val[i] == 0);
   }
+}
+
+inline void check_incompatible_bindparam(const HandleWrapper& stmt_handle, SQLSMALLINT c_type, SQLSMALLINT sql_type,
+                                         void* value, SQLLEN buffer_len, SQLLEN* ind) {
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle.getHandle(), 1, SQL_PARAM_INPUT, c_type, sql_type, 0, 0, value, buffer_len, ind);
+  if (ret == SQL_ERROR) {
+    auto records = get_diag_rec(stmt_handle);
+    INFO("c_type=" << c_type << " sql_type=" << sql_type << " rejected at SQLBindParameter");
+    REQUIRE(!records.empty());
+#ifdef _WIN32
+    if (c_type == SQL_C_GUID) {
+      CHECK((records[0].sqlState == "07006" || records[0].sqlState == "HYC00"));
+    } else {
+      CHECK(records[0].sqlState == "07006");
+    }
+#else
+    CHECK(records[0].sqlState == "07006");
+#endif
+    return;
+  }
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLExecute(stmt_handle.getHandle());
+  auto records = get_diag_rec(stmt_handle);
+  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
+  INFO("c_type=" << c_type << " sql_type=" << sql_type << " ret=" << ret << " sqlstate=" << sqlstate);
+  REQUIRE(ret == SQL_ERROR);
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "07006");
+}
+
+inline void set_numeric_magnitude(SQL_NUMERIC_STRUCT& ns, uint64_t magnitude) {
+  std::memset(ns.val, 0, sizeof(ns.val));
+  std::memcpy(ns.val, &magnitude, sizeof(magnitude));
+}
+
+inline void set_numeric_magnitude_128(SQL_NUMERIC_STRUCT& ns, uint64_t low, uint64_t high) {
+  std::memset(ns.val, 0, sizeof(ns.val));
+  std::memcpy(ns.val, &low, sizeof(low));
+  std::memcpy(ns.val + sizeof(low), &high, sizeof(high));
 }
 
 #endif  // CONVERSION_CHECKS_HPP

@@ -33,6 +33,9 @@ enum StatusCode {
   STATUS_CODE_MISSING_PARAMETER = 15;
   STATUS_CODE_INVALID_PARAMETER_VALUE = 16;
   STATUS_CODE_LOGIN_ERROR = 17;
+  STATUS_CODE_LOCAL_FILE_NOT_FOUND = 18;
+  STATUS_CODE_REMOTE_FILE_NOT_FOUND = 19;
+  STATUS_CODE_UNSUPPORTED_COMPRESSION = 20;
 }
 
 // Info codes corresponding to Thrift InfoCode enum
@@ -146,16 +149,28 @@ message QueryStats {
   optional int64 num_dml_duplicates = 4;
 }
 
-// Execute result
-message ExecuteResult {
-  ArrowArrayStreamPtr stream = 1;
-  optional int64 rows_affected = 2;
-  string query_id = 3;
-  repeated ColumnMetadata columns = 4;
-  optional int64 statement_type_id = 5;
-  string query = 6;
-  optional string sql_state = 7;
-  optional QueryStats stats = 8;
+// Describes one result set from a (possibly multi-statement) execution.
+message ResultSetDescriptor {
+  string query_id = 1;
+  repeated ColumnMetadata columns = 2;
+  optional int64 rows_affected = 3;
+  optional int64 statement_type_id = 4;
+  optional string sql_state = 5;
+  optional QueryStats stats = 6;
+}
+
+message ResultSetResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
+}
+
+// Multi-statement execution: child query IDs and their statement types.
+message MultiStatementResult {
+  ResultSetDescriptor parent = 1;
+  repeated string query_ids = 2;
+  // Statement type IDs for each child, parallel to query_ids.
+  // Used by wrappers to classify results (ResultSet vs update count) without lazy fetch.
+  repeated int64 statement_type_ids = 3;
 }
 
 // Partitioned result
@@ -179,6 +194,12 @@ message ConnectionHandle {
 
 // Statement handle
 message StatementHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// ResultSet handle
+message ResultSetHandle {
   int64 id = 1;
   int64 magic = 2;
 }
@@ -226,51 +247,6 @@ message DatabaseNewResponse {
   DatabaseHandle db_handle = 1;
 }
 
-message DatabaseSetOptionStringRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message DatabaseSetOptionStringResponse {
-}
-
-message DatabaseSetOptionBytesRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message DatabaseSetOptionBytesResponse {
-}
-
-message DatabaseSetOptionIntRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message DatabaseSetOptionIntResponse {
-}
-
-message DatabaseSetOptionDoubleRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message DatabaseSetOptionDoubleResponse {
-}
-
-message DatabaseSetOptionBoolRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message DatabaseSetOptionBoolResponse {
-}
-
 message DatabaseInitRequest {
   DatabaseHandle db_handle = 1;
 }
@@ -294,54 +270,20 @@ message ConnectionNewResponse {
   ConnectionHandle conn_handle = 1;
 }
 
-message ConnectionSetOptionStringRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message ConnectionSetOptionStringResponse {
-}
-
-message ConnectionSetOptionBytesRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message ConnectionSetOptionBytesResponse {
-}
-
-message ConnectionSetOptionIntRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message ConnectionSetOptionIntResponse {
-}
-
-message ConnectionSetOptionDoubleRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message ConnectionSetOptionDoubleResponse {
-}
-
-message ConnectionSetOptionBoolRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message ConnectionSetOptionBoolResponse {
+// Identity of the language-specific wrapper invoking core via protobuf.
+message WrapperIdentity {
+  optional string driver_name = 1;
+  optional string driver_version = 2;
+  optional string language_runtime = 3;
+  optional string language_version = 4;
+  optional string language_compiler = 5;
 }
 
 message ConnectionInitRequest {
   ConnectionHandle conn_handle = 1;
   DatabaseHandle db_handle = 2;
+  // Wrapper identity — used to emit session_init telemetry during connection init.
+  optional WrapperIdentity wrapper_identity = 3;
 }
 
 message ConnectionInitResponse {
@@ -352,6 +294,21 @@ message ConnectionReleaseRequest {
 }
 
 message ConnectionReleaseResponse {
+}
+
+message ConnectionCloseRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionCloseResponse {
+}
+
+message ConnectionIsClosedRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionIsClosedResponse {
+  bool is_closed = 1;
 }
 
 message ConnectionGetInfoRequest {
@@ -457,6 +414,27 @@ message ConnectionGetParameterResponse {
   optional string value = 1;
 }
 
+message ConnectionGetAllParametersRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionGetAllParametersResponse {
+  map<string, string> parameters = 1;
+}
+
+// Reads the Snowflake server version cached from the login response.
+// Distinct from ConnectionGetInfo (which aggregates ~12 fields and takes
+// several locks) so SQLGetInfo(SQL_DBMS_VER) / JDBC getDatabaseProductVersion
+// stay cheap even when callers poll them per-statement.
+message ConnectionGetServerVersionRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionGetServerVersionResponse {
+  // Empty when called before login completes.
+  optional string server_version = 1;
+}
+
 message ConnectionValidateOptionsRequest {
   ConnectionHandle conn_handle = 1;
 }
@@ -499,14 +477,35 @@ message ConnectionTokenResponse {
   optional int64 validity_in_seconds = 2;
 }
 
+// Heartbeat request to validate that the connection and session are still alive.
+message ConnectionHeartbeatRequest {
+  ConnectionHandle conn_handle = 1;
+  optional uint32 timeout_seconds = 2;  // 0 / absent = use default (300s)
+}
+
+message ConnectionHeartbeatResponse {
+  bool valid = 1;
+}
+
 // Fetch the result of a previously executed query by its Snowflake Query ID.
 message ConnectionGetQueryResultRequest {
   ConnectionHandle conn_handle = 1;
   string query_id = 2;
 }
 
-message ConnectionGetQueryResultResponse {
-  ExecuteResult result = 1;
+message ConnectionGetResultSetRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+// Abort a running query by its Snowflake Query ID.
+message ConnectionAbortQueryRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionAbortQueryResponse {
+  bool success = 1;
 }
 
 // Statement service requests and responses
@@ -559,51 +558,6 @@ message StatementPrepareResponse {
   PrepareResult result = 1;
 }
 
-message StatementSetOptionStringRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message StatementSetOptionStringResponse {
-}
-
-message StatementSetOptionBytesRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message StatementSetOptionBytesResponse {
-}
-
-message StatementSetOptionIntRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message StatementSetOptionIntResponse {
-}
-
-message StatementSetOptionDoubleRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message StatementSetOptionDoubleResponse {
-}
-
-message StatementSetOptionBoolRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message StatementSetOptionBoolResponse {
-}
-
 message StatementGetParameterSchemaRequest {
   StatementHandle stmt_handle = 1;
 }
@@ -616,10 +570,26 @@ message StatementGetParameterSchemaResponse {
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
   optional QueryBindings bindings = 2;  // None = no bindings
+  optional uint32 timeout_seconds = 3;  // 0 / absent = no timeout override
 }
 
-message StatementExecuteQueryResponse {
-  ExecuteResult result = 1;
+message ExecuteQueryResponse {
+  oneof result {
+    // Single statement — descriptor + result_set_handle for stream/chunks access.
+    ResultSetResponse single = 1;
+    // Multi-statement — child query IDs only, fetch metadata lazily.
+    MultiStatementResult multi = 2;
+  }
+}
+
+// Async query execution: submit and return immediately with query_id
+message StatementExecuteAsyncRequest {
+  StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;
+}
+
+message StatementExecuteAsyncResponse {
+  string query_id = 1;
 }
 
 message StatementExecutePartitionsRequest {
@@ -650,6 +620,8 @@ enum ChunkFormat {
 message RemoteChunk {
   string url = 1;
   map<string, string> headers = 2;
+  int64 compressed_size = 3;
+  int64 uncompressed_size = 4;
 }
 
 message ResultChunk {
@@ -662,27 +634,46 @@ message ResultChunk {
     string inline = 2;
     RemoteChunk remote = 3;
   }
+  int32 row_count = 4;
 }
 
-message ResultChunksResult {
-  repeated ResultChunk chunks = 1;
-}
-
-message StatementResultChunksRequest {
-  StatementHandle stmt_handle = 1;
-}
-
-message StatementResultChunksResponse {
-  ResultChunksResult result = 1;
-}
 
 message DatabaseFetchChunkRequest {
   DatabaseHandle db_handle = 1;
   ResultChunk chunk = 2;
+  // Required when chunk.format == CHUNK_FORMAT_JSON (forward from ResultSetGetChunksResponse.columns); ignored for CHUNK_FORMAT_ARROW_IPC.
+  repeated ColumnMetadata columns = 3;
 }
 
 message DatabaseFetchChunkResponse {
   ArrowArrayStreamPtr stream = 1;
+}
+
+// ResultSet RPCs
+
+message ResultSetGetStreamRequest {
+  ResultSetHandle result_set_handle = 1;
+}
+
+message ResultSetGetStreamResponse {
+  ArrowArrayStreamPtr stream = 1;
+}
+
+message ResultSetGetChunksRequest {
+  ResultSetHandle result_set_handle = 1;
+}
+
+message ResultSetGetChunksResponse {
+  repeated ResultChunk chunks = 1;
+  // Column metadata. Required for CHUNK_FORMAT_JSON (forward on DatabaseFetchChunkRequest); ignored for CHUNK_FORMAT_ARROW_IPC.
+  repeated ColumnMetadata columns = 2;
+}
+
+message ResultSetReleaseRequest {
+  ResultSetHandle result_set_handle = 1;
+}
+
+message ResultSetReleaseResponse {
 }
 
 // Validation issue reported during set or validate operations.
@@ -771,8 +762,19 @@ message ConnectionGetQueryStatusRequest {
 message ConnectionGetQueryStatusResponse {
   // Status name as returned by the server (e.g. "RUNNING", "SUCCESS", "FAILED_WITH_ERROR")
   string status_name = 1;
-  optional int32 error_code = 2;
-  optional string error_message = 3;
+  int64 end_time = 2;
+  optional int32 error_code = 3;
+  optional string error_message = 4;
+  string query_id = 5;
+  int64 session_id = 6;
+  string sql_text = 7;
+  int64 start_time = 8;
+  string state = 9;
+  int32 total_duration = 10;
+  optional string warehouse_external_size = 11;
+  int64 warehouse_id = 12;
+  optional string warehouse_name = 13;
+  optional string warehouse_server_type = 14;
 }
 
 message ConfigGetPathsRequest {
@@ -783,16 +785,30 @@ message ConfigGetPathsResponse {
   string connections_file = 2;
 }
 
+// =============================================================================
+// TELEMETRY - In-band telemetry messages sent from wrappers via core
+// =============================================================================
+
+
+message TelemetrySendApiUsageRequest {
+  ConnectionHandle conn_handle = 1;
+  string api_method = 2;
+}
+
+message TelemetrySendWrapperErrorRequest {
+  ConnectionHandle conn_handle = 1;
+  string exception_type = 2;
+  string error_source = 3;
+}
+
+message TelemetrySendResponse {
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
   // Database operations
   rpc DatabaseNew(DatabaseNewRequest) returns (DatabaseNewResponse);
-  rpc DatabaseSetOptionString(DatabaseSetOptionStringRequest) returns (DatabaseSetOptionStringResponse);
-  rpc DatabaseSetOptionBytes(DatabaseSetOptionBytesRequest) returns (DatabaseSetOptionBytesResponse);
-  rpc DatabaseSetOptionInt(DatabaseSetOptionIntRequest) returns (DatabaseSetOptionIntResponse);
-  rpc DatabaseSetOptionDouble(DatabaseSetOptionDoubleRequest) returns (DatabaseSetOptionDoubleResponse);
-  rpc DatabaseSetOptionBool(DatabaseSetOptionBoolRequest) returns (DatabaseSetOptionBoolResponse);
   rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
@@ -800,14 +816,11 @@ service DatabaseDriver {
 
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
-  rpc ConnectionSetOptionString(ConnectionSetOptionStringRequest) returns (ConnectionSetOptionStringResponse);
-  rpc ConnectionSetOptionBytes(ConnectionSetOptionBytesRequest) returns (ConnectionSetOptionBytesResponse);
-  rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
-  rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
-  rpc ConnectionSetOptionBool(ConnectionSetOptionBoolRequest) returns (ConnectionSetOptionBoolResponse);
   rpc ConnectionSetOptions(ConnectionSetOptionsRequest) returns (ConnectionSetOptionsResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
+  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
+  rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
   rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);
@@ -822,34 +835,50 @@ service DatabaseDriver {
   // gets cached session parameter. Cache is updated with subset of connection parameters
   // (chosen by server, included in HTTP response) after each query
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
+  // gets all resolved session parameters at once
+  rpc ConnectionGetAllParameters(ConnectionGetAllParametersRequest) returns (ConnectionGetAllParametersResponse);
+  // returns the Snowflake server version cached from the login response
+  // (`serverVersion` in `/session/v1/login-request`); backs
+  // `SQLGetInfo(SQL_DBMS_VER)` and `getDatabaseProductVersion`
+  rpc ConnectionGetServerVersion(ConnectionGetServerVersionRequest) returns (ConnectionGetServerVersionResponse);
   // pre-flight validation of connection options - reports all issues at once
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
   // Fetch the result of a previously executed query by Snowflake Query ID
-  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
+  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ExecuteQueryResponse);
+  rpc ConnectionGetResultSet(ConnectionGetResultSetRequest) returns (ResultSetResponse);
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  // Abort a running query by Snowflake Query ID
+  rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core
   rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
+  // Heartbeat to validate connection and session are still alive
+  rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
+
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
   rpc StatementSetSqlQuery(StatementSetSqlQueryRequest) returns (StatementSetSqlQueryResponse);
   rpc StatementSetSubstraitPlan(StatementSetSubstraitPlanRequest) returns (StatementSetSubstraitPlanResponse);
   rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
-  rpc StatementSetOptionString(StatementSetOptionStringRequest) returns (StatementSetOptionStringResponse);
-  rpc StatementSetOptionBytes(StatementSetOptionBytesRequest) returns (StatementSetOptionBytesResponse);
-  rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
-  rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
-  rpc StatementSetOptionBool(StatementSetOptionBoolRequest) returns (StatementSetOptionBoolResponse);
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
-  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
+  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (ExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
-  rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
+  rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
+
+  // ResultSet operations
+  rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse);
+  rpc ResultSetGetChunks(ResultSetGetChunksRequest) returns (ResultSetGetChunksResponse);
+  rpc ResultSetRelease(ResultSetReleaseRequest) returns (ResultSetReleaseResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
+
+  // Telemetry operations
+  rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
+  rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendResponse);
 }

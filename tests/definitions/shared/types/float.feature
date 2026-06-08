@@ -42,6 +42,16 @@ Feature: FLOAT type support
       | min  | 2.2250738585072014e-308::<type>, 5e-324::<type>                | 2.2250738585072014e-308, approximately 5e-324    |
 
   @python_e2e @odbc_e2e @jdbc_e2e
+  Scenario Outline: should handle realistic large float <case> boundary values from literals for float and synonyms
+    Given Snowflake client is logged in
+    When Query "SELECT <query_values>" is executed
+    Then Result should contain floats [<expected_values>]
+
+    Examples:
+      | case | query_values                                                    | expected_values                                 |
+      | max  | 1.79769313486231e+308::<type>, -1.79769313486231e+308::<type>  | 1.79769313486231e+308, -1.79769313486231e+308  |
+
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle float precision boundary values from literals for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed

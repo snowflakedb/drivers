@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
     use crate::conversion::test_utils::helpers::{
@@ -42,13 +43,13 @@ mod tests {
 
     fn binding_for_wchar_buffer(
         target_type: CDataType,
-        buffer: &mut [u16],
+        buffer: &mut [WideChar],
         str_len: &mut sql::Len,
     ) -> Binding {
         Binding {
             target_type,
             target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-            buffer_length: (buffer.len() * 2) as sql::Len,
+            buffer_length: (buffer.len() * WIDE_CHAR_SIZE) as sql::Len,
             octet_length_ptr: str_len as *mut sql::Len,
             indicator_ptr: str_len as *mut sql::Len,
             ..Default::default()
@@ -568,75 +569,64 @@ mod tests {
     #[test]
     fn real_wchar_positive() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(3.125, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "3.125".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("3.125");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_negative() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(-99.5, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "-99.5".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("-99.5");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_zero() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "0".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("0");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_integer() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 32];
+        let mut buffer = vec![0 as WideChar; 32];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
         sr.write_odbc_type(42.0, &binding, &mut None).unwrap();
 
-        let expected: Vec<u16> = "42".encode_utf16().collect();
-        assert_eq!(
-            str_len,
-            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
-        );
+        let expected = encode_wide("42");
+        assert_eq!(str_len, (expected.len() * WIDE_CHAR_SIZE) as sql::Len);
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     #[test]
     fn real_wchar_fractional_only_truncation_returns_01004() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 4]; // "7.98765" → whole digits "7" (1 char), fits in 4-wchar buffer
+        // "7.98765" → whole digits "7" (1 char), fits in 4-wchar buffer.
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
@@ -652,7 +642,8 @@ mod tests {
     #[test]
     fn real_wchar_whole_digits_lost_returns_22003() {
         let sr = make_real();
-        let mut buffer = vec![0u16; 4]; // "123456.789" → whole digits "123456" (6 chars), doesn't fit in 4-wchar buffer
+        // "123456.789" → whole digits "123456" (6 chars), doesn't fit in 4-wchar buffer.
+        let mut buffer = vec![0 as WideChar; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
 
@@ -1722,6 +1713,54 @@ mod tests {
         assert_eq!(
             interval.interval_sign, 0,
             "-0.0 should produce positive interval"
+        );
+    }
+
+    // ======================================================================
+    // write_json: non-finite f64 serialization for Snowflake JSON bind parser
+    //
+    // The server's JSON bind parser is stricter than its TO_DOUBLE() text
+    // parser. It accepts "NaN" (matching Rust's Display) but rejects Rust's
+    // short-form "inf" / "-inf" — it requires the full word "Infinity" /
+    // "-Infinity" with the leading 'I' capitalized.
+    // ======================================================================
+
+    use crate::conversion::traits::WriteJson;
+    use serde_json::Value;
+
+    fn write_json(value: f64) -> Value {
+        SnowflakeReal.write_json(value).unwrap()
+    }
+
+    #[test]
+    fn write_json_finite_values_use_default_display() {
+        assert_eq!(write_json(0.0), Value::String("0".to_string()));
+        assert_eq!(write_json(1.5), Value::String("1.5".to_string()));
+        assert_eq!(
+            write_json(-12345.6789),
+            Value::String("-12345.6789".to_string())
+        );
+    }
+
+    #[test]
+    fn write_json_nan_serializes_as_capital_n_a_n() {
+        assert_eq!(write_json(f64::NAN), Value::String("NaN".to_string()));
+    }
+
+    #[test]
+    fn write_json_positive_infinity_serializes_as_full_word_infinity() {
+        // Server rejects Rust's default "inf" — must be the full word.
+        assert_eq!(
+            write_json(f64::INFINITY),
+            Value::String("Infinity".to_string())
+        );
+    }
+
+    #[test]
+    fn write_json_negative_infinity_serializes_as_full_word_with_sign() {
+        assert_eq!(
+            write_json(f64::NEG_INFINITY),
+            Value::String("-Infinity".to_string())
         );
     }
 }

@@ -287,8 +287,6 @@ PyObject* CArrowStreamIterator::buildRowObject() {
       PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
 
       if (py::checkPyError()) {
-        logger->debug(__FILE__, __func__, __LINE__,
-                      "Python error occurred during conversion of column %s", colName);
         Py_DECREF(pydict);
         return nullptr;
       }
@@ -312,8 +310,6 @@ PyObject* CArrowStreamIterator::buildRowObject() {
     PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
 
     if (py::checkPyError()) {
-      logger->debug(__FILE__, __func__, __LINE__,
-                    "Python error occurred during conversion of column %lld", colIdx);
       Py_DECREF(pytuple);
       return nullptr;
     }

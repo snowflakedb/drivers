@@ -4,9 +4,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -43,8 +44,17 @@ TEST_CASE("should return 07009 when ParameterNumber is zero.", "[query][bind_par
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 0, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE 07009 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07009"));
+  // Then SQLBindParameter returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE 07009
+    //   (invalid descriptor index)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07009"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1093 (invalid parameter
+    //   number) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1093"));
+  }
 }
 
 TEST_CASE("should return HY003 for invalid C data type.", "[query][bind_parameter][error]") {
@@ -58,8 +68,17 @@ TEST_CASE("should return HY003 for invalid C data type.", "[query][bind_paramete
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, 9999, SQL_INTEGER, 0, 0, &param, 0, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY003 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY003"));
+  // Then SQLBindParameter returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY003
+    //   (invalid application buffer type)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY003"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1003 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1003"));
+  }
 }
 
 TEST_CASE("should return HY004 for invalid SQL data type.", "[query][bind_parameter][error]") {
@@ -87,8 +106,17 @@ TEST_CASE("should return HY105 for invalid InputOutputType.", "[query][bind_para
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, 999, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY105 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY105"));
+  // Then SQLBindParameter returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY105
+    //   (invalid parameter type)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY105"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1105 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1105"));
+  }
 }
 
 TEST_CASE("should return HY009 when both value and indicator pointers are null.", "[query][bind_parameter][error]") {
@@ -115,8 +143,34 @@ TEST_CASE("should return HY090 for negative BufferLength.", "[query][bind_parame
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 4, 0, param, -1, &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY090 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY090"));
+  // Then SQL_ERROR with SQLSTATE HY090. The new driver advertises ODBC 3.x and
+  //   iODBC forwards the call so the driver's own HY090 surfaces.
+  //
+  // For the old driver under iODBC, BufferLength validation is
+  //   libiodbc-version-dependent (see BD#62 - iODBC's per-driver dispatch
+  //   paths). Both observed outcomes are valid for this BD; we assert each
+  //   one precisely:
+  //
+  //   (a) The libiodbc DM-side length validator rejects the negative
+  //       BufferLength up-front with SQL_ERROR + a single "S1090" record
+  //       ([iODBC][Driver Manager]Invalid string or buffer length); the
+  //       call never reaches the driver.
+  //   (b) The libiodbc DM forwards the call to the old driver, which
+  //       silently accepts the negative BufferLength as SQL_NTS-like and
+  //       returns SQL_SUCCESS with no diagnostic records posted.
+  OLD_IODBC_ONLY("BD#62") {
+    REQUIRE((ret == SQL_ERROR || ret == SQL_SUCCESS));
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+    if (ret == SQL_ERROR) {
+      REQUIRE(records.size() == 1);
+      REQUIRE(records[0].sqlState == "S1090");
+    } else {
+      REQUIRE(records.empty());
+    }
+  }
+  else {
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY090"));
+  }
 }
 
 TEST_CASE("should return HY104 for invalid precision or scale.", "[query][bind_parameter][error]") {
@@ -219,6 +273,36 @@ TEST_CASE("should fail with 07002 after SQL_RESET_PARAMS clears bindings.", "[qu
   // Then re-executing should fail with SQLSTATE 07002
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
+}
+
+TEST_CASE("should succeed after SQL_RESET_PARAMS clears a spurious extra binding.", "[query][bind_parameter]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a 1-parameter query is prepared but params 1 AND 2 are bound
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER p1 = 10, p2 = 20;
+  SQLLEN ind1 = 0, ind2 = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p1, 0, &ind1);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p2, 0, &ind2);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // And all parameter bindings are reset
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // And only the real parameter (param 1) is re-bound
+  SQLINTEGER val = 99;
+  SQLLEN val_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &val, 0, &val_ind);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then executing should succeed (the spurious param 2 was trimmed by reset)
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
 }
 
 TEST_CASE("should fail with 07002 when parameter bindings have a gap.", "[query][bind_parameter]") {
@@ -363,10 +447,9 @@ TEST_CASE("should bind NULL via SQL_NULL_DATA indicator.", "[query][bind_paramet
   CHECK(!result.has_value());
 }
 
-TEST_CASE("should alternate NULL and non-NULL across sequential executions.", "[query][bind_parameter]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should alternate NULL and non-NULL across sequential executions.",
+                 "[query][bind_parameter]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE bind_null_seq (val INTEGER)");
   auto stmt = conn.createStatement();
 

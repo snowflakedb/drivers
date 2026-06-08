@@ -2,6 +2,7 @@ mod arrow_parser;
 mod error;
 mod http_downloader;
 mod json_parser;
+mod memory_budget;
 pub mod mock;
 pub mod prefetch;
 
@@ -18,20 +19,59 @@ use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 pub use error::ChunkError;
 use error::*;
+pub(crate) use error::{ArrowIpcEncodingSnafu, ChunkReadingSnafu};
 pub use json_parser::convert_string_rowset_to_arrow_reader;
 use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, PrefetchChunkReader};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{OptionExt, ResultExt};
 
-pub const DEFAULT_PREFETCH_THREADS: usize = 8;
+pub const DEFAULT_PREFETCH_THREADS: usize = 4;
+pub const DEFAULT_MEMORY_LIMIT_MB: u32 = 1536;
+
+/// Configuration for the chunk prefetch pipeline.
+#[derive(Debug, Clone)]
+pub struct PrefetchConfig {
+    /// Number of concurrent chunk download+parse tasks.
+    pub prefetch_threads: usize,
+    /// Memory budget in MB for buffered chunks. 0 means unlimited.
+    pub memory_limit_mb: u32,
+}
+
+impl Default for PrefetchConfig {
+    fn default() -> Self {
+        Self {
+            prefetch_threads: DEFAULT_PREFETCH_THREADS,
+            memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
+        }
+    }
+}
+
+impl PrefetchConfig {
+    /// Resolve from a session parameters map, falling back to defaults for
+    /// missing or unparseable values.
+    pub fn from_session_params(params: &HashMap<String, String>) -> Self {
+        let prefetch_threads = params
+            .get("CLIENT_PREFETCH_THREADS")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_PREFETCH_THREADS);
+        let memory_limit_mb = params
+            .get("CLIENT_MEMORY_LIMIT")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(DEFAULT_MEMORY_LIMIT_MB);
+        Self {
+            prefetch_threads,
+            memory_limit_mb,
+        }
+    }
+}
 
 pub async fn json_prefetch_reader(
     initial_rowset: &[Vec<Option<String>>],
     row_types: Vec<RowType>,
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
-    prefetch_concurrency: usize,
+    config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)?;
     let downloader = HttpChunkDownloader { client };
@@ -43,7 +83,7 @@ pub async fn json_prefetch_reader(
         chunk_download_data.into(),
         downloader,
         parser,
-        prefetch_concurrency,
+        config,
     )
     .await
 }
@@ -52,7 +92,7 @@ pub async fn arrow_prefetch_reader(
     initial_base64_opt: Option<&str>,
     mut chunk_download_data: VecDeque<ChunkDownloadData>,
     client: Client,
-    prefetch_concurrency: usize,
+    config: &PrefetchConfig,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let initial_reader = if let Some(initial_base64) = initial_base64_opt {
         let bytes = BASE64.decode(initial_base64).context(Base64DecodingSnafu)?;
@@ -73,7 +113,7 @@ pub async fn arrow_prefetch_reader(
         chunk_download_data,
         downloader,
         parser,
-        prefetch_concurrency,
+        config,
     )
     .await
 }
@@ -98,6 +138,12 @@ pub fn empty_reader() -> Box<dyn RecordBatchReader + Send> {
     ))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkFormatKind {
+    ArrowIpc,
+    Json,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChunkDownloadData {
     pub url: String,
@@ -117,6 +163,22 @@ impl ChunkDownloadData {
             headers: chunk_headers.clone(),
         }
     }
+
+    /// Estimates in-memory size after decompression and Arrow conversion.
+    /// Uses 1.5x uncompressed size as a heuristic for Arrow overhead.
+    pub fn estimated_memory_mb(&self) -> u32 {
+        const BYTES_PER_MB: u64 = 1024 * 1024;
+        let bytes = (self.uncompressed_size.max(0) as u64) * 3 / 2;
+        ((bytes / BYTES_PER_MB).max(1)) as u32
+    }
+}
+
+#[derive(Debug)]
+pub struct InitialChunkData {
+    pub rowset_base64: String,
+    pub row_count: i32,
+    pub uncompressed_size: i64,
+    pub compressed_size: i64,
 }
 
 /// Downloads chunk data from the given URL.

@@ -1,0 +1,13 @@
+{
+  "name": "Telemetry send success",
+  "request": {
+    "urlPathPattern": "/telemetry/send",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true
+    }
+  }
+}

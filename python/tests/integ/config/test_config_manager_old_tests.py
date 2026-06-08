@@ -4,9 +4,10 @@ import re
 import stat
 import tempfile
 
+from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
-from typing import Callable, Literal, Union
+from typing import Literal
 from uuid import uuid4
 
 import pytest
@@ -52,7 +53,7 @@ def tmp_files_helper(cwd: Path, to_create: files) -> None:
             tmp_files_helper(new_file, v)
 
 
-files = dict[str, Union[str, Literal["files"]]]
+files = dict[str, str | Literal["files"]]
 
 
 @pytest.fixture

@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 3b1a2523-3d5b-4cd8-8863-fe7cbbedeb59
+    -- DTM_QRY:
+    desc table "DTMREPLAYTESTDB"."PUBLIC"."bpamain"
+  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."bpamain"

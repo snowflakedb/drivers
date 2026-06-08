@@ -3,7 +3,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -252,9 +253,11 @@ TEST_CASE("SQLPrepareW + SQLExecute basic flow.", "[query][prepare]") {
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When a SELECT is prepared using the wide variant
-  std::u16string sql = u"SELECT 88 AS wide_value";
-  SQLRETURN ret = SQLPrepareW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
+  // When a SELECT is prepared using the wide variant. Encoding the
+  // code-point literal into a DM-sized SQLWCHAR buffer keeps the test
+  // portable between UTF-16 (unixODBC) and UTF-32 (iODBC).
+  auto sql = sf::wide::encode_wide(U"SELECT 88 AS wide_value");
+  SQLRETURN ret = SQLPrepareW(stmt.getHandle(), sql.data(), static_cast<SQLINTEGER>(sql.size() - 1));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -280,9 +283,11 @@ TEST_CASE("SQLPrepareW with Unicode content in query.", "[query][prepare]") {
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When a SELECT with Unicode string literal is prepared using SQLPrepareW
-  std::u16string sql = u"SELECT '日本語テスト' AS unicode_col";
-  SQLRETURN ret = SQLPrepareW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
+  // When a SELECT with Unicode string literal is prepared using SQLPrepareW.
+  // The literal is encoded to DM-sized SQLWCHAR units so both UTF-16 and
+  // UTF-32 driver managers receive a well-formed wide string.
+  auto sql = sf::wide::encode_wide(U"SELECT '日本語テスト' AS unicode_col");
+  SQLRETURN ret = SQLPrepareW(stmt.getHandle(), sql.data(), static_cast<SQLINTEGER>(sql.size() - 1));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -292,7 +297,7 @@ TEST_CASE("SQLPrepareW with Unicode content in query.", "[query][prepare]") {
   REQUIRE_ODBC(ret, stmt);
 
   // Then the Unicode content should be correctly returned
-  CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == u"日本語テスト");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == U"日本語テスト");
 }
 
 // =============================================================================
@@ -310,9 +315,18 @@ TEST_CASE("SQLExecute without prior SQLPrepare returns HY010.", "[query][prepare
   // When SQLExecute is called without a prior SQLPrepare
   SQLRETURN ret = SQLExecute(stmt.getHandle());
 
-  // Then it should return SQL_ERROR with SQLSTATE HY010
+  // Then SQLExecute returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLExecute with bound parameters via SQLBindParameter.", "[query][prepare]") {
@@ -424,9 +438,11 @@ TEST_CASE("SQLExecDirectW basic flow.", "[query][prepare]") {
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When a SELECT is executed via SQLExecDirectW
-  std::u16string sql = u"SELECT 123 AS direct_w_val";
-  SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
+  // When a SELECT is executed via SQLExecDirectW. The literal is
+  // encoded to DM-sized SQLWCHAR units so both UTF-16 and UTF-32
+  // driver managers receive a well-formed wide string.
+  auto sql = sf::wide::encode_wide(U"SELECT 123 AS direct_w_val");
+  SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), sql.data(), static_cast<SQLINTEGER>(sql.size() - 1));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
@@ -510,9 +526,18 @@ TEST_CASE("SQLPrepare with negative TextLength returns HY090.", "[query][prepare
   // When SQLPrepare is called with a negative text length
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1", -5);
 
-  // Then it should return SQL_ERROR with SQLSTATE HY090
+  // Then SQLPrepare returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY090");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY090
+    //   (invalid string or buffer length)
+    CHECK(get_sqlstate(stmt) == "HY090");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1090 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1090");
+  }
 }
 
 TEST_CASE("SQLPrepare with zero TextLength returns HY090.", "[query][prepare][error]") {
@@ -527,9 +552,15 @@ TEST_CASE("SQLPrepare with zero TextLength returns HY090.", "[query][prepare][er
   // When SQLPrepare is called with zero text length
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1", 0);
 
-  // Then it should return SQL_ERROR with SQLSTATE HY090
+  // Then it should return SQL_ERROR. The SQLSTATE differs by DM/driver pair:
+  //   unixODBC (any driver) + iODBC (new driver) -> HY090 (driver-side validation);
+  //   iODBC + old driver -> HY000, because iODBC's DM reshapes the zero-length
+  //   string before forwarding to the old driver.
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY090");
+  OLD_IODBC_ONLY("BD#60") { CHECK(get_sqlstate(stmt) == "HY000"); }
+  else {
+    CHECK(get_sqlstate(stmt) == "HY090");
+  }
 }
 
 TEST_CASE("SQLPrepare with empty SQL string returns HY090.", "[query][prepare][error]") {
@@ -546,7 +577,16 @@ TEST_CASE("SQLPrepare with empty SQL string returns HY090.", "[query][prepare][e
   // Then it should return SQL_ERROR with SQLSTATE HY090
   REQUIRE(ret == SQL_ERROR);
   // TODO: Check why this is different on Windows
-  UNIX_ONLY { CHECK(get_sqlstate(stmt) == "HY090"); }
+  UNIX_ONLY {
+    OLD_IODBC_ONLY("BD#60") {
+      // iODBC's DM reshapes the empty SQL string before forwarding to the old
+      //   driver; surfaces HY000 instead of HY090.
+      CHECK(get_sqlstate(stmt) == "HY000");
+    }
+    else {
+      CHECK(get_sqlstate(stmt) == "HY090");
+    }
+  }
   WINDOWS_ONLY {
     auto sqlstate = get_sqlstate(stmt);
     CHECK((sqlstate == "HY090" || sqlstate == "HY000"));
@@ -594,13 +634,11 @@ TEST_CASE("SQLPrepare with cursor already open returns 24000.", "[query][prepare
 // DDL / DML Edge Cases
 // =============================================================================
 
-TEST_CASE("DDL via SQLPrepare + SQLExecute.", "[query][prepare]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DDL via SQLPrepare + SQLExecute.", "[query][prepare]") {
   // Doc: "SQLPrepare prepares an SQL string for execution."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   auto stmt = conn.createStatement();
 
   // When a CREATE TABLE is prepared and executed
@@ -623,15 +661,13 @@ TEST_CASE("DDL via SQLPrepare + SQLExecute.", "[query][prepare]") {
   CHECK(count == 0);
 }
 
-TEST_CASE("DML returning SQL_NO_DATA via SQLPrepare + SQLExecute.", "[query][prepare]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DML returning SQL_NO_DATA via SQLPrepare + SQLExecute.", "[query][prepare]") {
   // Doc: "SQL_NO_DATA is returned if the SQL statement was an UPDATE, INSERT,
   //       or DELETE statement that did not affect any rows."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecute-function#returns
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE prep_dml_nodata (id INT)");
+  conn.execute("CREATE TEMPORARY TABLE prep_dml_nodata (id INT)");
   auto stmt = conn.createStatement();
 
   // When a DELETE that affects no rows is prepared and executed
@@ -644,14 +680,12 @@ TEST_CASE("DML returning SQL_NO_DATA via SQLPrepare + SQLExecute.", "[query][pre
   CHECK(ret == SQL_NO_DATA);
 }
 
-TEST_CASE("INSERT via SQLPrepare + SQLExecute with verify.", "[query][prepare]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "INSERT via SQLPrepare + SQLExecute with verify.", "[query][prepare]") {
   // Doc: "SQLPrepare prepares an SQL string for execution."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE prep_insert_test (id INT, name VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE prep_insert_test (id INT, name VARCHAR(100))");
 
   // When an INSERT is prepared with bound parameters and executed
   {

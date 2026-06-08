@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: ae641aee-a8ca-4c3d-acec-cf85f7a3aea9
+    -- DTM_QRY:
+    SHOW TABLES LIKE 'ren\\_test\\_t\\_1\\_1' IN SCHEMA "DTMREPLAYTESTDB"."PUBLIC"
+  mapped: SHOW TABLES LIKE 'ren\\_test\\_t\\_1\\_1' IN SCHEMA "DTMREPLAYTESTDB"."PUBLIC"

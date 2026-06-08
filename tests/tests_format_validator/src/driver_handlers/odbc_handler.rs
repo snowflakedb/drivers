@@ -71,8 +71,8 @@ impl BaseDriverHandler for OdbcHandler {
         while i < lines.len() {
             let line = lines[i].trim();
 
-            // Look for TEST_CASE start
-            if line.starts_with("TEST_CASE(") {
+            // Look for TEST_CASE or TEST_CASE_METHOD start
+            if line.starts_with("TEST_CASE(") || line.starts_with("TEST_CASE_METHOD(") {
                 let start_line = i;
                 let mut test_case_content = String::new();
                 let mut found_closing_paren = false;
@@ -116,14 +116,40 @@ impl BaseDriverHandler for OdbcHandler {
         // Find the method and extract calls within it
         let mut in_method = false;
         let mut brace_count = 0;
+        let mut in_test_decl = false;
 
         for line in &lines {
             let line = line.trim();
 
-            if line.contains(&format!("TEST_CASE(\"{method_name}\"")) && !in_method {
-                in_method = true;
+            // Handle multi-line TEST_CASE_METHOD declarations
+            if in_test_decl {
+                if line.contains(&format!("\"{method_name}\"")) {
+                    in_method = true;
+                }
                 brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+                if line.contains('{') {
+                    in_test_decl = false;
+                    if !in_method {
+                        brace_count = 0;
+                    }
+                }
                 continue;
+            }
+
+            if (line.starts_with("TEST_CASE(") || line.starts_with("TEST_CASE_METHOD("))
+                && !in_method
+            {
+                if line.contains(&format!("\"{method_name}\"")) {
+                    in_method = true;
+                    brace_count +=
+                        line.matches('{').count() as i32 - line.matches('}').count() as i32;
+                    continue;
+                } else if !line.contains('{') {
+                    in_test_decl = true;
+                    brace_count +=
+                        line.matches('{').count() as i32 - line.matches('}').count() as i32;
+                    continue;
+                }
             }
 
             // Look for method definitions (not calls)
@@ -205,8 +231,8 @@ impl BaseDriverHandler for OdbcHandler {
         for (line_num, line) in lines.iter().enumerate() {
             let line = line.trim();
 
-            // Check for TEST_CASE start (might be multi-line)
-            if line.starts_with("TEST_CASE(") {
+            // Check for TEST_CASE or TEST_CASE_METHOD start (might be multi-line)
+            if line.starts_with("TEST_CASE(") || line.starts_with("TEST_CASE_METHOD(") {
                 if line.contains(&format!("\"{method_name}\"")) {
                     in_method = true;
                     method_start_line = line_num + 1;

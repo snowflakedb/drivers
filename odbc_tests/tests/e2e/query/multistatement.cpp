@@ -1,0 +1,411 @@
+#include <sql.h>
+#include <sqlext.h>
+
+#include <algorithm>
+#include <string>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "Connection.hpp"
+#include "compatibility.hpp"
+#include "get_data.hpp"
+#include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "sf_odbc.h"
+
+// =============================================================================
+// Tests for multi-statement query execution via SQLMoreResults
+// =============================================================================
+
+TEST_CASE("should execute multiple SELECT statements", "[query]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement query with 3 SELECTs is executed
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then 3 result sets are returned
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // And each result set contains correct data
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 1);
+
+  // Second result set
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 2);
+
+  // Third result set
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 3);
+
+  // No more result sets
+  ret = SQLMoreResults(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE("should execute multiple DML statements", "[query][multistatement]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement query with CREATE TABLE, INSERT, and DROP is executed
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(),
+                      sqlchar("CREATE OR REPLACE TEMPORARY TABLE ms_odbc_dml_test(id INT);"
+                              " INSERT INTO ms_odbc_dml_test VALUES (1),(2),(3);"
+                              " DROP TABLE ms_odbc_dml_test"),
+                      SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then 3 result sets are returned
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // No more result sets
+  ret = SQLMoreResults(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE("should execute mixed statement types", "[query][multistatement]") {
+  // iODBC's DM tracks cursor state across SQLMoreResults: after stepping through
+  // a DDL + DML + DDL prefix (ALTER, CREATE, INSERT here) and landing on the
+  // SELECT result set via SQLMoreResults, iODBC's DM rejects the follow-up
+  // SQLGetData with `24000 [iODBC][Driver Manager]Invalid cursor state` even
+  // though the driver-side cursor is open. The pure-SELECT and pure-DML
+  // multistatement cases above pass under iODBC (consistent cursor-shape
+  // transitions); only the DDL+DML+SELECT mix trips the DM state machine.
+  SKIP_IODBC("iODBC DM cursor-state machine doesn't reopen cursor after DDL/DML SQLMoreResults sequence");
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement query with various types is executed
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)5, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(),
+                      sqlchar("ALTER SESSION SET TIMEZONE='UTC';"
+                              " CREATE OR REPLACE TEMPORARY TABLE ms_odbc_mix_test(val TEXT);"
+                              " INSERT INTO ms_odbc_mix_test VALUES ('hello');"
+                              " SELECT val FROM ms_odbc_mix_test;"
+                              " DROP TABLE ms_odbc_mix_test"),
+                      SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then 5 result sets are returned
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // And the SELECT result contains expected data
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+
+  // 5th: DROP TABLE
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // No more result sets
+  ret = SQLMoreResults(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE("should fail when multistatement SQL is sent without multi_statement_count", "[query][multistatement]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement SQL is executed without configuring multi_statement_count
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1; SELECT 2; SELECT 3"), SQL_NTS);
+
+  // Then an error is returned indicating multi-statement is not enabled
+  CHECK(ret == SQL_ERROR);
+}
+
+TEST_CASE("should fail when multi_statement_count does not match actual statement count", "[query][multistatement]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Single SELECT is executed with multi_statement_count set to 3
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
+
+  // Then an error is returned indicating statement count mismatch
+  CHECK(ret == SQL_ERROR);
+}
+
+// =============================================================================
+// Multi-statement queries with positional parameter bindings
+// =============================================================================
+
+TEST_CASE("should execute multistatement DML with positional parameters", "[query][multistatement][parameters]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // And A temporary table with column (id NUMBER) exists
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), sqlchar("CREATE OR REPLACE TEMPORARY TABLE ms_bind_dml(id NUMBER)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When Multistatement INSERT chain is executed with 3 positional parameters
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER params[3] = {10, 20, 30};
+  SQLLEN param_lens[3];
+  for (SQLUSMALLINT i = 0; i < 3; ++i) {
+    param_lens[i] = sizeof(SQLINTEGER);
+    ret = SQLBindParameter(stmt.getHandle(), i + 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &params[i],
+                           sizeof(SQLINTEGER), &param_lens[i]);
+    REQUIRE_ODBC(ret, stmt);
+  }
+  ret = SQLExecDirect(stmt.getHandle(),
+                      sqlchar("INSERT INTO ms_bind_dml VALUES(?);"
+                              " INSERT INTO ms_bind_dml VALUES(?),(?)"),
+                      SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then 2 result sets are returned
+  SQLLEN row_count = 0;
+
+  // And the first result set reports update count 1
+  ret = SQLRowCount(stmt.getHandle(), &row_count);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(row_count == 1);
+
+  // And the second result set reports update count 2
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLRowCount(stmt.getHandle(), &row_count);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(row_count == 2);
+  ret = SQLMoreResults(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+
+  // Walked all result sets — now query the table on a second statement to
+  // verify the rows were inserted.
+  // And the table contains rows [10, 20, 30]
+  auto verify = conn.createStatement();
+  ret = SQLExecDirect(verify.getHandle(), sqlchar("SELECT id FROM ms_bind_dml ORDER BY id"), SQL_NTS);
+  REQUIRE_ODBC(ret, verify);
+  ret = SQLFetch(verify.getHandle());
+  REQUIRE_ODBC(ret, verify);
+  CHECK(get_data<SQL_C_LONG>(verify, 1) == 10);
+  ret = SQLFetch(verify.getHandle());
+  REQUIRE_ODBC(ret, verify);
+  CHECK(get_data<SQL_C_LONG>(verify, 1) == 20);
+  ret = SQLFetch(verify.getHandle());
+  REQUIRE_ODBC(ret, verify);
+  CHECK(get_data<SQL_C_LONG>(verify, 1) == 30);
+  ret = SQLFetch(verify.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE("should execute multistatement SELECT with positional parameters", "[query][multistatement][parameters]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement SELECT chain is executed with 6 positional parameters
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)3, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER params[6] = {10, 20, 30, 40, 50, 60};
+  SQLLEN param_lens[6];
+  for (SQLUSMALLINT i = 0; i < 6; ++i) {
+    param_lens[i] = sizeof(SQLINTEGER);
+    ret = SQLBindParameter(stmt.getHandle(), i + 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &params[i],
+                           sizeof(SQLINTEGER), &param_lens[i]);
+    REQUIRE_ODBC(ret, stmt);
+  }
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?; SELECT ?, ?, ?"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then 3 result sets are returned
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // And the first result set contains row [10]
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 10);
+  CHECK(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
+
+  // And the second result set contains row [20, 30]
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 20);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == 30);
+  CHECK(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
+
+  // And the third result set contains row [40, 50, 60]
+  ret = SQLMoreResults(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 40);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == 50);
+  CHECK(get_data<SQL_C_LONG>(stmt, 3) == 60);
+  CHECK(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
+  ret = SQLMoreResults(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+TEST_CASE("should fail when multistatement query has too few parameters", "[query][multistatement][parameters]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement SELECT requires 3 parameters but only 1 is bound
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER p1 = 10;
+  SQLLEN p1_len = sizeof(p1);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p1, sizeof(p1), &p1_len);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
+
+  // Then an error is returned indicating parameter count mismatch
+  CHECK(ret == SQL_ERROR);
+}
+
+TEST_CASE("should fail when NULL positional parameters are used in multistatement query",
+          "[query][multistatement][parameters]") {
+  // Snowflake's SYSTEM$MULTISTMT server-side dispatcher rejects NULL bindings
+  // with "Bind variable ? not set" — confirmed against legacy snowflake-jdbc
+  // and legacy snowflake-odbc; the universal-driver inherits the same behavior.
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When Multistatement SELECT is executed with NULL positional parameters
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, (SQLPOINTER)2, 0);
+  OLD_IODBC_ONLY("BD#56") {
+    // The old driver does not advertise SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+    //   in its iODBC function bitmap, so iODBC's DM rejects the
+    //   SQLSetStmtAttr call with IM001 ("Driver does not support this
+    //   function") before it reaches the driver. The new driver forwards
+    //   the attribute correctly. The rest of this test depends on the
+    //   multi-statement count being set, so we bail here after asserting
+    //   the IM001 outcome.
+    REQUIRE_EXPECTED_ERROR(ret, "IM001", stmt.getHandle(), SQL_HANDLE_STMT);
+    return;
+  }
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER p1_buf = 0, p2_buf = 10, p3_buf = 0;
+  SQLLEN p1_len = SQL_NULL_DATA;
+  SQLLEN p2_len = sizeof(p2_buf);
+  SQLLEN p3_len = SQL_NULL_DATA;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p1_buf, sizeof(p1_buf),
+                         &p1_len);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p2_buf, sizeof(p2_buf),
+                         &p2_len);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &p3_buf, sizeof(p3_buf),
+                         &p3_len);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?; SELECT ?, ?"), SQL_NTS);
+
+  // Then an error is returned indicating NULL bindings are not supported
+  CHECK(ret == SQL_ERROR);
+  auto records = get_diag_rec(stmt);
+  bool mentions_bind = std::any_of(records.begin(), records.end(), [](const DiagRec& r) {
+    std::string lower = r.messageText;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    return lower.find("bind") != std::string::npos;
+  });
+  CHECK(mentions_bind);
+}

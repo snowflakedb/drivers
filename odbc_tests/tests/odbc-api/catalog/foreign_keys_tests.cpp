@@ -268,7 +268,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative PKCata
 
   SQLRETURN ret = SQLForeignKeys(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS,
                                  nullptr, 0, nullptr, 0, nullptr, 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative FKTableName length",
@@ -277,7 +288,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative FKTabl
 
   SQLRETURN ret =
       SQLForeignKeys(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  IODBC_ONLY {
+    // iODBC's DM-side length validator rejects the negative length with the
+    //   ODBC 2.x form of HY090 ("S1090") before the call reaches the driver.
+    //   Exactly one record is posted on the SQL_HANDLE_STMT handle.
+    REQUIRE(ret == SQL_ERROR);
+    auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].sqlState == "S1090");
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: 24000 - Cursor already open",

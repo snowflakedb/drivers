@@ -5,7 +5,6 @@ import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
 import java.sql.Clob;
-import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.NClob;
 import java.sql.PreparedStatement;
@@ -22,99 +21,148 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
-import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
+import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
+import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
+import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.ConfigSettingFactory;
+import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.ProtobufApis;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity.Builder;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
+public class SnowflakeConnectionImpl implements InternalSnowflakeConnection {
+
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
+
+  private final AtomicBoolean closed = new AtomicBoolean(false);
+  private final Set<Statement> openStatements = ConcurrentHashMap.newKeySet();
+  private final CoreDriverApi coreDriverApi;
+  private final DatabaseHandle databaseHandle;
+  private final ConnectionHandle connectionHandle;
   private final String url;
   private final Properties properties;
+
   private boolean autoCommit = true;
-  private boolean closed = false;
   private String catalog;
   private String schema;
-  private DatabaseHandle databaseHandle;
-  public ConnectionHandle connectionHandle;
+
+  private volatile String cachedDatabaseVersion;
+  private final Object databaseVersionLock = new Object();
 
   public SnowflakeConnectionImpl(String url, Properties properties) throws SQLException {
+    this(url, properties, ProtobufApis.coreDriverApi);
+  }
+
+  SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi)
+      throws SQLException {
     this.url = url;
     this.properties = properties;
-    Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
+    this.coreDriverApi = coreDriverApi;
+
+    DatabaseHandle dbHandle = null;
+    ConnectionHandle connHandle = null;
     try {
-      this.databaseHandle =
-          ProtobufApis.databaseDriverV1
-              .databaseNew(DatabaseNewRequest.getDefaultInstance())
-              .getDbHandle();
-      DatabaseInitRequest databaseInitRequest =
-          DatabaseInitRequest.newBuilder().setDbHandle(databaseHandle).build();
-      ProtobufApis.databaseDriverV1.databaseInit(databaseInitRequest);
-      this.connectionHandle =
-          ProtobufApis.databaseDriverV1
-              .connectionNew(ConnectionNewRequest.getDefaultInstance())
-              .getConnHandle();
-      Map<String, ConfigSetting> optionsMap = new HashMap<>();
-      connectionOptions.forEach(
-          (key, value) -> {
-            if (!(key instanceof String)) {
-              return;
-            }
-            String keyStr = (String) key;
-            ConfigSetting configSetting = toConfigSetting(value);
-            if (configSetting != null) {
-              optionsMap.put(keyStr, configSetting);
-            }
-          });
-      if (!optionsMap.isEmpty()) {
-        ConnectionSetOptionsResponse response =
-            ProtobufApis.databaseDriverV1.connectionSetOptions(
-                ConnectionSetOptionsRequest.newBuilder()
-                    .setConnHandle(connectionHandle)
-                    .putAllOptions(optionsMap)
-                    .build());
-        logConnectionOptionWarnings(response);
-      }
-      ConnectionInitRequest connectionInitRequest =
-          ConnectionInitRequest.newBuilder()
-              .setDbHandle(databaseHandle)
-              .setConnHandle(connectionHandle)
-              .build();
-      ProtobufApis.databaseDriverV1.connectionInit(connectionInitRequest);
-    } catch (DatabaseDriverService.ServiceException e) {
-      throw new SQLException(e);
+      dbHandle = coreDriverApi.databaseNew().getDbHandle();
+      coreDriverApi.databaseInit(dbHandle);
+      connHandle = coreDriverApi.connectionNew().getConnHandle();
+
+      Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
+      setOptions(connHandle, connectionOptions);
+
+      WrapperIdentity identity = wrapperIdentity();
+      coreDriverApi.connectionInit(connHandle, dbHandle, identity);
+
+      this.databaseHandle = dbHandle;
+      this.connectionHandle = connHandle;
+    } catch (SQLException e) {
+      releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
+      throw e;
     }
+  }
+
+  private WrapperIdentity wrapperIdentity() {
+    Builder identityBuilder =
+        WrapperIdentity.newBuilder()
+            .setDriverName("JDBC")
+            .setDriverVersion(SnowflakeDriver.DRIVER_VERSION);
+    String runtimeName = System.getProperty("java.vm.name");
+    if (runtimeName != null && !runtimeName.trim().isEmpty()) {
+      identityBuilder.setLanguageRuntime(runtimeName);
+    }
+    String runtimeVersion = System.getProperty("java.version");
+    if (runtimeVersion != null && !runtimeVersion.trim().isEmpty()) {
+      identityBuilder.setLanguageVersion(runtimeVersion);
+    }
+    return identityBuilder.build();
+  }
+
+  private void setOptions(ConnectionHandle connHandle, Properties connectionOptions)
+      throws SQLException {
+    Map<String, ConfigSetting> optionsMap = new HashMap<>();
+
+    // JDBC convention: Connection.close() must not throw on logout failure.
+    // Users can opt into Strict via the "logout_error_strategy" connection property.
+    optionsMap.put(
+        "logout_error_strategy", ConfigSetting.newBuilder().setStringValue("best_effort").build());
+
+    connectionOptions.forEach(
+        (key, value) -> {
+          if (!(key instanceof String)) {
+            return;
+          }
+          String keyStr = ConfigSettingFactory.normalizeKey((String) key, value);
+          ConfigSetting configSetting = ConfigSettingFactory.from(value);
+          if (configSetting != null) {
+            optionsMap.put(keyStr, configSetting);
+          }
+        });
+
+    if (!optionsMap.isEmpty()) {
+      ConnectionSetOptionsResponse response =
+          coreDriverApi.connectionSetOptions(connHandle, optionsMap);
+      logConnectionOptionWarnings(response);
+    }
+  }
+
+  @Override
+  public ConnectionHandle getHandle() {
+    return connectionHandle;
   }
 
   @Override
   public Statement createStatement() throws SQLException {
     checkClosed();
-    return new SnowflakeStatementImpl(this);
+    Statement stmt = new SnowflakeStatementImpl(this, coreDriverApi);
+    openStatements.add(stmt);
+    return stmt;
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql) throws SQLException {
     checkClosed();
-    return new SnowflakePreparedStatementImpl(this, sql);
+    PreparedStatement stmt = new SnowflakePreparedStatementImpl(this, sql, coreDriverApi);
+    openStatements.add(stmt);
+    return stmt;
   }
 
   @Override
@@ -126,26 +174,6 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   public String nativeSQL(String sql) throws SQLException {
     checkClosed();
     return sql;
-  }
-
-  static ConfigSetting toConfigSetting(Object value) {
-    if (value instanceof String) {
-      return ConfigSetting.newBuilder().setStringValue((String) value).build();
-    }
-    if (value instanceof Byte
-        || value instanceof Short
-        || value instanceof Integer
-        || value instanceof Long) {
-      return ConfigSetting.newBuilder().setIntValue(((Number) value).longValue()).build();
-    }
-    if (value instanceof Boolean) {
-      return ConfigSetting.newBuilder().setBoolValue((Boolean) value).build();
-    }
-    if (value instanceof Double) {
-      return ConfigSetting.newBuilder().setDoubleValue((Double) value).build();
-    }
-    // TODO(sfc-gh-boler): Support byte[] connection properties via ConfigSetting.bytes_value.
-    return null;
   }
 
   private static void logConnectionOptionWarnings(ConnectionSetOptionsResponse response) {
@@ -182,14 +210,63 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void close() throws SQLException {
-    if (!closed) {
-      closed = true;
+    if (!closed.compareAndSet(false, true)) {
+      return;
+    }
+
+    logger.debug("Closing connection");
+    closeOpenStatements();
+
+    try {
+      coreDriverApi.connectionClose(connectionHandle);
+    } catch (SQLException e) {
+      logger.warn("Error during connection close: {}", e.getMessage());
+      logger.debug("Connection close error details", e);
+      throw e;
+    } finally {
+      releaseHandlesQuietly(coreDriverApi, connectionHandle, databaseHandle);
+    }
+  }
+
+  @Override
+  public void removeStatement(Statement stmt) {
+    openStatements.remove(stmt);
+  }
+
+  private void closeOpenStatements() {
+    for (Statement stmt : openStatements) {
+      try {
+        if (!stmt.isClosed()) {
+          stmt.close();
+        }
+      } catch (SQLException e) {
+        logger.debug("Error closing statement during connection close", e);
+      }
+    }
+    openStatements.clear();
+  }
+
+  private static void releaseHandlesQuietly(
+      CoreDriverApi driver, ConnectionHandle connHandle, DatabaseHandle dbHandle) {
+    if (connHandle != null) {
+      try {
+        driver.connectionRelease(connHandle);
+      } catch (SQLException e) {
+        logger.debug("Error releasing connection handle", e);
+      }
+    }
+    if (dbHandle != null) {
+      try {
+        driver.databaseRelease(dbHandle);
+      } catch (SQLException e) {
+        logger.debug("Error releasing database handle", e);
+      }
     }
   }
 
   @Override
   public boolean isClosed() throws SQLException {
-    return closed;
+    return closed.get();
   }
 
   @Override
@@ -358,7 +435,19 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public boolean isValid(int timeout) throws SQLException {
-    throw new NotImplementedException();
+    if (timeout < 0) {
+      throw new SQLException("timeout is less than 0");
+    }
+    if (closed.get()) {
+      return false;
+    }
+
+    try {
+      return coreDriverApi.connectionHeartbeat(connectionHandle, timeout).getValid();
+    } catch (Exception e) {
+      logger.debug("isValid check failed", e);
+      return false;
+    }
   }
 
   @Override
@@ -466,12 +555,35 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public QueryStatus getQueryStatus(String queryID) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    ConnectionGetQueryStatusResponse response =
+        coreDriverApi.connectionGetQueryStatus(connectionHandle, queryID);
+    return QueryStatusMapper.fromCoreResponse(response);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Returns a {@link net.snowflake.client.api.resultset.SnowflakeAsyncResultSet} that lazily
+   * polls for query completion and materializes results on first data access. This matches the old
+   * JDBC driver behavior, allowing callers to reconnect and retrieve results for queries submitted
+   * by a previous session.
+   */
+  @Override
+  public ResultSet createResultSet(String queryID) throws SQLException {
+    checkClosed();
+    // This statement is owned exclusively by the async result set and will be closed
+    // when the result set is closed.
+    SnowflakeStatementImpl stmt = (SnowflakeStatementImpl) createStatement();
+    return ResultSetFactory.createAsync(queryID, this, stmt, true);
   }
 
   @Override
-  public ResultSet createResultSet(String queryID) throws SQLException {
-    throw new SQLFeatureNotSupportedException("createResultSet not supported");
+  public InternalResultSet createResultSetFromSfqid(
+      String queryID, SnowflakeStatementImpl statement) throws SQLException {
+    ResultSetResponse rsResponse = coreDriverApi.connectionGetResultSet(connectionHandle, queryID);
+    return ResultSetFactory.create(
+        coreDriverApi, statement, queryID, rsResponse.getResultSetHandle());
   }
 
   @Override
@@ -481,16 +593,51 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public int getDatabaseMajorVersion() throws SQLException {
-    throw new NotImplementedException();
+    return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 0);
   }
 
   @Override
   public int getDatabaseMinorVersion() throws SQLException {
-    throw new NotImplementedException();
+    return SnowflakeDriver.parseVersionComponent(getDatabaseVersion(), 1);
   }
 
+  /** Issues a single {@code SELECT CURRENT_VERSION()} on first call per connection; cached. */
   @Override
   public String getDatabaseVersion() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    String cached = cachedDatabaseVersion;
+    if (cached != null) {
+      return cached;
+    }
+    synchronized (databaseVersionLock) {
+      if (cachedDatabaseVersion == null) {
+        cachedDatabaseVersion = fetchDatabaseVersion();
+      }
+      return cachedDatabaseVersion;
+    }
+  }
+
+  private String fetchDatabaseVersion() throws SQLException {
+    try (Statement stmt = createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_VERSION()")) {
+      if (!rs.next()) {
+        throw new SQLException("SELECT CURRENT_VERSION() returned no rows");
+      }
+      String raw = rs.getString(1);
+      if (raw == null) {
+        throw new SQLException("SELECT CURRENT_VERSION() returned NULL");
+      }
+      return stripVersionSuffix(raw);
+    }
+  }
+
+  // The server returns e.g. "8.46.1 abcdef"; the build suffix is not part of the public version.
+  static String stripVersionSuffix(String raw) {
+    if (raw == null) {
+      return null;
+    }
+    String trimmed = raw.trim();
+    int spaceIdx = trimmed.indexOf(' ');
+    return spaceIdx < 0 ? trimmed : trimmed.substring(0, spaceIdx);
   }
 }

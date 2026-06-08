@@ -4,7 +4,6 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 
@@ -436,9 +435,17 @@ TEST_CASE("SQLGetData returns HY090 when BufferLength is less than 0.", "[query]
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, -1, &indicator);
 
-  // Then SQLGetData should return SQL_ERROR with SQLSTATE HY090
+  // Then SQLGetData returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY090");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY090
+    CHECK(get_sqlstate(stmt) == "HY090");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1090 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1090");
+  }
 }
 
 TEST_CASE("SQLGetData does not return error when BufferLength is 0.", "[query][get_data]") {
@@ -901,12 +908,31 @@ TEST_CASE("SQLGetData returns 24000 when cursor is positioned after end of resul
   ret = SQLFetch(stmt.getHandle());
   REQUIRE(ret == SQL_NO_DATA);
 
-  // Then SQLGetData should return SQL_ERROR because cursor is past end
+  // When SQLGetData is called after the cursor is past the last row
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "24000");
+
+  NON_IODBC {
+    // Then SQLGetData returns SQL_ERROR with SQLSTATE 24000 (invalid cursor
+    //   state) because the DM detects the cursor-past-end condition
+    REQUIRE(ret == SQL_ERROR);
+    CHECK(get_sqlstate(stmt) == "24000");
+  }
+  IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#62") {
+      // The old driver doesn't synthesize SQL_NO_DATA for cursor-past-end on
+      //   SQLGetData under iODBC; it raises SQL_ERROR with SQLSTATE "24000"
+      //   directly (matching the unixODBC contract).
+      REQUIRE(ret == SQL_ERROR);
+      CHECK(get_sqlstate(stmt) == "24000");
+    }
+    else {
+      // The new driver follows the iODBC DM convention and returns
+      //   SQL_NO_DATA without consulting the driver layer.
+      REQUIRE(ret == SQL_NO_DATA);
+    }
+  }
 }
 
 // =============================================================================
@@ -1319,13 +1345,24 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.",
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then SQLGetData with SQL_ARD_TYPE should use the ARD's type
+  // Then SQLGetData is called with TargetType=SQL_ARD_TYPE
   SQLBIGINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_ARD_TYPE, &value, sizeof(value), &indicator);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(value == 42);
-  CHECK(indicator == sizeof(SQLBIGINT));
+
+  NON_IODBC {
+    // And the DM forwards SQL_ARD_TYPE to the driver,
+    //   which resolves the ARD's SQL_C_SBIGINT type and returns the value as BIGINT
+    REQUIRE_ODBC(ret, stmt);
+    CHECK(value == 42);
+    CHECK(indicator == sizeof(SQLBIGINT));
+  }
+  IODBC_ONLY {
+    // And the DM rejects SQL_ARD_TYPE as an unknown C type identifier
+    //   before the call reaches the driver, so we only assert that an error was
+    //   surfaced (no value semantics)
+    REQUIRE(ret == SQL_ERROR);
+  }
 }
 
 // =============================================================================
@@ -1349,12 +1386,25 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE returns 07009 error when ARD is unmodifi
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then SQLGetData with SQL_ARD_TYPE should return SQL_ERROR with SQLSTATE 07009
+  // When SQLGetData is called with TargetType=SQL_ARD_TYPE without setting any
+  //   descriptor fields on the ARD
   SQLCHAR buffer[64] = {0};
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_ARD_TYPE, buffer, sizeof(buffer), &indicator);
+
+  // Then SQLGetData returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "07009");
+  NON_IODBC {
+    // And the DM reaches the driver and the driver
+    //   surfaces the ODBC 3.x SQLSTATE 07009 (invalid descriptor index)
+    CHECK(get_sqlstate(stmt) == "07009");
+  }
+  IODBC_ONLY {
+    // And the DM intercepts the C-type validation and surfaces the
+    //   ODBC 2.x SQLSTATE S1003 (program type out of range) before the call
+    //   reaches the driver
+    CHECK(get_sqlstate(stmt) == "S1003");
+  }
 }
 
 // =============================================================================
@@ -1946,8 +1996,17 @@ TEST_CASE("SQLGetData returns HY010 when called on a statement with no executed 
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
 
-  // Then SQLGetData should return SQL_ERROR with SQLSTATE HY010
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+  // Then SQLGetData returns SQL_ERROR under every DM
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("S1010"));
+  }
 }
 
 // =============================================================================

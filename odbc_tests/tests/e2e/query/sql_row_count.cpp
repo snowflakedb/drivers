@@ -3,22 +3,31 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 
 TEST_CASE("SQLRowCount returns HY010 when called without executing statement.", "[query]") {
-  // Given Snowflake client is logged in
+  // Given a fresh statement handle on an active connection (no execute yet)
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLRowCount is called without executing any statement first
+  // When SQLRowCount is called without first executing a statement
   SQLLEN rows_affected = 0;
   SQLRETURN ret = SQLRowCount(stmt.getHandle(), &rows_affected);
 
-  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLRowCount returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLRowCount returns HY009 when called with null pointer.", "[query]") {
@@ -54,20 +63,18 @@ TEST_CASE("SQLRowCount returns data about number of rows affected.") {
   REQUIRE(rows_affected == 1);
 }
 
-TEST_CASE("SQLRowCount returns correct count for INSERT statement.") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for INSERT statement.") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // Create a temporary table
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
-                                (SQLCHAR*)"CREATE TEMPORARY TABLE test_table (id INT, value VARCHAR(50))", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt.getHandle(), sqlchar("CREATE TEMPORARY TABLE rowcount_insert_t (id INT, value VARCHAR(50))"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // When SQLExecDirect is called to execute an INSERT statement
   ret = SQLExecDirect(stmt.getHandle(),
-                      (SQLCHAR*)"INSERT INTO test_table VALUES (1, 'test'), (2, 'test2'), (3, 'test3')", SQL_NTS);
+                      sqlchar("INSERT INTO rowcount_insert_t VALUES (1, 'test'), (2, 'test2'), (3, 'test3')"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLRowCount is called to get the number of rows affected
@@ -98,15 +105,13 @@ TEST_CASE("SQLRowCount returns correct count for SELECT with many rows.") {
   REQUIRE(rows_affected == 10);
 }
 
-TEST_CASE("SQLRowCount returns 0 for DDL statements.") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns 0 for DDL statements.") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
+  const auto stmt = conn.createStatement();
 
   // When SQLExecDirect is called to execute a DDL statement
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE test_table (id INT, value VARCHAR(50))", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
+                                sqlchar("CREATE TEMPORARY TABLE rowcount_ddl_t (id INT, value VARCHAR(50))"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLRowCount is called to get the number of rows affected
@@ -118,16 +123,15 @@ TEST_CASE("SQLRowCount returns 0 for DDL statements.") {
   REQUIRE(rows_affected == -1);
 }
 
-TEST_CASE("SQLRowCount returns -1 for ALTER TABLE DDL statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns -1 for ALTER TABLE DDL statement.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When an ALTER TABLE DDL statement is executed
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE alter_test (id INT)", SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE rowcount_alter_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"ALTER TABLE alter_test ADD COLUMN value VARCHAR(50)", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"ALTER TABLE rowcount_alter_t ADD COLUMN value VARCHAR(50)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLRowCount is called
@@ -139,16 +143,14 @@ TEST_CASE("SQLRowCount returns -1 for ALTER TABLE DDL statement.", "[query]") {
   REQUIRE(rows_affected == -1);
 }
 
-TEST_CASE("SQLRowCount returns -1 for DROP TABLE DDL statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns -1 for DROP TABLE DDL statement.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When a DROP TABLE DDL statement is executed
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE drop_test (id INT)", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE rowcount_drop_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"DROP TABLE drop_test", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"DROP TABLE rowcount_drop_t", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLRowCount is called
@@ -164,15 +166,13 @@ TEST_CASE("SQLRowCount returns -1 for DROP TABLE DDL statement.", "[query]") {
 // MERGE statement
 // =============================================================================
 
-TEST_CASE("SQLRowCount returns correct count for MERGE statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for MERGE statement.", "[query]") {
   // Doc: "SQLRowCount returns the number of rows affected by an UPDATE, INSERT,
   //       or DELETE statement."  MERGE combines these operations.
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlrowcount-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When a MERGE statement affecting rows is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -201,14 +201,12 @@ TEST_CASE("SQLRowCount returns correct count for MERGE statement.", "[query]") {
   REQUIRE(rows_affected == 2);
 }
 
-TEST_CASE("SQLRowCount returns correct count for MERGE with DELETE clause.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for MERGE with DELETE clause.", "[query]") {
   // Doc: MERGE can combine INSERT, UPDATE, and DELETE operations.
   //      SQLRowCount should return the total rows affected across all clauses.
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a target table with data exists
   SQLRETURN ret = SQLExecDirect(
@@ -248,15 +246,13 @@ TEST_CASE("SQLRowCount returns correct count for MERGE with DELETE clause.", "[q
   REQUIRE(rows_affected == 3);
 }
 
-TEST_CASE("SQLRowCount returns correct count for UPDATE statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for UPDATE statement.", "[query]") {
   // Doc: "SQLRowCount returns the number of rows affected by an UPDATE, INSERT,
   //       or DELETE statement."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlrowcount-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a table with data exists
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -279,13 +275,11 @@ TEST_CASE("SQLRowCount returns correct count for UPDATE statement.", "[query]") 
   REQUIRE(rows_affected == 2);
 }
 
-TEST_CASE("SQLRowCount returns correct count for UPDATE with JOIN.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for UPDATE with JOIN.", "[query]") {
   // Doc: Validates calculate_rows_affected() for multi-joined updates.
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a target table and a source table exist
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -318,15 +312,13 @@ TEST_CASE("SQLRowCount returns correct count for UPDATE with JOIN.", "[query]") 
   REQUIRE(rows_affected == 2);
 }
 
-TEST_CASE("SQLRowCount returns correct count for DELETE statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for DELETE statement.", "[query]") {
   // Doc: "SQLRowCount returns the number of rows affected by an UPDATE, INSERT,
   //       or DELETE statement."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlrowcount-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a table with data exists
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -349,11 +341,9 @@ TEST_CASE("SQLRowCount returns correct count for DELETE statement.", "[query]") 
   REQUIRE(rows_affected == 2);
 }
 
-TEST_CASE("SQLRowCount returns total count for DELETE all rows.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns total count for DELETE all rows.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When a DELETE without WHERE clause is executed on a table with 4 rows
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE delete_all (id INT)", SQL_NTS);
@@ -372,11 +362,9 @@ TEST_CASE("SQLRowCount returns total count for DELETE all rows.", "[query]") {
   REQUIRE(rows_affected == 4);
 }
 
-TEST_CASE("SQLRowCount returns total count for UPDATE all rows.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns total count for UPDATE all rows.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When an UPDATE without WHERE clause is executed on a table with 3 rows
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -397,11 +385,9 @@ TEST_CASE("SQLRowCount returns total count for UPDATE all rows.", "[query]") {
   REQUIRE(rows_affected == 3);
 }
 
-TEST_CASE("SQLRowCount returns correct count for INSERT INTO SELECT.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for INSERT INTO SELECT.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When INSERT INTO ... SELECT copies 3 rows from a source table
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -424,14 +410,12 @@ TEST_CASE("SQLRowCount returns correct count for INSERT INTO SELECT.", "[query]"
   REQUIRE(rows_affected == 3);
 }
 
-TEST_CASE("SQLRowCount returns correct count for INSERT from multi-table JOIN.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns correct count for INSERT from multi-table JOIN.", "[query]") {
   // Doc: Validates calculate_rows_affected() for multi-table inserts
   //      where the source involves a JOIN across multiple tables.
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And two source tables and a destination table exist
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -485,13 +469,22 @@ TEST_CASE("SQLRowCount returns HY010 after SQLFreeStmt SQL_CLOSE.", "[query]") {
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
   REQUIRE_ODBC(ret, stmt);
 
-  // And SQLRowCount is called
+  // When SQLRowCount is called after SQLFreeStmt(SQL_CLOSE) reset the row count
   SQLLEN rows_affected = 0;
   ret = SQLRowCount(stmt.getHandle(), &rows_affected);
 
-  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLRowCount returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 TEST_CASE("SQLRowCount returns HY010 after SQLPrepare without execute.", "[query]") {
@@ -506,28 +499,35 @@ TEST_CASE("SQLRowCount returns HY010 after SQLPrepare without execute.", "[query
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS value", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
-  // And SQLRowCount is called
+  // When SQLRowCount is called on a prepared but unexecuted statement
   SQLLEN rows_affected = 0;
   ret = SQLRowCount(stmt.getHandle(), &rows_affected);
 
-  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
+  // Then SQLRowCount returns SQL_ERROR under every DM
   REQUIRE(ret == SQL_ERROR);
-  CHECK(get_sqlstate(stmt) == "HY010");
+  NON_IODBC {
+    // And the diagnostic is the ODBC 3.x SQLSTATE HY010
+    //   (function sequence error)
+    CHECK(get_sqlstate(stmt) == "HY010");
+  }
+  IODBC_ONLY {
+    // And the diagnostic is the ODBC 2.x SQLSTATE S1010 (same condition,
+    //   older code) because the DM has not remapped the legacy state
+    CHECK(get_sqlstate(stmt) == "S1010");
+  }
 }
 
 // =============================================================================
 // Prepared statement execution
 // =============================================================================
 
-TEST_CASE("SQLRowCount works with SQLPrepare and SQLExecute flow.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount works with SQLPrepare and SQLExecute flow.", "[query]") {
   // Doc: "SQLRowCount returns the number of rows affected by an UPDATE, INSERT,
   //       or DELETE statement" — applies to both SQLExecDirect and SQLExecute.
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlrowcount-function#related-functions
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When a statement is prepared and executed via SQLPrepare and SQLExecute
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE prep_test (id INT)", SQL_NTS);
@@ -550,16 +550,15 @@ TEST_CASE("SQLRowCount works with SQLPrepare and SQLExecute flow.", "[query]") {
 // Mixed DML on same statement
 // =============================================================================
 
-TEST_CASE("SQLRowCount updates correctly across different DML types on same statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount updates correctly across different DML types on same statement.",
+                 "[query]") {
   // Doc: "When SQLExecute, SQLExecDirect, SQLBulkOperations, SQLSetPos, or
   //       SQLMoreResults is called, the SQL_DIAG_ROW_COUNT field … is set to
   //       the row count, and the row count is cached."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlrowcount-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When INSERT, UPDATE, and DELETE are executed sequentially on the same statement
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
@@ -625,7 +624,7 @@ TEST_CASE("SQLRowCount returns cached count after SQLFetch has started.", "[quer
 // Re-execution
 // =============================================================================
 
-TEST_CASE("SQLRowCount updates after re-execution with different INSERT.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount updates after re-execution with different INSERT.", "[query]") {
   // Doc: "When SQLExecute, SQLExecDirect, SQLBulkOperations, SQLSetPos, or
   //       SQLMoreResults is called, the SQL_DIAG_ROW_COUNT field of the diagnostic
   //       data structure is set to the row count, and the row count is cached in
@@ -633,9 +632,7 @@ TEST_CASE("SQLRowCount updates after re-execution with different INSERT.", "[que
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlrowcount-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a table exists
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE reexec_test (id INT)", SQL_NTS);

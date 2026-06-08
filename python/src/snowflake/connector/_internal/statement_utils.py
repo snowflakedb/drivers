@@ -2,25 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
 
+from .api_client.client_api import core_driver
 from .protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionHandle,
     DatabaseFetchChunkResponse,
-    ExecuteResult,
     PrepareResult,
+    ResultSetDescriptor,
+    ResultSetGetStreamResponse,
     StatementHandle,
-    StatementNewRequest,
-    StatementReleaseRequest,
-    StatementSetSqlQueryRequest,
 )
-
-
-if TYPE_CHECKING:
-    from ..connection import Connection
+from .sqlstate import SQLSTATE_SUCCESS
 
 
 @contextmanager
-def create_statement(connection: Connection, query: str) -> Generator[StatementHandle]:
+def statement(conn_handle: ConnectionHandle, query: str) -> Generator[StatementHandle]:
     """Context manager that owns the full lifecycle of a statement handle.
 
     Allocates a new statement on the server, binds the given SQL query to it,
@@ -29,65 +25,22 @@ def create_statement(connection: Connection, query: str) -> Generator[StatementH
     is raised.
 
     Args:
-        connection: Active Snowflake connection used to issue gRPC calls.
+        conn_handle: Active Snowflake conn_handle.
         query: SQL text to bind to the newly created statement.
 
     Yields:
         StatementHandle: A handle that can be passed to ``statement_execute``
         or other statement-level APIs.
     """
-    statement_request = StatementNewRequest(conn_handle=connection.conn_handle)
-    statement = connection.db_api.statement_new(request=statement_request)
-    stmt_handle = statement.stmt_handle
-    sql_query_request = StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+    stmt_handle = core_driver.statement_new(conn_handle=conn_handle).stmt_handle
     try:
-        connection.db_api.statement_set_sql_query(sql_query_request)
+        core_driver.statement_set_query(stmt_handle=stmt_handle, query=query)
         yield stmt_handle
     finally:
-        release_request = StatementReleaseRequest(stmt_handle=stmt_handle)
-        connection.db_api.statement_release(release_request)
+        core_driver.statement_release(stmt_handle=stmt_handle)
 
 
-def extract_rowcount(result: ExecuteResult | None) -> int:
-    """Return the number of rows affected by the executed statement.
-
-    If the result is falsy or the ``rows_affected`` field is not present
-    (e.g. for SELECT queries), returns ``-1`` following the DB-API 2.0
-    convention for an indeterminate row count.
-
-    Args:
-        result: The protobuf response returned by ``statement_execute``.
-
-    Returns:
-        Non-negative row count, or ``-1`` when the count is unavailable.
-    """
-    if result and result.HasField("rows_affected"):
-        return result.rows_affected
-    return -1
-
-
-def extract_sqlstate(result: ExecuteResult | PrepareResult | None) -> str | None:
-    """Return the SQLSTATE code from an execute result, if meaningful.
-
-    SQLSTATE ``"00000"`` (successful completion) is normalised to ``None``
-    for backwards compatibility with the legacy connector, which omits
-    the code on success.
-
-    Args:
-        result: The protobuf response returned by ``statement_execute``,
-            or ``None`` if no result is available.
-
-    Returns:
-        A five-character SQLSTATE string for warnings/errors, or ``None``
-        on success or when *result* is ``None``.
-    """
-    sql_state = result.sql_state if result else None
-    if sql_state and sql_state != "00000":
-        return sql_state
-    return None
-
-
-def get_stream_ptr(result: DatabaseFetchChunkResponse | ExecuteResult | PrepareResult | None) -> int:
+def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetGetStreamResponse | None) -> int:
     """Extract a C ArrowArrayStream pointer from an execute result.
 
     The pointer is stored as an 8-byte little-endian value inside
@@ -130,3 +83,45 @@ def get_stream_ptr(result: DatabaseFetchChunkResponse | ExecuteResult | PrepareR
         raise RuntimeError("Stream pointer is null")
 
     return stream_ptr
+
+
+def extract_sqlstate(result: PrepareResult | ResultSetDescriptor | None) -> str | None:
+    """Return the SQLSTATE code from an execute result, if meaningful.
+
+    SQLSTATE ``"00000"`` (successful completion) is normalized to ``None``
+    for backwards compatibility with the legacy connector, which omits
+    the code on success.
+
+    Args:
+        result: A ``PrepareResult`` or ``ResultSetDescriptor``,
+            or ``None`` if no result is available.
+
+    Returns:
+        A five-character SQLSTATE string for warnings/errors, or ``None``
+        on success or when *result* is ``None``.
+    """
+    sql_state = result.sql_state if result else None
+    if sql_state and sql_state != SQLSTATE_SUCCESS:
+        return sql_state
+    return None
+
+
+def extract_rowcount(descriptor: ResultSetDescriptor | None) -> int:
+    """Return the number of rows affected from a ResultSetDescriptor.
+
+    Returns the rows_affected value from the server if present, otherwise -1.
+
+    Args:
+        descriptor: The ResultSetDescriptor from a proto response.
+
+    Returns:
+        Row count from server, or ``-1`` when unavailable.
+    """
+    if not descriptor:
+        return -1
+
+    # Return rows_affected if present (for SELECT, DML, and DDL)
+    if descriptor.HasField("rows_affected"):
+        return descriptor.rows_affected
+
+    return -1

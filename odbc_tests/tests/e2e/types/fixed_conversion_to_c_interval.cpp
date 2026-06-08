@@ -4,8 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
@@ -16,10 +15,8 @@
 // SUCCESSFUL CONVERSIONS - Single-component interval types
 // ============================================================================
 
-TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to single-field interval types", "[datatype][number][interval]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Positive, negative, and zero NUMBER values are fetched as SQL_C_INTERVAL_YEAR
   auto stmt = conn.execute_fetch("SELECT 5::NUMBER(10,0)");
@@ -112,10 +109,9 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
 // TRUNCATION WITH INFO - Fractional truncation (SQLSTATE 01S07)
 // ============================================================================
 
-TEST_CASE("NUMBER to interval - fractional truncation returns 01S07", "[datatype][number][interval][01S07]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to interval - fractional truncation returns 01S07",
+                 "[datatype][number][interval][01S07]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When DECIMAL value with fractional part is fetched as SQL_C_INTERVAL_YEAR
   auto stmt = conn.execute_fetch("SELECT 5.7::DECIMAL(10,1)");
@@ -164,10 +160,9 @@ TEST_CASE("NUMBER to interval - fractional truncation returns 01S07", "[datatype
 // TRUNCATION WITH INFO - Sub-microsecond truncation (SQLSTATE 01S07)
 // ============================================================================
 
-TEST_CASE("NUMBER to interval - sub-microsecond truncation returns 01S07", "[datatype][number][interval][01S07]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to interval - sub-microsecond truncation returns 01S07",
+                 "[datatype][number][interval][01S07]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When DECIMAL with 9-digit fractional part is fetched as SQL_C_INTERVAL_SECOND
   auto stmt = conn.execute_fetch("SELECT 45.123456789::DECIMAL(12,9)");
@@ -194,11 +189,9 @@ TEST_CASE("NUMBER to interval - sub-microsecond truncation returns 01S07", "[dat
 // EDGE CASES - Negative zero handling
 // ============================================================================
 
-TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to interval - no negative zero", "[datatype][number][interval][edge]") {
   SKIP_OLD_DRIVER("BD#17", "Old driver produces negative zero for interval types");
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Negative fractional DECIMAL is fetched as SQL_C_INTERVAL_YEAR
   auto stmt = conn.execute_fetch("SELECT -0.5::DECIMAL(10,1)");
@@ -244,10 +237,9 @@ TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval]
 // ILLEGAL CONVERSIONS - Multi-field interval types (SQLSTATE 22015)
 // ============================================================================
 
-TEST_CASE("NUMBER to multi-field interval returns 22015", "[datatype][number][interval][22015]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to multi-field interval returns 22015",
+                 "[datatype][number][interval][22015]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT 42::NUMBER(10,0)" is executed and fetched as SQL_C_INTERVAL_YEAR_TO_MONTH
   auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
@@ -278,10 +270,9 @@ TEST_CASE("NUMBER to multi-field interval returns 22015", "[datatype][number][in
 // NULL VALUE HANDLING
 // ============================================================================
 
-TEST_CASE("NUMBER to interval - NULL returns SQL_NULL_DATA", "[datatype][number][interval][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to interval - NULL returns SQL_NULL_DATA",
+                 "[datatype][number][interval][null]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT NULL::NUMBER(10,0)" is executed and fetched as SQL_C_INTERVAL_YEAR
   auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0)");
@@ -309,11 +300,10 @@ TEST_CASE("NUMBER to interval - NULL returns SQL_NULL_DATA", "[datatype][number]
 // LEADING FIELD PRECISION - Default precision (SQLSTATE 22015)
 // ============================================================================
 
-TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[datatype][number][interval][precision]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to interval - default precision rejects values >= 100",
+                 "[datatype][number][interval][precision]") {
   SKIP_OLD_DRIVER("BD#18", "Old driver does not enforce interval leading precision");
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Value 99 is fetched as SQL_C_INTERVAL_YEAR with default precision
   auto stmt = conn.execute_fetch("SELECT 99::NUMBER(10,0)");
@@ -348,12 +338,10 @@ TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[data
 // LEADING FIELD PRECISION - Custom precision via SQLSetDescField
 // ============================================================================
 
-TEST_CASE("NUMBER to interval - custom precision via SQLSetDescField",
-          "[datatype][number][interval][precision][descriptor]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER to interval - custom precision via SQLSetDescField",
+                 "[datatype][number][interval][precision][descriptor]") {
   SKIP_OLD_DRIVER("BD#18", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When SQL_DESC_DATETIME_INTERVAL_PRECISION is set to 5 on the ARD
   {
@@ -420,10 +408,8 @@ TEST_CASE("NUMBER to interval - custom precision via SQLSetDescField",
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_INTERVAL types", "[fixed][conversion][c_interval][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_INTERVAL types", "[fixed][conversion][c_interval][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL NUMBER value is queried
   const auto query = "SELECT NULL::NUMBER(10,0)";

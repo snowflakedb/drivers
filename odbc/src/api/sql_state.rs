@@ -95,10 +95,16 @@ pub enum SqlState {
     FeatureNotSupported,
 
     // Data exception class (22)
+    /// 22001 - String data, right truncation
+    StringDataRightTruncation,
     /// 22002 - Indicator variable required but not supplied
     IndicatorVariableRequiredButNotSupplied,
     /// 22003 - Numeric value out of range
     NumericValueOutOfRange,
+    /// 22007 - Invalid datetime format
+    InvalidDatetimeFormat,
+    /// 22008 - Datetime field overflow
+    DatetimeFieldOverflow,
     /// 22015 - Interval field overflow
     IntervalFieldOverflow,
     /// 22018 - Invalid character value for cast
@@ -349,8 +355,11 @@ impl SqlState {
             SqlState::CommunicationLinkFailure => "08S01",
             SqlState::TriggeredActionException => "09000",
             SqlState::FeatureNotSupported => "0A000",
+            SqlState::StringDataRightTruncation => "22001",
             SqlState::IndicatorVariableRequiredButNotSupplied => "22002",
             SqlState::NumericValueOutOfRange => "22003",
+            SqlState::InvalidDatetimeFormat => "22007",
+            SqlState::DatetimeFieldOverflow => "22008",
             SqlState::IntervalFieldOverflow => "22015",
             SqlState::InvalidCharacterValueForCast => "22018",
             SqlState::InvalidCursorState => "24000",
@@ -524,8 +533,11 @@ impl FromStr for SqlState {
             "08S01" => SqlState::CommunicationLinkFailure,
             "09000" => SqlState::TriggeredActionException,
             "0A000" => SqlState::FeatureNotSupported,
+            "22001" => SqlState::StringDataRightTruncation,
             "22002" => SqlState::IndicatorVariableRequiredButNotSupplied,
             "22003" => SqlState::NumericValueOutOfRange,
+            "22007" => SqlState::InvalidDatetimeFormat,
+            "22008" => SqlState::DatetimeFieldOverflow,
             "22015" => SqlState::IntervalFieldOverflow,
             "22018" => SqlState::InvalidCharacterValueForCast,
             "24000" => SqlState::InvalidCursorState,

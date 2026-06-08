@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: bfb02e46-67e0-4931-b246-0841d970088a
+    -- DTM_QRY:
+    desc table "INFORMATION_SCHEMA"."PROCEDURES"
+  mapped: desc table "INFORMATION_SCHEMA"."PROCEDURES"

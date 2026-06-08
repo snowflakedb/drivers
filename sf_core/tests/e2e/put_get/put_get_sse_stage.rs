@@ -8,7 +8,7 @@ fn random_stage_name(prefix: &str) -> String {
 }
 
 fn create_sse_stage(client: &SnowflakeTestClient, stage_name: &str) {
-    client.execute_query(&format!(
+    client.execute_sql(&format!(
         "CREATE TEMPORARY STAGE IF NOT EXISTS {stage_name} ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')"
     ));
 }
@@ -60,7 +60,7 @@ fn should_put_and_get_file_on_sse_stage_with_directory_enabled() {
     // Given Stage with server-side encryption and DIRECTORY enabled
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = random_stage_name("TEST_SSE_DIR");
-    client.execute_query(&format!(
+    client.execute_sql(&format!(
         "CREATE TEMPORARY STAGE IF NOT EXISTS {stage_name} \
          ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE') \
          DIRECTORY = (ENABLE = TRUE)"

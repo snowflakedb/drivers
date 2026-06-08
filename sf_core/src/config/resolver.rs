@@ -6,6 +6,71 @@ use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
 
+/// If `account` is not explicitly set but `host` is available,
+/// derive the account identifier from the hostname — matching the legacy
+/// `snowflake-odbc` driver behavior.
+///
+/// The algorithm is:
+///   1. Take everything before the first `.` in the host.
+///   2. If the host contains `.global.`, strip the external-ID suffix after the
+///      last `-` in that first token.
+///
+/// Must be called **before** underscore normalization so that
+/// `normalize_host_underscores` can see the derived account.
+pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
+    if store.get_string(param_names::ACCOUNT).is_some() {
+        return;
+    }
+
+    let host_opt = store.get(param_names::HOST).and_then(|h| h.as_string());
+
+    let Some(host) = host_opt else {
+        return;
+    };
+
+    let first_label = host.split('.').next().unwrap_or(host);
+    if first_label.is_empty() {
+        return;
+    }
+
+    let account = if host.contains(".global.") {
+        first_label
+            .rfind('-')
+            .map_or(first_label, |i| &first_label[..i])
+    } else {
+        first_label
+    };
+
+    tracing::debug!(derived_account = %account, host = %host, "Derived account from host");
+    store.insert(
+        param_names::ACCOUNT.into(),
+        Setting::String(account.to_owned()),
+    );
+}
+
+/// If neither `host` nor `server_url` is explicitly set but `account` is,
+/// derive the hostname from the account identifier — matching the legacy
+/// `snowflake-connector-python` driver behavior where `account="myaccount"`
+/// yields host `"myaccount.snowflakecomputing.com"`.
+///
+/// Account identifiers that already encode a region (e.g. `"myaccount.us-east-1"`)
+/// are passed through unchanged, producing `"myaccount.us-east-1.snowflakecomputing.com"`.
+pub(crate) fn derive_host_from_account(store: &mut ParamStore) {
+    if store.get_string(param_names::HOST).is_some()
+        || store.get_string(param_names::SERVER_URL).is_some()
+    {
+        return;
+    }
+
+    let Some(account) = store.get_string(param_names::ACCOUNT) else {
+        return;
+    };
+
+    let host = format!("{account}.snowflakecomputing.com");
+    tracing::debug!(derived_host = %host, account = %account, "Derived host from account");
+    store.insert(param_names::HOST.into(), Setting::String(host));
+}
+
 /// Resolve final settings by merging explicit settings with file-based
 /// config and registry defaults.
 ///
@@ -50,6 +115,9 @@ pub fn resolve_with_paths(
     // Layer 1: Explicit programmatic settings (highest priority)
     merged.extend_from(explicit);
 
+    derive_account_from_host(&mut merged);
+    derive_host_from_account(&mut merged);
+
     Ok(merged)
 }
 
@@ -61,6 +129,134 @@ mod tests {
     use crate::config::settings::Setting;
     use std::fs;
     use tempfile::TempDir;
+    use test_case::test_case;
+
+    #[test_case("myaccount.snowflakecomputing.com", "myaccount" ; "standard host")]
+    #[test_case("myaccount.us-east-1.snowflakecomputing.com", "myaccount" ; "host with region")]
+    #[test_case("myaccount.privatelink.snowflakecomputing.com", "myaccount" ; "privatelink host")]
+    #[test_case("myaccount", "myaccount" ; "bare account no dots")]
+    fn derive_account_from_host_extracts_first_label(host: &str, expected: &str) {
+        let mut store = ParamStore::new();
+        store.insert(param_names::HOST.into(), Setting::String(host.to_owned()));
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String(expected.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_strips_global_external_id() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("myaccount-extid.global.snowflake.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("myaccount".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_skips_when_account_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("explicit".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("other.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("explicit".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_noop_when_no_host() {
+        let mut store = ParamStore::new();
+
+        derive_account_from_host(&mut store);
+
+        assert_eq!(store.get(param_names::ACCOUNT), None);
+    }
+
+    // --- derive_host_from_account tests ---
+
+    #[test_case("myaccount", "myaccount.snowflakecomputing.com" ; "simple account")]
+    #[test_case("myaccount.us-east-1", "myaccount.us-east-1.snowflakecomputing.com" ; "account with region")]
+    #[test_case("myorg-myaccount", "myorg-myaccount.snowflakecomputing.com" ; "org-account format")]
+    fn derive_host_from_account_constructs_host(account: &str, expected_host: &str) {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String(account.to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String(expected_host.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_host_from_account_skips_when_host_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("myaccount".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("custom.host.com".to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(
+            store.get(param_names::HOST),
+            Some(&Setting::String("custom.host.com".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_host_from_account_skips_when_server_url_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("myaccount".to_owned()),
+        );
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://custom.url".to_owned()),
+        );
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(store.get(param_names::HOST), None);
+    }
+
+    #[test]
+    fn derive_host_from_account_noop_when_no_account() {
+        let mut store = ParamStore::new();
+
+        derive_host_from_account(&mut store);
+
+        assert_eq!(store.get(param_names::HOST), None);
+    }
 
     fn make_paths(dir: &TempDir) -> ConfigPaths {
         ConfigPaths {
@@ -217,12 +413,8 @@ account = "file_account"
             panic!("Expected account setting");
         }
 
-        // Registry default for protocol should be present
-        if let Some(Setting::String(protocol)) = resolved.get(param_names::PROTOCOL) {
-            assert_eq!(protocol, "https");
-        } else {
-            panic!("Expected default protocol setting");
-        }
+        // protocol has no registry default (handled by consumption code)
+        assert_eq!(resolved.get(param_names::PROTOCOL), None);
     }
 
     fn get_str(map: &ParamStore, key: crate::config::param_registry::ParamKey) -> Option<String> {
@@ -284,9 +476,7 @@ database = "conn_db"
             get_str(&resolved, param_names::WAREHOUSE),
             Some("config_wh".to_owned())
         );
-        assert_eq!(
-            get_str(&resolved, param_names::PROTOCOL),
-            Some("https".to_owned())
-        );
+        // protocol has no registry default
+        assert_eq!(get_str(&resolved, param_names::PROTOCOL), None);
     }
 }

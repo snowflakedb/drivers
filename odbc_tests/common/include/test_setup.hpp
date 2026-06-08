@@ -3,11 +3,14 @@
 
 #include <picojson.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <string>
 
 #ifdef _WIN32
 #include <process.h>
@@ -21,6 +24,23 @@ inline int current_pid() { return getpid(); }
 
 #include "ODBCConfig.hpp"
 #include "utils.hpp"
+
+/**
+ * Macro to skip a test when QUERY_RESULT_FORMAT=JSON is set.
+ * Use this for tests that require Arrow-specific precision that JSON format cannot provide.
+ *
+ * Usage:
+ *   TEST_CASE("test name", "[tag]") {
+ *     SKIP_FOR_JSON_RESULT_SET("JSON format loses precision for Double.MAX boundary values");
+ *     // test code
+ *   }
+ */
+#define SKIP_FOR_JSON_RESULT_SET(reason)                   \
+  do {                                                     \
+    if (test_utils::get_query_result_format() == "JSON") { \
+      SKIP("Skipped for JSON result format: " reason);     \
+    }                                                      \
+  } while (0)
 
 inline picojson::object get_test_parameters(const std::string& connection_name) {
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
@@ -139,7 +159,7 @@ inline std::string get_or_create_private_key_file(const picojson::object& params
   return shared_path;
 }
 
-inline void configure_driver_string(std::stringstream& ss) {
+inline void configure_driver_string(std::ostream& ss) {
   static std::shared_ptr<DriverConfig> driver_config = DriverConfig::Default();
   static ConfigInstallation config_installation = ConfigInstallation::install_driver(driver_config);
 #ifdef _WIN32
@@ -193,6 +213,9 @@ inline std::string get_connection_string() {
   ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
 #endif
+  if (auto result_format = test_utils::get_query_result_format(); !result_format.empty()) {
+    ss << "ODBC_QUERY_RESULT_FORMAT=" << result_format << ";";
+  }
   return ss.str();
 }
 

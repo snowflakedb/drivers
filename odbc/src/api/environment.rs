@@ -60,7 +60,8 @@ pub fn set_env_attribute(
 ) -> OdbcResult<()> {
     tracing::debug!("Setting environment attribute: {attribute}");
 
-    let env = env_from_handle(environment_handle);
+    let env = env_from_handle(environment_handle)?;
+    let mut environment = env.environment.lock();
     let attr = to_env_attr(attribute).ok_or(UnsupportedAttributeSnafu { attribute }.build())?;
 
     match attr {
@@ -69,7 +70,7 @@ pub fn set_env_attribute(
             match version {
                 SQL_OV_ODBC2 | SQL_OV_ODBC3 | SQL_OV_ODBC3_80 => {
                     tracing::debug!("Setting ODBC version: {version}");
-                    env.odbc_version = version;
+                    environment.odbc_version = version;
                     Ok(())
                 }
                 _ => {
@@ -85,14 +86,14 @@ pub fn set_env_attribute(
         sql::EnvironmentAttribute::ConnectionPooling => {
             let pooling = parse_connection_pooling(value as sql::UInteger, attribute)?;
             tracing::debug!("Setting connection pooling: {pooling:?}");
-            env.connection_pooling = pooling;
+            environment.connection_pooling = pooling;
             Ok(())
         }
         sql::EnvironmentAttribute::CpMatch => {
             let connection_pool_match =
                 parse_connection_pool_match(value as sql::UInteger, attribute)?;
             tracing::debug!("Setting connection pool match: {connection_pool_match:?}");
-            env.connection_pool_match = connection_pool_match;
+            environment.connection_pool_match = connection_pool_match;
             Ok(())
         }
         sql::EnvironmentAttribute::OutputNts => {
@@ -111,7 +112,8 @@ pub fn get_env_attribute(
 ) -> OdbcResult<()> {
     tracing::debug!("Getting environment attribute: {attribute}");
 
-    let env = env_from_handle(environment_handle);
+    let env = env_from_handle(environment_handle)?;
+    let environment = env.environment.lock();
     let attr = to_env_attr(attribute).ok_or(UnsupportedAttributeSnafu { attribute }.build())?;
 
     let write_string_length = || {
@@ -127,20 +129,23 @@ pub fn get_env_attribute(
 
     match attr {
         sql::EnvironmentAttribute::OdbcVersion => {
-            tracing::debug!("Getting ODBC version: {}", env.odbc_version);
+            tracing::debug!("Getting ODBC version: {}", environment.odbc_version);
             if !value.is_null() {
-                unsafe { std::ptr::write(value as *mut sql::Integer, env.odbc_version) };
+                unsafe { std::ptr::write(value as *mut sql::Integer, environment.odbc_version) };
             }
             write_string_length();
             Ok(())
         }
         sql::EnvironmentAttribute::ConnectionPooling => {
-            tracing::debug!("Getting connection pooling: {:?}", env.connection_pooling);
+            tracing::debug!(
+                "Getting connection pooling: {:?}",
+                environment.connection_pooling
+            );
             if !value.is_null() {
                 unsafe {
                     std::ptr::write(
                         value as *mut sql::UInteger,
-                        env.connection_pooling as sql::UInteger,
+                        environment.connection_pooling as sql::UInteger,
                     )
                 };
             }
@@ -150,13 +155,13 @@ pub fn get_env_attribute(
         sql::EnvironmentAttribute::CpMatch => {
             tracing::debug!(
                 "Getting connection pool match: {:?}",
-                env.connection_pool_match
+                environment.connection_pool_match
             );
             if !value.is_null() {
                 unsafe {
                     std::ptr::write(
                         value as *mut sql::UInteger,
-                        env.connection_pool_match as sql::UInteger,
+                        environment.connection_pool_match as sql::UInteger,
                     )
                 };
             }

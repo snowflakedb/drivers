@@ -13,7 +13,7 @@ use arrow::datatypes::{DataType, FieldRef, Schema};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
-use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ResultSetGetStreamResponse;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::mem::discriminant;
@@ -25,8 +25,8 @@ pub struct ArrowResultHelper {
 }
 
 impl ArrowResultHelper {
-    /// Creates a new Arrow result helper from an ExecuteResult
-    pub fn from_result(result: ExecuteResult) -> Self {
+    /// Creates a new Arrow result helper from a ResultSetGetStreamResponse
+    pub fn from_result(result: ResultSetGetStreamResponse) -> Self {
         let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.unwrap().into();
         let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
         let reader = ArrowArrayStreamReader::try_new(stream).unwrap();
@@ -173,6 +173,8 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
             "scale",
             "physicalType",
         ],
+        "INTERVAL_YEAR_MONTH" => &["finalType", "byteLength", "charLength"],
+        "INTERVAL_DAY_TIME" => &["finalType", "byteLength", "charLength"],
         _ => &[],
     }
 }
@@ -222,7 +224,10 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
     // FIXED columns may use different integer widths (e.g. Arrow-native Int8
     // vs JSON-converted Int64). Accept any integer/decimal pair.
     let is_fixed = logical_type == "FIXED";
-    if !is_fixed {
+    // INTERVAL_YEAR_MONTH and INTERVAL_DAY_TIME columns may also use different integer widths.
+    let is_interval_ym = logical_type == "INTERVAL_YEAR_MONTH";
+    let is_interval_ds = logical_type == "INTERVAL_DAY_TIME";
+    if !is_fixed && !is_interval_ym && !is_interval_ds {
         assert_eq!(
             discriminant(left.data_type()),
             discriminant(right.data_type()),
@@ -272,10 +277,10 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
                 .zip(right_fields.iter())
                 .for_each(|(a, j)| assert_fields_match(a, j));
         }
-        (left_dt, right_dt) if is_fixed => {
+        (left_dt, right_dt) if is_fixed || is_interval_ym || is_interval_ds => {
             assert!(
                 is_integer_or_decimal(left_dt) && is_integer_or_decimal(right_dt),
-                "FIXED field '{}' has non-numeric types: left={:?}, right={:?}",
+                "FIXED/INTERVAL field '{}' has non-numeric types: left={:?}, right={:?}",
                 left.name(),
                 left_dt,
                 right_dt

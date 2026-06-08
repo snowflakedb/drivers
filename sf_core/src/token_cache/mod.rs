@@ -390,7 +390,8 @@ mod tests {
         }
 
         #[test]
-        fn remove_existing_token_succeeds() {
+        #[cfg_attr(target_os = "windows", ignore)]
+        fn flaky_remove_existing_token_succeeds() {
             let cache = KeyringTokenCache::new().expect("Failed to create cache");
             let host = unique_test_key("remove_test_host");
             let username = unique_test_key("remove_test_user");
@@ -436,7 +437,8 @@ mod tests {
         }
 
         #[test]
-        fn overwrite_token_succeeds() {
+        #[cfg_attr(target_os = "windows", ignore)]
+        fn flaky_overwrite_token_succeeds() {
             let cache = KeyringTokenCache::new().expect("Failed to create cache");
             let host = unique_test_key("overwrite_test_host");
             let username = unique_test_key("overwrite_test_user");

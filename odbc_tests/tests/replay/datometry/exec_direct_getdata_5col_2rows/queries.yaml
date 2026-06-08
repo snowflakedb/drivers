@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 8ee76c91-94ca-410a-8f7e-da76105e3386
+    -- DTM_QRY:
+    show terse objects like 'dtm386\\_ambig\\_tbl' in "DTMREPLAYTESTDB"."PUBLIC"
+  mapped: show terse objects like 'dtm386\\_ambig\\_tbl' in "DTMREPLAYTESTDB"."PUBLIC"

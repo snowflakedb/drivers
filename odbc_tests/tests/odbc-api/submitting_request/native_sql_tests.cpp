@@ -62,8 +62,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: Zero TextLength1 returns e
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), 0, out, sizeof(out), &outLen);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(outLen == 0);
-  REQUIRE(std::string(reinterpret_cast<char*>(out)).empty());
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver ignores TextLength1=0 and copies the NUL-terminated input
+    //   verbatim, reporting outLen=8 for "SELECT 1"; the new driver honours
+    //   the explicit length and returns an empty string with outLen=0.
+    REQUIRE(outLen == 8);
+    REQUIRE(std::string(reinterpret_cast<char*>(out)) == "SELECT 1");
+  }
+  else {
+    REQUIRE(outLen == 0);
+    REQUIRE(std::string(reinterpret_cast<char*>(out)).empty());
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -77,7 +86,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: NULL OutStatementText retu
 
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 12345"), SQL_NTS, nullptr, 0, &outLen);
-  REQUIRE(ret == SQL_SUCCESS);
+  OLD_IODBC_ONLY("BD#61") {
+    // The old driver flags the NULL output buffer as an implicit truncation
+    //   and surfaces SQL_SUCCESS_WITH_INFO; the new driver returns plain
+    //   SQL_SUCCESS because the caller explicitly asked for the length only.
+    REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  }
+  else {
+    REQUIRE(ret == SQL_SUCCESS);
+  }
   REQUIRE(outLen == 12);
 
   SQLDisconnect(dbc_handle());
@@ -187,7 +204,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative TextLen
   SQLCHAR out[256] = {};
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), -5, out, sizeof(out), &outLen);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM validates TextLength1 itself and surfaces the ODBC 2.x
+    //   alias "S1090" before forwarding to the old driver; the new driver
+    //   maps the same condition to the ODBC 3.x "HY090".
+    REQUIRE_EXPECTED_ERROR(ret, "S1090", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -202,7 +227,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLNativeSql: HY090 for negative BufferL
   SQLCHAR out[256] = {};
   SQLINTEGER outLen = 0;
   ret = SQLNativeSql(dbc_handle(), sqlchar("SELECT 1"), SQL_NTS, out, -1, &outLen);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver doesn't pre-validate the negative output BufferLength
+    //   and reaches the SimbaWStringHelper, which raises a vendor "HY000
+    //   [Snowflake][Support] (30020) Invalid argument" diagnostic; the new
+    //   driver short-circuits on the negative length and returns "HY090"
+    //   itself before any string conversion happens.
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
+  }
 
   SQLDisconnect(dbc_handle());
 }

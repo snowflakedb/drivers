@@ -2,16 +2,14 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -62,22 +60,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes multiple pa
   }
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
                  "[odbc-api][describeparam][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
   SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      sqlchar(
-          ("CREATE OR REPLACE TABLE " + schema.name() + ".dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)").c_str()),
-      SQL_NTS);
+      stmt_handle(), sqlchar("CREATE TEMPORARY TABLE dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  ret = SQLPrepare(stmt_handle(), sqlchar(("INSERT INTO " + schema.name() + ".dp_typed_t VALUES(?, ?, ?)").c_str()),
-                   SQL_NTS);
+  ret = SQLPrepare(stmt_handle(), sqlchar("INSERT INTO dp_typed_t VALUES(?, ?, ?)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: The reference driver reports SQL_VARCHAR with the same large fixed
@@ -241,7 +233,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNu
   SQLSMALLINT decDigits = 0;
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeParam(stmt_handle(), 0, &dataType, &paramSize, &decDigits, &nullable);
-  REQUIRE_EXPECTED_ERROR(ret, "07009", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM validates ParameterNumber == 0 itself and returns ODBC 2.x
+    //   "S1093 Invalid parameter number" before the call reaches the old
+    //   driver; the new driver maps it to the spec-mandated "07009" inside.
+    REQUIRE_EXPECTED_ERROR(ret, "S1093", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "07009", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: 07009 for ParameterNumber beyond parameter count",
@@ -287,15 +287,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 for statement n
   SQLSMALLINT decDigits = 0;
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeParam(fresh_stmt, 1, &dataType, &paramSize, &decDigits, &nullable);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", fresh_stmt, SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM catches SQLDescribeParam on an unprepared statement as a
+    //   function-sequence error and surfaces ODBC 2.x "S1010" before the old
+    //   driver sees the call; the new driver maps it to "HY010" itself.
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", fresh_stmt, SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", fresh_stmt, SQL_HANDLE_STMT);
+  }
 
   SQLFreeHandle(SQL_HANDLE_STMT, fresh_stmt);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 during SQL_NEED_DATA",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -307,13 +315,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 during SQL_NEED
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLDescribeParam is called while the statement is in the SQL_NEED_DATA state
   SQLSMALLINT dataType = 0;
   SQLULEN paramSize = 0;
   SQLSMALLINT decDigits = 0;
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeParam(stmt_handle(), 1, &dataType, &paramSize, &decDigits, &nullable);
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }
 

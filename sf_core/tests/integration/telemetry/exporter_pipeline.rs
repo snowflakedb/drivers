@@ -1,0 +1,324 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, UNIX_EPOCH};
+
+use opentelemetry::trace::{
+    SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
+};
+use opentelemetry::{InstrumentationScope, KeyValue};
+use opentelemetry_sdk::trace::{SpanData, SpanExporter};
+use serde_json::json;
+use sf_core::config::rest_parameters::QueryParameters;
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
+use sf_core::rest::snowflake::SessionTokens;
+use sf_core::sensitive::SensitiveString;
+use sf_core::telemetry::snowflake_exporter::{
+    ExporterSession, SessionRegistry, SnowflakeInBandExporter,
+};
+use tokio::sync::RwLock as AsyncRwLock;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const SESSION_ID: i64 = 42;
+
+fn test_query_parameters(server_url: &str) -> QueryParameters {
+    QueryParameters {
+        server_url: server_url.to_string(),
+        client_info: test_client_info(),
+        log_max_query_length: 80,
+        log_query_text: false,
+        log_query_parameters: false,
+    }
+}
+
+fn make_session(server_url: &str, token: Option<SessionTokens>) -> Arc<ExporterSession> {
+    Arc::new(ExporterSession {
+        client: reqwest::Client::new(),
+        query_parameters: test_query_parameters(server_url),
+        session_token: Arc::new(AsyncRwLock::new(token)),
+    })
+}
+
+fn make_active_session(server_url: &str) -> Arc<ExporterSession> {
+    let tokens = SessionTokens {
+        session_token: SensitiveString::from("test_token"),
+        master_token: SensitiveString::from("master_token"),
+        session_id: SESSION_ID,
+        session_expires_at: None,
+        master_expires_at: None,
+        master_validity: None,
+    };
+    make_session(server_url, Some(tokens))
+}
+
+fn make_registry(session_id: i64, session: Arc<ExporterSession>) -> SessionRegistry {
+    let mut map = HashMap::new();
+    map.insert(session_id, session);
+    Arc::new(RwLock::new(map))
+}
+
+fn make_span(name: &'static str, attributes: Vec<KeyValue>) -> SpanData {
+    SpanData {
+        span_context: SpanContext::new(
+            TraceId::from_hex("0102030405060708090a0b0c0d0e0f10").unwrap(),
+            SpanId::from_hex("0102030405060708").unwrap(),
+            TraceFlags::default(),
+            false,
+            TraceState::default(),
+        ),
+        parent_span_id: SpanId::INVALID,
+        span_kind: SpanKind::Internal,
+        name: name.into(),
+        start_time: UNIX_EPOCH + Duration::from_millis(1700000000000),
+        end_time: UNIX_EPOCH + Duration::from_millis(1700000001000),
+        attributes,
+        dropped_attributes_count: 0,
+        events: Default::default(),
+        links: Default::default(),
+        status: Status::Ok,
+        instrumentation_scope: InstrumentationScope::builder("test").build(),
+    }
+}
+
+/// Helper: create a span with the `snowflake.session.id` attribute set.
+fn make_tagged_span(name: &'static str, extra_attrs: Vec<KeyValue>) -> SpanData {
+    let mut attrs = vec![KeyValue::new(
+        "snowflake.session.id",
+        SESSION_ID.to_string(),
+    )];
+    attrs.extend(extra_attrs);
+    make_span(name, attrs)
+}
+
+// ---------------------------------------------------------------------------
+// SpanExporter tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn span_exporter_sends_span_attributes_in_snowflake_format() {
+    let server = MockServer::start().await;
+    let session = make_active_session(&server.uri());
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let span = make_tagged_span(
+        "session_init",
+        vec![
+            KeyValue::new("service.name", "snowflake-python"),
+            KeyValue::new("os.type", "linux"),
+        ],
+    );
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, vec![span]).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn span_exporter_sends_multiple_spans_in_single_batch() {
+    let server = MockServer::start().await;
+    let session = make_active_session(&server.uri());
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(1) // Single POST for the entire batch
+        .mount(&server)
+        .await;
+
+    let spans = vec![
+        make_tagged_span(
+            "session_init",
+            vec![KeyValue::new("service.name", "python")],
+        ),
+        make_tagged_span(
+            "driver_exception",
+            vec![KeyValue::new("exception.type", "RuntimeError")],
+        ),
+        make_tagged_span("session_init", vec![KeyValue::new("service.name", "odbc")]),
+    ];
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, spans).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn span_exporter_handles_token_revoked_between_calls() {
+    let server = MockServer::start().await;
+    let tokens = SessionTokens {
+        session_token: SensitiveString::from("valid_token"),
+        master_token: SensitiveString::from("master"),
+        session_id: SESSION_ID,
+        session_expires_at: None,
+        master_expires_at: None,
+        master_validity: None,
+    };
+    let token_store = Arc::new(AsyncRwLock::new(Some(tokens)));
+
+    let session = Arc::new(ExporterSession {
+        client: reqwest::Client::new(),
+        query_parameters: test_query_parameters(&server.uri()),
+        session_token: token_store.clone(),
+    });
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, vec![make_tagged_span("span1", vec![])]).await;
+    assert!(result.is_ok());
+
+    // Clear the token — simulating session expiry
+    *token_store.write().await = None;
+
+    // Second export should silently succeed (no POST, no error)
+    let result = SpanExporter::export(&exporter, vec![make_tagged_span("span2", vec![])]).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn span_exporter_uses_refreshed_token() {
+    let server = MockServer::start().await;
+    let initial_tokens = SessionTokens {
+        session_token: SensitiveString::from("old_token"),
+        master_token: SensitiveString::from("master"),
+        session_id: SESSION_ID,
+        session_expires_at: None,
+        master_expires_at: None,
+        master_validity: None,
+    };
+    let token_store = Arc::new(AsyncRwLock::new(Some(initial_tokens)));
+
+    let session = Arc::new(ExporterSession {
+        client: reqwest::Client::new(),
+        query_parameters: test_query_parameters(&server.uri()),
+        session_token: token_store.clone(),
+    });
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Refresh the token before exporting
+    let new_tokens = SessionTokens {
+        session_token: SensitiveString::from("new_refreshed_token"),
+        master_token: SensitiveString::from("master"),
+        session_id: SESSION_ID,
+        session_expires_at: None,
+        master_expires_at: None,
+        master_validity: None,
+    };
+    *token_store.write().await = Some(new_tokens);
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, vec![make_tagged_span("test", vec![])]).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn span_exporter_swallows_all_server_errors() {
+    let server = MockServer::start().await;
+    let session = make_active_session(&server.uri());
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("server error"))
+        .mount(&server)
+        .await;
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, vec![make_tagged_span("test", vec![])]).await;
+    assert!(result.is_ok(), "Exporter must not propagate server errors");
+}
+
+#[tokio::test]
+async fn span_exporter_swallows_connection_errors() {
+    let session = make_active_session("http://127.0.0.1:1");
+    let registry = make_registry(SESSION_ID, session);
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, vec![make_tagged_span("test", vec![])]).await;
+    assert!(
+        result.is_ok(),
+        "Exporter must not propagate connection errors"
+    );
+}
+
+#[tokio::test]
+async fn span_exporter_shutdown_is_clean() {
+    let session = make_active_session(&server_url_placeholder());
+    let registry = make_registry(SESSION_ID, session);
+
+    let mut exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::shutdown(&mut exporter);
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn span_exporter_drops_spans_without_session_id() {
+    let server = MockServer::start().await;
+    let session = make_active_session(&server.uri());
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(0) // No POST — spans lack session_id
+        .mount(&server)
+        .await;
+
+    let exporter = SnowflakeInBandExporter::new(registry);
+    let result = SpanExporter::export(&exporter, vec![make_span("test", vec![])]).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn span_exporter_drops_spans_after_session_deregistered() {
+    let server = MockServer::start().await;
+    let session = make_active_session(&server.uri());
+    let registry = make_registry(SESSION_ID, session);
+
+    Mock::given(method("POST"))
+        .and(path("/telemetry/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(1) // Only the first export should POST
+        .mount(&server)
+        .await;
+
+    let exporter = SnowflakeInBandExporter::new(registry.clone());
+
+    // First export succeeds — session is registered.
+    let result =
+        SpanExporter::export(&exporter, vec![make_tagged_span("before_close", vec![])]).await;
+    assert!(result.is_ok());
+
+    // Simulate connection close: remove the session from the registry.
+    registry.write().unwrap().remove(&SESSION_ID);
+
+    // Second export should silently drop — no POST, no error.
+    let result =
+        SpanExporter::export(&exporter, vec![make_tagged_span("after_close", vec![])]).await;
+    assert!(result.is_ok());
+}
+
+fn server_url_placeholder() -> String {
+    "http://127.0.0.1:1".to_string()
+}

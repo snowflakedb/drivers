@@ -132,8 +132,25 @@ impl BehaviorDifferencesProcessor {
                             handler.method_matches_scenario(&test_method.name, scenario)
                         });
 
-                    // Only process Behavior Differences for test methods that match Behavior Difference scenarios
-                    if matches_behavior_difference_scenario {
+                    // Process Behavior Differences for:
+                    // 1. Test methods that match Behavior Difference scenarios (shared features)
+                    // 2. Test methods that contain BD# references but have no matching feature
+                    //    (language-specific tests)
+                    let has_bd_reference = !matches_behavior_difference_scenario
+                        && content.contains("BD#")
+                        && {
+                            // Quick check: does this method's body contain BD#?
+                            handler
+                                .find_behavior_differences_in_method(
+                                    &content,
+                                    &test_method.name,
+                                    test_file,
+                                )
+                                .map(|bds| !bds.is_empty())
+                                .unwrap_or(false)
+                        };
+
+                    if matches_behavior_difference_scenario || has_bd_reference {
                         if let Ok(method_behavior_differences) = handler
                             .find_behavior_differences_in_method(
                                 &content,

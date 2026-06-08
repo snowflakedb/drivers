@@ -515,7 +515,13 @@ class ClientSideBindingConverter:
             return tuple(cls.process_single_param(param) for param in params)
 
     @classmethod
-    def interpolate_query(cls, query: str, params: Sequence[Any] | Mapping[str, Any] | None) -> str:
+    def interpolate_query(
+        cls,
+        query: str,
+        params: Sequence[Any] | Mapping[str, Any] | None,
+        *,
+        interpolate_empty_sequences: bool = False,
+    ) -> str:
         """Interpolate parameters into query using Python % formatting.
 
         This is the main entry point for client-side binding, mirroring
@@ -524,15 +530,20 @@ class ClientSideBindingConverter:
         Args:
             query: SQL query with %s or %(name)s placeholders
             params: Parameters to interpolate
+            interpolate_empty_sequences: When True, perform ``query % params``
+                even when *params* is empty.  This unescapes ``%%`` → ``%``
+                which is required when SQLAlchemy doubles percent signs during
+                compilation (pyformat paramstyle).  Matches the old connector's
+                ``connection._interpolate_empty_sequences`` flag.
 
         Returns:
             Query string with parameters interpolated
         """
-        if params is None or (not isinstance(params, Mapping) and len(params) == 0):
+        if params is None:
             return query
 
         processed_params = cls.process_params_pyformat(params)
 
-        if processed_params:
+        if interpolate_empty_sequences or len(processed_params) > 0:
             return query % processed_params
         return query

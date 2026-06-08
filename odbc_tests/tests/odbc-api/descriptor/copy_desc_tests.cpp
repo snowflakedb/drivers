@@ -303,6 +303,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: SQL_INVALID_HANDLE for nul
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: SQL_INVALID_HANDLE for null target",
                  "[odbc-api][copydesc][descriptor][error]") {
+  SKIP_OLD_IODBC("BD#59", "old driver SegFaults under iODBC for SQLCopyDesc with null target");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
@@ -341,12 +342,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY007 - IRD source from un
   SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA (explicit desc)",
                  "[odbc-api][copydesc][descriptor][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  // Get descriptors before entering NEED_DATA state
-  SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLHDESC explicit_desc = SQL_NULL_HDESC;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc_handle(), &explicit_desc);
@@ -364,8 +364,61 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLCopyDesc(ard, explicit_desc);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver does not track per-statement SQL_NEED_DATA state on
+    //   descriptor calls and allows SQLCopyDesc to succeed mid-DAE; the new
+    //   driver short-circuits with "HY010" and the test expects that on
+    //   unixODBC + old as well (where the DM doesn't intercept either).
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  }
 
   SQLCancel(stmt_handle());
   SQLFreeHandle(SQL_HANDLE_DESC, explicit_desc);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCopyDesc: HY010 - Called during SQL_NEED_DATA",
+                 "[odbc-api][copydesc][descriptor][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given the implicit ARD of the default statement (the source descriptor)
+  const SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
+
+  // And a second statement on the same connection whose implicit ARD serves as the
+  // copy target (we avoid SQLAllocHandle(SQL_HANDLE_DESC) which is not implemented)
+  SQLHSTMT stmt2 = SQL_NULL_HSTMT;
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt2);
+  REQUIRE(ret == SQL_SUCCESS);
+  const SQLHDESC target_ard = get_descriptor(stmt2, SQL_ATTR_APP_ROW_DESC);
+
+  // And the source statement is driven into SQL_NEED_DATA via a SQL_DATA_AT_EXEC bind
+  ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  // When SQLCopyDesc is called while the source statement is in SQL_NEED_DATA
+  ret = SQLCopyDesc(ard, target_ard);
+  // Then DM surfaces HY010 on the source ARD (only the old driver exercises this
+  //   path; new driver does not implement SQLCopyDesc and is skipped above).
+  OLD_IODBC_ONLY("BD#69") {
+    // Old driver under iODBC bypasses the SQL_NEED_DATA state-check for
+    //   descriptor entry points and silently returns SQL_SUCCESS.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  }
+
+  // And the statement is cancelled to release any pending state and the helper stmt
+  // is freed
+  SQLCancel(stmt_handle());
+  SQLFreeHandle(SQL_HANDLE_STMT, stmt2);
 }

@@ -37,13 +37,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Close and re-execute",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Fetch after close",
                  "[odbc-api][closecursor][terminating_statement]") {
+  // Given an executed statement whose cursor has been explicitly closed
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQLFetch is called after the cursor is closed
   ret = SQLFetch(stmt_handle());
+
+  // Then DM surface HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -72,6 +76,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Repeated close-execute 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Close after partial fetch of multi-row result",
                  "[odbc-api][closecursor][terminating_statement]") {
+  // Given a three-row SELECT with the first row already fetched and then the cursor closed
   SQLRETURN ret =
       SQLExecDirect(stmt_handle(), sqlchar("SELECT * FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -82,9 +87,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: Close after partial fet
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQLFetch is called after the cursor is closed
   ret = SQLFetch(stmt_handle());
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement remains usable for a new execute/fetch cycle under every DM
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 99"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -196,8 +204,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: 24000 - No cursor open"
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][closecursor][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -210,8 +218,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: HY010 - Called during S
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLCloseCursor is called while the statement is in the SQL_NEED_DATA state
   ret = SQLCloseCursor(stmt_handle());
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  // And the statement is cancelled to release any pending state
+  SQLCancel(stmt_handle());
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: 24000 - Double close",
@@ -448,14 +461,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLDescribeCol fails wi
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCloseCursor: SQLRowCount returns HY010 after close on exec_direct",
                  "[odbc-api][closecursor][terminating_statement]") {
+  // Given an executed statement whose cursor has been explicitly closed
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
+  // When SQLRowCount is called after the cursor is closed
   SQLLEN row_count = 0;
   ret = SQLRowCount(stmt_handle(), &row_count);
+
+  // Then DM surfaces HY010
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 }
 

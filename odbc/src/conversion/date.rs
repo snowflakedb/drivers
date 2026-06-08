@@ -1,18 +1,49 @@
+use std::io::{Cursor, Write as _};
+
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, NaiveTime};
 use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
-use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::error::{
+    BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidDatetimeValueSnafu,
+    JsonBindingError, UnsupportedCDataTypeSnafu,
+};
+use crate::conversion::error::{
+    ConversionError, DatetimeOutOfSqlRangeSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    SQL_DATETIME_YEAR_RANGE, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+};
+use crate::conversion::param_binding::{
+    parse_temporal_char_input, read_binary_struct, read_unaligned,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+
+/// Expected literal shape for a `SQL_C_CHAR` / `SQL_C_WCHAR` source bound to a
+/// DATE target, surfaced in the 22018 diagnostic when parsing fails.
+const DATE_CHAR_EXPECTED_FORMAT: &str = "YYYY-MM-DD";
+
+/// Format a `NaiveDate` as `YYYY-MM-DD` into a stack buffer without heap
+/// allocation. 32 bytes is sufficient for any year chrono can represent.
+fn format_date_ascii<'a>(date: &NaiveDate, buf: &'a mut [u8; 32]) -> &'a str {
+    let mut cursor = Cursor::new(&mut buf[..]);
+    // Infallible: the buffer is large enough for any year chrono produces.
+    let _ = write!(
+        cursor,
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        date.month(),
+        date.day()
+    );
+    let len = cursor.position() as usize;
+    // SAFETY: we only wrote ASCII digits and '-' above.
+    unsafe { std::str::from_utf8_unchecked(&buf[..len]) }
+}
 
 pub(crate) struct SnowflakeDate;
 
@@ -23,6 +54,16 @@ const UNIX_EPOCH: NaiveDate = match NaiveDate::from_ymd_opt(1970, 1, 1) {
 
 impl SnowflakeType for SnowflakeDate {
     type Representation<'a> = NaiveDate;
+
+    fn validate_value(&self, value: &NaiveDate) -> Result<(), ConversionError> {
+        if !SQL_DATETIME_YEAR_RANGE.contains(&value.year()) {
+            return DatetimeOutOfSqlRangeSnafu {
+                reason: format!("DATE year {} is outside SQL range 0001..9999", value.year()),
+            }
+            .fail();
+        }
+        Ok(())
+    }
 }
 
 impl ReadArrowType<PrimitiveArray<Date32Type>> for SnowflakeDate {
@@ -59,7 +100,7 @@ impl WriteODBCType for SnowflakeDate {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-        _get_data_offset: &mut Option<usize>,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
             CDataType::Default | CDataType::Date | CDataType::TypeDate => {
@@ -69,6 +110,69 @@ impl WriteODBCType for SnowflakeDate {
                     day: snowflake_value.day() as u16,
                 };
                 binding.write_fixed(date);
+                Ok(vec![])
+            }
+            CDataType::Char => {
+                if binding.buffer_length > 0 && binding.buffer_length < 11 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_CHAR date (minimum 11 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let mut buf = [0u8; 32];
+                let s = format_date_ascii(&snowflake_value, &mut buf);
+                Ok(binding.write_char_string(s, get_data_offset))
+            }
+            CDataType::WChar => {
+                if binding.buffer_length > 0 && binding.buffer_length < 22 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_WCHAR date (minimum 22 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let mut buf = [0u8; 32];
+                let s = format_date_ascii(&snowflake_value, &mut buf);
+                Ok(binding.write_wchar_string(s, get_data_offset))
+            }
+            CDataType::Binary => {
+                if binding.buffer_length > 0
+                    && (binding.buffer_length as usize) < std::mem::size_of::<sql::Date>()
+                {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_BINARY date".to_string(),
+                    }
+                    .fail();
+                }
+                let date = sql::Date {
+                    year: snowflake_value.year() as i16,
+                    month: snowflake_value.month() as u16,
+                    day: snowflake_value.day() as u16,
+                };
+                // SAFETY: `sql::Date` is a POD struct (repr(C), no padding
+                // beyond the u16/i16 layout) defined by odbc_sys. Borrowing
+                // its bytes for the duration of this call is sound and lets
+                // us avoid an intermediate stack copy per row.
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        &date as *const sql::Date as *const u8,
+                        std::mem::size_of::<sql::Date>(),
+                    )
+                };
+                Ok(binding.write_binary(bytes, get_data_offset))
+            }
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = sql::Timestamp {
+                    year: snowflake_value.year() as i16,
+                    month: snowflake_value.month() as u16,
+                    day: snowflake_value.day() as u16,
+                    hour: 0,
+                    minute: 0,
+                    second: 0,
+                    fraction: 0,
+                };
+                binding.write_fixed(ts);
                 Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {
@@ -89,29 +193,87 @@ impl ReadODBC for SnowflakeDate {
                 let date = read_unaligned::<sql::Date>(binding);
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_DATE for DATE target: \
+                                 year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
                         }
                         .build()
                     })
             }
-            CDataType::Char => {
-                let s = read_char_str(binding)?;
-                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
-                    }
-                    .build()
+            CDataType::Char | CDataType::WChar => {
+                parse_temporal_char_input(binding, DATE_CHAR_EXPECTED_FORMAT, |s| {
+                    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| ())
                 })
             }
-            CDataType::WChar => {
-                let s = read_wchar_str(binding)?;
-                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+            CDataType::Binary => {
+                let date = read_binary_struct::<sql::Date>(binding, "SQL_DATE_STRUCT")?;
+                NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
+                    .ok_or_else(|| {
+                        BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
+                        }
+                        .build()
+                    })
+            }
+            // Bind SQL_C_TYPE_TIMESTAMP into a DATE column by extracting the
+            // date portion of the timestamp. Per ODBC Appendix D ("Converting
+            // Data from C to SQL Data Types") and matching the legacy 3.16.0
+            // driver, the conversion only succeeds when the discarded time
+            // portion is exactly zero; otherwise SQLSTATE 22008 ("Datetime
+            // field overflow") is returned.
+            //
+            // Error precedence: validate the *struct* first (22007 for any
+            // out-of-range field — month=13, hour=25, fraction=3e9, …) and
+            // only then enforce the 22008 narrowing rule. Otherwise an input
+            // like {hour=25, minute=0, second=0, fraction=0} would surface
+            // as "datetime field overflow" when in fact the struct itself is
+            // malformed.
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                    .ok_or_else(|| {
+                        InvalidDatetimeValueSnafu {
+                            reason: format!(
+                                "invalid date in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                             year={}, month={}, day={}",
+                                ts.year, ts.month, ts.day
+                            ),
+                        }
+                        .build()
+                    })?;
+                NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    InvalidDatetimeValueSnafu {
+                        reason: format!(
+                            "invalid time in SQL_C_TYPE_TIMESTAMP for DATE target: \
+                             hour={}, minute={}, second={}, fraction={}",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
                     }
                     .build()
-                })
+                })?;
+                if ts.hour != 0 || ts.minute != 0 || ts.second != 0 || ts.fraction != 0 {
+                    return DatetimeFieldOverflowSnafu {
+                        reason: format!(
+                            "SQL_C_TYPE_TIMESTAMP → SQL_TYPE_DATE: time portion must be \
+                             zero (got hour={}, minute={}, second={}, fraction={})",
+                            ts.hour, ts.minute, ts.second, ts.fraction
+                        ),
+                    }
+                    .fail();
+                }
+                Ok(date)
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
@@ -129,5 +291,87 @@ impl WriteJson for SnowflakeDate {
 
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Date
+    }
+}
+
+#[cfg(test)]
+mod format_date_ascii_tests {
+    use super::*;
+
+    #[test]
+    fn formats_typical_date() {
+        let mut buf = [0u8; 32];
+        let d = NaiveDate::from_ymd_opt(2026, 4, 12).unwrap();
+        assert_eq!(format_date_ascii(&d, &mut buf), "2026-04-12");
+    }
+
+    #[test]
+    fn pads_single_digit_components() {
+        let mut buf = [0u8; 32];
+        let d = NaiveDate::from_ymd_opt(1, 1, 1).unwrap();
+        assert_eq!(format_date_ascii(&d, &mut buf), "0001-01-01");
+    }
+
+    #[test]
+    fn formats_large_year() {
+        let mut buf = [0u8; 32];
+        let d = NaiveDate::from_ymd_opt(9999, 12, 31).unwrap();
+        assert_eq!(format_date_ascii(&d, &mut buf), "9999-12-31");
+    }
+
+    #[test]
+    fn formats_negative_year() {
+        let mut buf = [0u8; 32];
+        let d = NaiveDate::from_ymd_opt(-44, 3, 15).unwrap();
+        assert_eq!(format_date_ascii(&d, &mut buf), "-044-03-15");
+    }
+}
+
+#[cfg(test)]
+mod read_arrow_type_tests {
+    use super::*;
+    use arrow::array::PrimitiveArray;
+
+    fn days_since_epoch(year: i32, month: u32, day: u32) -> i32 {
+        let target = NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        (target - UNIX_EPOCH).num_days() as i32
+    }
+
+    #[test]
+    fn reads_year_1_boundary() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(days_since_epoch(1, 1, 1))]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveDate::from_ymd_opt(1, 1, 1).unwrap());
+    }
+
+    #[test]
+    fn reads_year_9999_boundary() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(days_since_epoch(9999, 12, 31))]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value, NaiveDate::from_ymd_opt(9999, 12, 31).unwrap());
+    }
+
+    #[test]
+    fn rejects_year_before_1() {
+        let day_count = days_since_epoch(1, 1, 1) - 1;
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(day_count)]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        let err = SnowflakeDate.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_year_after_9999() {
+        let day_count = days_since_epoch(9999, 12, 31) + 1;
+        let array = PrimitiveArray::<Date32Type>::from(vec![Some(day_count)]);
+        let value = SnowflakeDate.read_arrow_type(&array, 0).unwrap();
+        let err = SnowflakeDate.validate_value(&value).unwrap_err();
+        assert!(
+            matches!(err, ConversionError::DatetimeOutOfSqlRange { .. }),
+            "got {err:?}"
+        );
     }
 }

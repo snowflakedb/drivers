@@ -8,14 +8,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 
-TEST_CASE("REAL explicit SQL_C_BIT - basic", "[e2e][types][real][conversion][c_bit]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_BIT - basic", "[e2e][types][real][conversion][c_bit]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Various FLOAT values are fetched as SQL_C_BIT
   (void)0;
@@ -28,10 +26,8 @@ TEST_CASE("REAL explicit SQL_C_BIT - basic", "[e2e][types][real][conversion][c_b
   check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT -1.5::FLOAT"), 1);
 }
 
-TEST_CASE("REAL SQL_C_BIT spec compliance", "[e2e][types][real][conversion][c_bit]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_BIT spec compliance", "[e2e][types][real][conversion][c_bit]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When FLOAT values are fetched as SQL_C_BIT per ODBC spec
   (void)0;
@@ -58,10 +54,9 @@ TEST_CASE("REAL SQL_C_BIT spec compliance", "[e2e][types][real][conversion][c_bi
   check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT 100.0::FLOAT"), 1);
 }
 
-TEST_CASE("REAL SQL_C_BIT rejects negative fractions", "[e2e][types][real][conversion][c_bit][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_BIT rejects negative fractions",
+                 "[e2e][types][real][conversion][c_bit][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Negative fractional FLOAT values are fetched as SQL_C_BIT
   (void)0;
@@ -72,11 +67,10 @@ TEST_CASE("REAL SQL_C_BIT rejects negative fractions", "[e2e][types][real][conve
   check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT -0.9999::FLOAT"), 1);
 }
 
-TEST_CASE("REAL NaN to BIT returns error", "[e2e][types][real][conversion][c_bit][nan][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NaN to BIT returns error",
+                 "[e2e][types][real][conversion][c_bit][nan][edge]") {
   SKIP_OLD_DRIVER("BD#16", "Old driver silently converts NaN to 0 for BIT target");
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NaN FLOAT value is fetched as SQL_C_BIT
   (void)0;
@@ -84,10 +78,9 @@ TEST_CASE("REAL NaN to BIT returns error", "[e2e][types][real][conversion][c_bit
   check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
 }
 
-TEST_CASE("REAL Infinity to BIT returns 22003", "[e2e][types][real][conversion][c_bit][infinity][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL Infinity to BIT returns 22003",
+                 "[e2e][types][real][conversion][c_bit][infinity][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Infinity FLOAT values are fetched as SQL_C_BIT
   (void)0;
@@ -96,10 +89,8 @@ TEST_CASE("REAL Infinity to BIT returns 22003", "[e2e][types][real][conversion][
   check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
 }
 
-TEST_CASE("REAL NULL to SQL_C_BIT", "[real][conversion][c_bit][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NULL to SQL_C_BIT", "[real][conversion][c_bit][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL FLOAT value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");

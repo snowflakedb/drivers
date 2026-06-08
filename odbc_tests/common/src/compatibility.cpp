@@ -1,5 +1,11 @@
 #include "compatibility.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
 DRIVER_TYPE get_driver_type() {
 #ifdef SNOWFLAKE_OLD_DRIVER
   return DRIVER_TYPE::OLD;
@@ -17,5 +23,23 @@ PLATFORM get_platform() {
   return PLATFORM::PLATFORM_MACOS;
 #else
   return PLATFORM::PLATFORM_UNKNOWN;
+#endif
+}
+
+bool is_iodbc_test_suite() {
+#ifdef _WIN32
+  return false;
+#else
+  const char* raw = std::getenv("SF_RUNNING_IODBC_TEST_SUITE");
+  if (raw == nullptr) {
+    return false;
+  }
+  std::string value(raw);
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (value.empty() || value == "0" || value == "false" || value == "no" || value == "off") {
+    return false;
+  }
+  return true;
 #endif
 }

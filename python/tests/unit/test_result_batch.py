@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ResultChunk
-from snowflake.connector.errors import InterfaceError
+from snowflake.connector.errors import Error, InterfaceError
 from snowflake.connector.result_batch import (
     IterTableStructure,
     IterUnit,
@@ -134,17 +134,33 @@ class TestProperties:
         batch.connection = None
         assert batch.connection is None
 
-    def test_rowcount_raises(self):
-        with pytest.raises(NotImplementedError):
-            _ = _make_batch().rowcount
+    def test_rowcount_defaults_to_zero(self):
+        assert _make_batch().rowcount == 0
 
-    def test_compressed_size_raises(self):
-        with pytest.raises(NotImplementedError):
-            _ = _make_batch().compressed_size
+    def test_rowcount_from_chunk(self):
+        chunk = ResultChunk(row_count=42)
+        batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
+        assert batch.rowcount == 42
 
-    def test_uncompressed_size_raises(self):
-        with pytest.raises(NotImplementedError):
-            _ = _make_batch().uncompressed_size
+    def test_compressed_size_none_when_unset(self):
+        assert _make_batch().compressed_size is None
+
+    def test_compressed_size_from_chunk(self):
+        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import RemoteChunk
+
+        chunk = ResultChunk(remote=RemoteChunk(url="http://example.com", compressed_size=1024))
+        batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
+        assert batch.compressed_size == 1024
+
+    def test_uncompressed_size_none_when_unset(self):
+        assert _make_batch().uncompressed_size is None
+
+    def test_uncompressed_size_from_chunk(self):
+        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import RemoteChunk
+
+        chunk = ResultChunk(remote=RemoteChunk(url="http://example.com", uncompressed_size=4096))
+        batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
+        assert batch.uncompressed_size == 4096
 
 
 # ------------------------------------------------------------------
@@ -243,7 +259,8 @@ class TestCreateIterValidation:
 
 class TestCreateIterDispatch:
     def test_row_unit_calls_create_row_iterator(self):
-        batch = _make_batch(connection=MagicMock())
+        mock_connection = MagicMock()
+        batch = _make_batch(connection=mock_connection)
         with (
             patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
             patch("snowflake.connector.result_batch.create_row_iterator") as mock_iter,
@@ -251,17 +268,18 @@ class TestCreateIterDispatch:
             mock_iter.return_value = iter([(1,), (2,)])
             rows = list(batch.create_iter(iter_unit=IterUnit.ROW_UNIT))
         assert rows == [(1,), (2,)]
-        mock_iter.assert_called_once_with(0, use_dict_result=False)
+        mock_iter.assert_called_once_with(0, connection=mock_connection, use_dict_result=False)
 
     def test_row_unit_with_dict_result(self):
-        batch = _make_batch(connection=MagicMock())
+        mock_connection = MagicMock()
+        batch = _make_batch(connection=mock_connection)
         with (
             patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
             patch("snowflake.connector.result_batch.create_row_iterator") as mock_iter,
         ):
             mock_iter.return_value = iter([{"id": 1}])
             batch.create_iter(iter_unit=IterUnit.ROW_UNIT, use_dict_result=True)
-        mock_iter.assert_called_once_with(0, use_dict_result=True)
+        mock_iter.assert_called_once_with(0, connection=mock_connection, use_dict_result=True)
 
     def test_table_unit_pandas_calls_to_pandas(self):
         batch = _make_batch(connection=MagicMock())
@@ -322,14 +340,17 @@ class TestToArrowConnection:
             batch.to_arrow()
 
     def test_to_arrow_forwards_conversion_params(self):
-        batch = _make_batch(connection=MagicMock())
+        mock_connection = MagicMock()
+        batch = _make_batch(connection=mock_connection)
         with (
             patch.object(batch, "_fetch_arrow_stream_ptr", return_value=0),
             patch("snowflake.connector.result_batch.create_table_iterator") as mock_table_iter,
             patch("snowflake.connector.result_batch.collect_arrow_table"),
         ):
             batch.to_arrow(number_to_decimal=True, force_microsecond_precision=True)
-        mock_table_iter.assert_called_once_with(0, number_to_decimal=True, force_microsecond_precision=True)
+        mock_table_iter.assert_called_once_with(
+            0, connection=mock_connection, number_to_decimal=True, force_microsecond_precision=True
+        )
 
 
 class TestToPandasConnection:
@@ -350,3 +371,46 @@ class TestToPandasConnection:
             force_microsecond_precision=True,
         )
         mock_table.to_pandas.assert_called_once()
+
+
+# ------------------------------------------------------------------
+# Errorhandler routing
+# ------------------------------------------------------------------
+
+
+def _make_connection_with_handler():
+    """Build a MagicMock connection with real messages list and default handler."""
+    conn = MagicMock()
+    conn.messages = []
+    conn.errorhandler = Error.default_errorhandler
+    return conn
+
+
+class TestErrorhandlerRouting:
+    def test_error_routed_through_connection_handler(self):
+        conn = _make_connection_with_handler()
+        batch = _make_batch(connection=conn)
+
+        with patch.object(batch, "_fetch_arrow_stream_ptr", side_effect=InterfaceError(msg="fetch failed")):
+            with pytest.raises(InterfaceError, match="fetch failed"):
+                batch.populate_data()
+
+        assert len(conn.messages) == 1
+        assert conn.messages[0][0] is InterfaceError
+
+    def test_custom_handler_is_called_before_reraise(self):
+        conn = _make_connection_with_handler()
+        observed = []
+        conn.errorhandler = lambda c, cur, cls, val: observed.append(cls)
+        batch = _make_batch(connection=conn)
+
+        with patch.object(batch, "_fetch_arrow_stream_ptr", side_effect=InterfaceError(msg="observed")):
+            with pytest.raises(InterfaceError, match="observed"):
+                batch.populate_data()
+
+        assert observed == [InterfaceError]
+
+    def test_no_connection_still_raises(self):
+        batch = _make_batch()
+        with pytest.raises(InterfaceError, match="not connected"):
+            batch.create_iter()

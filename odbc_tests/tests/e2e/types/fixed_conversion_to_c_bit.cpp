@@ -5,16 +5,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("SQL_C_BIT spec compliance", "[fixed][conversion][c_bit]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_C_BIT spec compliance", "[fixed][conversion][c_bit]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-
   {
     INFO("0 and 1 succeed");
     // When Various NUMBER/DECIMAL values are fetched as SQL_C_BIT
@@ -74,11 +71,8 @@ TEST_CASE("SQL_C_BIT spec compliance", "[fixed][conversion][c_bit]") {
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_BIT", "[fixed][conversion][c_bit][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_BIT", "[fixed][conversion][c_bit][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-
   // When A NULL NUMBER value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0)");
   // Then Indicator returns SQL_NULL_DATA

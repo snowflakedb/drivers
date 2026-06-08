@@ -21,3 +21,19 @@ class QueryStatus(Enum):
     RESTARTED = 10
     BLOCKED = 11
     NO_DATA = 12
+
+
+# backward compatibility constant
+UTF8 = "utf-8"
+
+
+class StatementParameterName:
+    """Known statement-level parameter names.
+
+    These correspond to the statement-scoped entries in sf_core's
+    ``param_registry``.  Pass them via the ``parameters`` dict when
+    executing a statement.
+    """
+
+    MULTI_STATEMENT_COUNT = "MULTI_STATEMENT_COUNT"
+    ASYNC_EXECUTION = "ASYNC_EXECUTION"

@@ -17,7 +17,10 @@
       "data": {
         "token": "mock_token",
         "masterToken": "mock_master_token",
-        "sessionId": 12345
+        "sessionId": 12345,
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": true}
+        ]
       }
     }
   }

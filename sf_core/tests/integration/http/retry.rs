@@ -66,6 +66,7 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
         // Use 2 seconds to avoid race with deadline check on slow CI,
         // but still less than the 5-second Retry-After from server
         max_elapsed: Duration::from_secs(2),
+        per_request_timeout: None,
         extra_retryable_statuses: Vec::new(),
     };
 
@@ -140,6 +141,7 @@ async fn should_fail_after_reaching_max_attempts() {
             jitter: Jitter::None,
         },
         max_elapsed: Duration::from_secs(5),
+        per_request_timeout: None,
         extra_retryable_statuses: Vec::new(),
     };
 

@@ -1206,6 +1206,42 @@ class TestInterpolateQuery:
         )
         assert result == "SELECT * FROM t WHERE id = 42 AND name = 'Alice' AND active = TRUE"
 
+    def test_empty_dict_preserves_doubled_percents_by_default(self):
+        result = ClientSideBindingConverter.interpolate_query("SELECT 1600 %% 400 AS a", {})
+        assert result == "SELECT 1600 %% 400 AS a"
+
+    def test_empty_list_preserves_doubled_percents_by_default(self):
+        result = ClientSideBindingConverter.interpolate_query("SELECT 1600 %% 400 AS a", [])
+        assert result == "SELECT 1600 %% 400 AS a"
+
+    def test_empty_dict_unescapes_doubled_percents_when_flag_set(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "SELECT 1600 %% 400 AS a, 1599 %% 400 AS b", {}, interpolate_empty_sequences=True
+        )
+        assert result == "SELECT 1600 % 400 AS a, 1599 % 400 AS b"
+
+    def test_empty_list_unescapes_doubled_percents_when_flag_set(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "SELECT 1600 %% 400 AS a", [], interpolate_empty_sequences=True
+        )
+        assert result == "SELECT 1600 % 400 AS a"
+
+    def test_empty_dict_no_percents_unchanged(self):
+        query = "SELECT * FROM t"
+        assert ClientSideBindingConverter.interpolate_query(query, {}) == query
+
+    def test_stage_path_unescapes_when_flag_set(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "PUT file:///tmp/data.txt @%%users", {}, interpolate_empty_sequences=True
+        )
+        assert result == "PUT file:///tmp/data.txt @%users"
+
+    def test_nonempty_params_always_interpolate_regardless_of_flag(self):
+        result = ClientSideBindingConverter.interpolate_query(
+            "SELECT %s, 100 %% 3", [42], interpolate_empty_sequences=False
+        )
+        assert result == "SELECT 42, 100 % 3"
+
 
 class TestJsonBindingConverterNumpy:
     """Test that JsonBindingConverter handles numpy types via _is_numeric."""

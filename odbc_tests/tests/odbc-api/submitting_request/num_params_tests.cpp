@@ -6,7 +6,6 @@
 
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -183,13 +182,21 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: HY010 when called before 
 
   SQLSMALLINT count = -1;
   SQLRETURN ret = SQLNumParams(stmt_handle(), &count);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  OLD_IODBC_ONLY("BD#60") {
+    // iODBC's DM intercepts SQLNumParams on an unprepared statement and
+    //   returns ODBC 2.x "S1010" before the old driver sees the call; the new
+    //   driver short-circuits with the spec-mandated "HY010" itself.
+    REQUIRE_EXPECTED_ERROR(ret, "S1010", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: HY010 during SQL_NEED_DATA",
                  "[odbc-api][numparams][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+  // Given a prepared statement with a SQL_DATA_AT_EXEC parameter whose execution has
+  // entered the SQL_NEED_DATA state (waiting for SQLPutData)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -201,9 +208,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: HY010 during SQL_NEED_DAT
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
+  // When SQLNumParams is called while the statement is in the SQL_NEED_DATA state
   SQLSMALLINT count = -1;
   ret = SQLNumParams(stmt_handle(), &count);
+  // Both DMs surface HY010: unixODBC gates at the DM layer; iODBC forwards and the driver short-circuits with the same
+  // error.
   REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
+  // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }

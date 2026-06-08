@@ -1,11 +1,13 @@
-# PEP 249 Database API 2.0 Implementation
+# ⚠️ PRIVATE PREVIEW DISCLAIMER ⚠️
 
-A Python library that implements [PEP 249 (Python Database API Specification 2.0)](https://peps.python.org/pep-0249/) with empty interface implementations. This library provides a complete skeleton implementation that follows the PEP 249 specification, making it an ideal starting point for creating new database drivers or for testing database API compliance.
+**This is a beta version of our Universal Driver intended for Snowflake customers who are subject to Snowflake's Preview Terms.**
+
+This driver is not ready for use with production data and may be unstable. Please only use it if you are actively participating in the Universal Driver Private Preview.
 
 ## Development
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [Hatch](https://hatch.pypa.io/) build tool
 - Rust toolchain (for building core library)
@@ -44,7 +46,7 @@ The `dev` environment is designed for **human developers** during active develop
 - Installs from sources (`skip-install = false`)
 - Editable mode enabled (`dev-mode = true`)
 - Changes to source code are immediately available
-- Supports Python matrix: 3.9, 3.10, 3.11, 3.12, 3.13
+- Supports Python matrix: 3.10, 3.11, 3.12, 3.13, 3.14
 
 **Usage:**
 ```bash
@@ -107,8 +109,10 @@ hatch run test.py3.12:all
 hatch run precommit:check        # Run all checks (format, lint, type)
 hatch run precommit:fix          # Auto-fix formatting and linting issues
 
-# Reference connector tests (for compatibility testing)
-PYTHON_REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:test
+# Reference connector tests (for compatibility testing, installs latest v4.x)
+hatch run reference:test
+# Pin a specific version if needed:
+PYTHON_REFERENCE_DRIVER_VERSION='==4.3.0' hatch run reference:test
 ```
 
 ## References

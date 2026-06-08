@@ -49,9 +49,9 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then Connector changes authenticator to JWT and login is successful and simple query can be executed
 
-  @core_unit
-  Scenario: should fail when both private_key and private_key_file are provided
-    Given Both private_key and private_key_file parameters are set
+  @odbc_e2e
+  Scenario: should authenticate using PRIV_KEY_PWD as alias for private key password
+    Given Authentication is set to JWT with encrypted key file and PRIV_KEY_PWD parameter
     When Trying to Connect
-    Then There is error returned indicating conflicting parameters
+    Then Login is successful and simple query can be executed
 

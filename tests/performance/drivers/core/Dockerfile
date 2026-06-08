@@ -2,15 +2,17 @@
 
 ARG BUILDPLATFORM=linux/amd64
 
-# Stage 1: Planner - generate recipe for dependencies
-FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS planner
+# Stage 1: Chef base - common stage with cargo-chef installed
+FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS chef
 
-# Install cargo-chef
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --version 0.1.77 --locked
 
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang
+
+# Stage 2: Planner - generate recipe for dependencies
+FROM chef AS planner
 
 WORKDIR /workdir
 
@@ -29,8 +31,8 @@ RUN sed -i 's/crate-type = \["dylib", "rlib"\]/crate-type = ["rlib"]/' ./sf_core
 WORKDIR /workdir/tests/performance/drivers/core/app
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Stage 2: Builder - build dependencies (cached) then app
-FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS builder
+# Stage 3: Builder - build dependencies (cached) then app
+FROM chef AS builder
 
 # Capture Rust version (major.minor only, e.g. 1.75)
 RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /rust_version
@@ -45,13 +47,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     unzip \
     && rm -rf /var/lib/apt/lists/*
-
-# Install cargo-chef
-RUN cargo install cargo-chef
-
-# TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
-# See: https://github.com/aws/aws-lc-rs/issues/569
-ENV AWS_LC_FIPS_SYS_CC=clang
 
 WORKDIR /workdir
 
@@ -87,7 +82,7 @@ COPY tests/performance/drivers/core/app/ ./
 
 RUN cargo build --release --bin core-perf-driver
 
-# Stage 3: Runtime - use minimal base image with newer GLIBC
+# Stage 4: Runtime - use minimal base image with newer GLIBC
 ARG BUILDPLATFORM=linux/amd64
 FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/debian:trixie-slim
 

@@ -1,5 +1,0 @@
-name: 'Rust CI'
-description: 'Runs various checks for the Rust code in the repository.'
-runs:
-  using: 'docker'
-  image: 'Dockerfile'

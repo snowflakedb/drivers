@@ -57,7 +57,6 @@ class TestQueryStatus:
         # And the query should not be indicated as still running
         assert not connection.is_still_running(status)
 
-    @pytest.mark.skip(reason="depends on execute_async which is not yet implemented")
     def test_should_indicate_still_running_for_in_progress_query(self, connection, cursor):
         """Test that an in-progress query indicates still running."""
         # Given Snowflake client is logged in

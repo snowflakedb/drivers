@@ -1,5 +1,7 @@
 use crate::api::bitmask::Bitmask;
-use crate::api::error::InvalidDescriptorKindSnafu;
+use crate::api::error::{InvalidDescriptorKindSnafu, OdbcRuntimeSnafu};
+use crate::api::handle_registry::{HandleGuard, HandleId};
+use crate::api::runtime::global;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
 use crate::conversion::warning::Warnings;
@@ -7,10 +9,13 @@ use crate::conversion::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
 use arrow::{array::RecordBatch, datatypes::SchemaRef, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
+    ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, ExecuteQueryResponse,
+    StatementHandle,
 };
+use snafu::ResultExt;
 use std::collections::HashMap;
-use std::sync::Weak;
+
+use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::CDataType;
@@ -91,6 +96,8 @@ pub enum ConnectionAttribute {
     ConnectionDead,
     /// SQL_ATTR_AUTO_IPD (10001) — read-only
     AutoIpd,
+    /// SQL_ATTR_METADATA_ID (10014) — identifier vs. pattern treatment for catalog functions
+    MetadataId,
 
     // Custom Snowflake attributes (matching sf_odbc.h)
     /// SQL_SF_CONN_ATTR_PRIV_KEY — EVP_PKEY pointer (not supported in new driver)
@@ -120,6 +127,7 @@ impl ConnectionAttribute {
             113 => Some(Self::ConnectionTimeout),
             1209 => Some(Self::ConnectionDead),
             10001 => Some(Self::AutoIpd),
+            10014 => Some(Self::MetadataId),
             x if x == SQL_SF_CONN_ATTR_BASE + 1 => Some(Self::PrivKey),
             x if x == SQL_SF_CONN_ATTR_BASE + 2 => Some(Self::Application),
             x if x == SQL_SF_CONN_ATTR_BASE + 3 => Some(Self::PrivKeyContent),
@@ -147,6 +155,7 @@ impl ConnectionAttribute {
             Self::ConnectionTimeout => 113,
             Self::ConnectionDead => 1209,
             Self::AutoIpd => 10001,
+            Self::MetadataId => 10014,
             Self::PrivKey => SQL_SF_CONN_ATTR_BASE + 1,
             Self::Application => SQL_SF_CONN_ATTR_BASE + 2,
             Self::PrivKeyContent => SQL_SF_CONN_ATTR_BASE + 3,
@@ -161,6 +170,14 @@ impl ConnectionAttribute {
 #[repr(u16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfoType {
+    /// `SQL_DRIVER_NAME` (6) — name of the driver shared library (string).
+    DriverName = 6,
+    /// `SQL_DRIVER_VER` (7) — driver release version (string).
+    DriverVer = 7,
+    /// `SQL_DBMS_NAME` (17) — name of the DBMS product (string).
+    DbmsName = 17,
+    /// `SQL_DBMS_VER` (18) — version of the DBMS the connection is talking to (string).
+    DbmsVer = 18,
     /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
     CursorCommitBehavior = 23,
     /// `SQL_CURSOR_ROLLBACK_BEHAVIOR` (24) — cursor behavior on rollback.
@@ -169,6 +186,14 @@ pub enum InfoType {
     DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_ASYNC_MODE` (10021) — async mode supported by the driver.
+    AsyncMode = 10021,
+    /// `SQL_MAX_ASYNC_CONCURRENT_STATEMENTS` (10022) — max concurrent async statements.
+    MaxAsyncConcurrentStatements = 10022,
+    /// `SQL_ASYNC_DBC_FUNCTIONS` (10023) — whether the driver supports async on connections.
+    AsyncDbcFunctions = 10023,
+    /// `SQL_ASYNC_NOTIFICATION` (10025) — async notification capability.
+    AsyncNotification = 10025,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -176,10 +201,18 @@ impl TryFrom<u16> for InfoType {
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
+            6 => Ok(InfoType::DriverName),
+            7 => Ok(InfoType::DriverVer),
+            17 => Ok(InfoType::DbmsName),
+            18 => Ok(InfoType::DbmsVer),
             23 => Ok(InfoType::CursorCommitBehavior),
             24 => Ok(InfoType::CursorRollbackBehavior),
             77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
+            10021 => Ok(InfoType::AsyncMode),
+            10022 => Ok(InfoType::MaxAsyncConcurrentStatements),
+            10023 => Ok(InfoType::AsyncDbcFunctions),
+            10025 => Ok(InfoType::AsyncNotification),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
                 Err(OdbcError::UnknownInfoType {
@@ -248,19 +281,72 @@ impl TryFrom<sql::ULen> for CursorType {
     }
 }
 
+/// ODBC statement attribute value constants.
+/// `SQL_CONCUR_READ_ONLY` (1) — read-only cursor concurrency (default).
+pub const SQL_CONCUR_READ_ONLY: sql::ULen = 1;
+/// `SQL_CONCUR_LOCK` (2) — cursor concurrency with locking.
+pub const SQL_CONCUR_LOCK: sql::ULen = 2;
+/// `SQL_CONCUR_ROWVER` (3) — cursor concurrency with row versioning.
+#[allow(dead_code)] // Covered by SQL_CONCUR_LOCK..=SQL_CONCUR_VALUES range pattern
+pub const SQL_CONCUR_ROWVER: sql::ULen = 3;
+/// `SQL_CONCUR_VALUES` (4) — cursor concurrency with optimistic values.
+pub const SQL_CONCUR_VALUES: sql::ULen = 4;
+/// `SQL_NONSCROLLABLE` (0) — non-scrollable cursor (default).
+pub const SQL_NONSCROLLABLE: sql::ULen = 0;
+/// `SQL_SCROLLABLE` (1) — scrollable cursor.
+pub const SQL_SCROLLABLE: sql::ULen = 1;
+/// `SQL_UNSPECIFIED` (0) — unspecified cursor sensitivity (default).
+pub const SQL_UNSPECIFIED: sql::ULen = 0;
+/// `SQL_INSENSITIVE` (1) — insensitive cursor.
+pub const SQL_INSENSITIVE: sql::ULen = 1;
+/// `SQL_SENSITIVE` (2) — sensitive cursor.
+pub const SQL_SENSITIVE: sql::ULen = 2;
+/// `SQL_NOSCAN_OFF` (0) — scan for escape sequences (default).
+pub const SQL_NOSCAN_OFF: sql::ULen = 0;
+/// `SQL_NOSCAN_ON` (1) — do not scan for escape sequences.
+pub const SQL_NOSCAN_ON: sql::ULen = 1;
+/// `SQL_SC_NON_UNIQUE` (0) — simulate non-unique cursors (default).
+pub const SQL_SC_NON_UNIQUE: sql::ULen = 0;
+/// `SQL_RD_OFF` (0) — do not retrieve data after positioned update.
+pub const SQL_RD_OFF: sql::ULen = 0;
+/// `SQL_RD_ON` (1) — retrieve data after positioned update (default).
+pub const SQL_RD_ON: sql::ULen = 1;
+
 /// ODBC statement attribute identifiers (matching `SQL_ATTR_*` constants from `sql.h`).
 #[repr(i32)]
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StmtAttr {
+    /// `SQL_ATTR_CURSOR_SCROLLABLE` (-1) — whether the cursor is scrollable.
+    CursorScrollable = -1,
+    /// `SQL_ATTR_CURSOR_SENSITIVITY` (-2) — cursor sensitivity to changes.
+    CursorSensitivity = -2,
+    /// `SQL_ATTR_QUERY_TIMEOUT` (0) — query timeout in seconds (0 = no timeout).
+    QueryTimeout = 0,
+    /// `SQL_ATTR_MAX_ROWS` (1) — maximum rows returned (0 = no limit).
+    MaxRows = 1,
+    /// `SQL_ATTR_NOSCAN` (2) — whether to scan for ODBC escape sequences.
+    Noscan = 2,
     /// `SQL_ATTR_MAX_LENGTH` (3) — maximum amount of data returned from character/binary columns.
     MaxLength = 3,
+    /// `SQL_ATTR_ASYNC_ENABLE` (4) — enable/disable asynchronous execution.
+    AsyncEnable = 4,
     /// `SQL_ATTR_ROW_BIND_TYPE` (5) — row-wise vs column-wise binding.
     RowBindType = 5,
     /// `SQL_ATTR_CURSOR_TYPE` (6) — type of cursor.
     CursorType = 6,
+    /// `SQL_ATTR_CONCURRENCY` (7) — cursor concurrency.
+    Concurrency = 7,
+    /// `SQL_ATTR_KEYSET_SIZE` (8) — keyset size for keyset-driven cursors.
+    KeysetSize = 8,
+    /// `SQL_ATTR_SIMULATE_CURSOR` (10) — how to simulate positioned update/delete statements.
+    SimulateCursor = 10,
+    /// `SQL_ATTR_RETRIEVE_DATA` (11) — whether to retrieve data after a positioned update.
+    RetrieveData = 11,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
+    /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
+    EnableAutoIpd = 15,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
@@ -277,8 +363,14 @@ pub enum StmtAttr {
     ImpRowDesc = 10012,
     /// `SQL_ATTR_IMP_PARAM_DESC` — handle to the Implementation Parameter Descriptor.
     ImpParamDesc = 10013,
-    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (2000100) — last query ID (read-only string).
-    SnowflakeLastQueryId = 2000100,
+    /// `SQL_ATTR_METADATA_ID` (10014) — identifier vs. pattern treatment for catalog functions.
+    MetadataId = 10014,
+
+    // Custom Snowflake statement attributes (SQL_SF_STMT_ATTR_BASE = 0x4000 + 0x106)
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (0x4107 = 16647) — query ID of last execution (read-only).
+    SnowflakeLastQueryId = 16647,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` (0x4108 = 16648) — multi-statement count.
+    SnowflakeMultiStatementCount = 16648,
 }
 
 impl TryFrom<i32> for StmtAttr {
@@ -286,10 +378,21 @@ impl TryFrom<i32> for StmtAttr {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
+            -2 => Ok(StmtAttr::CursorSensitivity),
+            -1 => Ok(StmtAttr::CursorScrollable),
+            0 => Ok(StmtAttr::QueryTimeout),
+            1 => Ok(StmtAttr::MaxRows),
+            2 => Ok(StmtAttr::Noscan),
             3 => Ok(StmtAttr::MaxLength),
+            4 => Ok(StmtAttr::AsyncEnable),
             5 => Ok(StmtAttr::RowBindType),
             6 => Ok(StmtAttr::CursorType),
+            7 => Ok(StmtAttr::Concurrency),
+            8 => Ok(StmtAttr::KeysetSize),
+            10 => Ok(StmtAttr::SimulateCursor),
+            11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
+            15 => Ok(StmtAttr::EnableAutoIpd),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
@@ -298,7 +401,13 @@ impl TryFrom<i32> for StmtAttr {
             10011 => Ok(StmtAttr::AppParamDesc),
             10012 => Ok(StmtAttr::ImpRowDesc),
             10013 => Ok(StmtAttr::ImpParamDesc),
-            2000100 => Ok(StmtAttr::SnowflakeLastQueryId),
+            10014 => Ok(StmtAttr::MetadataId),
+            // Windows/Microsoft ODBC (SQL_DRIVER_STMT_ATTR_BASE = 1000)
+            1263 => Ok(StmtAttr::SnowflakeLastQueryId),
+            1264 => Ok(StmtAttr::SnowflakeMultiStatementCount),
+            // Mac/iODBC (SQL_DRIVER_STMT_ATTR_BASE = 16384)
+            16647 => Ok(StmtAttr::SnowflakeLastQueryId),
+            16648 => Ok(StmtAttr::SnowflakeMultiStatementCount),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
                 Err(OdbcError::UnknownAttribute {
@@ -332,6 +441,10 @@ pub enum DescField {
     Count = 1001,
     /// `SQL_DESC_TYPE` (1002) — verbose data type of the column.
     Type = 1002,
+    /// `SQL_DESC_LENGTH` (1003) — column length in characters (or scale-derived
+    /// precision for temporal types, byte length for binary types). Distinct
+    /// from `SQL_DESC_OCTET_LENGTH` (1013), which is always in bytes.
+    Length = 1003,
     /// `SQL_DESC_OCTET_LENGTH_PTR` (1004) — pointer to the octet-length buffer.
     OctetLengthPtr = 1004,
     /// `SQL_DESC_PRECISION` (1005) — numeric precision.
@@ -342,6 +455,8 @@ pub enum DescField {
     IndicatorPtr = 1009,
     /// `SQL_DESC_DATA_PTR` (1010) — pointer to the data buffer.
     DataPtr = 1010,
+    /// `SQL_DESC_NAME` (1011) — column name (string, IRD only).
+    Name = 1011,
     /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
     /// `SQL_DESC_PARAMETER_TYPE` (33) — parameter direction (IPD only).
@@ -366,6 +481,7 @@ impl TryFrom<i16> for DescField {
             34 => Ok(DescField::RowsProcessedPtr),
             1001 => Ok(DescField::Count),
             1002 => Ok(DescField::Type),
+            1003 => Ok(DescField::Length),
             14 => Ok(DescField::TypeName),
             1004 => Ok(DescField::OctetLengthPtr),
             1005 => Ok(DescField::Precision),
@@ -373,6 +489,7 @@ impl TryFrom<i16> for DescField {
             1008 => Ok(DescField::Nullable),
             1009 => Ok(DescField::IndicatorPtr),
             1010 => Ok(DescField::DataPtr),
+            1011 => Ok(DescField::Name),
             1013 => Ok(DescField::OctetLength),
             33 => Ok(DescField::ParameterType),
             _ => {
@@ -523,6 +640,24 @@ pub enum SqlType {
     // sqlext.h
     Guid = -11, // SQL_GUID
 
+    // Snowflake-specific vendor SQL type codes for TIMESTAMP variants.
+    //
+    // Defined here so applications can pass them as the `ParameterType`
+    // argument to `SQLBindParameter` and explicitly request that a bound
+    // value round-trip as `TIMESTAMP_LTZ` / `_TZ` / `_NTZ` instead of being
+    // routed by the standard `SQL_TYPE_TIMESTAMP` (93) which has no way to
+    // distinguish the three. The values match the legacy 3.16.0 Snowflake
+    // ODBC driver (`Source/sf_odbc.h`) for application compatibility.
+    //
+    // These are *not* returned from `SQLDescribeCol` or
+    // `SQLColAttribute(SQL_DESC_CONCISE_TYPE)`: per the MS ODBC spec, those
+    // descriptors must report the standard `SQL_TYPE_TIMESTAMP` (93) for
+    // ODBC 3.x output. Applications distinguish the three subtypes via
+    // `SQLColAttribute(SQL_DESC_TYPE_NAME)`.
+    SqlSfTimestampLtz = 2000, // SQL_SF_TIMESTAMP_LTZ
+    SqlSfTimestampTz = 2001,  // SQL_SF_TIMESTAMP_TZ
+    SqlSfTimestampNtz = 2002, // SQL_SF_TIMESTAMP_NTZ
+
     // sqlext.h — ODBC 3.x interval types (100 + subcode)
     IntervalYear = 101,
     IntervalMonth = 102,
@@ -585,6 +720,9 @@ impl TryFrom<sql::SmallInt> for SqlType {
             111 => Ok(SqlType::IntervalHourToMinute),
             112 => Ok(SqlType::IntervalHourToSecond),
             113 => Ok(SqlType::IntervalMinuteToSecond),
+            2000 => Ok(SqlType::SqlSfTimestampLtz),
+            2001 => Ok(SqlType::SqlSfTimestampTz),
+            2002 => Ok(SqlType::SqlSfTimestampNtz),
             _ => {
                 tracing::error!("Invalid SQL data type: {value}");
                 Err(OdbcError::InvalidSqlDataType {
@@ -602,6 +740,49 @@ impl From<SqlType> for sql::SqlDataType {
     }
 }
 
+/// Snowflake vendor SQL type codes as `odbc_sys::SqlDataType` constants. Match
+/// the legacy 3.16.0 driver's macros from `Source/sf_odbc.h` and the
+/// corresponding `SqlType::SqlSfTimestamp{Ltz,Tz,Ntz}` enum variants. Use
+/// these forms in `match` patterns against `sql::SqlDataType` (e.g. when
+/// dispatching by the `ParameterType` argument of `SQLBindParameter`).
+pub const SQL_SF_TIMESTAMP_LTZ: sql::SqlDataType = sql::SqlDataType(2000);
+pub const SQL_SF_TIMESTAMP_TZ: sql::SqlDataType = sql::SqlDataType(2001);
+pub const SQL_SF_TIMESTAMP_NTZ: sql::SqlDataType = sql::SqlDataType(2002);
+
+/// Snowflake-specific timestamp subtype carried alongside the standard ODBC
+/// `SQL_TYPE_TIMESTAMP` (93) on the IPD. Set by `SQLBindParameter` when the
+/// application uses one of the vendor codes `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}`,
+/// so the binding pipeline knows which Snowflake logical type to emit on the
+/// wire while `SQLDescribeParam` and `SQLGetDescField(IPD, SQL_DESC_TYPE)`
+/// keep returning the spec-mandated 93. `None` means "no vendor opt-in";
+/// the converter dispatch falls back to the default for the SQL type
+/// (which for `SQL_TYPE_TIMESTAMP` is NTZ, mirroring the legacy driver).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampSubtype {
+    /// Vendor code 2002: explicit opt-in to TIMESTAMP_NTZ on the wire.
+    Ntz,
+    /// Vendor code 2000: TIMESTAMP_LTZ — naive datetime interpreted in the
+    /// session timezone (matches legacy 3.16.0 wall-clock-string semantics).
+    Ltz,
+    /// Vendor code 2001: TIMESTAMP_TZ — preserves the offset on the wire.
+    Tz,
+}
+
+impl TimestampSubtype {
+    /// Map a `SQLBindParameter` `ParameterType` argument to its Snowflake
+    /// timestamp subtype, if it is one of the vendor codes 2000/2001/2002.
+    /// Returns `None` for every other SQL type — including the standard
+    /// `SQL_TYPE_TIMESTAMP` (93), which has no vendor opt-in associated.
+    pub fn from_parameter_type(parameter_type: sql::SqlDataType) -> Option<Self> {
+        match parameter_type {
+            SQL_SF_TIMESTAMP_NTZ => Some(Self::Ntz),
+            SQL_SF_TIMESTAMP_LTZ => Some(Self::Ltz),
+            SQL_SF_TIMESTAMP_TZ => Some(Self::Tz),
+            _ => None,
+        }
+    }
+}
+
 /// Application Row Descriptor (ARD).
 ///
 /// Stores column binding information and block-cursor header fields.
@@ -610,6 +791,8 @@ impl From<SqlType> for sql::SqlDataType {
 #[repr(C)]
 pub struct ArdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt_id: HandleId,
     pub bindings: HashMap<u16, Binding>,
     /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
     pub array_size: usize,
@@ -629,6 +812,8 @@ impl ArdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ard,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt_id: HandleId::default(),
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -663,6 +848,8 @@ impl ArdDescriptor {
 #[repr(C)]
 pub struct ApdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt_id: HandleId,
     pub records: HashMap<u16, ApdRecord>,
     /// `SQL_DESC_ARRAY_SIZE` — number of parameter sets (default 1).
     pub array_size: usize,
@@ -682,6 +869,8 @@ impl ApdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Apd,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt_id: HandleId::default(),
             records: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -706,6 +895,8 @@ impl ApdDescriptor {
 #[repr(C)]
 pub struct IrdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt_id: HandleId,
     /// `SQL_DESC_COUNT` — number of columns in the result set.
     pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
@@ -724,6 +915,8 @@ impl IrdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ird,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt_id: HandleId::default(),
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -740,6 +933,8 @@ impl IrdDescriptor {
 #[repr(C)]
 pub struct IpdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
+    pub(crate) stmt_id: HandleId,
     pub records: HashMap<u16, IpdRecord>,
     /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
     pub array_status_ptr: *mut u16,
@@ -757,6 +952,8 @@ impl IpdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ipd,
+            diagnostic_info: DiagnosticInfo::default(),
+            stmt_id: HandleId::default(),
             records: HashMap::new(),
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -827,6 +1024,8 @@ impl ToSqlReturn for OdbcResult<()> {
             }
             Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA,
             Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE,
+            Err(OdbcError::DaeRequired { .. }) => sql::SqlReturn::NEED_DATA,
+            Err(OdbcError::StillExecuting { .. }) => sql::SqlReturn::STILL_EXECUTING,
             Err(_) => sql::SqlReturn::ERROR,
         }
     }
@@ -838,12 +1037,21 @@ impl ToSqlReturn for OdbcResult<()> {
         self.to_sql_return(warnings).0
     }
 }
+pub struct Env {
+    pub environment: Mutex<Environment>,
+}
+
+// TODO: this is a hack to allow the Env to be used in a multi-threaded environment
+// Will be removed after this PR stack is completed
+unsafe impl Send for Env {}
+unsafe impl Sync for Env {}
 
 pub struct Environment {
     pub odbc_version: sql::Integer,
     pub connection_pooling: sql::AttrConnectionPooling,
     pub connection_pool_match: sql::AttrCpMatch,
     pub diagnostic_info: DiagnosticInfo,
+    pub connections: Vec<HandleId>,
 }
 
 pub enum ConnectionState {
@@ -859,6 +1067,11 @@ pub enum ConnectionState {
 /// These are applied to the sf_core connection during driver_connect/connect.
 pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
 
+pub struct Dbc {
+    pub connection: Mutex<Connection>,
+    pub env_id: HandleId,
+}
+
 pub struct Connection {
     pub state: ConnectionState,
     pub diagnostic_info: DiagnosticInfo,
@@ -871,12 +1084,9 @@ pub struct Connection {
     pub quiet_mode: sql::Pointer,
     /// SQL_ATTR_PACKET_SIZE — pre-connect only (default 0 = driver-defined)
     pub packet_size: sql::UInteger,
-    /// Weak references to all child statements allocated on this connection, paired with
-    /// the raw pointer obtained from `Arc::into_raw` at allocation time.
-    /// Storing this pointer ensures `Arc::from_raw` (used in `free_connection`) receives a
-    /// pointer that satisfies its documented contract (obtained via `Arc::into_raw`, not
-    /// `Weak::as_ptr`).
-    pub(crate) child_statements: Vec<(Weak<Statement>, *const Statement)>,
+    /// HandleIds of all child statements allocated on this connection.
+    /// Used by `free_connection` to release orphaned statements.
+    pub(crate) child_statements: Vec<HandleId>,
     /// Cached local autocommit state. Defaults to `AutocommitValue::On`.
     /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
     /// when the server session parameter is unavailable.
@@ -886,14 +1096,22 @@ pub struct Connection {
     /// this from the server per spec; the field is used to track the catalog for
     /// internal purposes (e.g. logging, future optimizations).
     pub current_catalog: Option<String>,
+    /// SQL_ATTR_METADATA_ID — identifier vs. pattern treatment for catalog functions (default false)
+    pub metadata_id: bool,
+    /// Value of the `DRIVER` keyword captured from the `SQLDriverConnect`
+    /// connection string, if present. Used as the primary lookup section
+    /// in `odbcinst.ini` when resolving `SQLGetInfo(SQL_DRIVER_NAME)`.
+    pub driver_section: Option<String>,
+    /// Value of the `DSN` keyword captured at connect time (either from
+    /// `SQLConnect`'s server-name argument or `SQLDriverConnect`'s
+    /// `DSN=...`). Used to find the driver short name via `odbc.ini`
+    /// when `driver_section` is absent.
+    pub dsn_name: Option<String>,
 }
 
-// Safety: Send is required so that the async runtime can transfer ownership of the
-// Connection allocation between threads (e.g. when a Tokio task completes on a
-// different thread than it started). All ODBC API access remains serialised on the
-// single caller thread — the raw-pointer DBC handle is never shared across threads.
-// `*const Statement` inside `child_statements` is `!Send`, but Connection is never
-// accessed concurrently, so this is safe.
+// Safety: Connection contains raw pointers (quiet_mode: sql::Pointer) that are !Send + !Sync.
+// Access to Connection is always serialised through the Mutex<Connection> in Dbc, and ODBC
+// guarantees that a single connection handle is only used from one thread at a time.
 unsafe impl Send for Connection {}
 
 /// Application Parameter Descriptor (APD) record.
@@ -926,6 +1144,15 @@ impl Default for ApdRecord {
 /// Stores the implementation-side view of a bound parameter: the SQL data type,
 /// column size, decimal digits, and parameter direction. Populated by
 /// `SQLBindParameter` or `SQLSetDescField` on the IPD handle.
+///
+/// `sql_data_type` always holds a *standard* ODBC SQL type code (1..=12,
+/// 91..=95, 101..=113, etc.) so that `SQLDescribeParam` and
+/// `SQLGetDescField(IPD, SQL_DESC_TYPE)` echo spec-conformant values back
+/// to the application. When `SQLBindParameter` is called with one of the
+/// Snowflake vendor codes (`SQL_SF_TIMESTAMP_LTZ` / `_TZ` / `_NTZ`), the
+/// vendor opt-in is normalised: `sql_data_type` becomes
+/// `SQL_TYPE_TIMESTAMP` (93) and the chosen subtype is stashed on
+/// `sf_subtype` for the bind-time converter dispatch.
 #[derive(Debug)]
 pub struct IpdRecord {
     pub sql_data_type: sql::SqlDataType,
@@ -933,6 +1160,10 @@ pub struct IpdRecord {
     pub decimal_digits: sql::SmallInt,
     pub direction: sql::SmallInt,
     pub nullable: sql::SmallInt,
+    /// Snowflake-specific timestamp subtype, set when the application binds
+    /// with `SQL_SF_TIMESTAMP_{LTZ,TZ,NTZ}` to opt in to a non-default
+    /// Snowflake logical type for the wire. `None` for every other binding.
+    pub sf_subtype: Option<TimestampSubtype>,
 }
 
 impl IpdRecord {
@@ -945,6 +1176,7 @@ impl IpdRecord {
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
             nullable: 1, // SQL_NULLABLE — per ODBC spec
+            sf_subtype: None,
         }
     }
 }
@@ -964,6 +1196,10 @@ pub struct ParameterBinding {
     pub parameter_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
     pub str_len_or_ind_ptr: *mut sql::Len,
+    /// Mirrors `IpdRecord::sf_subtype`. Lets the converter dispatch route a
+    /// `SQL_TYPE_TIMESTAMP` bind to the right Snowflake logical type
+    /// (NTZ / LTZ / TZ) when the application opted in via a vendor code.
+    pub sf_subtype: Option<TimestampSubtype>,
 }
 
 impl ParameterBinding {
@@ -974,8 +1210,48 @@ impl ParameterBinding {
             parameter_value_ptr: apd.data_ptr,
             buffer_length: apd.buffer_length,
             str_len_or_ind_ptr: apd.str_len_or_ind_ptr,
+            sf_subtype: ipd.sf_subtype,
         }
     }
+}
+
+/// Tracks whether the current execution originated from `SQLPrepare`+`SQLExecute`
+/// or from `SQLExecDirect`. Maps to the ODBC spec's `[p]`/`[np]` transition
+/// annotations (e.g. `SQLFreeStmt(SQL_CLOSE)` in S5 → S1 [np] / S3 [p]).
+#[derive(Clone, Debug)]
+pub enum ExecutionOrigin {
+    Prepared { schema: SchemaRef },
+    Direct,
+}
+
+impl ExecutionOrigin {
+    pub fn restore_state(&self) -> StatementState {
+        match self {
+            ExecutionOrigin::Prepared { schema } => StatementState::Prepared {
+                schema: schema.clone(),
+            },
+            ExecutionOrigin::Direct => StatementState::Created,
+        }
+    }
+
+    pub fn is_prepared(&self) -> bool {
+        matches!(self, ExecutionOrigin::Prepared { .. })
+    }
+}
+
+/// State of an individual DAE parameter's data during the `SQLPutData` loop.
+pub enum ParamValue {
+    Pending,
+    Null,
+    Data(Vec<Vec<u8>>),
+}
+
+/// Holds the context for a data-at-execution operation in progress.
+pub struct DaeContext {
+    pub dae_params: Vec<u16>,
+    pub current_index: usize,
+    pub pushed_data: HashMap<u16, ParamValue>,
+    pub deferred_query: Option<String>,
 }
 
 pub enum StatementState {
@@ -987,33 +1263,59 @@ pub enum StatementState {
     QueryExecuted {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
-        /// `true` when reached via `SQLExecute` (prepared path). On
-        /// `SQLFreeStmt(SQL_CLOSE)` the state returns to `Prepared`;
-        /// when `false` (exec-direct path) it returns to `Created`.
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     /// ODBC state S4 for DDL. No cursor opened; SQLRowCount returns -1.
     DdlExecuted {
         schema: SchemaRef,
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     /// ODBC state S4 for DML (INSERT/UPDATE/DELETE/MERGE).
     /// No cursor opened; SQLRowCount returns rows_affected.
     DmlExecuted {
         rows_affected: i64,
         schema: SchemaRef,
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,
-        prepared: bool,
+        origin: ExecutionOrigin,
     },
     Done {
+        #[allow(dead_code)]
         schema: SchemaRef,
-        prepared: bool,
+        origin: ExecutionOrigin,
+    },
+    /// ODBC state S8: Need data, waiting for `SQLParamData`.
+    AwaitingParamData {
+        dae_context: Box<DaeContext>,
+        origin: ExecutionOrigin,
+    },
+    /// ODBC state S9: Need data, waiting for `SQLPutData`.
+    AwaitingPutData {
+        dae_context: Box<DaeContext>,
+        origin: ExecutionOrigin,
+    },
+    /// ODBC state S10: Need data, `SQLPutData` called at least once.
+    PutDataCalled {
+        dae_context: Box<DaeContext>,
+        origin: ExecutionOrigin,
+    },
+    /// Async `SQLExecDirect` spawned; polling for completion.
+    AsyncExecDirect {
+        join_handle: tokio::task::JoinHandle<Result<ExecDirectOutcome, OdbcError>>,
+    },
+    /// Async `SQLPrepare` spawned; polling for completion.
+    AsyncPrepare {
+        join_handle: tokio::task::JoinHandle<Result<PrepareOutcome, OdbcError>>,
+    },
+    /// Async `SQLExecute` spawned; polling for completion.
+    AsyncExecute {
+        join_handle: tokio::task::JoinHandle<Result<ExecuteOutcome, OdbcError>>,
+        origin: ExecutionOrigin,
     },
     Error,
 }
@@ -1026,6 +1328,24 @@ impl StatementState {
             StatementState::QueryExecuted { .. }
                 | StatementState::Fetching { .. }
                 | StatementState::Done { .. }
+        )
+    }
+
+    /// Returns `true` when the statement is in any of the NeedData states (S8/S9/S10).
+    pub fn is_need_data(&self) -> bool {
+        matches!(
+            self,
+            StatementState::AwaitingParamData { .. }
+                | StatementState::AwaitingPutData { .. }
+                | StatementState::PutDataCalled { .. }
+        )
+    }
+
+    /// Returns `true` when an async operation has been spawned and is awaiting poll completion.
+    pub fn is_async_executing(&self) -> bool {
+        matches!(
+            self,
+            Self::AsyncExecDirect { .. } | Self::AsyncPrepare { .. } | Self::AsyncExecute { .. }
         )
     }
 }
@@ -1045,7 +1365,7 @@ impl<T> State<T> {
 
     /// Invariant: `current_state` is always `Some` between public API calls.
     /// Every caller must call `set` before returning to restore the invariant.
-    fn take(&mut self) -> T {
+    pub(crate) fn take(&mut self) -> T {
         self.current_state.take().expect(
             "State::take called on an empty state — set() was not called after a previous take()",
         )
@@ -1110,11 +1430,55 @@ impl GetDataState {
     }
 }
 
+/// Outer Statement handle.
+///
+/// Most mutable state lives inside `inner: Mutex<StatementInner>`.
+/// `cancel_token` is also mutable (interior mutability via its own Mutex)
+/// to allow zero-contention cross-thread cancellation without locking `inner`.
+/// The `HandleManager` stores `Statement` inside `Arc<RwLock<Option<Statement>>>`,
+/// so the outer fields are accessible through `HandleGuard::deref()` without
+/// any additional locking.
 pub struct Statement {
-    /// Raw pointer to the owning connection. Valid for the entire lifetime of this Statement
-    /// (the connection always outlives its statements). Access via `conn()` / `conn_ptr()`.
-    conn: *mut Connection,
+    /// ID of the parent connection handle. Looked up via the global dbc_registry.
+    pub conn_id: HandleId,
     pub stmt_handle: StatementHandle,
+    pub inner: parking_lot::Mutex<StatementInner>,
+    /// Cancellation token for the currently in-flight operation, if any.
+    /// `Some(token)` while a cancellable operation is running (sync or async); `None` otherwise.
+    /// SQLCancel checks this without locking `inner` — zero-contention cross-thread cancel.
+    pub cancel_token: parking_lot::Mutex<Option<CancellationToken>>,
+}
+
+pub struct ExecDirectOutcome {
+    pub response: ExecuteQueryResponse,
+    pub conn_handle: TConnectionHandle,
+}
+
+pub struct PrepareOutcome {
+    pub number_of_binds: u16,
+    pub schema: SchemaRef,
+}
+
+pub struct ExecuteOutcome {
+    pub response: ExecuteQueryResponse,
+    pub conn_handle: TConnectionHandle,
+}
+
+/// All mutable statement state, protected by `Statement::inner`.
+///
+/// # Lock ordering
+///
+/// When both `Connection` (`dbc.connection.lock()`) and `inner` must be
+/// held, `Connection` is locked first. `exec_direct_impl`,
+/// `prepare_impl`, `param_data` (and the `execute_dae` it delegates to),
+/// `fetch`, and `extended_fetch` follow this rule.
+///
+/// Functions that only mutate `inner` (`SQLBindCol`, `SQLBindParameter`,
+/// `SQLPutData`, `SQLSetStmtAttr`, `SQLFreeStmt`, `SQLNumParams`,
+/// `SQLDescribeParam`, the diagnostic helpers) do not lock `Connection`
+/// at all. `SQLCancel` operates only on `Statement::cancel_token` and
+/// never touches either mutex.
+pub struct StatementInner {
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
     pub ird: IrdDescriptor,
@@ -1126,92 +1490,233 @@ pub struct Statement {
     pub cursor_type: CursorType,
     /// `SQL_ATTR_MAX_LENGTH` — default 0 (no limit). Stored but not enforced.
     pub max_length: sql::ULen,
+    /// `SQL_ATTR_METADATA_ID` — inherited from connection at allocation time (default false).
+    pub metadata_id: bool,
     /// Set when `SQLExtendedFetch` has been used on this statement.
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
     pub used_extended_fetch: bool,
-    /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
+    /// Number of `?` parameter markers reported by the server after
+    /// `SQLPrepare`. Used to ignore spurious APD bindings on non-existent
+    /// parameters (e.g. DAE detection for "SELECT 1" with a bound param).
+    /// `None` before the first prepare or after exec-direct.
+    pub prepared_param_count: Option<u16>,
+    /// `SQL_ATTR_QUERY_TIMEOUT` — query timeout in seconds (default 0 = no timeout).
+    pub query_timeout: sql::ULen,
+    /// `SQL_ATTR_NOSCAN` — whether to scan for ODBC escape sequences (default SQL_NOSCAN_OFF = 0).
+    pub noscan: sql::ULen,
+    /// `SQL_ATTR_MAX_ROWS` — maximum rows returned (default 0 = no limit).
+    pub max_rows: sql::ULen,
+    /// Rows returned to the application so far in the current result set.
+    /// Reset to 0 on each execution. Used to enforce `max_rows`.
+    pub rows_returned: sql::ULen,
+    /// `SQL_ATTR_CONCURRENCY` — cursor concurrency (default SQL_CONCUR_READ_ONLY = 1).
+    pub concurrency: sql::ULen,
+    /// `SQL_ATTR_CURSOR_SCROLLABLE` — cursor scrollability (default SQL_NONSCROLLABLE = 0).
+    pub cursor_scrollable: sql::ULen,
+    /// `SQL_ATTR_CURSOR_SENSITIVITY` — cursor sensitivity (default SQL_UNSPECIFIED = 0).
+    pub cursor_sensitivity: sql::ULen,
+    /// `SQL_ATTR_KEYSET_SIZE` — keyset size for keyset-driven cursors (default 0).
+    pub keyset_size: sql::ULen,
+    /// `SQL_ATTR_SIMULATE_CURSOR` — simulate positioned update/delete (default SQL_SC_NON_UNIQUE = 0).
+    pub simulate_cursor: sql::ULen,
+    /// `SQL_ATTR_RETRIEVE_DATA` — whether to retrieve data after positioned update (default SQL_RD_ON = 1).
+    pub retrieve_data: sql::ULen,
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — query ID from the last successful execution (read-only).
+    /// `None` before any execution; `Some("")` if sf_core returned an empty string.
     pub last_query_id: Option<String>,
-    /// Cancelled by `SQLCancel` (possibly from another thread) and observed
-    /// by execution functions via `tokio::select!` when cross-thread cancel
-    /// is wired up. Replaced with a fresh token at the start of each
-    /// execution/prepare call so that stale cancels do not affect new ops.
-    pub cancel_token: CancellationToken,
+    /// Child query IDs for multi-statement execution (consumed by SQLMoreResults).
+    pub multi_query_ids: Vec<String>,
+    /// Index of the next child result to fetch in `multi_query_ids`.
+    pub multi_current_idx: usize,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — multi-statement execution count.
+    /// -1 = auto-detect (default), 0 = single statement, N > 0 = expect exactly N statements.
+    pub multi_statement_count: i16,
+    /// `SQL_ATTR_ASYNC_ENABLE` — whether async polling is enabled (default false).
+    pub async_enabled: bool,
 }
 
-/// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
-// The conn raw pointer is valid for the Statement's lifetime (Connection outlives Statement).
-// `Send` allows moving the allocation across threads (e.g. when the runtime hands the raw
-// Arc pointer back on an arbitrary thread). `Sync` is NOT implemented: sharing `&Statement`
-// across threads is unsound because `conn` is a `*mut Connection` with no synchronisation.
-// Connection itself uses `unsafe impl Send` to suppress auto-trait checks on the
-// `Vec<(Weak<Statement>, *const Statement)>` field, so `Statement: Sync` is not required
-// for `Connection: Send`.
-unsafe impl Send for Statement {}
+// Safety: StatementInner contains raw pointers (descriptor fields like bind_offset_ptr,
+// array_status_ptr) that make it !Send + !Sync. These are application-owned pointers
+// that are only dereferenced on the calling thread. This temporary unsafe impl allows
+// Mutex<StatementInner> to work; PR 5 removes it by adding proper interior mutability.
+unsafe impl Send for StatementInner {}
+unsafe impl Sync for StatementInner {}
 
 impl Statement {
     /// Construct a new Statement for the given connection.
-    pub fn new(conn: *mut Connection, stmt_handle: StatementHandle) -> Self {
+    pub fn new(conn_id: HandleId, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
         Self {
-            conn,
+            conn_id,
             stmt_handle,
-            state: StatementState::Created.into(),
-            ard: ArdDescriptor::new(),
-            ird: IrdDescriptor::new(),
-            apd: ApdDescriptor::new(),
-            ipd: IpdDescriptor::new(),
-            diagnostic_info: DiagnosticInfo::default(),
-            get_data_state: None,
-            cursor_type: CursorType::ForwardOnly,
-            max_length: 0,
-            used_extended_fetch: false,
-            last_query_id: None,
-            cancel_token: CancellationToken::new(),
+            inner: parking_lot::Mutex::new(StatementInner {
+                state: StatementState::Created.into(),
+                ard: ArdDescriptor::new(),
+                ird: IrdDescriptor::new(),
+                apd: ApdDescriptor::new(),
+                ipd: IpdDescriptor::new(),
+                diagnostic_info: DiagnosticInfo::default(),
+                get_data_state: None,
+                cursor_type: CursorType::ForwardOnly,
+                max_length: 0,
+                used_extended_fetch: false,
+                prepared_param_count: None,
+                metadata_id,
+                query_timeout: 0,
+                noscan: SQL_NOSCAN_OFF,
+                max_rows: 0,
+                rows_returned: 0,
+                concurrency: SQL_CONCUR_READ_ONLY,
+                cursor_scrollable: SQL_NONSCROLLABLE,
+                cursor_sensitivity: SQL_UNSPECIFIED,
+                keyset_size: 0,
+                simulate_cursor: SQL_SC_NON_UNIQUE,
+                retrieve_data: SQL_RD_ON,
+                last_query_id: None,
+                multi_query_ids: Vec::new(),
+                multi_current_idx: 0,
+                multi_statement_count: -1,
+                async_enabled: false,
+            }),
+            cancel_token: parking_lot::Mutex::new(None),
         }
     }
 
-    /// Borrow the owning connection.
+    /// Look up the parent connection via the global dbc_registry.
     ///
-    /// # Safety
-    /// The caller must ensure the Connection outlives this borrow and no other
-    /// mutable reference to the Connection exists simultaneously.
-    pub unsafe fn conn(&self) -> &Connection {
-        debug_assert!(
-            !self.conn.is_null(),
-            "Statement::conn: connection pointer is null"
-        );
-        unsafe { &*self.conn }
-    }
-
-    /// Return the raw connection pointer without creating a Rust borrow on `self`.
+    /// Callers should take this guard only when they will (a) lock
+    /// `dbc.connection`, (b) read the session `conn_handle` from
+    /// `ConnectionState::Connected`, or (c) otherwise dereference connection
+    /// state. Functions that only mutate `Statement::inner` or
+    /// `Statement::cancel_token` (e.g. `SQLBindCol`, `SQLBindParameter`,
+    /// `SQLPutData`, `SQLSetStmtAttr`, `SQLCancel`) do not need this.
     ///
-    /// Use this when you need both a `&mut Connection` and access to other
-    /// `Statement` fields in the same scope — the raw pointer carries no borrow
-    /// on `self`, so the borrow checker treats the resulting `&mut Connection`
-    /// as independent.
-    ///
-    /// # Safety
-    /// The caller must ensure that no live `conn()` borrow (or any other `&Connection`
-    /// derived from this statement) exists while the returned pointer is dereferenced
-    /// mutably. Having both an active `&Connection` and a `&mut Connection` pointing
-    /// to the same allocation is undefined behaviour.
-    pub(crate) unsafe fn conn_ptr(&self) -> *mut Connection {
-        self.conn
+    /// Returns an error if the parent connection has already been freed.
+    pub fn conn(&self) -> OdbcResult<HandleGuard<Dbc>> {
+        global()
+            .context(OdbcRuntimeSnafu)?
+            .dbc_registry
+            .get(self.conn_id)
     }
 }
 
 // Helper functions for handle conversion
-pub fn env_from_handle<'a>(handle: sql::Handle) -> &'a mut Environment {
-    let env_ptr = handle as *mut Environment;
-    unsafe { env_ptr.as_mut().unwrap() }
+pub fn env_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Env>> {
+    let handle_id = HandleId::from(handle);
+    global()
+        .context(OdbcRuntimeSnafu)?
+        .env_registry
+        .get(handle_id)
 }
 
-pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Connection {
-    let conn_ptr = handle as *mut Connection;
-    unsafe { conn_ptr.as_mut().unwrap() }
+pub fn conn_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Dbc>> {
+    let handle_id = HandleId::from(handle);
+    global()
+        .context(OdbcRuntimeSnafu)?
+        .dbc_registry
+        .get(handle_id)
 }
 
-pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement {
-    let stmt_ptr = handle as *mut Statement;
-    unsafe { stmt_ptr.as_mut().unwrap() }
+pub fn stmt_from_handle(handle: sql::Handle) -> OdbcResult<HandleGuard<Statement>> {
+    let handle_id = HandleId::from(handle);
+    global()
+        .context(OdbcRuntimeSnafu)?
+        .stmt_registry
+        .get(handle_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the Snowflake-vendor-code → standard-ODBC-type normalisation that
+    /// `bind_parameter` relies on to keep `SQLDescribeParam` and
+    /// `SQLGetDescField(IPD, SQL_DESC_TYPE)` returning spec-mandated codes.
+    #[test]
+    fn from_parameter_type_recognises_vendor_codes() {
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(SQL_SF_TIMESTAMP_NTZ),
+            Some(TimestampSubtype::Ntz)
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(SQL_SF_TIMESTAMP_LTZ),
+            Some(TimestampSubtype::Ltz)
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(SQL_SF_TIMESTAMP_TZ),
+            Some(TimestampSubtype::Tz)
+        );
+    }
+
+    /// Standard ODBC SQL type codes -- and TIMESTAMP in particular -- must
+    /// not be classified as vendor opt-ins. `None` here is what keeps the
+    /// dispatch in `make_converter` defaulting to NTZ for backward-compat
+    /// callers that bind via the standard `SQL_TYPE_TIMESTAMP`.
+    #[test]
+    fn from_parameter_type_returns_none_for_standard_codes() {
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType::TIMESTAMP),
+            None
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType::INTEGER),
+            None
+        );
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType::VARCHAR),
+            None
+        );
+        // SQL_TYPE_TIMESTAMP_WITH_TIMEZONE (95) is a standard ODBC type, not
+        // the Snowflake vendor TZ code (2001), and must not be treated as one.
+        assert_eq!(
+            TimestampSubtype::from_parameter_type(sql::SqlDataType(95)),
+            None
+        );
+    }
+
+    /// Pin the on-the-wire mapping for `SQLGetInfo` codes the new ODBC driver
+    /// claims to support. Excel/PowerQuery probes 6/7/17/18/77/81 during
+    /// `SQLDriverConnect`; bumping these values breaks the AS-bound trace
+    /// replay tests and breaks application discovery.
+    #[test]
+    fn info_type_try_from_round_trip() {
+        assert_eq!(InfoType::try_from(6_u16).unwrap(), InfoType::DriverName);
+        assert_eq!(InfoType::try_from(7_u16).unwrap(), InfoType::DriverVer);
+        assert_eq!(InfoType::try_from(17_u16).unwrap(), InfoType::DbmsName);
+        assert_eq!(InfoType::try_from(18_u16).unwrap(), InfoType::DbmsVer);
+        assert_eq!(
+            InfoType::try_from(23_u16).unwrap(),
+            InfoType::CursorCommitBehavior
+        );
+        assert_eq!(
+            InfoType::try_from(24_u16).unwrap(),
+            InfoType::CursorRollbackBehavior
+        );
+        assert_eq!(InfoType::try_from(77_u16).unwrap(), InfoType::DriverOdbcVer);
+        assert_eq!(
+            InfoType::try_from(81_u16).unwrap(),
+            InfoType::GetDataExtensions
+        );
+
+        match InfoType::try_from(9999_u16) {
+            Err(OdbcError::UnknownInfoType { info_type, .. }) => assert_eq!(info_type, 9999),
+            other => panic!("expected UnknownInfoType, got {other:?}"),
+        }
+    }
+
+    /// Excel uses `SQLColAttribute(SQL_DESC_NAME)` and `SQL_DESC_LENGTH` while
+    /// rendering result-set previews. Pin the discriminants so descriptor
+    /// dispatch keeps routing to the column-name / column-size code paths.
+    #[test]
+    fn desc_field_try_from_round_trip() {
+        assert_eq!(DescField::try_from(1003_i16).unwrap(), DescField::Length);
+        assert_eq!(DescField::try_from(1011_i16).unwrap(), DescField::Name);
+        assert_eq!(DescField::try_from(2_i16).unwrap(), DescField::ConciseType);
+        assert_eq!(DescField::try_from(1002_i16).unwrap(), DescField::Type);
+
+        match DescField::try_from(-1_i16) {
+            Err(OdbcError::UnknownAttribute { attribute, .. }) => assert_eq!(attribute, -1),
+            other => panic!("expected UnknownAttribute, got {other:?}"),
+        }
+    }
 }

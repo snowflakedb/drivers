@@ -35,6 +35,9 @@ tests/wiremock/__files/*
 # Generated protobuf Rust code (built on the fly via build.rs)
 sf_core/src/protobuf_gen/database_driver_v1.rs
 
+# Generated ODBC version header (built on the fly via build.rs)
+odbc/src/setup/version_generated.h
+
 # Generated protobuf Python code (built on the fly via hatch_build.py)
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.pyi
@@ -47,3 +50,6 @@ jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDr
 
 .DS_Store
 tests/test_data/generated_test_data/chunks/
+
+# CI test matrix generated files -- produced at runtime by ci/test_matrix/generate_matrix.py
+ci/test_matrix/generated/

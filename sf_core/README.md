@@ -46,6 +46,34 @@ cargo test -- --include-ignored
 
 **Note:** VPN tests are skipped in GitHub Actions CI (no VPN access). Run them on Jenkins or locally with VPN.
 
+### Flaky Tests
+
+Tests that fail intermittently (e.g., due to CI runner timing, server-side propagation delays, or OS credential manager races) are marked with the `flaky_` prefix and `#[ignore]` (or platform-conditional `#[cfg_attr(target_os = "...", ignore)]`).
+
+```rust
+// Flaky everywhere
+#[test]
+#[ignore]
+fn flaky_example_test() { ... }
+
+// Flaky only on Windows
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn flaky_keyring_race_condition() { ... }
+```
+
+CI runs flaky tests in a separate non-blocking step for visibility:
+
+```bash
+# Run only flaky tests (non-blocking in CI)
+cargo test -- --ignored flaky_
+```
+
+**Naming conventions for `#[ignore]` tests:**
+- `flaky_` prefix → Intermittently failing (non-blocking CI step)
+- `vpn_` prefix → Requires VPN access (Jenkins only)
+- No prefix → Manual/slow tests (never run in CI)
+
 ### Requirements
 
 - `PARAMETER_PATH` environment variable pointing to `parameters.json`

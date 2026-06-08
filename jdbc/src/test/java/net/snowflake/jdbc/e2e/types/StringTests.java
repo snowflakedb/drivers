@@ -12,7 +12,7 @@ import java.sql.ResultSet;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
-import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class StringTests extends SnowflakeIntegrationTestBase {

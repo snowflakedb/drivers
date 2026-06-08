@@ -1,17 +1,14 @@
-use crate::chunks::ChunkDownloadData;
 use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
-use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
-use crate::rest::snowflake::error::SfError;
+use crate::http::retry::{HttpContext, execute_with_retry};
+use crate::rest::snowflake::error::{SfError, current_location, map_http_error};
 use crate::rest::snowflake::{
-    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_request,
-    query_response,
+    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_log_fields,
+    query_request, query_response,
 };
 use reqwest::{Method, StatusCode};
-use snafu::Location;
-use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
-use tracing::debug;
+use tracing::{debug, info};
 use url::Url;
 
 const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
@@ -21,6 +18,13 @@ const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
     Duration::from_millis(40),
 ];
 const QUERY_SEQUENCE_ID: u64 = 1;
+
+/// Maximum wall-clock time the driver will spend polling for a single
+/// statement's completion. `None` means unbounded — poll until Snowflake
+/// returns data or a terminal error.
+///
+/// TODO: plumb a caller-supplied `statement_timeout` (e.g. configuration) so users can cap long-running queries.
+const STATEMENT_POLL_DEADLINE: Option<Duration> = None;
 
 /// Metrics for async query execution phases, logged for monitoring and debugging.
 ///
@@ -74,7 +78,7 @@ impl AsyncExecutionMetrics {
         self.wait = Some(WaitMetrics { duration, polls });
     }
 
-    fn emit(&self) {
+    fn emit(&self, label: &str) {
         fn ms(d: Duration) -> f64 {
             d.as_secs_f64() * 1000.0
         }
@@ -86,7 +90,7 @@ impl AsyncExecutionMetrics {
 
         debug!(
             submit_ms = ms(self.submit),
-            inline_ms, inline_completed, wait_ms, wait_polls, "async execution timings"
+            inline_ms, inline_completed, wait_ms, wait_polls, label,
         );
     }
 }
@@ -101,6 +105,7 @@ fn join_server_path(server_url: &str, path: &str) -> Result<String, SfError> {
             location: current_location(),
         })
 }
+
 pub struct SubmitOk {
     pub query_id: Option<String>,
     pub get_result_url: Option<String>,
@@ -115,7 +120,7 @@ fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request:
         query_submission_time: current_epoch_millis(),
         is_internal: false,
         describe_only: query_input.describe_only,
-        parameters: None,
+        parameters: query_input.query_parameters.clone(),
         bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
@@ -152,12 +157,7 @@ async fn parse_submit_response(
     let parsed: query_response::Response =
         serde_json::from_slice(&body_bytes).map_err(|source| body_parse_error(source))?;
     let query_id = parsed.data.query_id.clone();
-    let get_result_url = parsed
-        .data
-        .get_result_url
-        .as_deref()
-        .map(|u| normalize_get_result_url(server_url, u))
-        .transpose()?;
+    let get_result_url = extract_result_url_from_response(server_url, &parsed)?;
     debug!(
         success = parsed.success,
         rowset_present = parsed.data.rowset.is_some(),
@@ -197,6 +197,14 @@ pub async fn submit_statement_async<'a>(
     let server_url = &params.server_url;
     let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
+    // query logging guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(params, query_input);
+    info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing async query"
+    );
     let request_body = build_async_query_request(query_input);
     let submit_request = || {
         build_submit_request(
@@ -217,7 +225,7 @@ pub async fn submit_statement_async<'a>(
     parse_submit_response(server_url, response).await
 }
 
-pub async fn poll_query_status(
+pub(super) async fn poll_query_status(
     client: &reqwest::Client,
     client_info: &ClientInfo,
     session_token: &str,
@@ -258,7 +266,7 @@ pub async fn poll_query_status(
     Ok(parsed)
 }
 
-pub async fn execute_blocking_with_async<'a>(
+pub(super) async fn execute_blocking_with_async<'a>(
     client: &reqwest::Client,
     params: &QueryParameters,
     session_token: &str,
@@ -266,6 +274,14 @@ pub async fn execute_blocking_with_async<'a>(
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
+    // query logging guarded with: log_query_text, log_query_parameters
+    let (sql, bindings) = query_log_fields(params, query_input);
+    info!(
+        request_id = %request_id,
+        sql = sql,
+        bindings = bindings,
+        "Executing sync query"
+    );
     let client_info = &params.client_info;
     let mut metrics = AsyncExecutionMetrics::default();
     let submit_start = Instant::now();
@@ -293,25 +309,16 @@ pub async fn execute_blocking_with_async<'a>(
                 location: current_location(),
             })?;
 
-        let inline_start = Instant::now();
-        match inline_poll_for_completion(client, client_info, session_token, result_url, policy)
-            .await?
-        {
-            Some(inline) => {
-                metrics.record_inline(inline_start.elapsed(), true);
-                response = inline;
-            }
-            None => {
-                metrics.record_inline(inline_start.elapsed(), false);
-                let wait_start = Instant::now();
-                let (waited, polls) =
-                    wait_for_completion(client, client_info, session_token, result_url, policy)
-                        .await?;
-                metrics.record_wait(wait_start.elapsed(), polls);
-                response = waited;
-            }
-        }
-    }
+        response = poll_for_result(
+            client,
+            client_info,
+            session_token,
+            result_url,
+            policy,
+            &mut metrics,
+        )
+        .await?
+    };
 
     response
         .data
@@ -322,49 +329,8 @@ pub async fn execute_blocking_with_async<'a>(
             location: current_location(),
         })?;
 
-    metrics.emit();
+    metrics.emit("async execution timings");
     Ok(response)
-}
-
-#[track_caller]
-fn current_location() -> Location {
-    let caller = StdLocation::caller();
-    Location::new(caller.file(), caller.line(), caller.column())
-}
-
-#[track_caller]
-fn map_http_error(err: HttpError) -> SfError {
-    let location = current_location();
-    match err {
-        HttpError::Transport { source, .. } => SfError::Transport { source, location },
-        HttpError::DeadlineExceeded {
-            configured,
-            elapsed,
-            ..
-        } => SfError::DeadlineExceeded {
-            configured,
-            elapsed,
-            location,
-        },
-        HttpError::MaxAttempts {
-            attempts,
-            last_status,
-            ..
-        } => SfError::RetryAttemptsExhausted {
-            attempts,
-            last_status,
-            location,
-        },
-        HttpError::RetryAfterExceeded {
-            retry_after,
-            remaining,
-            ..
-        } => SfError::RetryBudgetExceeded {
-            retry_after,
-            remaining,
-            location,
-        },
-    }
 }
 
 #[track_caller]
@@ -397,20 +363,16 @@ fn http_status_error(status: StatusCode) -> SfError {
     }
 }
 
-pub async fn refresh_chunk_download_data_from_get_result(
-    client: &reqwest::Client,
-    client_info: &ClientInfo,
-    session_token: &str,
-    get_result_url: &str,
-    policy: &RetryPolicy,
-) -> Result<Option<Vec<ChunkDownloadData>>, SfError> {
-    let resp =
-        poll_query_status(client, client_info, session_token, get_result_url, policy).await?;
-    if resp.success {
-        Ok(resp.data.to_chunk_download_data())
-    } else {
-        Ok(None)
-    }
+fn extract_result_url_from_response(
+    server_url: &str,
+    response: &query_response::Response,
+) -> Result<Option<String>, SfError> {
+    response
+        .data
+        .get_result_url
+        .as_deref()
+        .map(|u| normalize_get_result_url(server_url, u))
+        .transpose()
 }
 
 fn normalize_get_result_url(base: &str, url: &str) -> Result<String, SfError> {
@@ -432,7 +394,7 @@ fn normalize_get_result_url(base: &str, url: &str) -> Result<String, SfError> {
     Ok(joined.to_string())
 }
 
-fn should_poll_for_completion(resp: &query_response::Response) -> bool {
+pub(super) fn should_poll_for_completion(resp: &query_response::Response) -> bool {
     resp.data
         .get_result_url
         .as_ref()
@@ -465,9 +427,11 @@ async fn inline_poll_for_completion(
 /// Poll Snowflake for completion, starting with a burst of short delays
 /// and then degrading into retry-policy-driven exponential backoff.
 /// Each HTTP poll flows through the shared retry helper so transport
-/// or retryable status failures are retried automatically. We stop
-/// polling once tabular data arrives, Snowflake returns a terminal
-/// error, or the overall deadline / retry budget is exhausted.
+/// or retryable status failures are retried automatically.
+///
+/// The outer loop is bounded only by [`STATEMENT_POLL_DEADLINE`] (unbounded
+/// by default). `policy.max_elapsed` bounds each individual HTTP poll's
+/// internal retry budget — it does NOT cap total query wall-clock time.
 async fn wait_for_completion(
     client: &reqwest::Client,
     client_info: &ClientInfo,
@@ -481,13 +445,15 @@ async fn wait_for_completion(
     let mut polls: usize = 0;
 
     loop {
-        let elapsed = start.elapsed();
-        if elapsed >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed,
-                location: current_location(),
-            });
+        if let Some(deadline) = STATEMENT_POLL_DEADLINE {
+            let elapsed = start.elapsed();
+            if elapsed >= deadline {
+                return Err(SfError::DeadlineExceeded {
+                    configured: deadline,
+                    elapsed,
+                    location: current_location(),
+                });
+            }
         }
 
         let delay = if attempt < INLINE_SHORT_POLL_DELAYS.len() {
@@ -499,42 +465,89 @@ async fn wait_for_completion(
         attempt += 1;
 
         if !delay.is_zero() {
-            let sleep_deadline = start.elapsed() + delay;
-            if sleep_deadline >= policy.max_elapsed {
-                return Err(SfError::DeadlineExceeded {
-                    configured: policy.max_elapsed,
-                    elapsed,
-                    location: current_location(),
-                });
+            if let Some(deadline) = STATEMENT_POLL_DEADLINE {
+                let would_wake = start.elapsed() + delay;
+                if would_wake >= deadline {
+                    return Err(SfError::DeadlineExceeded {
+                        configured: deadline,
+                        elapsed: start.elapsed(),
+                        location: current_location(),
+                    });
+                }
             }
             tokio::time::sleep(delay).await;
         }
 
-        let elapsed_after_sleep = start.elapsed();
-        if elapsed_after_sleep >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed: elapsed_after_sleep,
-                location: current_location(),
-            });
-        }
-
-        let remaining = policy
-            .max_elapsed
-            .checked_sub(elapsed_after_sleep)
-            .unwrap_or_default()
-            .max(Duration::from_millis(1));
-
-        let mut poll_policy = policy.clone();
-        poll_policy.max_elapsed = remaining;
         let response =
-            poll_query_status(client, client_info, session_token, result_url, &poll_policy).await?;
+            poll_query_status(client, client_info, session_token, result_url, policy).await?;
         polls += 1;
 
         if let Some(done) = handle_poll_response(response, false)? {
             return Ok((done, polls));
         }
     }
+}
+
+/// Poll a result URL until the query completes, using an immediate inline
+/// poll followed by exponential-backoff waiting if needed.
+///
+/// Shared by both the async execution path (after async submit) and the
+/// detached query path (after sync submit returned an "in progress" code).
+async fn poll_for_result(
+    client: &reqwest::Client,
+    client_info: &ClientInfo,
+    session_token: &str,
+    result_url: &str,
+    policy: &RetryPolicy,
+    metrics: &mut AsyncExecutionMetrics,
+) -> Result<query_response::Response, SfError> {
+    let inline_start = Instant::now();
+    let inline_result =
+        inline_poll_for_completion(client, client_info, session_token, result_url, policy).await?;
+
+    match inline_result {
+        Some(response) => {
+            metrics.record_inline(inline_start.elapsed(), true);
+            Ok(response)
+        }
+        None => {
+            metrics.record_inline(inline_start.elapsed(), false);
+            let wait_start = Instant::now();
+            let (response, polls) =
+                wait_for_completion(client, client_info, session_token, result_url, policy).await?;
+            metrics.record_wait(wait_start.elapsed(), polls);
+            Ok(response)
+        }
+    }
+}
+
+/// Poll for the result of a detached query — a sync submission that returned
+/// a `get_result_url` without tabular data, indicating the server is still
+/// processing.
+pub(super) async fn poll_detached_query(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    response: &query_response::Response,
+    policy: &RetryPolicy,
+) -> Result<query_response::Response, SfError> {
+    let result_url = extract_result_url_from_response(&query_parameters.server_url, response)?
+        .ok_or_else(|| SfError::MissingResultUrl {
+            location: current_location(),
+        })?;
+
+    let mut metrics = AsyncExecutionMetrics::default();
+    let result = poll_for_result(
+        client,
+        &query_parameters.client_info,
+        session_token,
+        &result_url,
+        policy,
+        &mut metrics,
+    )
+    .await;
+    metrics.emit("detached query poll timings");
+    result
 }
 
 /// Error code 612 indicates "Result not found" - typically returned when
@@ -621,33 +634,132 @@ mod tests {
         serde_json::from_value(value).expect("valid response JSON")
     }
 
-    #[test]
-    fn should_not_poll_when_failure_has_no_result_url() {
-        let resp = response_from_json(json!({
-            "success": false,
+    fn response_with_result_url(url: &str) -> serde_json::Value {
+        json!({
+            "success": true,
             "data": {
+                "getResultUrl": url,
                 "rowset": null,
-                "rowsetBase64": null
+                "rowsetBase64": null,
+                "chunks": null,
             }
-        }));
+        })
+    }
 
+    // ── should_poll_for_completion ──────────────────────────────────
+
+    #[test]
+    fn should_not_poll_when_no_result_url() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": { "rowset": null, "rowsetBase64": null }
+        }));
         assert!(!should_poll_for_completion(&resp));
     }
 
     #[test]
     fn should_poll_when_result_url_present_and_no_data() {
+        let resp = response_from_json(response_with_result_url("https://example.test"));
+        assert!(should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_not_poll_when_result_url_present_but_rowset_exists() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": [["1"]],
+                "rowsetBase64": null,
+            }
+        }));
+        assert!(!should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_not_poll_when_result_url_present_but_rowset_base64_exists() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": "AAAA",
+            }
+        }));
+        assert!(!should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_not_poll_when_result_url_present_but_chunks_exist() {
         let resp = response_from_json(json!({
             "success": true,
             "data": {
                 "getResultUrl": "https://example.test",
                 "rowset": null,
                 "rowsetBase64": null,
-                "chunks": null
+                "chunks": [{"url": "https://chunk.test", "rowCount": 10, "uncompressedSize": 100, "compressedSize": 50}],
             }
         }));
+        assert!(!should_poll_for_completion(&resp));
+    }
 
+    #[test]
+    fn should_poll_when_chunks_is_empty_array() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": null,
+                "chunks": [],
+            }
+        }));
         assert!(should_poll_for_completion(&resp));
     }
+
+    #[test]
+    fn should_not_poll_when_failure_has_no_result_url() {
+        let resp = response_from_json(json!({
+            "success": false,
+            "data": { "rowset": null, "rowsetBase64": null }
+        }));
+        assert!(!should_poll_for_completion(&resp));
+    }
+
+    // ── extract_result_url_from_response ───────────────────────────
+
+    #[test]
+    fn extract_result_url_returns_none_when_absent() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": { "rowset": null, "rowsetBase64": null }
+        }));
+        assert!(
+            extract_result_url_from_response("https://base.test", &resp)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn extract_result_url_normalizes_relative_path() {
+        let resp = response_from_json(response_with_result_url("/queries/abc/result"));
+        let url = extract_result_url_from_response("https://base.test", &resp)
+            .unwrap()
+            .unwrap();
+        assert_eq!(url, "https://base.test/queries/abc/result");
+    }
+
+    #[test]
+    fn extract_result_url_passes_through_absolute_url() {
+        let resp = response_from_json(response_with_result_url("https://other.test/result"));
+        let url = extract_result_url_from_response("https://base.test", &resp)
+            .unwrap()
+            .unwrap();
+        assert_eq!(url, "https://other.test/result");
+    }
+
+    // ── http_status_error ──────────────────────────────────────────
 
     #[test]
     fn http_401_returns_session_expired() {
@@ -669,6 +781,8 @@ mod tests {
             other => panic!("expected HttpStatus, got {:?}", other),
         }
     }
+
+    // ── snowflake error ──────────────────────────────────────────
 
     #[test]
     fn error_612_returns_async_poll_result_not_found() {
@@ -708,5 +822,53 @@ mod tests {
             "expected AsyncPollResultNotFound with is_first_poll=false, got {:?}",
             err
         );
+    }
+
+    // ── handle_poll_response ───────────────────────────────────────
+
+    #[test]
+    fn handle_poll_success_with_data_returns_response() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": { "rowset": [["1"]], "rowsetBase64": null }
+        }));
+        let result = handle_poll_response(resp, true).unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn handle_poll_success_with_result_url_but_no_data_continues() {
+        let resp = response_from_json(response_with_result_url("https://example.test"));
+        let result = handle_poll_response(resp, true).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn handle_poll_failure_with_result_url_continues() {
+        let resp = response_from_json(json!({
+            "success": false,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": null,
+            }
+        }));
+        let result = handle_poll_response(resp, false).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn handle_poll_failure_without_result_url_returns_error() {
+        let resp = response_from_json(json!({
+            "success": false,
+            "code": "1003",
+            "message": "Syntax error",
+            "data": { "rowset": null, "rowsetBase64": null }
+        }));
+        match handle_poll_response(resp, false) {
+            Err(SfError::SnowflakeBody { code: 1003, .. }) => {}
+            Err(other) => panic!("expected SnowflakeBody(1003), got {other:?}"),
+            Ok(_) => panic!("expected error, got Ok"),
+        }
     }
 }

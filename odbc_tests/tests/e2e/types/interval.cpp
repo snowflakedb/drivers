@@ -225,19 +225,39 @@ TEST_CASE("should select INTERVAL DAY TO HOUR literals", "[interval]") {
   Connection conn;
 
   // When Query "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR,
-  //   '-1 2'::INTERVAL DAY TO HOUR, '999999999 23'::INTERVAL DAY TO HOUR,
-  //   '-999999999 23'::INTERVAL DAY TO HOUR" is executed
+  //   '-1 2'::INTERVAL DAY TO HOUR" is executed
   auto stmt = conn.execute_fetch(
       "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR, "
-      "'-1 2'::INTERVAL DAY TO HOUR, '999999999 23'::INTERVAL DAY TO HOUR, "
-      "'-999999999 23'::INTERVAL DAY TO HOUR");
+      "'-1 2'::INTERVAL DAY TO HOUR");
 
   // Then the result should contain expected INTERVAL DAY TO HOUR literal values in order
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.00000");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "936000000.00000");
   CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-936000000.00000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "863999999964000000.00000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-863999999964000000.00000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO HOUR max literal", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT '999999999 23'::INTERVAL DAY TO HOUR" is executed
+  auto stmt = conn.execute_fetch("SELECT '999999999 23'::INTERVAL DAY TO HOUR");
+
+  // Then the result should contain expected INTERVAL DAY TO HOUR max value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "863999999964000000.00000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO HOUR min literal", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT '-999999999 23'::INTERVAL DAY TO HOUR" is executed
+  auto stmt = conn.execute_fetch("SELECT '-999999999 23'::INTERVAL DAY TO HOUR");
+
+  // Then the result should contain expected INTERVAL DAY TO HOUR min value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-863999999964000000.00000");
 }
 
 TEST_CASE("should select INTERVAL DAY TO MINUTE literals", "[interval]") {
@@ -246,19 +266,39 @@ TEST_CASE("should select INTERVAL DAY TO MINUTE literals", "[interval]") {
   Connection conn;
 
   // When Query "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE,
-  //   '-1 2:30'::INTERVAL DAY TO MINUTE, '999999999 23:59'::INTERVAL DAY TO MINUTE,
-  //   '-999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+  //   '-1 2:30'::INTERVAL DAY TO MINUTE" is executed
   auto stmt = conn.execute_fetch(
       "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE, "
-      "'-1 2:30'::INTERVAL DAY TO MINUTE, '999999999 23:59'::INTERVAL DAY TO MINUTE, "
-      "'-999999999 23:59'::INTERVAL DAY TO MINUTE");
+      "'-1 2:30'::INTERVAL DAY TO MINUTE");
 
   // Then the result should contain expected INTERVAL DAY TO MINUTE literal values in order
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0.0000");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "9540000000.0000");
   CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-9540000000.0000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "8639999999994000000.0000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "-8639999999994000000.0000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO MINUTE max literal", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+  auto stmt = conn.execute_fetch("SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE");
+
+  // Then the result should contain expected INTERVAL DAY TO MINUTE max value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "8639999999994000000.0000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO MINUTE min literal", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT '-999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+  auto stmt = conn.execute_fetch("SELECT '-999999999 23:59'::INTERVAL DAY TO MINUTE");
+
+  // Then the result should contain expected INTERVAL DAY TO MINUTE min value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-8639999999994000000.0000");
 }
 
 TEST_CASE("should select INTERVAL HOUR TO MINUTE literals", "[interval]") {
@@ -366,10 +406,10 @@ TEST_CASE("should select INTERVAL YEAR TO MONTH values from table", "[interval]"
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR TO MONTH column is created
-  conn.execute("CREATE TABLE interval_ym_table (C1 INTERVAL YEAR TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_ym_table (C1 INTERVAL YEAR TO MONTH)");
 
   // And The table is populated with YEAR TO MONTH values including corner cases
   conn.execute(
@@ -404,10 +444,10 @@ TEST_CASE("should select INTERVAL DAY TO SECOND values from table", "[interval]"
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY TO SECOND column is created
-  conn.execute("CREATE TABLE interval_dt_table (C1 INTERVAL DAY TO SECOND)");
+  conn.execute("CREATE TEMPORARY TABLE interval_dt_table (C1 INTERVAL DAY TO SECOND)");
 
   // And The table is populated with DAY TO SECOND values including corner cases
   conn.execute(
@@ -443,10 +483,10 @@ TEST_CASE("should select INTERVAL YEAR(2) TO MONTH values from table", "[interva
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR(2) TO MONTH column is created
-  conn.execute("CREATE TABLE interval_ym2_table (C1 INTERVAL YEAR(2) TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_ym2_table (C1 INTERVAL YEAR(2) TO MONTH)");
 
   // And The table is populated with values ['0-0', '1-2', '-1-3', '99-11', '-99-11', NULL]
   conn.execute(
@@ -481,10 +521,10 @@ TEST_CASE("should select INTERVAL YEAR(7) TO MONTH values from table", "[interva
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR(7) TO MONTH column is created
-  conn.execute("CREATE TABLE interval_ym7_table (C1 INTERVAL YEAR(7) TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_ym7_table (C1 INTERVAL YEAR(7) TO MONTH)");
 
   // And The table is populated with values ['0-0', '1-2', '-1-3', '9999999-11', '-9999999-11', NULL]
   conn.execute(
@@ -519,10 +559,10 @@ TEST_CASE("should select INTERVAL DAY(3) TO SECOND values from table", "[interva
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY(3) TO SECOND column is created
-  conn.execute("CREATE TABLE interval_dt3_table (C1 INTERVAL DAY(3) TO SECOND)");
+  conn.execute("CREATE TEMPORARY TABLE interval_dt3_table (C1 INTERVAL DAY(3) TO SECOND)");
 
   // And The table is populated with values ['0 0:0:0.0', '1 2:3:4.567', '-1 2:3:4.567',
   //   '999 23:59:59.999999', '-999 23:59:59.999999', NULL]
@@ -563,10 +603,10 @@ TEST_CASE("should insert and select back INTERVAL YEAR TO MONTH values using par
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR TO MONTH column is created
-  conn.execute("CREATE TABLE interval_bind_ym (C1 INTERVAL YEAR TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_bind_ym (C1 INTERVAL YEAR TO MONTH)");
 
   // When INTERVAL YEAR TO MONTH values ['0-0', '1-2', '-1-3', '999999999-11', '-999999999-11', NULL]
   //   are inserted using parameter binding
@@ -620,10 +660,10 @@ TEST_CASE("should insert and select back INTERVAL DAY TO SECOND values using par
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY TO SECOND column is created
-  conn.execute("CREATE TABLE interval_bind_dt (C1 INTERVAL DAY TO SECOND)");
+  conn.execute("CREATE TEMPORARY TABLE interval_bind_dt (C1 INTERVAL DAY TO SECOND)");
 
   // When INTERVAL DAY TO SECOND values ['0 0:0:0.0', '12 3:4:5.678', '-1 2:3:4.567',
   //   '99999 23:59:59.999999', '-99999 23:59:59.999999', NULL] are inserted using parameter binding
@@ -995,65 +1035,148 @@ TEST_CASE("should select INTERVAL SECOND values using parameter binding", "[inte
   CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "-999999.999999999000");
 }
 
-TEST_CASE("should select INTERVAL DAY TO HOUR values using parameter binding", "[interval]") {
+TEST_CASE("should select INTERVAL DAY TO HOUR value using parameter binding", "[interval]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When Query "SELECT ?::INTERVAL DAY TO HOUR, ?::INTERVAL DAY TO HOUR"
-  //   is executed with bound string values ['1 2', '-999999999 23']
+  // When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '1 2'
   auto stmt = conn.createStatement();
 
   char v1[] = "1 2";
-  char v2[] = "-999999999 23";
   auto ind1 = static_cast<SQLLEN>(std::strlen(v1));
-  auto ind2 = static_cast<SQLLEN>(std::strlen(v2));
 
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind1, 0, v1, sizeof(v1), &ind1);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind2, 0, v2, sizeof(v2), &ind2);
-  REQUIRE_ODBC(ret, stmt);
 
-  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO HOUR, ?::INTERVAL DAY TO HOUR"), SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO HOUR"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the result should contain expected INTERVAL DAY TO HOUR bound values in order
+  // Then the result should contain expected INTERVAL DAY TO HOUR bound value
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "936000000.00000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "-863999999964000000.00000");
 }
 
-TEST_CASE("should select INTERVAL DAY TO MINUTE values using parameter binding", "[interval]") {
+TEST_CASE("should select INTERVAL DAY TO HOUR max value using parameter binding", "[interval]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When Query "SELECT ?::INTERVAL DAY TO MINUTE, ?::INTERVAL DAY TO MINUTE"
-  //   is executed with bound string values ['1 2:30', '-999999999 23:59']
+  // When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '999999999 23'
   auto stmt = conn.createStatement();
 
-  char v1[] = "1 2:30";
-  char v2[] = "-999999999 23:59";
+  char v1[] = "999999999 23";
   auto ind1 = static_cast<SQLLEN>(std::strlen(v1));
-  auto ind2 = static_cast<SQLLEN>(std::strlen(v2));
 
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind1, 0, v1, sizeof(v1), &ind1);
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind2, 0, v2, sizeof(v2), &ind2);
-  REQUIRE_ODBC(ret, stmt);
 
-  ret =
-      SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO MINUTE, ?::INTERVAL DAY TO MINUTE"), SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO HOUR"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the result should contain expected INTERVAL DAY TO MINUTE bound values in order
+  // Then the result should contain expected INTERVAL DAY TO HOUR max bound value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "863999999964000000.00000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO HOUR min value using parameter binding", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '-999999999 23'
+  auto stmt = conn.createStatement();
+
+  char v1[] = "-999999999 23";
+  auto ind1 = static_cast<SQLLEN>(std::strlen(v1));
+
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind1, 0, v1, sizeof(v1), &ind1);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO HOUR"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the result should contain expected INTERVAL DAY TO HOUR min bound value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-863999999964000000.00000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO MINUTE value using parameter binding", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '1 2:30'
+  auto stmt = conn.createStatement();
+
+  char v1[] = "1 2:30";
+  auto ind1 = static_cast<SQLLEN>(std::strlen(v1));
+
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind1, 0, v1, sizeof(v1), &ind1);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO MINUTE"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the result should contain expected INTERVAL DAY TO MINUTE bound value
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9540000000.0000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "-8639999999994000000.0000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO MINUTE max value using parameter binding", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '999999999 23:59'
+  auto stmt = conn.createStatement();
+
+  char v1[] = "999999999 23:59";
+  auto ind1 = static_cast<SQLLEN>(std::strlen(v1));
+
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind1, 0, v1, sizeof(v1), &ind1);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO MINUTE"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the result should contain expected INTERVAL DAY TO MINUTE max bound value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "8639999999994000000.0000");
+}
+
+TEST_CASE("should select INTERVAL DAY TO MINUTE min value using parameter binding", "[interval]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '-999999999 23:59'
+  auto stmt = conn.createStatement();
+
+  char v1[] = "-999999999 23:59";
+  auto ind1 = static_cast<SQLLEN>(std::strlen(v1));
+
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, ind1, 0, v1, sizeof(v1), &ind1);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::INTERVAL DAY TO MINUTE"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the result should contain expected INTERVAL DAY TO MINUTE min bound value
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-8639999999994000000.0000");
 }
 
 TEST_CASE("should select INTERVAL HOUR TO MINUTE values using parameter binding", "[interval]") {

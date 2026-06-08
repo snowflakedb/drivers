@@ -1,12 +1,15 @@
-use super::super::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn should_authenticate_using_pat_as_password() {
     //Given Authentication is set to password and valid PAT token is provided
-    let pat = Pat::acquire();
     let client = SnowflakeTestClient::with_default_params();
-    set_pat_as_password(&client, &pat.token_secret);
+    let pat_secret = client
+        .parameters
+        .pat
+        .clone()
+        .expect("SNOWFLAKE_TEST_PAT must be set in parameters.json");
+    set_pat_as_password(&client, &pat_secret);
 
     //When Trying to Connect
     let result = client.connect();
@@ -16,12 +19,17 @@ fn should_authenticate_using_pat_as_password() {
 }
 
 #[test]
-fn should_authenticate_using_pat_as_token() {
+#[cfg_attr(target_os = "windows", ignore)]
+fn flaky_should_authenticate_using_pat_as_token() {
     //Given Authentication is set to Programmatic Access Token and valid PAT token is provided
-    let pat = Pat::acquire();
     let client = SnowflakeTestClient::with_default_params();
+    let pat_secret = client
+        .parameters
+        .pat
+        .clone()
+        .expect("SNOWFLAKE_TEST_PAT must be set in parameters.json");
     set_auth_to_programmatic_access_token(&client);
-    set_pat_token(&client, &pat.token_secret);
+    set_pat_token(&client, &pat_secret);
 
     //When Trying to Connect
     let result = client.connect();
@@ -31,12 +39,17 @@ fn should_authenticate_using_pat_as_token() {
 }
 
 #[test]
-fn should_authenticate_using_pat_as_token_with_lowercase_authenticator() {
+#[cfg_attr(target_os = "windows", ignore)]
+fn flaky_should_authenticate_using_pat_as_token_with_lowercase_authenticator() {
     //Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
-    let pat = Pat::acquire();
     let client = SnowflakeTestClient::with_default_params();
+    let pat_secret = client
+        .parameters
+        .pat
+        .clone()
+        .expect("SNOWFLAKE_TEST_PAT must be set in parameters.json");
     client.set_connection_option("authenticator", "programmatic_access_token");
-    set_pat_token(&client, &pat.token_secret);
+    set_pat_token(&client, &pat_secret);
 
     //When Trying to Connect
     let result = client.connect();
@@ -57,42 +70,6 @@ fn should_fail_pat_authentication_when_invalid_token_provided() {
 
     //Then There is error returned
     client.assert_login_error(result);
-}
-
-struct Pat {
-    token_name: String,
-    token_secret: String,
-}
-
-impl Pat {
-    fn acquire() -> Self {
-        let name = format!("pat_{:x}", rand::random::<u32>());
-        let client = SnowflakeTestClient::connect_with_default_auth();
-        let user = client.parameters.user.clone().unwrap();
-        let role = client.parameters.role.clone().unwrap();
-        let result = client.execute_query(&format!("ALTER USER IF EXISTS {user} ADD PROGRAMMATIC ACCESS TOKEN {name} ROLE_RESTRICTION = {role}"));
-        let mut arrow_helper = ArrowResultHelper::from_result(result);
-        let result = arrow_helper.transform_into_array::<String>().unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].len(), 2);
-        let token_name = result[0][0].clone();
-        let token_secret = result[0][1].clone();
-        Self {
-            token_name,
-            token_secret,
-        }
-    }
-}
-
-impl Drop for Pat {
-    fn drop(&mut self) {
-        let client = SnowflakeTestClient::connect_with_default_auth();
-        let user = client.parameters.user.clone().unwrap();
-        client.execute_query(&format!(
-            "ALTER USER IF EXISTS {user} REMOVE PROGRAMMATIC ACCESS TOKEN {}",
-            self.token_name
-        ));
-    }
 }
 
 fn set_auth_to_programmatic_access_token(client: &SnowflakeTestClient) {

@@ -1,4 +1,4 @@
-@python @jdbc @odbc
+@python @jdbc @odbc @core_not_needed
 Feature: BOOLEAN type support
 
   # =========================================================================== #

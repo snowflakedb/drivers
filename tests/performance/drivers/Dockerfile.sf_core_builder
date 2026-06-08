@@ -21,7 +21,7 @@ COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show
 
 # Install cargo-chef
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --version 0.1.77 --locked
 
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
@@ -64,8 +64,11 @@ RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --pack
 
 # Re-copy Cargo.toml files that cargo-chef may have overwritten from the recipe,
 # which can strip the [lib] section (e.g. proc-macro = true).
+# Also restores the package version, which cargo-chef stubs as 0.0.1 — without
+# this, env!("CARGO_PKG_VERSION") compiles to "0.0.1" instead of the real version.
 COPY error_trace/Cargo.toml ./error_trace/Cargo.toml
 COPY error_trace_derive/Cargo.toml ./error_trace_derive/Cargo.toml
+COPY odbc/Cargo.toml ./odbc/Cargo.toml
 
 # Copy source files
 COPY sf_core/src/ ./sf_core/src/
@@ -74,6 +77,7 @@ COPY sf_mini_core/src/ ./sf_mini_core/src/
 COPY sf_mini_core_static/src/ ./sf_mini_core_static/src/
 COPY proto_utils/src/ ./proto_utils/src/
 COPY odbc/src/ ./odbc/src/
+COPY odbc/build.rs ./odbc/build.rs
 COPY proto_generator/src/ ./proto_generator/src/
 COPY jdbc_bridge/src/ ./jdbc_bridge/src/
 COPY error_trace/src/ ./error_trace/src/

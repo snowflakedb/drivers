@@ -8,7 +8,6 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_descriptor.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -230,7 +229,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: HY021 - Invalid descript
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: HY010 - Called during SQL_NEED_DATA",
                  "[odbc-api][setdescrec][descriptor][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
@@ -247,7 +245,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: HY010 - Called during SQ
   SQLINTEGER val = 0;
   SQLLEN ind = 0, olen = 0;
   ret = SQLSetDescRec(ard, 1, SQL_C_SLONG, 0, sizeof(SQLINTEGER), 0, 0, &val, &olen, &ind);
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  OLD_IODBC_ONLY("BD#60") {
+    // The old driver doesn't gate descriptor mutations on SQL_NEED_DATA and
+    //   silently accepts SQLSetDescRec mid-DAE; the new driver enforces
+    //   "HY010" itself before reaching the descriptor.
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  else {
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", ard, SQL_HANDLE_DESC);
+  }
 
   SQLCancel(stmt_handle());
 }
