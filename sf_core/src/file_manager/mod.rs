@@ -308,17 +308,24 @@ pub async fn download_files(
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
     let mut results = Vec::new();
 
-    for (file_location, encryption_material) in data
+    // Three-way zip: src_locations / encryption_materials / presigned_urls.
+    // `presigned_urls` is built in `query_response::to_file_download_data` to
+    // be the same length as `src_locations` (padded with `None` when GS
+    // omitted entries) so the zip never silently drops a file. See
+    // `DownloadData.presigned_urls` doc-comment for the alignment invariant.
+    let download_iter = data
         .src_locations
         .drain(..)
         .zip(data.encryption_materials.drain(..))
-    {
+        .zip(data.presigned_urls.drain(..));
+    for ((file_location, encryption_material), presigned_url) in download_iter {
         let stage_info = current_stage_info(&data.stage_info, refresher.as_deref());
         let single_download_data = SingleDownloadData {
             src_location: file_location,
             local_location: data.local_location.clone(),
             stage_info,
             encryption_material,
+            presigned_url,
             flavor: data.flavor.clone(),
         };
 
@@ -341,16 +348,24 @@ pub async fn download_single_file(
         cloud_byte_count,
     } = match data.stage_info.location_type {
         LocationType::S3 => {
+            // `data.presigned_url` is GCS-only; S3 ignores it (uses STS creds).
             download_from_s3(&data.stage_info, data.src_location.as_str(), refresher)
                 .await
                 .context(S3DownloadSnafu)?
         }
-        LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(GcsDownloadSnafu)?,
-        LocationType::Azure => download_from_azure(&data.stage_info, data.src_location.as_str())
-            .await
-            .context(AzureDownloadSnafu)?,
+        LocationType::Gcs => download_from_gcs(
+            &data.stage_info,
+            data.src_location.as_str(),
+            data.presigned_url.as_deref(),
+        )
+        .await
+        .context(GcsDownloadSnafu)?,
+        LocationType::Azure => {
+            // `data.presigned_url` is GCS-only; Azure ignores it (uses SAS).
+            download_from_azure(&data.stage_info, data.src_location.as_str())
+                .await
+                .context(AzureDownloadSnafu)?
+        }
     };
 
     let output_data = match data.encryption_material.as_ref() {
