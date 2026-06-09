@@ -21,9 +21,21 @@
 ///
 /// Starts WireMock as a subprocess, exposes admin API helpers, and
 /// cleans up on destruction.
+///
+/// The default mode is a plain HTTP server matching by URL path. Pass
+/// `Mode::ForwardProxy` to start WireMock with `--enable-browser-proxying`,
+/// which lets it act as an HTTP forward proxy and match requests by their
+/// path even when the driver sends absolute URLs (used by proxy tests).
 class WiremockClient {
  public:
-  WiremockClient() {
+  enum class Mode {
+    Server,
+    ForwardProxy,
+  };
+
+  WiremockClient() : WiremockClient(Mode::Server) {}
+
+  explicit WiremockClient(Mode mode) : mode_(mode) {
     ensure_driver_installed();
     port_ = platform::find_free_port();
     start_process();
@@ -145,6 +157,7 @@ class WiremockClient {
   }
 
  private:
+  Mode mode_;
   int port_;
   std::filesystem::path root_dir_;
   std::unique_ptr<Subprocess> process_;
@@ -195,9 +208,12 @@ class WiremockClient {
     std::filesystem::create_directories(root_dir_ / "mappings");
     std::filesystem::create_directories(root_dir_ / "__files");
 
-    process_ = std::make_unique<Subprocess>(
-        "java", std::vector<std::string>{"-jar", jar.string(), "--root-dir", root_dir_.string(), "--port", port_str,
-                                         "--proxy-pass-through", "false", "--disable-gzip"});
+    std::vector<std::string> args{"-jar",   jar.string(),           "--root-dir", root_dir_.string(), "--port",
+                                  port_str, "--proxy-pass-through", "false",      "--disable-gzip"};
+    if (mode_ == Mode::ForwardProxy) {
+      args.emplace_back("--enable-browser-proxying");
+    }
+    process_ = std::make_unique<Subprocess>("java", std::move(args));
   }
 
   void wait_for_health(int timeout_secs = 15) const {

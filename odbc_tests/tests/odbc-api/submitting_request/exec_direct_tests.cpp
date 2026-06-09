@@ -11,6 +11,7 @@
 #include "ODBCFixtures.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -511,7 +512,16 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 22000 for NOT NULL co
   // for integrity constraint violations.
   sql = "INSERT INTO ed_nn_t VALUES(NULL)";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "22000", stmt_handle(), SQL_HANDLE_STMT);
+  REQUIRE(ret == SQL_ERROR);
+  OLD_IODBC_ONLY("BD#70") {
+    // Old driver on iODBC has been observed to surface either 22000 or HY000
+    // for the same server-side NOT NULL violation.
+    const std::string state = get_sqlstate(SQL_HANDLE_STMT, stmt_handle());
+    CHECK((state == "22000" || state == "HY000"));
+  }
+  else {
+    CHECK(get_sqlstate(SQL_HANDLE_STMT, stmt_handle()) == "22000");
+  }
 }
 
 TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecDirect: 42710 for table already exists",

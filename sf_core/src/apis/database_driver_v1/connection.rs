@@ -36,7 +36,6 @@ use crate::rest::snowflake::{
     heartbeat, snowflake_query_with_client,
 };
 use crate::sensitive::SensitiveString;
-use crate::tls::client::create_tls_client_with_config;
 use crate::token_cache::TokenCache;
 
 impl DatabaseDriverV1 {
@@ -249,8 +248,11 @@ impl DatabaseDriverV1 {
                     )
                 };
 
-                let http_client = create_tls_client_with_config(config.tls.clone())
-                    .context(TlsClientCreationSnafu)?;
+                let http_client = crate::tls::create_tls_client_with_proxy(
+                    config.tls.clone(),
+                    Some(&config.proxy),
+                )
+                .context(TlsClientCreationSnafu)?;
                 let login_parameters = LoginParameters::from_connection_config(
                     &config,
                     client_info,

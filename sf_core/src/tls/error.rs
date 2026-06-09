@@ -43,4 +43,12 @@ pub enum TlsError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Failed to build proxy from URL: {url}"))]
+    ProxyBuild {
+        url: String,
+        source: reqwest::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

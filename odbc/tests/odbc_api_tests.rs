@@ -204,3 +204,10 @@ fn telemetry_rpcs_accept_unknown_handles_silently() {
         })
         .expect("telemetry_send_wrapper_error on unknown handle must not error");
 }
+
+// End-to-end proxy DSN coverage lives in
+// `odbc_tests/tests/e2e/session/proxy.cpp`, which exercises the full SQL*
+// connect path through a wiremock forward proxy (see Jakub's review on PR
+// #1223). The Rust unit tests in `api/connection.rs::tests` cover DSN
+// parsing/normalisation; sf_core's `ProxyConfig::from_settings` covers
+// the URL-vs-fields merge.

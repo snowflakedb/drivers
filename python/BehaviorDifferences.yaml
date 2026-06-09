@@ -323,3 +323,33 @@ behavior_differences:
       parameter `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` continues to be honored
       verbatim (it is the same string all reference drivers — Python, JDBC,
       libsnowflakeclient — read from the login response).
+
+  31:
+    name: "HTTP_PROXY/HTTPS_PROXY env vars are not consulted by default"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    old_driver_behavior: |
+      Since 3.17.0, the legacy connector unconditionally consults
+      `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` env vars and lets them override
+      explicit `proxy_host`/`proxy_port` connection parameters. A globally-set
+      env var silently overrides per-connection settings.
+    new_driver_behavior: |
+      Two changes that together standardize proxy precedence with
+      JDBC/Go/Node.js/ODBC:
+
+      1. Default-deny env detection. The new `use_proxy_env` parameter
+         (default: `false`) gates whether `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
+         are consulted at all. Customers who relied on env-var auto-pickup
+         must set `use_proxy_env=True` (or pass the env-equivalent ODBC alias
+         `PROXYWITHENV=true`).
+
+      2. Explicit params win. When both `use_proxy_env=True` AND an explicit
+         `proxy_host`/`proxy_port` (or legacy `PROXY` URL) are set, the
+         explicit param wins; env vars are ignored.
+
+      Both legacy formats are accepted: snowflake-connector-python
+      `proxy_host`/`proxy_port`/`proxy_user`/`proxy_password`/`no_proxy`
+      kwargs, and the legacy ODBC `PROXY=[scheme://][user:pass@]host[:port]`
+      URL form. When both are set, individual fields override URL components
+      per-field. See (snowflakedb/universal-driver#29).

@@ -1536,6 +1536,63 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_forwards_proxy_keys_for_core_aliases() {
+        // Proxy keys are forwarded UPPERCASE; sf_core's param registry resolves
+        // them to canonical lowercase names via the registered aliases.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("PROXY_HOST".to_owned(), "p.example.com".to_owned()),
+            ("PROXY_PORT".to_owned(), "8080".to_owned()),
+            ("PROXY_USER".to_owned(), "puser".to_owned()),
+            ("PROXY_PASSWORD".to_owned(), "ppass".to_owned()),
+            ("NO_PROXY".to_owned(), "internal,*.local".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "PROXY_HOST"), Some("p.example.com"));
+        assert_eq!(config_string(&options, "PROXY_PORT"), Some("8080"));
+        assert_eq!(config_string(&options, "PROXY_USER"), Some("puser"));
+        assert_eq!(config_string(&options, "PROXY_PASSWORD"), Some("ppass"));
+        assert_eq!(
+            config_string(&options, "NO_PROXY"),
+            Some("internal,*.local")
+        );
+        // Pre-canonicalisation is the registry's job; ODBC layer does not
+        // emit lowercase canonical keys.
+        assert!(!options.contains_key("proxy_host"));
+        assert!(!options.contains_key("no_proxy"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_passes_through_legacy_proxy_url_form() {
+        // Legacy ODBC DSNs use `PROXY=[scheme://][user:pass@]host[:port]`.
+        // sf_core's `ProxyConfig::from_settings` parses the URL.  The ODBC
+        // layer just forwards the value unchanged.
+        let options = normalize_connection_string_options(HashMap::from([(
+            "PROXY".to_owned(),
+            "http://user:pass@p.example.com:8080".to_owned(),
+        )]));
+
+        assert_eq!(
+            config_string(&options, "PROXY"),
+            Some("http://user:pass@p.example.com:8080")
+        );
+    }
+
+    #[test]
+    fn normalize_connection_string_options_passes_through_legacy_odbc_proxy_aliases() {
+        // Legacy ODBC also accepts NOPROXY / PROXYWITHENV / ALLOWEMPTYPROXY.
+        // These flow through as UPPERCASE and sf_core's registry resolves
+        // them to canonical names.
+        let options = normalize_connection_string_options(HashMap::from([
+            ("NOPROXY".to_owned(), "*.corp".to_owned()),
+            ("PROXYWITHENV".to_owned(), "true".to_owned()),
+            ("ALLOWEMPTYPROXY".to_owned(), "false".to_owned()),
+        ]));
+        assert_eq!(config_string(&options, "NOPROXY"), Some("*.corp"));
+        assert_eq!(config_string(&options, "PROXYWITHENV"), Some("true"));
+        assert_eq!(config_string(&options, "ALLOWEMPTYPROXY"), Some("false"));
+    }
+
+    #[test]
     fn normalize_connection_string_options_maps_passcodeinpassword() {
         let options = normalize_connection_string_options(HashMap::from([(
             "PASSCODEINPASSWORD".to_owned(),
