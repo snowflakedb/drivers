@@ -14,3 +14,14 @@ Feature: PUT/GET overwrite
     When Updated file is uploaded with OVERWRITE set to false
     Then SKIPPED status is returned
     And File was not overwritten
+
+  @core_e2e
+  Scenario Outline: should skip upload when content matches under overwrite true on gcs <encryption_type>
+    Given File is uploaded to a GCS <encryption_type> stage
+    When Same file is uploaded again with OVERWRITE set to true
+    Then SKIPPED status is returned
+
+    Examples:
+      | encryption_type |
+      | SSE             |
+      | CSE             |

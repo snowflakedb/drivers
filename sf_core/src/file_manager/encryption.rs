@@ -81,7 +81,11 @@ pub fn encrypt_file_data(
         key_size: (cipher_suite.key_len * 8).to_string(),
     };
 
-    let digest = compute_sha256_digest(&encrypted_data).context(OpenSSLSnafu {
+    // Digest is computed over the (compressed) plaintext, not the ciphertext.
+    // Each upload uses a fresh random IV, so a ciphertext digest would change
+    // every time and never match the stored header. Hashing the plaintext keeps
+    // the digest stable across uploads and interoperable with other drivers.
+    let digest = compute_sha256_digest(file_data).context(OpenSSLSnafu {
         operation: "calculating SHA-256 digest",
     })?;
 
@@ -126,26 +130,27 @@ pub fn decrypt_file_data(
             context: "initialization vector",
         })?;
 
-    // 3. Verify the digest of encrypted data.
-    let calculated_digest = compute_sha256_digest(encrypted_data).context(OpenSSLSnafu {
-        operation: "calculating SHA-256 digest for verification",
-    })?;
-    if calculated_digest != digest {
-        return DigestMismatchSnafu.fail();
-    }
-
-    // 4. Decrypt the file key using the master key with AES-ECB.
+    // 3. Decrypt the file key using the master key with AES-ECB.
     let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key).context(
         OpenSSLSnafu {
             operation: "decrypting file key with AES-ECB",
         },
     )?;
 
-    // 5. Decrypt the file data using the file key and IV with AES-CBC.
+    // 4. Decrypt the file data using the file key and IV with AES-CBC.
     let decrypted_data =
         decrypt(cipher_suite.cbc, &file_key, Some(&iv), encrypted_data).context(OpenSSLSnafu {
             operation: "decrypting file data with AES-CBC",
         })?;
+
+    // 5. Verify the digest against the decrypted plaintext (the digest stored
+    // on upload is the SHA-256 of the plaintext, not the ciphertext).
+    let calculated_digest = compute_sha256_digest(&decrypted_data).context(OpenSSLSnafu {
+        operation: "calculating SHA-256 digest for verification",
+    })?;
+    if calculated_digest != digest {
+        return DigestMismatchSnafu.fail();
+    }
 
     Ok(decrypted_data)
 }
@@ -190,4 +195,81 @@ pub enum EncryptionError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sensitive::SensitiveString;
+
+    fn test_material() -> EncryptionMaterial {
+        // 32-byte master key (AES-256), Base64-encoded as the wire format.
+        let master_key = BASE64_ENGINE.encode([7u8; AES_256_KEY_SIZE_IN_BYTES]);
+        EncryptionMaterial {
+            query_stage_master_key: SensitiveString::from(master_key),
+            query_id: "test-query-id".to_string(),
+            smk_id: "123".to_string(),
+        }
+    }
+
+    #[test]
+    fn encrypt_digest_is_sha256_of_plaintext_not_ciphertext() {
+        let plaintext = b"the quick brown fox jumps over the lazy dog";
+        let material = test_material();
+
+        let prepared = encrypt_file_data(plaintext, &material).unwrap();
+
+        let expected = compute_sha256_digest(plaintext).unwrap();
+        assert_eq!(prepared.digest, expected);
+        // The ciphertext digest must NOT be what we store, otherwise the
+        // random per-upload IV would make the digest non-reproducible.
+        let ciphertext_digest = compute_sha256_digest(&prepared.data).unwrap();
+        assert_ne!(prepared.digest, ciphertext_digest);
+    }
+
+    #[test]
+    fn encrypt_digest_is_stable_across_uploads_of_same_content() {
+        let plaintext = b"identical content";
+        let material = test_material();
+
+        let first = encrypt_file_data(plaintext, &material).unwrap();
+        let second = encrypt_file_data(plaintext, &material).unwrap();
+
+        // Fresh IV per upload => different ciphertext bytes ...
+        assert_ne!(first.data, second.data);
+        // ... but identical plaintext digest, which is what enables the
+        // content-match upload skip.
+        assert_eq!(first.digest, second.digest);
+    }
+
+    #[test]
+    fn encrypt_then_decrypt_round_trips_and_verifies_plaintext_digest() {
+        let plaintext = b"round-trip payload";
+        let material = test_material();
+
+        let prepared = encrypt_file_data(plaintext, &material).unwrap();
+        let metadata = prepared.encryption_metadata.unwrap();
+
+        let decrypted =
+            decrypt_file_data(&prepared.data, &metadata, &prepared.digest, &material).unwrap();
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn decrypt_rejects_mismatched_digest() {
+        let plaintext = b"payload to tamper-check";
+        let material = test_material();
+
+        let prepared = encrypt_file_data(plaintext, &material).unwrap();
+        let metadata = prepared.encryption_metadata.unwrap();
+        let wrong_digest = compute_sha256_digest(b"different content").unwrap();
+
+        let result = decrypt_file_data(&prepared.data, &metadata, &wrong_digest, &material);
+
+        assert!(matches!(
+            result,
+            Err(EncryptionError::DigestMismatch { .. })
+        ));
+    }
 }

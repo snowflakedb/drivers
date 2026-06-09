@@ -91,6 +91,62 @@ fn assert_stage_content(
     );
 }
 
+/// GCS-only: when the same file is uploaded twice with `OVERWRITE=TRUE`,
+/// the digest-skip branch fires on the second attempt because the remote
+/// `x-goog-meta-sfc-digest` already matches the local SHA-256.
+///
+/// The digest is the SHA-256 of the (compressed) plaintext, so the skip
+/// fires for both SSE and CSE stages. Not applicable to S3/Azure where no
+/// digest-skip exists — the test self-skips (via `current_cloud()`) when the
+/// connected account is not GCS-backed, since the `gcs_e2e` feature only gates
+/// compilation, not the runtime cloud.
+#[cfg(feature = "gcs_e2e")]
+#[test]
+fn should_skip_upload_when_content_matches_under_overwrite_true_on_gcs_encryption_type() {
+    use crate::common::put_get_common::build_put_command;
+    use crate::common::snowflake_test_client::CloudProvider;
+
+    let client = SnowflakeTestClient::connect_with_default_auth();
+
+    // The digest-skip optimisation only exists on the GCS upload path
+    // (`upload_to_gcs_or_skip`); S3/Azure have existence-skip only. Internal
+    // stages live in the deployment cloud, so on a non-GCS account (e.g. CI's
+    // default AWS account, decoded by `scripts/decode_secrets.sh` with no
+    // argument) the second PUT would re-upload. The `gcs_e2e` feature only
+    // gates *compilation*, not the runtime cloud — self-skip here rather than
+    // assert wrong-cloud behaviour.
+    let cloud = client.current_cloud();
+    if cloud != CloudProvider::Gcp {
+        eprintln!("Skipping GCS digest-skip test: connected account is {cloud:?}, not GCP");
+        return;
+    }
+
+    for (stage_name, encryption_type) in [
+        ("TEST_PUT_GCS_DIGEST_SKIP_SSE", "SNOWFLAKE_SSE"),
+        ("TEST_PUT_GCS_DIGEST_SKIP_CSE", "SNOWFLAKE_FULL"),
+    ] {
+        // Given File is uploaded to a GCS <encryption_type> stage
+        client.execute_sql(&format!(
+            "CREATE TEMPORARY STAGE IF NOT EXISTS {stage_name} \
+             ENCRYPTION = (TYPE = '{encryption_type}')"
+        ));
+        let (filename, file_path) = original_test_file();
+        let file_path_str = file_path.to_str().unwrap();
+        let first_result = client.execute_query(&build_put_command(stage_name, file_path_str, ""));
+        assert_put_result_status(first_result, &filename, "UPLOADED");
+
+        // When Same file is uploaded again with OVERWRITE set to true
+        let second_result = client.execute_query(&build_put_command(
+            stage_name,
+            file_path_str,
+            "OVERWRITE=TRUE",
+        ));
+
+        // Then SKIPPED status is returned
+        assert_put_result_status(second_result, &filename, "SKIPPED");
+    }
+}
+
 fn upload_original_file(client: &SnowflakeTestClient, stage_name: &str) {
     let (filename, original_reference_file_path) = original_test_file();
     let original_put_results = upload_to_stage(

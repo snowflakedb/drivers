@@ -19,7 +19,14 @@ const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
 const GCS_META_ENCRYPTIONDATA: &str = "x-goog-meta-encryptiondata";
 const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 
-/// Uploads a file to GCS, skipping if it already exists and `overwrite` is false.
+/// Uploads a file to GCS, skipping when either:
+///   * the object already exists and `overwrite` is false (existence skip), or
+///   * the remote object's stored SHA-256 (`x-goog-meta-sfc-digest`) matches
+///     the local payload's SHA-256 — even under `OVERWRITE=TRUE` (digest skip).
+///
+/// The existence check runs first (cheap, gated on `!overwrite`); the
+/// content-match check runs regardless of `overwrite`. The HEAD is always
+/// issued so both checks can share its result.
 ///
 /// `refresher` drives the reactive stage-info recovery introduced by gaps
 /// 2.1 (URL expiry) and 2.4 (token expiry):
@@ -79,8 +86,26 @@ pub async fn upload_to_gcs_or_skip(
                 let (url, token) = resolve_url_and_token(&stage_info, &key, None)
                     .map_err(map_gcs_request_error_for_attempt)?;
 
-                if !overwrite && check_file_exists_gcs(&client, &url, token).await {
+                let head = check_file_exists_gcs(&client, &url, token).await;
+
+                if !overwrite && matches!(head, GcsHeadResult::Found { .. }) {
                     tracing::info!("File already exists in GCS: {key}");
+                    return Ok(UploadStatus::Skipped);
+                }
+
+                // `prepared.digest` is the SHA-256 of the (compressed) plaintext for both
+                // SSE and CSE stages (see `encryption.rs`), so it is stable across uploads
+                // of identical content and matches the digest stored by this and other
+                // drivers. The skip therefore fires whenever the remote content matches,
+                // regardless of the encryption mode.
+                if let GcsHeadResult::Found {
+                    digest: Some(ref d),
+                } = head
+                    && d == &prepared.digest
+                {
+                    tracing::info!(
+                        "Remote GCS object matches local content digest, skipping upload: {key}"
+                    );
                     return Ok(UploadStatus::Skipped);
                 }
 
@@ -378,9 +403,33 @@ pub async fn download_from_gcs(
     })
 }
 
-/// Check if a file exists in GCS via HEAD request.
-/// Returns false on any error or non-200 status so the caller proceeds with upload.
-async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Option<&str>) -> bool {
+/// Outcome of the pre-upload HEAD request against a GCS object.
+///
+/// `Found { digest }` carries the `x-goog-meta-sfc-digest` user-metadata
+/// value (a Base64 SHA-256 string) when present. `digest` is `None` when
+/// the header is absent (older objects, libsfclient S3-style uploads, etc.)
+/// or when its bytes are not valid UTF-8. Callers must never log the digest
+/// value — it is treated as PII-adjacent, matching the redaction discipline
+/// elsewhere in this file.
+#[derive(Debug, PartialEq, Eq)]
+enum GcsHeadResult {
+    NotFound,
+    Found { digest: Option<String> },
+}
+
+/// Issue a HEAD against the GCS object and return `Found { digest }` on
+/// 200, or `NotFound` otherwise.
+///
+/// Any non-200 status (including 403 / unexpected codes) and any
+/// transport-level error are treated as `NotFound` — the caller falls
+/// through to a PUT. A malformed sfc-digest header yields
+/// `Found { digest: None }`; the digest comparison then misses and the
+/// upload proceeds.
+async fn check_file_exists_gcs(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> GcsHeadResult {
     let mut request = client.head(url);
     if let Some(t) = token {
         request = request.bearer_auth(t);
@@ -388,28 +437,38 @@ async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Optio
 
     match request.send().await {
         Ok(resp) => match resp.status() {
-            StatusCode::OK => true,
-            StatusCode::NOT_FOUND => false,
+            StatusCode::OK => {
+                let digest = match try_get_header(resp.headers(), GCS_META_SFC_DIGEST) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        // Header value is not valid UTF-8 — treat as
+                        // "no digest known"; never log the bytes.
+                        tracing::warn!(
+                            "Non-UTF8 {GCS_META_SFC_DIGEST} header on GCS HEAD response, \
+                             ignoring digest"
+                        );
+                        None
+                    }
+                };
+                GcsHeadResult::Found { digest }
+            }
+            StatusCode::NOT_FOUND => GcsHeadResult::NotFound,
             StatusCode::FORBIDDEN => {
                 tracing::warn!(
                     "Access denied checking file existence in GCS, proceeding with upload"
                 );
-                false
+                GcsHeadResult::NotFound
             }
             status => {
                 tracing::warn!(
-                    "Unexpected status {} checking GCS file existence, proceeding with upload",
-                    status
+                    "Unexpected status {status} checking GCS file existence, proceeding with upload"
                 );
-                false
+                GcsHeadResult::NotFound
             }
         },
         Err(e) => {
-            tracing::warn!(
-                "Error checking GCS file existence, proceeding with upload: {}",
-                e
-            );
-            false
+            tracing::warn!("Error checking GCS file existence, proceeding with upload: {e}");
+            GcsHeadResult::NotFound
         }
     }
 }
@@ -1683,5 +1742,403 @@ mod tests {
             !r.should_refresh(&GcsAttemptError::Other(())),
             "Other (400, 403, …) must NOT trigger cred refresh"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // `check_file_exists_gcs` — HEAD result + sfc-digest extraction
+    //
+    // Parity with Python connector `gcs_storage_client.get_file_header`
+    // at `gcs_storage_client.py:338-419` and the skip block at
+    // `storage_client.py:213-220`.
+    // ---------------------------------------------------------------
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Builds a `StageInfo` whose URL strategy routes through the given
+    /// custom endpoint (i.e. the wiremock server URI). Uses bearer-token
+    /// auth so the HEAD path matches the production code paths exactly
+    /// — the presigned-URL path is a peer, not a substitute (HEAD on a
+    /// PUT-only presigned URL is typically rejected by real GCS so the
+    /// existence-check is a no-op in that mode).
+    fn make_stage_for_mock(endpoint: &str) -> StageInfo {
+        make_stage_info(StageInfoOverrides {
+            endpoint: Some(endpoint.to_string()),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn check_file_exists_gcs_returns_exists_with_digest_on_200_with_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, "dGVzdA=="))
+            .mount(&server)
+            .await;
+
+        let client = create_gcs_client().unwrap();
+        let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
+        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+
+        assert_eq!(
+            result,
+            GcsHeadResult::Found {
+                digest: Some("dGVzdA==".to_string()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn check_file_exists_gcs_returns_exists_no_digest_on_200_without_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = create_gcs_client().unwrap();
+        let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
+        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+
+        // Older objects (pre-`sfc-digest`-write era, libsfclient-S3-style
+        // uploads, etc.) lack the header; the conservative fall-through
+        // is `Found { digest: None }` so the digest comparison misses
+        // and the upload proceeds. Matches Python
+        // `meta.sha256_digest == file_header.digest` evaluating to
+        // `Some(...) == None == false`.
+        assert_eq!(result, GcsHeadResult::Found { digest: None });
+    }
+
+    #[tokio::test]
+    async fn check_file_exists_gcs_returns_default_on_404() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = create_gcs_client().unwrap();
+        let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
+        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+
+        assert_eq!(result, GcsHeadResult::NotFound);
+    }
+
+    #[tokio::test]
+    async fn check_file_exists_gcs_returns_default_on_403() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let client = create_gcs_client().unwrap();
+        let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
+        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+
+        // 403 indicates limited credentials (e.g. PUT-only); proceed
+        // with upload rather than surface a hard error — the worst
+        // case is one wasted PUT that GCS would also reject.
+        assert_eq!(result, GcsHeadResult::NotFound);
+    }
+
+    #[tokio::test]
+    async fn check_file_exists_gcs_returns_default_on_unexpected_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let client = create_gcs_client().unwrap();
+        let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
+        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+
+        assert_eq!(result, GcsHeadResult::NotFound);
+    }
+
+    #[tokio::test]
+    async fn check_file_exists_gcs_drops_non_utf8_digest_header_silently() {
+        // A non-UTF8 sfc-digest header must NOT poison the upload — we
+        // surface `exists=true, digest=None` so the comparison misses
+        // and the upload proceeds. Locks in the "never error out on a
+        // malformed header" promise documented on `check_file_exists_gcs`.
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200).insert_header(
+                GCS_META_SFC_DIGEST,
+                reqwest::header::HeaderValue::from_bytes(&[0x80, 0x81]).unwrap(),
+            ))
+            .mount(&server)
+            .await;
+
+        let client = create_gcs_client().unwrap();
+        let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
+        let result = check_file_exists_gcs(&client, &url, Some("token")).await;
+
+        assert_eq!(result, GcsHeadResult::Found { digest: None });
+    }
+
+    // ---------------------------------------------------------------
+    // `upload_to_gcs_or_skip` — digest-based skip-on-content-match
+    //
+    // Mirrors Python connector `storage_client.py:213-220` order:
+    //   1. existence skip (gated on `!overwrite`)
+    //   2. digest skip (fires even when `overwrite=true`)
+    //   3. PUT
+    //
+    // Each test mounts a `HEAD` mock with a configurable response and a
+    // `PUT` mock with `.expect(0)` or `.expect(1)` to assert the skip
+    // path was (or wasn't) taken without relying on side effects.
+    // ---------------------------------------------------------------
+
+    /// Constructs a SSE-shaped `PreparedUpload` whose `digest` field is
+    /// the caller-supplied marker string. The actual `data` bytes are
+    /// irrelevant — the skip branch never gets to PUT them.
+    fn make_prepared_for_skip(digest: &str) -> PreparedUpload {
+        PreparedUpload {
+            data: b"payload-bytes".to_vec(),
+            digest: digest.to_string(),
+            encryption_metadata: None,
+        }
+    }
+
+    /// Constructs a CSE-shaped `PreparedUpload` — the only structural
+    /// difference is `encryption_metadata = Some(_)`. The `digest` field
+    /// drives the skip comparison; for both SSE and CSE it is the SHA-256
+    /// of the plaintext (see `encryption.rs`), so the skip fires whenever
+    /// the remote digest matches.
+    fn make_prepared_cse_for_skip(digest: &str) -> PreparedUpload {
+        PreparedUpload {
+            data: b"would-be-ciphertext-bytes".to_vec(),
+            digest: digest.to_string(),
+            encryption_metadata: Some(EncryptedFileMetadata {
+                encrypted_key: "ZW5jLWtleQ==".to_string(),
+                iv: "aXY=".to_string(),
+                material_desc: MaterialDescription {
+                    query_id: "qid".to_string(),
+                    smk_id: "1".to_string(),
+                    key_size: "256".to_string(),
+                },
+            }),
+        }
+    }
+
+    /// Mount a HEAD responder and a PUT responder with a usage
+    /// expectation. Combined call form keeps each test focused on the
+    /// behaviour it asserts.
+    async fn mount_head_and_put(
+        server: &MockServer,
+        head_response: ResponseTemplate,
+        expected_puts: u64,
+    ) {
+        Mock::given(method("HEAD"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(head_response)
+            .mount(server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(expected_puts)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_skips_when_digest_matches_under_overwrite_true() {
+        // Python parity: `storage_client.py:214-220` — content-match
+        // skip fires regardless of the `overwrite` flag (the existence
+        // skip above it is gated on `!overwrite`; this branch is not).
+        let server = MockServer::start().await;
+        let digest = "ZGlnZXN0Lw==";
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
+            0,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_for_skip(digest);
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_skips_when_digest_matches_under_overwrite_false() {
+        // Edge: when both the existence skip and the digest skip would
+        // fire, the existence skip short-circuits first (cheaper, no
+        // header parsing). Either way the outcome is `Skipped` and no
+        // PUT is issued — `expect(0)` guards both.
+        let server = MockServer::start().await;
+        let digest = "ZGlnZXN0Lw==";
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
+            0,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_for_skip(digest);
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", false, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_uploads_when_digest_mismatches_under_overwrite_true() {
+        let server = MockServer::start().await;
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, "remote-digest-differs"),
+            1,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_for_skip("local-digest-value");
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_uploads_when_remote_digest_missing_under_overwrite_true() {
+        // Python parity for older objects without the `sfc-digest`
+        // header: `meta.sha256_digest == file_header.digest` evaluates
+        // to `Some(_) == None == false`, so the skip does not fire and
+        // the upload proceeds.
+        let server = MockServer::start().await;
+        mount_head_and_put(&server, ResponseTemplate::new(200), 1).await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_for_skip("local-digest-value");
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_skips_existence_when_overwrite_false_and_remote_digest_missing()
+    {
+        // A remote object without a digest header must still trigger the
+        // existence-skip when `overwrite=false`. Locks in that the digest
+        // branch does not displace the existence branch.
+        let server = MockServer::start().await;
+        mount_head_and_put(&server, ResponseTemplate::new(200), 0).await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_for_skip("local-digest-value");
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", false, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_uploads_on_404_under_overwrite_false() {
+        let server = MockServer::start().await;
+        mount_head_and_put(&server, ResponseTemplate::new(404), 1).await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_for_skip("local-digest-value");
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", false, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_digest_skip_fires_for_cse_when_digests_match() {
+        // CSE digest now hashes the plaintext (see `encryption.rs`), so it
+        // is stable across uploads and cross-driver interoperable. When the
+        // remote `sfc-digest` matches the local plaintext digest, the skip
+        // fires even for a CSE object under `OVERWRITE=TRUE` — no PUT.
+        let server = MockServer::start().await;
+        let digest = "plaintext-sha256";
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, digest),
+            0,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_cse_for_skip(digest);
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Skipped);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_uploads_for_cse_when_digests_differ() {
+        // Different remote content => the plaintext digests differ, so the
+        // skip does not fire and the CSE object is re-uploaded.
+        let server = MockServer::start().await;
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200)
+                .insert_header(GCS_META_SFC_DIGEST, "remote-plaintext-sha256"),
+            1,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = make_prepared_cse_for_skip("local-plaintext-sha256");
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_to_gcs_or_skip_skip_on_empty_file_digest_match() {
+        // SHA-256 of the empty byte string in Base64 — the well-known
+        // `47DEQpj…` value. The skip branch must treat the empty-file
+        // case like any other; both ends produce the same digest, so
+        // the skip fires.
+        const EMPTY_SHA256_B64: &str = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+        let server = MockServer::start().await;
+        mount_head_and_put(
+            &server,
+            ResponseTemplate::new(200).insert_header(GCS_META_SFC_DIGEST, EMPTY_SHA256_B64),
+            0,
+        )
+        .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let prepared = PreparedUpload {
+            data: Vec::new(),
+            digest: EMPTY_SHA256_B64.to_string(),
+            encryption_metadata: None,
+        };
+        let status = upload_to_gcs_or_skip(prepared, &stage, "file.csv", true, &mut None)
+            .await
+            .unwrap();
+
+        assert_eq!(status, UploadStatus::Skipped);
     }
 }
