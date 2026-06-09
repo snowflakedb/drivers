@@ -748,7 +748,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
-        description: "Skip all TLS verification: a single switch that disables both certificate and hostname checks. Insecure; intended for testing only.",
+        description: "Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only.",
         deprecated_by: None,
         scope: ParamScope::Connection,
         used_at_connect: true,
