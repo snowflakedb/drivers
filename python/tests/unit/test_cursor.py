@@ -9,6 +9,7 @@ import pytest
 
 from snowflake.connector._internal.api_client.client_api import core_driver
 from snowflake.connector._internal.binding_converters import ParamStyle
+from snowflake.connector._internal.cursor import CursorBaseMixin, QueryResult, QueryResultWaiter
 from snowflake.connector._internal.errorcode import ER_NO_PYARROW
 from snowflake.connector._internal.extras import (
     MissingOptionalDependency,
@@ -22,18 +23,16 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from snowflake.connector.constants import QueryStatus
-from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
-from snowflake.connector.cursor._query_result import _QueryResult
-from snowflake.connector.cursor._query_result_waiter import QueryResultWaiter
+from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
 from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
 @pytest.fixture(autouse=True)
 def _no_native_stream_ops():
-    """Prevent _QueryResult from touching real native memory in unit tests."""
+    """Prevent QueryResult from touching real native memory in unit tests."""
     with (
-        patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
-        patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
+        patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0),
+        patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream"),
     ):
         yield
 
@@ -943,7 +942,7 @@ class TestFetchmanyArraysizeAttribute:
 
     def test_arraysize_is_property(self):
         """Test that arraysize is a property on the class."""
-        assert isinstance(SnowflakeCursorBase.__dict__["arraysize"], property)
+        assert isinstance(CursorBaseMixin.__dict__["arraysize"], property)
 
     def test_arraysize_instance_independent(self, cursor):
         """Test instance arraysize changes are independent."""
@@ -1111,12 +1110,12 @@ class TestCheckCanUseArrowResultset:
 
     def test_no_error_when_pyarrow_installed(self, cursor):
         """check_can_use_arrow_resultset does not raise when pyarrow is available."""
-        with patch("snowflake.connector.cursor._base.pyarrow", MagicMock()):
+        with patch("snowflake.connector._internal.cursor.base.pyarrow", MagicMock()):
             cursor.check_can_use_arrow_resultset()
 
     def test_raises_programming_error_when_pyarrow_missing(self, cursor):
         """check_can_use_arrow_resultset raises ProgrammingError when pyarrow is not installed."""
-        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector._internal.cursor.base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_arrow_resultset()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -1124,7 +1123,7 @@ class TestCheckCanUseArrowResultset:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector._internal.cursor.base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_arrow_resultset()
 
@@ -1142,12 +1141,12 @@ class TestCheckCanUsePandas:
 
     def test_no_error_when_pandas_installed(self, cursor):
         """check_can_use_pandas does not raise when pandas is available."""
-        with patch("snowflake.connector.cursor._base.pandas", MagicMock()):
+        with patch("snowflake.connector._internal.cursor.base.pandas", MagicMock()):
             cursor.check_can_use_pandas()
 
     def test_raises_programming_error_when_pandas_missing(self, cursor):
         """check_can_use_pandas raises ProgrammingError when pandas is not installed."""
-        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector._internal.cursor.base.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_pandas()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -1155,7 +1154,7 @@ class TestCheckCanUsePandas:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector._internal.cursor.base.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_pandas()
 
@@ -1419,7 +1418,7 @@ class TestReset:
     def test_reset_clears_all_state_together(self, cursor):
         """reset() frees heavy result data but preserves lightweight metadata."""
         mock_desc = [MagicMock()]
-        cursor._query_result = _QueryResult(
+        cursor._query_result = QueryResult(
             description=mock_desc,
             sqlstate="42601",
             sfqid="abc-123",
@@ -1445,7 +1444,7 @@ class TestReset:
 
     def test_reset_is_idempotent(self, cursor):
         """Calling reset() twice produces the same state as calling it once."""
-        cursor._query_result = _QueryResult(rowcount=42)
+        cursor._query_result = QueryResult(rowcount=42)
         cursor._iterator = iter([(1,)])
 
         cursor.reset()
@@ -1468,7 +1467,7 @@ class TestReset:
     def test_reset_closing_true_clears_everything_except_rowcount(self, cursor):
         """reset(closing=True) preserves rowcount in addition to the usual preserved fields."""
         mock_desc = [MagicMock()]
-        cursor._query_result = _QueryResult(
+        cursor._query_result = QueryResult(
             description=mock_desc,
             sqlstate="42601",
             sfqid="abc-123",
@@ -1547,7 +1546,7 @@ class TestClose:
     def test_close_clears_result_state(self, cursor):
         """close() clears result-related state via reset (except description)."""
         mock_desc = [MagicMock()]
-        cursor._query_result = _QueryResult(description=mock_desc)
+        cursor._query_result = QueryResult(description=mock_desc)
         cursor._iterator = iter([(1,)])
 
         cursor.close()
@@ -1598,7 +1597,7 @@ class TestResetIntegration:
 
     def test_close_calls_reset_with_closing_true(self, cursor):
         """close() calls reset(closing=True) to preserve rowcount."""
-        cursor._query_result = _QueryResult(rowcount=42)
+        cursor._query_result = QueryResult(rowcount=42)
         cursor._iterator = iter([(1,)])
 
         cursor.close()
@@ -1611,7 +1610,7 @@ class TestResetIntegration:
 
     def test_execute_calls_reset_before_executing(self, cursor, mock_connection):
         """execute() calls reset() before executing to clear old state."""
-        cursor._query_result = _QueryResult(
+        cursor._query_result = QueryResult(
             description=[MagicMock()],
             rowcount=100,
         )
@@ -1667,7 +1666,7 @@ class TestResetIntegration:
 
     def test_executemany_empty_params_does_not_reset(self, cursor, mock_connection):
         """executemany() with empty seq_of_parameters returns early without calling reset."""
-        cursor._query_result = _QueryResult(rowcount=42)
+        cursor._query_result = QueryResult(rowcount=42)
 
         cursor.executemany("INSERT INTO t VALUES (?)", [])
 
@@ -1770,7 +1769,7 @@ class TestDescribe:
         """describe() allocates/releases statement handle and releases the arrow stream."""
         self._setup_prepare(mock_core_client)
 
-        with patch("snowflake.connector.cursor._query_result.release_arrow_stream") as mock_release:
+        with patch("snowflake.connector._internal.cursor.query_result.release_arrow_stream") as mock_release:
             cursor.describe("SELECT 1")
 
         mock_core_client.statement_new.assert_called_once()
@@ -1880,7 +1879,7 @@ class TestQueryResult:
 
     def test_query_result_resets_prior_state(self, cursor, mock_core_client):
         """query_result clears iterator from a previous execute."""
-        cursor._query_result = _QueryResult(rowcount=99)
+        cursor._query_result = QueryResult(rowcount=99)
         cursor._iterator = iter([(1,)])
 
         self._stub_result(mock_core_client)
@@ -1920,7 +1919,7 @@ class TestQueryResultWaiter:
         mock_connection.get_query_status_throw_if_error.return_value = QueryStatus.SUCCESS
         waiter = QueryResultWaiter(mock_connection, "qid")
 
-        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep") as mock_sleep:
+        with patch("snowflake.connector._internal.cursor.query_result_waiter.time.sleep") as mock_sleep:
             waiter.wait()
 
         mock_sleep.assert_not_called()
@@ -1934,7 +1933,7 @@ class TestQueryResultWaiter:
         ]
         waiter = QueryResultWaiter(mock_connection, "qid")
 
-        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep") as mock_sleep:
+        with patch("snowflake.connector._internal.cursor.query_result_waiter.time.sleep") as mock_sleep:
             waiter.wait()
 
         assert mock_connection.get_query_status_throw_if_error.call_count == 3
@@ -1945,7 +1944,7 @@ class TestQueryResultWaiter:
         mock_connection.get_query_status_throw_if_error.side_effect = ProgrammingError("Query failed")
         waiter = QueryResultWaiter(mock_connection, "qid")
 
-        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep"):
+        with patch("snowflake.connector._internal.cursor.query_result_waiter.time.sleep"):
             with pytest.raises(ProgrammingError, match="Query failed"):
                 waiter.wait()
 
@@ -1954,7 +1953,7 @@ class TestQueryResultWaiter:
         mock_connection.get_query_status_throw_if_error.return_value = QueryStatus.NO_DATA
         waiter = QueryResultWaiter(mock_connection, "qid")
 
-        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep"):
+        with patch("snowflake.connector._internal.cursor.query_result_waiter.time.sleep"):
             with pytest.raises(DatabaseError, match="Cannot retrieve data"):
                 waiter.wait()
 
@@ -1994,7 +1993,7 @@ class TestGetResultsFromSfqid:
 
     def test_prefetch_hook_fires_on_fetch(self, cursor, mock_connection):
         """First fetch triggers the hook, which calls query_result."""
-        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep"):
+        with patch("snowflake.connector._internal.cursor.query_result_waiter.time.sleep"):
             cursor.get_results_from_sfqid("test-qid")
 
         assert cursor._prefetch_hook is not None

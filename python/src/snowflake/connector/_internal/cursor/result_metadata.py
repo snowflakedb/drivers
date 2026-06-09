@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
-from .._internal.protobuf_gen.database_driver_v1_pb2 import (
+from ..protobuf_gen.database_driver_v1_pb2 import (
     PrepareResult,
     QueryStats,
     ResultSetDescriptor,
 )
-from .._internal.type_codes import get_type_code
+from ..type_codes import get_type_code
 
 
 class ResultMetadata(NamedTuple):

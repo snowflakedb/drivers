@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from pyarrow import Schema, Table
 
     from ..connection import Connection
-    from ..cursor import ResultMetadata
+    from .cursor.result_metadata import ResultMetadata
 
 
 def release_arrow_stream(stream_ptr: int | None) -> None:

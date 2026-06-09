@@ -104,7 +104,7 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
 from ..protobuf_gen.database_driver_v1_pb2 import (
     MissingParameter as ProtoMissingParameter,
 )
-from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
+from ..protobuf_gen.database_driver_v1_services import AsyncDatabaseDriverClient, DatabaseDriverClient
 from ..protobuf_gen.proto_exception import (
     ProtoApplicationException,
     ProtoTransportException,
@@ -527,4 +527,134 @@ class CoreDriver:
         return self.client.config_get_paths(request)
 
 
-core_driver = CoreDriver()
+core_driver: CoreDriver = CoreDriver()
+
+
+# ---------------------------------------------------------------------------
+# async CoreDriver facade (process-wide singleton)
+# ---------------------------------------------------------------------------
+
+
+class AsyncCoreDriver:
+    """Async-native facade over :class:`DatabaseDriverClient`.
+
+    Mirrors :class:`CoreDriver` but exposes ``async def`` methods. Will
+    eventually replace ``CoreDriver`` once the codebase is fully async-first;
+    for now both coexist — sync callers go through ``core_driver``,
+    async-native callers go through ``async_core_driver``.
+
+    Both facades share the process-wide :data:`_proto_transport`.
+
+    Lazily initializes its underlying :class:`DatabaseDriverClient` on first
+    access (thread-safe, double-checked lock). Tests can inject a mock by
+    assigning to the ``client`` setter.
+
+    Currently, exposes only the subset of methods the cursor layer needs;
+    extend as new async callers appear.
+    """
+
+    def __init__(self) -> None:
+        self._client: AsyncDatabaseDriverClient | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def client(self) -> AsyncDatabaseDriverClient:
+        if self._client is not None:
+            return self._client
+        with self._lock:
+            if self._client is None:
+                self._client = AsyncDatabaseDriverClient(
+                    ProtoTransport(),
+                    error_handler=_proto_to_public_error,
+                )
+        return self._client
+
+    @client.setter
+    def client(self, client: AsyncDatabaseDriverClient | None) -> None:
+        self._client = client
+
+    # =====================================================================
+    # Statement lifecycle (cursor execute path)
+    # =====================================================================
+
+    async def statement_new(self, conn_handle: ConnectionHandle) -> StatementNewResponse:
+        return await self.client.statement_new(StatementNewRequest(conn_handle=conn_handle))
+
+    async def statement_set_query(self, stmt_handle: StatementHandle, query: str) -> StatementSetSqlQueryResponse:
+        return await self.client.statement_set_sql_query(
+            StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+        )
+
+    async def statement_release(self, stmt_handle: StatementHandle) -> StatementReleaseResponse:
+        return await self.client.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
+
+    async def statement_set_options(
+        self, stmt_handle: StatementHandle, options: dict[str, ConfigSetting]
+    ) -> StatementSetOptionsResponse:
+        return await self.client.statement_set_options(
+            StatementSetOptionsRequest(stmt_handle=stmt_handle, options=options)
+        )
+
+    async def statement_execute_query(
+        self, stmt_handle: StatementHandle, bindings: QueryBindings | None = None
+    ) -> ExecuteQueryResponse:
+        return await self.client.statement_execute_query(
+            StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
+        )
+
+    async def statement_execute_async(
+        self, stmt_handle: StatementHandle, bindings: QueryBindings | None = None
+    ) -> StatementExecuteAsyncResponse:
+        return await self.client.statement_execute_async(
+            StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
+        )
+
+    async def statement_prepare(self, stmt_handle: StatementHandle) -> StatementPrepareResponse:
+        return await self.client.statement_prepare(StatementPrepareRequest(stmt_handle=stmt_handle))
+
+    # =====================================================================
+    # Connection result-set access (multi-statement / async-query paths)
+    # =====================================================================
+
+    async def connection_get_result_set(self, conn_handle: ConnectionHandle, query_id: str) -> ResultSetResponse:
+        return await self.client.connection_get_result_set(
+            ConnectionGetResultSetRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    async def connection_get_query_result(self, conn_handle: ConnectionHandle, query_id: str) -> ExecuteQueryResponse:
+        return await self.client.connection_get_query_result(
+            ConnectionGetQueryResultRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    async def connection_abort_query(
+        self, conn_handle: ConnectionHandle, query_id: str
+    ) -> ConnectionAbortQueryResponse:
+        return await self.client.connection_abort_query(
+            ConnectionAbortQueryRequest(conn_handle=conn_handle, query_id=query_id)
+        )
+
+    # =====================================================================
+    # Result-set streaming
+    # =====================================================================
+
+    async def result_set_get_stream(self, result_set_handle: ResultSetHandle) -> ResultSetGetStreamResponse:
+        return await self.client.result_set_get_stream(ResultSetGetStreamRequest(result_set_handle=result_set_handle))
+
+    async def result_set_get_chunks(self, result_set_handle: ResultSetHandle) -> ResultSetGetChunksResponse:
+        return await self.client.result_set_get_chunks(ResultSetGetChunksRequest(result_set_handle=result_set_handle))
+
+    async def result_set_release(self, result_set_handle: ResultSetHandle) -> ResultSetReleaseResponse:
+        return await self.client.result_set_release(ResultSetReleaseRequest(result_set_handle=result_set_handle))
+
+    async def database_fetch_chunk(
+        self,
+        db_handle: DatabaseHandle,
+        chunk: ResultChunk,
+        columns: list[ColumnMetadata],
+    ) -> DatabaseFetchChunkResponse:
+        return await self.client.database_fetch_chunk(
+            DatabaseFetchChunkRequest(db_handle=db_handle, chunk=chunk, columns=columns)
+        )
+
+
+async_core_driver: AsyncCoreDriver = AsyncCoreDriver()

@@ -59,7 +59,7 @@ def connection(mock_db_api):
     """Create a Connection with a mocked db_api."""
     from snowflake.connector.connection import Connection
 
-    with patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0):
+    with patch("snowflake.connector._internal.cursor.query_result.get_stream_ptr", return_value=0):
         conn = Connection(user="test_user", account="test_account")
         yield conn
 

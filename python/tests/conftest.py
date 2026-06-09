@@ -34,6 +34,15 @@ def pytest_configure(config):
     import importlib.util
     import pathlib
 
+    config.addinivalue_line(
+        "markers",
+        "async_cursor_parity: also run this test against the async cursor (see run_against_sync_and_async)",
+    )
+    config.addinivalue_line(
+        "markers",
+        "skip_async(reason): skip this test only when run against the async cursor backend",
+    )
+
     repo_root = pathlib.Path(__file__).resolve().parents[2]
     param_path = pathlib.Path(os.environ.get("PARAMETER_PATH", repo_root / "parameters.json"))
     if not param_path.is_file():
@@ -59,6 +68,65 @@ def connector_adapter(request):
     return ConnectorFactory.create_adapter()
 
 
+@pytest.fixture(scope="module")
+def cursor_backend(request):
+    """Select the cursor implementation under test: ``"sync"`` (default) or ``"async"``.
+
+    Parametrized indirectly by :data:`run_against_sync_and_async`; tests that
+    don't opt in fall back to the synchronous cursor. When ``"async"``, the
+    ``connection``/``function_connection`` fixtures hand out a connection whose
+    cursors run the async implementation behind a blocking facade, so existing
+    synchronous tests exercise the async cursor unchanged.
+    """
+    return getattr(request, "param", "sync")
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize ``cursor_backend`` for tests opted in via ``async_cursor_parity``.
+
+    Only tests whose fixture closure includes ``cursor_backend`` (i.e. they use a
+    connection/cursor fixture) get the ``["sync", "async"]`` parametrization;
+    marked tests that touch no connection simply run once unparametrized, so the
+    marker is safe to apply to a whole class or module.
+
+    Async parametrization is universal-driver only: the reference connector has
+    no ``_async`` package and the blocking async bridge lives under ``tests/``.
+    """
+    if not IS_UNIVERSAL_DRIVER:
+        return
+    if metafunc.definition.get_closest_marker("async_cursor_parity") is None:
+        return
+    if "cursor_backend" in metafunc.fixturenames:
+        metafunc.parametrize("cursor_backend", ["sync", "async"], indirect=True)
+
+
+def _maybe_blocking_async(connection: Any, cursor_backend: str) -> Any:
+    """Wrap *connection* for the async cursor backend (universal driver only)."""
+    if cursor_backend != "async":
+        return connection
+    from ._async_bridge import maybe_blocking_async
+
+    return maybe_blocking_async(connection, cursor_backend)
+
+
+# Apply as a class decorator or module-level ``pytestmark`` to run a test
+# (class/module) against BOTH the sync and the async cursor implementations.
+# The actual parametrization is performed in ``pytest_generate_tests`` and only
+# applies to tests that pull in a connection/cursor fixture (and therefore the
+# ``cursor_backend`` fixture); marked tests that use neither simply run once.
+run_against_sync_and_async = pytest.mark.async_cursor_parity
+
+
+def skip_async(reason: str):
+    """Mark a test to be skipped only under the async cursor backend.
+
+    Use for tests that assert against a concrete sync cursor type
+    (e.g. ``isinstance(cur, SnowflakeCursor)``) which cannot hold for the
+    blocking async facade.
+    """
+    return pytest.mark.skip_async(reason=reason)
+
+
 def with_paramstyle(style: str):
     """Decorator that sets the paramstyle on the ``connection`` fixture.
 
@@ -76,12 +144,15 @@ def with_paramstyle(style: str):
 
 
 @pytest.fixture(scope="module")
-def connection(request, connector_adapter):
+def connection(request, connector_adapter, cursor_backend):
     """Module-scoped test connection; shared across tests in the same module.
 
     Use ``@with_paramstyle(...)`` to enable parameter binding. When a paramstyle
     is supplied via indirect parametrize, a distinct instance is created per
     paramstyle so tests with different paramstyles don't collide.
+
+    When ``cursor_backend == "async"`` the connection is wrapped so its cursors
+    run the async cursor implementation (see ``run_against_sync_and_async``).
 
     Tests that mutate connection state (close, autocommit, commit/rollback,
     set_autocommit, etc.) must use ``function_connection`` instead — this
@@ -89,18 +160,18 @@ def connection(request, connector_adapter):
     """
     paramstyle = getattr(request, "param", None)
     with create_connection_with_adapter(connector_adapter, paramstyle=paramstyle) as conn:
-        yield conn
+        yield _maybe_blocking_async(conn, cursor_backend)
 
 
 @pytest.fixture
-def function_connection(connector_adapter):
+def function_connection(connector_adapter, cursor_backend):
     """Function-scoped connection for tests that mutate connection state.
 
     Required for tests that call ``close()``, ``autocommit()``, ``commit()``,
     ``rollback()``, or similar methods that invalidate the session.
     """
     with create_connection_with_adapter(connector_adapter) as conn:
-        yield conn
+        yield _maybe_blocking_async(conn, cursor_backend)
 
 
 @pytest.fixture(scope="session")
@@ -246,6 +317,14 @@ def wiremock(_wiremock_session):
 
 def pytest_runtest_setup(item):
     """Skip tests based on connector type and markers."""
+    skip_async_marker = item.get_closest_marker("skip_async")
+    if skip_async_marker is not None:
+        callspec = getattr(item, "callspec", None)
+        backend = callspec.params.get("cursor_backend") if callspec is not None else None
+        if backend == "async":
+            reason = skip_async_marker.kwargs.get("reason", "Skipping test for async cursor backend")
+            pytest.skip(reason)
+
     if IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_universal"):
         marker = item.get_closest_marker("skip_universal")
         reason = marker.kwargs.get("reason", "Skipping test for universal driver")

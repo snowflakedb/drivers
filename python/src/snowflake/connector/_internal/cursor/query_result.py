@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from .._internal.arrow_stream_utils import release_arrow_stream
-from .._internal.protobuf_gen.database_driver_v1_pb2 import (
+from ...errors import ProgrammingError
+from ..arrow_stream_utils import release_arrow_stream
+from ..protobuf_gen.database_driver_v1_pb2 import (
     MultiStatementResult,
     PrepareResult,
     ResultSetResponse,
 )
-from .._internal.statement_utils import (
+from ..statement_utils import (
     extract_rowcount,
     extract_sqlstate,
     get_stream_ptr,
 )
-from ..errors import ProgrammingError
-from ._result_metadata import QueryResultStats, ResultMetadata
+from .result_metadata import QueryResultStats, ResultMetadata
 
 
-class _MultiStatementQueryResultState:
+class MultiStatementQueryResultState:
     """Cursor-level navigation state for multi-statement query results.
 
     Tracks the child query IDs returned by the server, which child
@@ -49,20 +49,20 @@ class _MultiStatementQueryResultState:
         return self.child_query_ids[self._next_index - 1]
 
     @staticmethod
-    def from_result(multi_result: MultiStatementResult) -> _MultiStatementQueryResultState | None:
+    def from_result(multi_result: MultiStatementResult) -> MultiStatementQueryResultState | None:
         """Create from a proto MultiStatementResult, or None if there are no children."""
         query_ids = list(multi_result.query_ids)
         if not query_ids:
             return None
         parent = multi_result.parent
         parent_qid = parent.query_id if parent.query_id else None
-        return _MultiStatementQueryResultState(
+        return MultiStatementQueryResultState(
             parent_qid=parent_qid,
             child_query_ids=query_ids,
         )
 
 
-class _QueryResult:
+class QueryResult:
     """Pure metadata about a query execution result."""
 
     __slots__ = ("description", "sqlstate", "sfqid", "query", "stats", "rowcount")
@@ -95,12 +95,12 @@ class _QueryResult:
             self.rowcount = None
 
     @staticmethod
-    def from_prepare_result(result: PrepareResult | None) -> _QueryResult:
+    def from_prepare_result(result: PrepareResult | None) -> QueryResult:
         stream_ptr = get_stream_ptr(result)
         release_arrow_stream(stream_ptr)
 
         description = ResultMetadata.create_description(result)
-        return _QueryResult(
+        return QueryResult(
             description=description,
             sqlstate=extract_sqlstate(result),
             sfqid=(result.query_id if result.query_id else None) if result else None,
@@ -109,8 +109,8 @@ class _QueryResult:
         )
 
     @staticmethod
-    def from_programming_error(exc: ProgrammingError) -> _QueryResult:
-        return _QueryResult(
+    def from_programming_error(exc: ProgrammingError) -> QueryResult:
+        return QueryResult(
             sqlstate=exc.sqlstate or None,
             sfqid=exc.sfqid or None,
             query=exc.query or None,
@@ -120,19 +120,19 @@ class _QueryResult:
     def from_result_set_response(
         response: ResultSetResponse,
         query: str | None = None,
-    ) -> _QueryResult:
-        """Create _QueryResult from a ResultSetResponse (metadata only).
+    ) -> QueryResult:
+        """Create QueryResult from a ResultSetResponse (metadata only).
 
         Args:
             response: ResultSetResponse containing descriptor metadata.
             query: Optional query text (not available in proto, must be passed separately).
 
         Returns:
-            _QueryResult instance with metadata populated.
+            QueryResult instance with metadata populated.
         """
         descriptor = response.result_descriptor
 
-        return _QueryResult(
+        return QueryResult(
             description=ResultMetadata.create_description(descriptor),
             sqlstate=extract_sqlstate(descriptor),
             sfqid=descriptor.query_id if descriptor.query_id else None,
