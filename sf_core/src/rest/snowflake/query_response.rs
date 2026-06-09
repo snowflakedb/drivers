@@ -767,7 +767,7 @@ fn align_presigned_urls(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RowsetData {
     SchemaOnly {
         rowtype: Vec<RowType>,

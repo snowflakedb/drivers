@@ -368,7 +368,7 @@ impl DatabaseDriverV1 {
     ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
         let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
-                argument: "ResultSet handle not found".to_string(),
+                argument: "result_handle: ResultSet handle not found".to_string(),
             }
             .build()
         })?;
@@ -391,17 +391,22 @@ impl DatabaseDriverV1 {
     /// that skips the `FFI_ArrowArrayStream` wrapping. Built lazily from the
     /// stored `RowsetData`, so it can be requested multiple times.
     ///
-    /// For chunked result sets the reader downloads/parses chunks lazily via a
-    /// blocking channel receiver, so it must be drained from a synchronous
-    /// context -- never from within an async runtime (a `tokio` task or
-    /// `block_on`), which would panic.
+    /// Calling this method is async-safe: awaiting it (including inside a
+    /// `tokio` task or `block_on`) only builds the reader and never blocks.
+    ///
+    /// **Iterating** the returned reader is what must happen in a synchronous
+    /// context. For chunked result sets the reader downloads/parses chunks
+    /// lazily via a blocking channel receiver, so draining it from within an
+    /// async runtime would call `blocking_recv` and panic. Drain it after
+    /// returning from `block_on` (while keeping the runtime alive), on a
+    /// dedicated `std::thread`, or via `tokio::task::spawn_blocking`.
     pub async fn result_set_get_reader(
         &self,
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
         let rs_ptr = self.results.get_obj(result_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
-                argument: "ResultSet handle not found".to_string(),
+                argument: "result_handle: ResultSet handle not found".to_string(),
             }
             .build()
         })?;
