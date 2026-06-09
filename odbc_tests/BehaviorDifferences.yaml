@@ -1127,3 +1127,15 @@ behavior_differences:
       SQLGetInfo(SQL_DRIVER_VER) returns the Cargo package version verbatim, in unpadded semver form (e.g. `4.0.0`). The dot count is preserved (two dots, three components) so existing version-pattern consumers keep working, but the exact numeric width differs from the legacy fixed-width format.
     impact: |
       Applications that parsed SQL_DRIVER_VER assuming fixed `MM.mm.bbbb` widths need to relax their parser to accept unpadded semver. Applications that only used the dot count or treated the string as opaque are unaffected.
+
+  77:
+    name: "SQLGetDiagRec/SQLGetDiagField MessageText appends an internal error trace by default"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      `SQLGetDiagRec` / `SQLGetDiagField(SQL_DIAG_MESSAGE_TEXT)` return only the human-readable diagnostic message produced by the driver/server. No internal call-site trace is appended.
+    new_driver_behavior: |
+      `OdbcError::message_text()` appends the driver's internal `ErrorTrace` (file/line entries collected via the `error_trace` derive) to the user-facing diagnostic string by default. The behavior is gated by `error_trace_enabled` in `LoggingConfig`, which defaults to `true` (sf_core/src/logging/mod.rs:87). Setting `ErrorTraceEnabled=false` in `sf.odbc.ini` (parsed by `sf_core::config::logging_config_loader`) suppresses the appended trace and restores legacy-shaped messages.
+    impact: |
+      Applications that match diagnostic message text against fixed substrings, or that surface `SQLGetDiagRec` output verbatim to end users / test oracles, will see additional trace content appended. Consumers that need the legacy shape must write `ErrorTraceEnabled=false` to `sf.odbc.ini` and point `SF_ODBC_INI` at it.

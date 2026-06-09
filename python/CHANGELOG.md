@@ -1,4 +1,3 @@
 # Changelog
 
-- [NEXT RELEASE]
-    - 
+## Upcoming Release

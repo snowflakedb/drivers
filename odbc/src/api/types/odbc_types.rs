@@ -174,18 +174,124 @@ pub enum InfoType {
     DriverName = 6,
     /// `SQL_DRIVER_VER` (7) — driver release version (string).
     DriverVer = 7,
+    /// `SQL_SEARCH_PATTERN_ESCAPE` (14) — escape character for catalog wildcard patterns (string).
+    SearchPatternEscape = 14,
     /// `SQL_DBMS_NAME` (17) — name of the DBMS product (string).
     DbmsName = 17,
     /// `SQL_DBMS_VER` (18) — version of the DBMS the connection is talking to (string).
     DbmsVer = 18,
+    /// `SQL_CONCAT_NULL_BEHAVIOR` (22) — concat-with-null result (`SQLUSMALLINT`).
+    ConcatNullBehavior = 22,
     /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
     CursorCommitBehavior = 23,
     /// `SQL_CURSOR_ROLLBACK_BEHAVIOR` (24) — cursor behavior on rollback.
     CursorRollbackBehavior = 24,
+    /// `SQL_IDENTIFIER_QUOTE_CHAR` (29) — identifier quote character (string).
+    IdentifierQuoteChar = 29,
+    /// `SQL_SCHEMA_TERM` (39) — DBMS term for schema (string). Aliased as `SQL_OWNER_TERM` in 2.x.
+    SchemaTerm = 39,
+    /// `SQL_CATALOG_NAME_SEPARATOR` (41) — catalog/schema separator character (string).
+    CatalogNameSeparator = 41,
+    /// `SQL_CATALOG_TERM` (42) — DBMS term for catalog (string).
+    CatalogTerm = 42,
+    /// `SQL_CONVERT_FUNCTIONS` (48) — supported `CAST`/`CONVERT` function bitmask.
+    ConvertFunctions = 48,
+    /// `SQL_NUMERIC_FUNCTIONS` (49) — supported numeric scalar functions bitmask.
+    NumericFunctions = 49,
+    /// `SQL_STRING_FUNCTIONS` (50) — supported string scalar functions bitmask.
+    StringFunctions = 50,
+    /// `SQL_SYSTEM_FUNCTIONS` (51) — supported system scalar functions bitmask.
+    SystemFunctions = 51,
+    /// `SQL_TIMEDATE_FUNCTIONS` (52) — supported timedate scalar functions bitmask.
+    TimedateFunctions = 52,
+    /// `SQL_CONVERT_BIGINT` (53) — conversion targets from `BIGINT` source bitmask.
+    ConvertBigint = 53,
+    /// `SQL_CONVERT_BINARY` (54) — conversion targets from `BINARY` source bitmask.
+    ConvertBinary = 54,
+    /// `SQL_CONVERT_BIT` (55) — conversion targets from `BIT` source bitmask.
+    ConvertBit = 55,
+    /// `SQL_CONVERT_CHAR` (56) — conversion targets from `CHAR` source bitmask.
+    ConvertChar = 56,
+    /// `SQL_CONVERT_DATE` (57) — conversion targets from `DATE` source bitmask.
+    ConvertDate = 57,
+    /// `SQL_CONVERT_DECIMAL` (58) — conversion targets from `DECIMAL` source bitmask.
+    ConvertDecimal = 58,
+    /// `SQL_CONVERT_DOUBLE` (59) — conversion targets from `DOUBLE` source bitmask.
+    ConvertDouble = 59,
+    /// `SQL_CONVERT_FLOAT` (60) — conversion targets from `FLOAT` source bitmask.
+    ConvertFloat = 60,
+    /// `SQL_CONVERT_INTEGER` (61) — conversion targets from `INTEGER` source bitmask.
+    ConvertInteger = 61,
+    /// `SQL_CONVERT_LONGVARCHAR` (62) — conversion targets from `LONGVARCHAR` source bitmask.
+    ConvertLongVarchar = 62,
+    /// `SQL_CONVERT_NUMERIC` (63) — conversion targets from `NUMERIC` source bitmask.
+    ConvertNumeric = 63,
+    /// `SQL_CONVERT_REAL` (64) — conversion targets from `REAL` source bitmask.
+    ConvertReal = 64,
+    /// `SQL_CONVERT_SMALLINT` (65) — conversion targets from `SMALLINT` source bitmask.
+    ConvertSmallint = 65,
+    /// `SQL_CONVERT_TIME` (66) — conversion targets from `TIME` source bitmask.
+    ConvertTime = 66,
+    /// `SQL_CONVERT_TIMESTAMP` (67) — conversion targets from `TIMESTAMP` source bitmask.
+    ConvertTimestamp = 67,
+    /// `SQL_CONVERT_TINYINT` (68) — conversion targets from `TINYINT` source bitmask.
+    ConvertTinyint = 68,
+    /// `SQL_CONVERT_VARBINARY` (69) — conversion targets from `VARBINARY` source bitmask.
+    ConvertVarbinary = 69,
+    /// `SQL_CONVERT_VARCHAR` (70) — conversion targets from `VARCHAR` source bitmask.
+    ConvertVarchar = 70,
+    /// `SQL_CONVERT_LONGVARBINARY` (71) — conversion targets from `LONGVARBINARY` source bitmask.
+    ConvertLongVarbinary = 71,
     /// `SQL_DRIVER_ODBC_VER` (77) — ODBC version the driver conforms to (string).
     DriverOdbcVer = 77,
+    /// `SQL_DYNAMIC_CURSOR_ATTRIBUTES1` (144) — dynamic-cursor attribute set 1 bitmask.
+    DynamicCursorAttributes1 = 144,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
+    /// `SQL_COLUMN_ALIAS` (87) — whether the driver supports column aliases (string `"Y"`/`"N"`).
+    ColumnAlias = 87,
+    /// `SQL_GROUP_BY` (88) — `GROUP BY` relationship to selected columns (`SQLUSMALLINT`).
+    GroupBy = 88,
+    /// `SQL_ORDER_BY_COLUMNS_IN_SELECT` (90) — whether `ORDER BY` columns must appear in the select list (string).
+    OrderByColumnsInSelect = 90,
+    /// `SQL_SCHEMA_USAGE` (91) — schema usage bitmask. Aliased as `SQL_OWNER_USAGE` in 2.x.
+    SchemaUsage = 91,
+    /// `SQL_CATALOG_USAGE` (92) — catalog usage bitmask.
+    CatalogUsage = 92,
+    /// `SQL_SPECIAL_CHARACTERS` (94) — non-alphanumeric characters allowed in identifiers (string).
+    SpecialCharacters = 94,
+    /// `SQL_MAX_COLUMNS_IN_GROUP_BY` (97) — max columns in a `GROUP BY` (`SQLUSMALLINT`).
+    MaxColumnsInGroupBy = 97,
+    /// `SQL_MAX_COLUMNS_IN_ORDER_BY` (99) — max columns in an `ORDER BY` (`SQLUSMALLINT`).
+    MaxColumnsInOrderBy = 99,
+    /// `SQL_MAX_COLUMNS_IN_SELECT` (100) — max columns in a `SELECT` list (`SQLUSMALLINT`).
+    MaxColumnsInSelect = 100,
+    /// `SQL_TIMEDATE_ADD_INTERVALS` (109) — supported intervals for `TIMESTAMPADD` bitmask.
+    TimedateAddIntervals = 109,
+    /// `SQL_TIMEDATE_DIFF_INTERVALS` (110) — supported intervals for `TIMESTAMPDIFF` bitmask.
+    TimedateDiffIntervals = 110,
+    /// `SQL_CATALOG_LOCATION` (114) — whether catalog appears before or after the schema (`SQLUSMALLINT`).
+    CatalogLocation = 114,
+    /// `SQL_SQL_CONFORMANCE` (118) — SQL-92 conformance level (`SQLUINTEGER`).
+    SqlConformance = 118,
+    /// `SQL_CONVERT_WCHAR` (122) — conversion targets from `WCHAR` source bitmask.
+    ConvertWchar = 122,
+    /// `SQL_CONVERT_WLONGVARCHAR` (125) — conversion targets from `WLONGVARCHAR` source bitmask.
+    ConvertWlongVarchar = 125,
+    /// `SQL_CONVERT_WVARCHAR` (126) — conversion targets from `WVARCHAR` source bitmask.
+    ConvertWvarchar = 126,
+    /// `SQL_ODBC_INTERFACE_CONFORMANCE` (152) — ODBC interface conformance level (`SQLUINTEGER`).
+    OdbcInterfaceConformance = 152,
+    /// `SQL_SQL92_PREDICATES` (160) — supported SQL-92 predicates bitmask.
+    Sql92Predicates = 160,
+    /// `SQL_SQL92_RELATIONAL_JOIN_OPERATORS` (161) — supported SQL-92 join operators bitmask.
+    Sql92RelationalJoinOperators = 161,
+    /// `SQL_SQL92_VALUE_EXPRESSIONS` (165) — supported SQL-92 value expressions bitmask.
+    Sql92ValueExpressions = 165,
+    /// `SQL_AGGREGATE_FUNCTIONS` (169) — supported aggregate functions bitmask.
+    AggregateFunctions = 169,
+    /// `SQL_CONVERT_GUID` (173) — conversion targets from `GUID` source bitmask.
+    ConvertGuid = 173,
     /// `SQL_ASYNC_MODE` (10021) — async mode supported by the driver.
     AsyncMode = 10021,
     /// `SQL_MAX_ASYNC_CONCURRENT_STATEMENTS` (10022) — max concurrent async statements.
@@ -194,6 +300,10 @@ pub enum InfoType {
     AsyncDbcFunctions = 10023,
     /// `SQL_ASYNC_NOTIFICATION` (10025) — async notification capability.
     AsyncNotification = 10025,
+    /// `SQL_CATALOG_NAME` (10003) — whether the driver supports catalog names (string `"Y"`/`"N"`).
+    CatalogName = 10003,
+    /// `SQL_MAX_IDENTIFIER_LEN` (10005) — max identifier length in characters (`SQLUSMALLINT`).
+    MaxIdentifierLen = 10005,
 }
 
 impl TryFrom<u16> for InfoType {
@@ -203,12 +313,67 @@ impl TryFrom<u16> for InfoType {
         match value {
             6 => Ok(InfoType::DriverName),
             7 => Ok(InfoType::DriverVer),
+            14 => Ok(InfoType::SearchPatternEscape),
             17 => Ok(InfoType::DbmsName),
             18 => Ok(InfoType::DbmsVer),
+            22 => Ok(InfoType::ConcatNullBehavior),
             23 => Ok(InfoType::CursorCommitBehavior),
             24 => Ok(InfoType::CursorRollbackBehavior),
+            29 => Ok(InfoType::IdentifierQuoteChar),
+            39 => Ok(InfoType::SchemaTerm),
+            41 => Ok(InfoType::CatalogNameSeparator),
+            42 => Ok(InfoType::CatalogTerm),
+            48 => Ok(InfoType::ConvertFunctions),
+            49 => Ok(InfoType::NumericFunctions),
+            50 => Ok(InfoType::StringFunctions),
+            51 => Ok(InfoType::SystemFunctions),
+            52 => Ok(InfoType::TimedateFunctions),
+            53 => Ok(InfoType::ConvertBigint),
+            54 => Ok(InfoType::ConvertBinary),
+            55 => Ok(InfoType::ConvertBit),
+            56 => Ok(InfoType::ConvertChar),
+            57 => Ok(InfoType::ConvertDate),
+            58 => Ok(InfoType::ConvertDecimal),
+            59 => Ok(InfoType::ConvertDouble),
+            60 => Ok(InfoType::ConvertFloat),
+            61 => Ok(InfoType::ConvertInteger),
+            62 => Ok(InfoType::ConvertLongVarchar),
+            63 => Ok(InfoType::ConvertNumeric),
+            64 => Ok(InfoType::ConvertReal),
+            65 => Ok(InfoType::ConvertSmallint),
+            66 => Ok(InfoType::ConvertTime),
+            67 => Ok(InfoType::ConvertTimestamp),
+            68 => Ok(InfoType::ConvertTinyint),
+            69 => Ok(InfoType::ConvertVarbinary),
+            70 => Ok(InfoType::ConvertVarchar),
+            71 => Ok(InfoType::ConvertLongVarbinary),
             77 => Ok(InfoType::DriverOdbcVer),
+            144 => Ok(InfoType::DynamicCursorAttributes1),
             81 => Ok(InfoType::GetDataExtensions),
+            87 => Ok(InfoType::ColumnAlias),
+            88 => Ok(InfoType::GroupBy),
+            90 => Ok(InfoType::OrderByColumnsInSelect),
+            91 => Ok(InfoType::SchemaUsage),
+            92 => Ok(InfoType::CatalogUsage),
+            94 => Ok(InfoType::SpecialCharacters),
+            97 => Ok(InfoType::MaxColumnsInGroupBy),
+            99 => Ok(InfoType::MaxColumnsInOrderBy),
+            100 => Ok(InfoType::MaxColumnsInSelect),
+            109 => Ok(InfoType::TimedateAddIntervals),
+            110 => Ok(InfoType::TimedateDiffIntervals),
+            114 => Ok(InfoType::CatalogLocation),
+            118 => Ok(InfoType::SqlConformance),
+            122 => Ok(InfoType::ConvertWchar),
+            125 => Ok(InfoType::ConvertWlongVarchar),
+            126 => Ok(InfoType::ConvertWvarchar),
+            152 => Ok(InfoType::OdbcInterfaceConformance),
+            160 => Ok(InfoType::Sql92Predicates),
+            161 => Ok(InfoType::Sql92RelationalJoinOperators),
+            165 => Ok(InfoType::Sql92ValueExpressions),
+            169 => Ok(InfoType::AggregateFunctions),
+            173 => Ok(InfoType::ConvertGuid),
+            10003 => Ok(InfoType::CatalogName),
+            10005 => Ok(InfoType::MaxIdentifierLen),
             10021 => Ok(InfoType::AsyncMode),
             10022 => Ok(InfoType::MaxAsyncConcurrentStatements),
             10023 => Ok(InfoType::AsyncDbcFunctions),
@@ -1680,23 +1845,82 @@ mod tests {
     /// replay tests and breaks application discovery.
     #[test]
     fn info_type_try_from_round_trip() {
-        assert_eq!(InfoType::try_from(6_u16).unwrap(), InfoType::DriverName);
-        assert_eq!(InfoType::try_from(7_u16).unwrap(), InfoType::DriverVer);
-        assert_eq!(InfoType::try_from(17_u16).unwrap(), InfoType::DbmsName);
-        assert_eq!(InfoType::try_from(18_u16).unwrap(), InfoType::DbmsVer);
-        assert_eq!(
-            InfoType::try_from(23_u16).unwrap(),
-            InfoType::CursorCommitBehavior
-        );
-        assert_eq!(
-            InfoType::try_from(24_u16).unwrap(),
-            InfoType::CursorRollbackBehavior
-        );
-        assert_eq!(InfoType::try_from(77_u16).unwrap(), InfoType::DriverOdbcVer);
-        assert_eq!(
-            InfoType::try_from(81_u16).unwrap(),
-            InfoType::GetDataExtensions
-        );
+        let cases: &[(u16, InfoType)] = &[
+            (6, InfoType::DriverName),
+            (7, InfoType::DriverVer),
+            (14, InfoType::SearchPatternEscape),
+            (17, InfoType::DbmsName),
+            (18, InfoType::DbmsVer),
+            (22, InfoType::ConcatNullBehavior),
+            (23, InfoType::CursorCommitBehavior),
+            (24, InfoType::CursorRollbackBehavior),
+            (29, InfoType::IdentifierQuoteChar),
+            (39, InfoType::SchemaTerm),
+            (41, InfoType::CatalogNameSeparator),
+            (42, InfoType::CatalogTerm),
+            (48, InfoType::ConvertFunctions),
+            (49, InfoType::NumericFunctions),
+            (50, InfoType::StringFunctions),
+            (51, InfoType::SystemFunctions),
+            (52, InfoType::TimedateFunctions),
+            (53, InfoType::ConvertBigint),
+            (54, InfoType::ConvertBinary),
+            (55, InfoType::ConvertBit),
+            (56, InfoType::ConvertChar),
+            (57, InfoType::ConvertDate),
+            (58, InfoType::ConvertDecimal),
+            (59, InfoType::ConvertDouble),
+            (60, InfoType::ConvertFloat),
+            (61, InfoType::ConvertInteger),
+            (62, InfoType::ConvertLongVarchar),
+            (63, InfoType::ConvertNumeric),
+            (64, InfoType::ConvertReal),
+            (65, InfoType::ConvertSmallint),
+            (66, InfoType::ConvertTime),
+            (67, InfoType::ConvertTimestamp),
+            (68, InfoType::ConvertTinyint),
+            (69, InfoType::ConvertVarbinary),
+            (70, InfoType::ConvertVarchar),
+            (71, InfoType::ConvertLongVarbinary),
+            (77, InfoType::DriverOdbcVer),
+            (144, InfoType::DynamicCursorAttributes1),
+            (81, InfoType::GetDataExtensions),
+            (87, InfoType::ColumnAlias),
+            (88, InfoType::GroupBy),
+            (90, InfoType::OrderByColumnsInSelect),
+            (91, InfoType::SchemaUsage),
+            (92, InfoType::CatalogUsage),
+            (94, InfoType::SpecialCharacters),
+            (97, InfoType::MaxColumnsInGroupBy),
+            (99, InfoType::MaxColumnsInOrderBy),
+            (100, InfoType::MaxColumnsInSelect),
+            (109, InfoType::TimedateAddIntervals),
+            (110, InfoType::TimedateDiffIntervals),
+            (114, InfoType::CatalogLocation),
+            (118, InfoType::SqlConformance),
+            (122, InfoType::ConvertWchar),
+            (125, InfoType::ConvertWlongVarchar),
+            (126, InfoType::ConvertWvarchar),
+            (152, InfoType::OdbcInterfaceConformance),
+            (160, InfoType::Sql92Predicates),
+            (161, InfoType::Sql92RelationalJoinOperators),
+            (165, InfoType::Sql92ValueExpressions),
+            (169, InfoType::AggregateFunctions),
+            (173, InfoType::ConvertGuid),
+            (10003, InfoType::CatalogName),
+            (10005, InfoType::MaxIdentifierLen),
+            (10021, InfoType::AsyncMode),
+            (10022, InfoType::MaxAsyncConcurrentStatements),
+            (10023, InfoType::AsyncDbcFunctions),
+            (10025, InfoType::AsyncNotification),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(
+                InfoType::try_from(*raw).unwrap(),
+                *expected,
+                "raw={raw} expected={expected:?}",
+            );
+        }
 
         match InfoType::try_from(9999_u16) {
             Err(OdbcError::UnknownInfoType { info_type, .. }) => assert_eq!(info_type, 9999),

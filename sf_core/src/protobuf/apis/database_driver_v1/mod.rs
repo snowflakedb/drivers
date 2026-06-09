@@ -1112,6 +1112,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: TelemetrySendWrapperErrorRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse>;
+    fn connection_get_query_result_blocking(
+        &self,
+        input: ConnectionGetQueryResultRequest,
+    ) -> BlockingProtoResult<ExecuteQueryResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1275,5 +1279,12 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: TelemetrySendWrapperErrorRequest,
     ) -> BlockingProtoResult<TelemetrySendResponse> {
         block_on_client_call(self.telemetry_send_wrapper_error(input))
+    }
+
+    fn connection_get_query_result_blocking(
+        &self,
+        input: ConnectionGetQueryResultRequest,
+    ) -> BlockingProtoResult<ExecuteQueryResponse> {
+        block_on_client_call(self.connection_get_query_result(input))
     }
 }

@@ -353,6 +353,21 @@ impl SnowflakeTestClient {
         stream
     }
 
+    /// Retrieve the result of an async PUT/GET by query_id via the connection.
+    /// Calls `connection_get_query_result`, which handles the DOWNLOAD/UPLOAD
+    /// command dispatch and stage-info refresh.
+    pub fn connection_get_query_result(
+        &self,
+        query_id: &str,
+    ) -> Result<ExecuteQueryResponse, String> {
+        self.client
+            .connection_get_query_result_blocking(ConnectionGetQueryResultRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
     /// Get a ResultSetResponse (handle + descriptor) by query_id via the connection.
     pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
         self.client

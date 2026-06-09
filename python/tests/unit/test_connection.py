@@ -462,40 +462,35 @@ class TestClose:
         mock_db_api.connection_release.assert_called_once()
         mock_db_api.database_release.assert_called_once()
 
-    def test_del_invokes_sync_close_when_not_closed(self, mock_db_api):
-        """__del__ should delegate to try_sync_close when close() was never called.
-
-        Note: __del__ takes the sync-FFI path (try_sync_close) — not the async
-        path via core_driver.client — because it may run during interpreter
-        shutdown when the background event loop is unsafe to use.
-        """
+    def test_del_releases_handles_if_not_closed(self, mock_db_api):
+        """__del__ should close + release handles when close() was never called."""
         from snowflake.connector.connection import Connection
 
-        with patch("snowflake.connector.connection.try_sync_close") as mock_try_sync:
-            conn = Connection(user="test_user", account="test_account")
-            conn.__del__()
+        conn = Connection(user="test_user", account="test_account")
 
-            mock_try_sync.assert_called_once()
-            # Called with the conn_handle and db_handle that were captured before nullification.
-            args, _ = mock_try_sync.call_args
-            assert args[0] is not None  # conn_handle
-            assert args[1] is not None  # db_handle
+        conn.__del__()
+        conn.auto_cleanup = False
+
+        mock_db_api.connection_close.assert_called_once()
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
 
     def test_del_does_not_raise(self, connection, mock_db_api):
         """__del__ must never propagate exceptions (best-effort via _try_close)."""
-        with patch("snowflake.connector.connection.try_sync_close", side_effect=RuntimeError("boom")):
-            connection.__del__()  # must not raise
+        mock_db_api.connection_release.side_effect = RuntimeError("boom")
+        mock_db_api.database_release.side_effect = RuntimeError("boom")
 
-    def test_del_is_noop_after_explicit_close(self, connection, mock_db_api):
-        """After close() ran, __del__ must NOT invoke try_sync_close again.
+        # Should not raise
+        connection.__del__()
 
-        close() nulls out conn_handle/db_handle; _try_close skips when
-        conn_handle is None.
-        """
-        connection.close()
-        with patch("snowflake.connector.connection.try_sync_close") as mock_try_sync:
-            connection.__del__()
-            mock_try_sync.assert_not_called()
+    def test_del_is_noop_if_already_closed(self, connection, mock_db_api):
+        """__del__ should not close again if already closed."""
+        # After close(), is_closed() returns True
+        mock_db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=True)
+
+        connection.__del__()
+
+        mock_db_api.connection_close.assert_not_called()
 
 
 class TestContextManagerUnit:

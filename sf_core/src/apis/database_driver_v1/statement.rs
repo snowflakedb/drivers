@@ -343,11 +343,15 @@ impl DatabaseDriverV1 {
         let rowset_data = match data.command.as_deref() {
             Some(command) => {
                 // Build refresh context for PUT/GET so the file manager can
-                // recover from STS `ExpiredToken` by re-issuing the original
-                // PUT/GET SQL to obtain fresh stage credentials. The refresher
-                // calls back into `RefreshContext::execute_with_refresh`, so a
-                // session-token expiry mid-batch is renewed transparently.
-                let stage_creds_refresh_context = super::query::StageCredsRefreshContext {
+                // recover from recoverable stage-info-expiry errors by
+                // re-issuing the original PUT/GET SQL. Covers:
+                // - S3 `ExpiredToken` (STS rotation, creds-only)
+                // - GCS 401 (bearer expired, creds-only)
+                // - GCS 400 in presigned mode (per-file URL expired, URL refresh)
+                // The refresher calls back into
+                // `RefreshContext::execute_with_refresh`, so a session-token
+                // expiry mid-batch is renewed transparently.
+                let stage_info_refresh_context = super::query::StageInfoRefreshContext {
                     sql: query.clone(),
                     query_parameters: query_parameters.clone(),
                     conn: conn_arc.clone(),
@@ -361,7 +365,7 @@ impl DatabaseDriverV1 {
                     command,
                     &data,
                     &self.wrapper_presets,
-                    Some(stage_creds_refresh_context),
+                    Some(stage_info_refresh_context),
                     use_s3_regional_url_session_param,
                 )
                 .await
@@ -462,16 +466,36 @@ impl DatabaseDriverV1 {
 
             let rowset_data = match data.command.as_deref() {
                 Some(command) => {
+                    let (query_parameters, _http_client, _retry_policy) =
+                        query_context(&conn_ptr).await?;
                     let use_s3_regional_url_session_param = conn_ptr
                         .lock()
                         .await
                         .use_s3_regional_url_session_param()
                         .await;
+                    // Build a refresh context when the response carries the
+                    // original SQL (`sqlText`). Async PUT/GET retrieval goes
+                    // through `monitoring/queries/{queryId}/result` which
+                    // populates `sqlText`; without it we cannot re-issue the
+                    // command, so stage-info refresh is disabled for this path.
+                    let stage_info_refresh_context =
+                        data.sql_text
+                            .as_ref()
+                            .map(|sql| super::query::StageInfoRefreshContext {
+                                sql: sql.clone(),
+                                query_parameters: query_parameters.clone(),
+                                conn: conn_ptr.clone(),
+                            });
+                    if stage_info_refresh_context.is_none() {
+                        tracing::debug!(
+                            "async PUT/GET response missing sqlText; stage-info refresh disabled"
+                        );
+                    }
                     perform_put_get_transfer(
                         command,
                         &data,
                         &self.wrapper_presets,
-                        None,
+                        stage_info_refresh_context,
                         use_s3_regional_url_session_param,
                     )
                     .await

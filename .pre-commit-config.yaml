@@ -103,3 +103,15 @@ repos:
         pass_filenames: false
         files: (\.claude/rules/|\.cursor/rules/|\.claude/skills/|\.cursor/skills/)
         language: system
+    -   id: sf-ai-skills-check
+        name: Validate Claude skills
+        entry: .pre-commit-scripts/sf-ai-skills-check.sh
+        language: script
+        pass_filenames: false
+        files: '^.*\.claude/.*'
+    -   id: sf-ai-skills-bridge
+        name: Create .agents/skills/ symlink bridges from .claude/skills/
+        entry: .pre-commit-scripts/sf-ai-skills-bridge.sh
+        language: script
+        pass_filenames: false
+        files: '(^|/)(\.claude|\.agents)/skills/'

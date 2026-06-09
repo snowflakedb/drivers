@@ -68,7 +68,7 @@ behavior_differences:
       resets both in finalizeBatch.
   5:
     name: "MFA token caching parameter consolidated; clientRequestMfaToken removed"
-    status: allowed
+    status: unknown
     type: api_incompatibility
     reviewed: false
     status_rationale: |
@@ -86,3 +86,12 @@ behavior_differences:
       relied on the legacy method or property must migrate to `clientStoreTemporaryCredential`.
       Mirrors the cross-driver consolidation documented as `BD#16` in
       `python/BehaviorDifferences.yaml`.
+  6:
+    name: "OAUTH_CLIENT_CREDENTIALS offline required-parameter validation"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    status_rationale: |
+      The universal driver routes OAUTH_CLIENT_CREDENTIALS through sf_core, which rejects missing
+      oauth_client_id, oauth_client_secret, and oauth_token_request_url synchronously at connect
+      time. The old driver does not surface the same offline validation or error text.

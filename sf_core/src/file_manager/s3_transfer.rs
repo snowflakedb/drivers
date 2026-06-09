@@ -1,6 +1,6 @@
 use super::types::{
     CloudCredentials, DownloadResponse, EncryptedFileMetadata, MaterialDescription, PreparedUpload,
-    StageCredsRefreshError, StageCredsRefresher, StageInfo, UploadStatus,
+    StageInfo, StageInfoRefreshError, StageInfoRefresher, UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -32,12 +32,15 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 /// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
 ///
 /// On AWS `ExpiredToken` the `refresher` (if any) is invoked to fetch fresh
-/// STS credentials, which it writes into the shared `StageCredsCache`; the
+/// STS credentials, which it writes into the shared `StageInfoCache`; the
 /// upload then retries with the new creds. The refresher is responsible for
 /// coalescing rapid-fire calls (the production implementation caches a
 /// successful refresh for 10 minutes, matching ODBC's `m_lastRefreshTokenSec`
 /// gate). The refreshed credentials are visible to other files in the batch
 /// via the shared cache — no return-value plumbing required.
+///
+/// S3 callers only project `creds` out of `StageInfoSnapshot`; the GCS-only
+/// `presigned_url` / `presigned_urls` fields are ignored here.
 ///
 /// When `refresher` is `Some`, the retry loop is driven by
 /// [`crate::refresh::execute_with_refresh`] via the [`S3StsRefresher`]
@@ -47,7 +50,7 @@ pub async fn upload_to_s3_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<UploadStatus, UploadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
@@ -77,7 +80,7 @@ pub async fn upload_to_s3_or_skip(
     run_s3_with_sts_refresh(
         refresher,
         &stage_info.creds,
-        |e| upload_file_error::StageCredsRefreshSnafu.into_error(e),
+        |e| upload_file_error::StageInfoRefreshFailedSnafu.into_error(e),
         // Refresher declined to rotate (or there was none). Surface the
         // original AWS error as a normal upload failure — same shape as
         // any other S3 PUT error.
@@ -100,13 +103,13 @@ enum S3AttemptError<E> {
 
 /// S3 STS implementation of the generic [`Refresher`] trait. Drives the
 /// retry loop in `execute_with_refresh` by reading credentials from a
-/// `StageCredsRefresher`'s shared cache and asking it to rotate when the
+/// `StageInfoRefresher`'s shared cache and asking it to rotate when the
 /// AWS SDK reports `ExpiredToken`.
 ///
 /// `map_refresh_err` keeps snafu's source-location stamping at the call
-/// site: each operation translates `StageCredsRefreshError` into its own
+/// site: each operation translates `StageInfoRefreshError` into its own
 /// error variant locally rather than via a blanket
-/// `From<StageCredsRefreshError>` impl on `UploadFileError` /
+/// `From<StageInfoRefreshError>` impl on `UploadFileError` /
 /// `DownloadFileError`, which would lose location info.
 ///
 /// Tracks the last AWS key id handed out so a refresh that doesn't
@@ -114,7 +117,7 @@ enum S3AttemptError<E> {
 /// `Ok(false)` and the helper propagates the original error rather than
 /// spinning.
 struct S3StsRefresher<'a, E, W> {
-    refresher: &'a mut dyn StageCredsRefresher,
+    refresher: &'a mut dyn StageInfoRefresher,
     last_seen_key: Option<String>,
     map_refresh_err: W,
     _marker: PhantomData<fn() -> E>,
@@ -122,10 +125,10 @@ struct S3StsRefresher<'a, E, W> {
 
 impl<'a, E, W> S3StsRefresher<'a, E, W>
 where
-    W: Fn(StageCredsRefreshError) -> E,
+    W: Fn(StageInfoRefreshError) -> E,
 {
     fn new(
-        refresher: &'a mut dyn StageCredsRefresher,
+        refresher: &'a mut dyn StageInfoRefresher,
         initial: &CloudCredentials,
         map_refresh_err: W,
     ) -> Self {
@@ -141,12 +144,13 @@ where
 impl<'a, E, W> Refresher<CloudCredentials, S3AttemptError<E>> for S3StsRefresher<'a, E, W>
 where
     E: Send,
-    W: Fn(StageCredsRefreshError) -> E + Send,
+    W: Fn(StageInfoRefreshError) -> E + Send,
 {
     fn current(
         &mut self,
     ) -> crate::refresh::RefreshFuture<'_, Result<CloudCredentials, S3AttemptError<E>>> {
-        let creds = self.refresher.cache().snapshot();
+        // S3 only cares about creds — project them out of the broader snapshot.
+        let creds = self.refresher.cache().snapshot().creds;
         Box::pin(async move { Ok(creds) })
     }
 
@@ -161,7 +165,7 @@ where
                 .refresh()
                 .await
                 .map_err(|e| S3AttemptError::Other((self.map_refresh_err)(e)))?;
-            let new = self.refresher.cache().snapshot();
+            let new = self.refresher.cache().snapshot().creds;
             let new_key = aws_key_id(&new).map(str::to_string);
             if new_key == self.last_seen_key {
                 // Refresher coalesced or returned the same creds — retrying
@@ -184,9 +188,9 @@ where
 /// instrumentation at the boundary so source locations land on the
 /// operation's own error variants rather than on this helper.
 async fn run_s3_with_sts_refresh<F, Fut, T, E>(
-    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
     initial_creds: &CloudCredentials,
-    map_refresh_err: impl Fn(StageCredsRefreshError) -> E + Send,
+    map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
     map_sts_err: impl FnOnce(aws_sdk_s3::Error) -> E,
     attempt: F,
 ) -> Result<T, E>
@@ -321,7 +325,7 @@ async fn put_object(
 /// Downloads a file from S3. For SSE stages the encryption metadata headers
 /// will be absent and `file_metadata` is `None`. See `upload_to_s3_or_skip`
 /// for the `refresher` semantics; refreshed credentials are written into the
-/// shared `StageCredsCache` rather than returned.
+/// shared `StageInfoCache` rather than returned.
 ///
 /// `cloud_byte_count` on the returned `DownloadResponse` reflects the
 /// on-cloud (pre-decryption) byte count of the blob — taken from the
@@ -330,7 +334,7 @@ async fn put_object(
 pub async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
-    refresher: &mut Option<&mut dyn StageCredsRefresher>,
+    refresher: &mut Option<&mut dyn StageInfoRefresher>,
 ) -> Result<DownloadResponse, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
@@ -348,7 +352,7 @@ pub async fn download_from_s3(
     let response = run_s3_with_sts_refresh(
         refresher,
         &stage_info.creds,
-        |e| download_file_error::StageCredsRefreshSnafu.into_error(e),
+        |e| download_file_error::StageInfoRefreshFailedSnafu.into_error(e),
         |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
         attempt,
     )
@@ -616,8 +620,9 @@ pub enum UploadFileError {
         location: Location,
     },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
-    StageCredsRefresh {
-        source: StageCredsRefreshError,
+    StageInfoRefreshFailed {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -657,8 +662,9 @@ pub enum DownloadFileError {
         location: Location,
     },
     #[snafu(display("Failed to refresh S3 stage credentials after ExpiredToken"))]
-    StageCredsRefresh {
-        source: StageCredsRefreshError,
+    StageInfoRefreshFailed {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -939,16 +945,16 @@ mod tests {
 
     // --- S3StsRefresher::refresh ---
     //
-    // A fake StageCredsRefresher records call counts and exposes a mutable
+    // A fake StageInfoRefresher records call counts and exposes a mutable
     // cache so tests can simulate "refresh rotated the creds" vs "refresh
     // coalesced and returned the same creds".
 
-    use super::super::types::{StageCredsCache, StageCredsRefreshError};
+    use super::super::types::{StageInfoCache, StageInfoRefreshError, StageInfoSnapshot};
     use crate::refresh::Refresher;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     struct FakeRefresher {
-        cache: StageCredsCache,
+        cache: StageInfoCache,
         next_creds: std::sync::Mutex<Option<CloudCredentials>>,
         refresh_calls: AtomicUsize,
     }
@@ -956,7 +962,7 @@ mod tests {
     impl FakeRefresher {
         fn new(initial: CloudCredentials) -> Self {
             Self {
-                cache: StageCredsCache::new(initial),
+                cache: StageInfoCache::new_with_creds(initial),
                 next_creds: std::sync::Mutex::new(None),
                 refresh_calls: AtomicUsize::new(0),
             }
@@ -968,24 +974,30 @@ mod tests {
         }
     }
 
-    impl StageCredsRefresher for FakeRefresher {
+    impl StageInfoRefresher for FakeRefresher {
         fn refresh(&mut self) -> super::super::types::RefreshFuture<'_> {
             self.refresh_calls.fetch_add(1, AtomicOrdering::SeqCst);
             let next = self.next_creds.lock().unwrap().take();
             if let Some(c) = next {
-                self.cache.store(c);
+                self.cache.store(StageInfoSnapshot::creds_only(c));
             }
-            Box::pin(async { Ok::<(), StageCredsRefreshError>(()) })
+            Box::pin(async { Ok::<(), StageInfoRefreshError>(()) })
         }
 
-        fn cache(&self) -> &StageCredsCache {
+        fn refresh_url(&mut self) -> super::super::types::RefreshFuture<'_> {
+            // S3 tests never trigger URL refresh; share the same path so the
+            // trait is satisfied. Production GCS tests provide a dedicated fake.
+            self.refresh()
+        }
+
+        fn cache(&self) -> &StageInfoCache {
             &self.cache
         }
     }
 
     /// Identity `map_refresh_err` for tests that don't care about error
-    /// translation — keeps the `StageCredsRefreshError` as-is.
-    fn identity_map(e: StageCredsRefreshError) -> StageCredsRefreshError {
+    /// translation — keeps the `StageInfoRefreshError` as-is.
+    fn identity_map(e: StageInfoRefreshError) -> StageInfoRefreshError {
         e
     }
 
@@ -1001,7 +1013,7 @@ mod tests {
         assert!(rotated);
         assert_eq!(fake.refresh_calls.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(
-            aws_key_id(&fake.cache().snapshot()),
+            aws_key_id(&fake.cache().snapshot().creds),
             Some("AKIA2"),
             "cache holds rotated creds"
         );

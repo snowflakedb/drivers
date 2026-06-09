@@ -46,6 +46,20 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setClientStoreTemporaryCredential(boolean clientStoreTemporaryCredential);
 
+  void setOauthClientId(String oauthClientId);
+
+  void setOauthClientSecret(String oauthClientSecret);
+
+  void setOauthAuthorizationUrl(String oauthAuthorizationUrl);
+
+  void setOauthTokenRequestUrl(String oauthTokenRequestUrl);
+
+  void setOauthRedirectUri(String oauthRedirectUri);
+
+  void setOauthScope(String oauthScope);
+
+  void setOauthEnableSingleUseRefreshTokens(boolean oauthEnableSingleUseRefreshTokens);
+
   String getUrl();
 
   Properties getProperties();

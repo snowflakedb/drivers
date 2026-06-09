@@ -9,7 +9,7 @@ use crate::chunks::{
 };
 use crate::file_manager;
 use crate::file_manager::{
-    CloudCredentials, DownloadResult, StageCredsCache, StageCredsRefreshError, UploadResult,
+    DownloadResult, StageInfoCache, StageInfoRefreshError, StageInfoSnapshot, UploadResult,
     download_files, upload_files,
 };
 use crate::query_types::RowType;
@@ -48,7 +48,7 @@ const ODBC_GET_ENCRYPTION_LITERAL: &str = "DECRYPTED";
 /// refresh (via `RefreshContext::execute_with_refresh`) lets PR #1137's
 /// session-renewal path heal a 390112 transparently.
 #[derive(Clone)]
-pub struct StageCredsRefreshContext {
+pub struct StageInfoRefreshContext {
     pub sql: String,
     pub query_parameters: crate::config::rest_parameters::QueryParameters,
     pub conn: Arc<Mutex<Connection>>,
@@ -56,9 +56,15 @@ pub struct StageCredsRefreshContext {
 
 /// Executes a PUT/GET file transfer and returns a `RowsetData` variant holding the results.
 ///
-/// When `stage_creds_refresh_context` is `Some`, an S3 `ExpiredToken` during a
-/// file transfer triggers a re-issue of the original PUT/GET SQL to obtain fresh
-/// STS credentials and the operation is retried. Non-PUT/GET callers pass `None`.
+/// When `stage_info_refresh_context` is `Some`, recoverable stage-info-expiry
+/// errors during a file transfer trigger a re-issue of the original PUT/GET
+/// SQL to obtain a fresh `StageInfoSnapshot` (creds + presigned URLs) and the
+/// operation is retried. Specifically:
+/// - S3: AWS `ExpiredToken` → creds refresh (coalesced, 10-min window)
+/// - GCS 401: bearer expired → creds refresh (coalesced, 10-min window)
+/// - GCS 400: presigned URL expired → URL refresh (per-file, no coalesce)
+///
+/// Non-PUT/GET callers pass `None`.
 ///
 /// `use_s3_regional_url_session_param` is the resolved value of the
 /// `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session parameter (read at the
@@ -69,19 +75,19 @@ pub(super) async fn perform_put_get_transfer(
     command: &str,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
-    stage_creds_refresh_context: Option<StageCredsRefreshContext>,
+    stage_info_refresh_context: Option<StageInfoRefreshContext>,
     use_s3_regional_url_session_param: bool,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
-    // Seed the refresher's cache with the initial creds.
-    let initial_creds = data
-        .stage_info_creds()
+    // Seed the refresher's cache with the initial snapshot.
+    let initial_snapshot = data
+        .stage_info_snapshot()
         .context(FileTransferPreparationSnafu)?;
-    let mut refresher = stage_creds_refresh_context
-        .zip(initial_creds)
-        .map(|(ctx, initial_creds)| SnowflakeStageCredsRefresher::new(ctx, initial_creds));
+    let mut refresher = stage_info_refresh_context
+        .zip(initial_snapshot)
+        .map(|(ctx, initial)| SnowflakeStageInfoRefresher::new(ctx, initial));
     let refresher_handle = refresher
         .as_mut()
-        .map(|r| r as &mut dyn file_manager::StageCredsRefresher);
+        .map(|r| r as &mut dyn file_manager::StageInfoRefresher);
 
     match command {
         "UPLOAD" => {
@@ -125,37 +131,55 @@ pub(super) async fn perform_put_get_transfer(
 /// Window during which repeated `refresh()` calls return without hitting GS.
 /// Matches ODBC's `FileTransferAgent.cpp` `m_lastRefreshTokenSec` gate (10
 /// minutes), which coalesces rapid-fire refreshes from concurrent uploads.
+///
+/// Applies only to `refresh` (cred-style: S3 STS expiry, GCS 401). Per-file
+/// URL refresh (`refresh_url`, GCS 400) intentionally bypasses this window:
+/// a single batch upload of 1000 files may carry up to 1000 distinct
+/// per-object presigned URLs, and coalescing would lock all subsequent
+/// expiries to the first-refreshed URL.
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
-/// Refreshes stage credentials by re-executing the original PUT/GET SQL
-/// against Snowflake GS, matching Python's `StorageCredential.update` and
-/// ODBC's `FileTransferAgent::renewToken`. GS returns a brand-new `stageInfo`
-/// per query, so we take only the creds and leave bucket/region/key_prefix
-/// untouched. The new creds land in the shared `StageCredsCache` so every
-/// in-flight transfer in the batch picks them up on its next attempt.
+/// Refreshes stage info (creds + presigned URLs) by re-executing the
+/// original PUT/GET SQL against Snowflake GS, matching Python's
+/// `StorageCredential.update` and ODBC's `FileTransferAgent::renewToken`. GS
+/// returns a brand-new `stageInfo` per query — we take the full
+/// `StageInfoSnapshot` (creds + presignedUrl + presignedUrls[]) and write it
+/// into the shared `StageInfoCache` so every in-flight transfer in the
+/// batch picks the fresh values up on its next attempt.
 ///
 /// The refresh re-issues the PUT/GET SQL through `RefreshContext::execute_with_refresh`
 /// — if the session token has itself expired by the time we reach this point
 /// (e.g. a long batch upload), the 390112 detection from PR #1137 transparently
 /// renews the session before retrying the SQL.
 ///
-/// A 10-minute coalescing window short-circuits subsequent refresh calls
-/// without re-issuing the SQL, keeping us well-behaved against a burst of
-/// `ExpiredToken` responses (long batch upload, concurrent parts in a future
-/// parallel implementation) without either capping retries artificially or
-/// hammering GS.
-struct SnowflakeStageCredsRefresher {
-    ctx: StageCredsRefreshContext,
-    cache: StageCredsCache,
+/// Two entry points share the same fetch logic but differ in coalescing:
+/// - [`refresh`](file_manager::StageInfoRefresher::refresh) gates on the
+///   10-minute window (matches libsfclient's `m_lastRefreshTokenSec`); used
+///   for token-style expiries (S3 STS, GCS 401) where a burst of expirations
+///   across files should collapse to a single SQL re-issue.
+/// - [`refresh_url`](file_manager::StageInfoRefresher::refresh_url) bypasses
+///   the window; used for GCS 400 per-file URL expiry where each call may
+///   need to fetch a fresh `presignedUrls[]` slot. The call site
+///   (`gcs_transfer.rs`) enforces a two-strike guard to prevent looping.
+struct SnowflakeStageInfoRefresher {
+    ctx: StageInfoRefreshContext,
+    cache: StageInfoCache,
     last_refresh_at: Option<Instant>,
+    /// Destination object name of the file currently being uploaded, set by
+    /// `upload_to_gcs_or_skip` via `notify_current_upload_file` before a
+    /// per-file URL refresh. `refresh_url` rewrites the PUT SQL to target this
+    /// file so GS returns its presigned URL (multi-file glob PUT). `None` for
+    /// GET, where the call site re-picks `presignedUrls[per_file_index]`.
+    current_upload_file: Option<String>,
 }
 
-impl SnowflakeStageCredsRefresher {
-    fn new(ctx: StageCredsRefreshContext, initial_creds: CloudCredentials) -> Self {
+impl SnowflakeStageInfoRefresher {
+    fn new(ctx: StageInfoRefreshContext, initial: StageInfoSnapshot) -> Self {
         Self {
             ctx,
-            cache: StageCredsCache::new(initial_creds),
+            cache: StageInfoCache::new(initial),
             last_refresh_at: None,
+            current_upload_file: None,
         }
     }
 }
@@ -167,37 +191,124 @@ fn should_coalesce(last: Option<Instant>, now: Instant) -> bool {
     last.is_some_and(|at| now.saturating_duration_since(at) < REFRESH_COALESCE_WINDOW)
 }
 
-impl file_manager::StageCredsRefresher for SnowflakeStageCredsRefresher {
+impl file_manager::StageInfoRefresher for SnowflakeStageInfoRefresher {
     fn refresh(&mut self) -> file_manager::RefreshFuture<'_> {
         Box::pin(async move {
-            // Coalesce rapid-fire refreshes: if we already fetched creds
-            // within the window, the cache still holds them — nothing to do.
+            // Coalesce rapid-fire refreshes: if we already fetched within
+            // the window, the cache still holds the result — nothing to do.
             if should_coalesce(self.last_refresh_at, Instant::now()) {
-                tracing::debug!("Stage creds refresh coalesced; cache holds recent creds");
+                tracing::debug!("Stage info refresh coalesced; cache holds recent snapshot");
                 return Ok(());
             }
 
-            tracing::info!("Refreshing stage credentials by re-executing PUT/GET SQL");
-            let creds = fetch_fresh_stage_creds(&self.ctx).await?;
-            self.cache.store(creds);
+            tracing::info!("Refreshing stage info by re-executing PUT/GET SQL");
+            let snapshot = fetch_fresh_stage_info(&self.ctx).await?;
+            self.cache.store(snapshot);
             self.last_refresh_at = Some(Instant::now());
             Ok(())
         })
     }
 
-    fn cache(&self) -> &StageCredsCache {
+    fn refresh_url(&mut self) -> file_manager::RefreshFuture<'_> {
+        Box::pin(async move {
+            // For a PUT, re-issue the SQL rewritten to target the single file
+            // currently uploading so GS returns *that* file's presigned URL —
+            // re-issuing the original glob SQL would return the first matched
+            // file's URL and misroute the upload. For a GET, the call site
+            // re-picks `presignedUrls[per_file_index]`, so re-issue unchanged.
+            let sql = match self.current_upload_file.as_deref() {
+                Some(dst) => match rewrite_put_command_for_file(&self.ctx.sql, dst) {
+                    Some(rewritten) => rewritten,
+                    // PUT command with no parseable `file://` token: refuse to
+                    // re-issue the unchanged SQL (it would misroute) and let
+                    // the GCS call site surface PresignedUrlExpired.
+                    None => {
+                        use crate::file_manager::types::stage_info_refresh_error::PresignedUrlRefreshSkippedSnafu;
+                        return PresignedUrlRefreshSkippedSnafu.fail();
+                    }
+                },
+                None => self.ctx.sql.clone(),
+            };
+            // Per-file URL refresh: bypass the coalescing window. Each file
+            // may carry a distinct per-object presigned URL, so collapsing
+            // refresh calls would lock subsequent files to a stale URL. The
+            // GCS call site enforces a two-strike guard.
+            tracing::info!(
+                "Refreshing stage info (presigned URLs) by re-executing PUT/GET SQL — \
+                 bypassing 10-min coalesce window for per-file URL expiry"
+            );
+            let snapshot = fetch_fresh_stage_info_with_sql(&self.ctx, &sql).await?;
+            self.cache.store(snapshot);
+            // Update `last_refresh_at` so a subsequent token-style refresh
+            // honors the window — the snapshot we just wrote carries fresh
+            // creds too. (Cred + URL refresh share the same underlying SQL,
+            // so this isn't double-spending against GS.)
+            self.last_refresh_at = Some(Instant::now());
+            Ok(())
+        })
+    }
+
+    fn cache(&self) -> &StageInfoCache {
         &self.cache
+    }
+
+    fn notify_current_upload_file(&mut self, dst_file_name: String) {
+        self.current_upload_file = Some(dst_file_name);
     }
 }
 
-/// Re-issues the original PUT/GET SQL through `RefreshContext::execute_with_refresh`
-/// and extracts the fresh `stageInfo.creds` from the response. Going through
-/// `execute_with_refresh` means a session-token expiry mid-batch is healed
-/// transparently by PR #1137's 390112 detection before the SQL is retried.
-async fn fetch_fresh_stage_creds(
-    ctx: &StageCredsRefreshContext,
-) -> Result<CloudCredentials, StageCredsRefreshError> {
-    use crate::file_manager::types::stage_creds_refresh_error::*;
+/// Extracts the local file path token from a PUT command: everything after the
+/// `file://` prefix, ending at the closing quote (if the path is quoted) or at
+/// the first space / newline / `;` (otherwise). Returns `None` when there is no
+/// `file://` (e.g. a GET command) or the token is empty/malformed. Mirrors
+/// libsfclient `getLocalFilePathFromCommand` and Python
+/// `_get_local_file_path_from_put_command`.
+fn local_file_path_from_put_command(sql: &str) -> Option<&str> {
+    const FILE_PROTOCOL: &str = "file://";
+    let proto_idx = sql.find(FILE_PROTOCOL)?;
+    let quoted = proto_idx > 0 && sql.as_bytes()[proto_idx - 1] == b'\'';
+    let rest = &sql[proto_idx + FILE_PROTOCOL.len()..];
+    let end = if quoted {
+        rest.find('\'')?
+    } else {
+        rest.find([' ', '\n', ';']).unwrap_or(rest.len())
+    };
+    let path = &rest[..end];
+    (!path.is_empty()).then_some(path)
+}
+
+/// Rewrites a PUT command so it targets a single destination file: the local
+/// path token after `file://` is replaced with `dst_file_name` (GS resolves the
+/// remote object from the trailing name, so the local prefix is dropped).
+/// Returns `None` when the command has no parseable local path. Mirrors
+/// libsfclient `getPresignedUrlForUploading` and Python `_update_presigned_url`.
+fn rewrite_put_command_for_file(sql: &str, dst_file_name: &str) -> Option<String> {
+    let local_path = local_file_path_from_put_command(sql)?;
+    Some(sql.replace(local_path, dst_file_name))
+}
+
+/// Re-issues the original PUT/GET SQL (`ctx.sql`) and extracts the fresh
+/// `stageInfo` snapshot. See [`fetch_fresh_stage_info_with_sql`].
+async fn fetch_fresh_stage_info(
+    ctx: &StageInfoRefreshContext,
+) -> Result<StageInfoSnapshot, StageInfoRefreshError> {
+    fetch_fresh_stage_info_with_sql(ctx, &ctx.sql).await
+}
+
+/// Re-issues `sql` through `RefreshContext::execute_with_refresh` and extracts
+/// the full `stageInfo` snapshot (creds + presignedUrl + presignedUrls[]) from
+/// the response. Going through `execute_with_refresh` means a session-token
+/// expiry mid-batch is healed transparently by session-renewal logic before
+/// the SQL is retried.
+///
+/// `sql` is usually `ctx.sql`, but the per-file URL refresh path passes a
+/// command rewritten for a single destination file (see
+/// `rewrite_put_command_for_file`) so GS returns that file's presigned URL.
+async fn fetch_fresh_stage_info_with_sql(
+    ctx: &StageInfoRefreshContext,
+    sql: &str,
+) -> Result<StageInfoSnapshot, StageInfoRefreshError> {
+    use crate::file_manager::types::stage_info_refresh_error::*;
 
     // `from_arc` is used (not `new`) so that a `close()` raced against an
     // in-flight refresh is rejected, consistent with the original query path.
@@ -214,7 +325,7 @@ async fn fetch_fresh_stage_creds(
         .clone()
         .expect("http_client present after RefreshContext::from_arc succeeded");
 
-    let query_input = rest::snowflake::QueryInput::new(ctx.sql.clone());
+    let query_input = rest::snowflake::QueryInput::new(sql.to_string());
     let response = refresh_ctx
         .execute_with_refresh(|session_token| {
             let http_client = http_client.clone();
@@ -247,7 +358,7 @@ async fn fetch_fresh_stage_creds(
     // The re-issued PUT/GET carries the fresh stageInfo on the response.
     response
         .data
-        .stage_info_creds()
+        .stage_info_snapshot()
         .context(InvalidStageInfoSnafu)?
         .context(MissingStageInfoSnafu)
 }
@@ -841,5 +952,96 @@ mod tests {
         let last = Instant::now();
         let now = last - Duration::from_millis(0); // same instant
         assert!(should_coalesce(Some(last), now));
+    }
+
+    #[test]
+    fn local_file_path_unquoted_glob() {
+        assert_eq!(
+            local_file_path_from_put_command("PUT file://data/*.csv @stage"),
+            Some("data/*.csv")
+        );
+    }
+
+    #[test]
+    fn local_file_path_unquoted_trailing_options() {
+        assert_eq!(
+            local_file_path_from_put_command(
+                "PUT file://data/*.csv @stage AUTO_COMPRESS=TRUE OVERWRITE=FALSE"
+            ),
+            Some("data/*.csv")
+        );
+    }
+
+    #[test]
+    fn local_file_path_unquoted_to_end_of_string() {
+        assert_eq!(
+            local_file_path_from_put_command("PUT file://data/only.csv"),
+            Some("data/only.csv")
+        );
+    }
+
+    #[test]
+    fn local_file_path_quoted() {
+        assert_eq!(
+            local_file_path_from_put_command("PUT 'file://data dir/*.csv' @stage"),
+            Some("data dir/*.csv")
+        );
+    }
+
+    #[test]
+    fn local_file_path_quoted_unterminated_is_none() {
+        // A quote opened before file:// with no closing quote is malformed —
+        // refuse rather than guess at the path boundary.
+        assert_eq!(
+            local_file_path_from_put_command("PUT 'file://data/*.csv @stage"),
+            None
+        );
+    }
+
+    #[test]
+    fn local_file_path_newline_and_semicolon_terminators() {
+        assert_eq!(
+            local_file_path_from_put_command("PUT file://data/*.csv\n@stage"),
+            Some("data/*.csv")
+        );
+        assert_eq!(
+            local_file_path_from_put_command("PUT file://data/*.csv;"),
+            Some("data/*.csv")
+        );
+    }
+
+    #[test]
+    fn local_file_path_none_for_get_command() {
+        assert_eq!(
+            local_file_path_from_put_command("GET @stage file:///tmp/out"),
+            Some("/tmp/out"),
+            "GET also carries file://; the refresher only rewrites when an upload file is set"
+        );
+        assert_eq!(local_file_path_from_put_command("GET @stage"), None);
+    }
+
+    #[test]
+    fn rewrite_put_command_replaces_glob_with_dst_name() {
+        assert_eq!(
+            rewrite_put_command_for_file("PUT file://data/*.csv @stage", "part-01.csv.gz"),
+            Some("PUT file://part-01.csv.gz @stage".to_string()),
+            "local path token is replaced with the dst name; file:// prefix is kept"
+        );
+    }
+
+    #[test]
+    fn rewrite_put_command_quoted_keeps_quotes() {
+        assert_eq!(
+            rewrite_put_command_for_file("PUT 'file://data dir/*.csv' @stage", "part-01.csv.gz"),
+            Some("PUT 'file://part-01.csv.gz' @stage".to_string())
+        );
+    }
+
+    #[test]
+    fn rewrite_put_command_none_when_no_file_protocol() {
+        assert_eq!(
+            rewrite_put_command_for_file("GET @stage", "part-01.csv.gz"),
+            None
+        );
     }
 }
