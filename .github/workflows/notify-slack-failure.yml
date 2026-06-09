@@ -52,7 +52,7 @@ concurrency:
 
 jobs:
   notify:
-    # Only alert on failures caused by a push to main or a merge-queue check.
+    # Only alert on failures caused by a push to main, a merge-queue check, or a nightly schedule run.
     # workflow_dispatch is allowed unconditionally for manual testing.
     if: |
       github.event_name == 'workflow_dispatch' ||
@@ -60,7 +60,8 @@ jobs:
         github.event.workflow_run.conclusion == 'failure' &&
         (
           (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') ||
-          github.event.workflow_run.event == 'merge_group'
+          github.event.workflow_run.event == 'merge_group' ||
+          github.event.workflow_run.event == 'schedule'
         )
       )
     runs-on: ubuntu-slim
@@ -168,6 +169,8 @@ jobs:
           # Human-readable trigger context.
           if event == 'merge_group':
               context_str = 'merge queue \u2192 `main`'
+          elif event == 'schedule':
+              context_str = 'nightly schedule on `main`'
           else:
               context_str = f'push to `{head_branch}`'
 
